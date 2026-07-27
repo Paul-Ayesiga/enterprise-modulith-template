@@ -38,6 +38,7 @@ dependencies {
     developmentOnly(libs.boot.docker.compose)
 
     testImplementation(libs.boot.test)
+    testImplementation(libs.boot.webmvc.test)
     testImplementation(libs.modulith.test)
     testImplementation(libs.archunit)
     // Later phases: data-jpa/flyway/postgresql, security/oauth2-rs, awssdk s3, data-redis/cache/caffeine,

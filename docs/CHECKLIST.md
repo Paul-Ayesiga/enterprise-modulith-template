@@ -22,12 +22,12 @@ its acceptance gate verified. Updated as work lands — this file is the single 
 
 ## Phase 1 — Core runtime (shared kernel)
 
-- [ ] `shared/web` — envelope records (`ApiResponse`/`ApiError`/`ApiSource`/`ApiMeta`/`PageMeta`)
-- [ ] `shared/web` — `ResponseBodyAdvice` auto-wrapper (excludes springdoc/actuator)
-- [ ] `shared/web` — `RequestIdFilter` (validate inbound id else mint ULID) + `X-Request-Id` header
-- [ ] `shared/error` — `ErrorCode` enum + `ApiException` hierarchy
-- [ ] `shared/error` — `GlobalExceptionHandler` (multi-error 422, catch-all 500 = only trace sink)
-- [ ] Tests: envelope wrapping, `meta.requestId`, **no stack-trace leakage** (MockMvc slice)
+- [x] `shared/web` — envelope records (`ApiResponse`/`ApiError`/`ApiSource`/`ApiMeta`/`PageMeta`)
+- [x] `shared/web` — `ResponseBodyAdvice` auto-wrapper (excludes springdoc/actuator)
+- [x] `shared/web` — `RequestIdFilter` (validate inbound id else mint ULID) + `X-Request-Id` header
+- [x] `shared/error` — `ErrorCode` enum + `ApiException` hierarchy
+- [x] `shared/error` — `GlobalExceptionHandler` (multi-error 422, catch-all 500 = only trace sink)
+- [x] Tests: envelope wrapping, `meta.requestId`, **no stack-trace leakage** (MockMvc + ArchUnit rules)
 - [ ] `shared/observability` — `logback-spring.xml` JSON, requestId+traceId in MDC, OTLP export
 - [ ] `shared/security` — Keycloak in Compose + realm import; OAuth2 Resource Server
 - [ ] `shared/security` — JWT roles → `ROLE_*`, `@EnableMethodSecurity`, `CurrentUser`, `PermissionEvaluator`

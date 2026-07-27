@@ -35,6 +35,7 @@ boot-data-redis     = { module = "org.springframework.boot:spring-boot-starter-d
 boot-cache          = { module = "org.springframework.boot:spring-boot-starter-cache" }
 boot-otel           = { module = "org.springframework.boot:spring-boot-starter-opentelemetry" }
 boot-test           = { module = "org.springframework.boot:spring-boot-starter-test" }
+boot-webmvc-test    = { module = "org.springframework.boot:spring-boot-webmvc-test" }  # Boot 4 split: @AutoConfigureMockMvc/@WebMvcTest live here
 boot-docker-compose = { module = "org.springframework.boot:spring-boot-docker-compose" }
 boot-testcontainers = { module = "org.springframework.boot:spring-boot-testcontainers" }
 
