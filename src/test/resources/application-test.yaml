@@ -19,6 +19,11 @@ app:
   # L1-only in tests; the Valkey IT re-enables L2 against its own container.
   cache:
     l2-enabled: false
+  # Delivery worker is driven explicitly by tests (deterministic, no cross-context background polling).
+  notification:
+    delivery:
+      worker-auto-start: false
+      retry-base-backoff: PT0.1S
 
 
 management:

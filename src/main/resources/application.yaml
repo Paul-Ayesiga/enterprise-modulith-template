@@ -15,6 +15,11 @@ spring:
     url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:modulith}
     username: ${POSTGRES_USER:modulith}
     password: ${POSTGRES_PASSWORD:modulith}
+    hikari:
+      # Keep pool >= notification delivery concurrency so fan-out status writes don't starve
+      # request-serving traffic. Raise both together (and Postgres max_connections) to scale out.
+      maximum-pool-size: ${DB_POOL_SIZE:16}
+      connection-timeout: ${DB_CONNECTION_TIMEOUT_MS:30000}
   jpa:
     hibernate:
       ddl-auto: validate
@@ -36,6 +41,11 @@ spring:
           auth: false
           starttls:
             enable: false
+          # Timeouts (ms) well below app.notification.delivery.stale-lock — JavaMail defaults to
+          # infinite, which would let a hung SMTP host pin a delivery worker permit forever.
+          connectiontimeout: ${SMTP_CONNECT_TIMEOUT_MS:5000}
+          timeout: ${SMTP_READ_TIMEOUT_MS:5000}
+          writetimeout: ${SMTP_WRITE_TIMEOUT_MS:5000}
   modulith:
     events:
       republish-outstanding-events-on-restart: true
@@ -58,6 +68,18 @@ app:
     from: ${NOTIFICATION_FROM:no-reply@smsone.co.ug}
     slack-webhook-url: ${NOTIFICATION_SLACK_WEBHOOK:}
     webhook-timeout-seconds: ${NOTIFICATION_WEBHOOK_TIMEOUT:5}
+    # Async fan-out worker (durable delivery queue).
+    delivery:
+      batch-size: ${NOTIFICATION_BATCH_SIZE:200}
+      concurrency: ${NOTIFICATION_CONCURRENCY:16}
+      max-attempts: ${NOTIFICATION_MAX_ATTEMPTS:5}
+      poll-interval: ${NOTIFICATION_POLL_INTERVAL:PT1S}
+      retry-base-backoff: ${NOTIFICATION_RETRY_BASE:PT10S}
+      retry-max-backoff: ${NOTIFICATION_RETRY_MAX:PT10M}
+      stale-lock: ${NOTIFICATION_STALE_LOCK:PT5M}
+      retention: ${NOTIFICATION_RETENTION:P7D}
+      purge-interval: ${NOTIFICATION_PURGE_INTERVAL:PT1H}
+      max-drain-batches: ${NOTIFICATION_MAX_DRAIN:25}
     admins:
       - username: ${NOTIFICATION_ADMIN_USER:david}
         email: ${NOTIFICATION_ADMIN_EMAIL:admin@smsone.co.ug}

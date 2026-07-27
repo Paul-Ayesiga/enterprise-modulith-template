@@ -27,7 +27,10 @@ class FeatureFlagChangeNotifier {
 
     @ApplicationModuleListener
     void on(FeatureFlagChanged event) {
-        if (!inbox.recordIfNew(LISTENER_ID, "flag:" + event.key() + ":" + event.enabled())) {
+        // occurredAt makes the key unique per change yet stable across redelivery — so a genuine
+        // re-toggle still notifies, but an at-least-once redelivery of the same event does not.
+        String messageId = "flag:" + event.key() + ":" + event.enabled() + "@" + event.occurredAt();
+        if (!inbox.recordIfNew(LISTENER_ID, messageId)) {
             return;
         }
         String state = event.enabled() ? "enabled" : "disabled";

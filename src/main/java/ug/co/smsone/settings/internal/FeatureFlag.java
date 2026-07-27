@@ -3,6 +3,7 @@ package ug.co.smsone.settings.internal;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Table;
+import java.time.Instant;
 import ug.co.smsone.settings.FeatureFlagChanged;
 import ug.co.smsone.shared.persistence.AggregateRoot;
 
@@ -33,7 +34,7 @@ public class FeatureFlag extends AggregateRoot {
     public void toggle(boolean enabled, String description) {
         this.enabled = enabled;
         this.description = description;
-        registerEvent(new FeatureFlagChanged(key, enabled));
+        registerEvent(new FeatureFlagChanged(key, enabled, Instant.now()));
     }
 
     public String getKey() {

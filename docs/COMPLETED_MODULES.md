@@ -57,5 +57,5 @@ Multi-channel, **pluggable** delivery of messages to recipients.
 - **Public API**: `Notifications` facade (`dispatch(NotificationRequest)`, `notifyAdmins`) with per-recipient channel addressing (`Recipient`).
 - **Endpoints**: `GET /api/v1/notifications` (current user's in-app, cursor-paginated), `POST /api/v1/notifications/{id}/read`.
 - **Event-driven**: `@ApplicationModuleListener` on `FeatureFlagChanged` notifies admins (email + in-app), idempotent via `EventInbox`.
-- **Audit**: every delivery attempt recorded in `notification_log` (channel, recipient, SENT/FAILED); one channel failing never aborts the others.
-- Verified against real Mailpit (email) and a real webhook receiver (fan-out).
+- **Async, scalable fan-out**: `dispatch` is non-blocking — it enqueues one row per recipient/channel into `notification_delivery`, then a background worker claims batches with `SELECT … FOR UPDATE SKIP LOCKED` and sends on a bounded pool of **virtual threads** (Java 21), **outside any DB transaction**, with exponential-backoff **retry**, **dead-lettering**, and stale-lock recovery. SKIP LOCKED lets N instances share the queue with no double-sends → fans out to thousands without blocking the caller. One channel/recipient failing never aborts the rest.
+- Verified against real Mailpit (email), a real webhook receiver (fan-out), and a **300-recipient concurrency test** (each hit exactly once, no duplicates).

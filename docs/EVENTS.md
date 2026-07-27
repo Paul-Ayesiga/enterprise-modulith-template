@@ -14,7 +14,9 @@ message id from business identity (e.g. `"setting:" + key + ":" + version`).
 | Event | Module | Payload | Published when |
 |---|---|---|---|
 | `ug.co.smsone.settings.SettingChanged` | settings | `key, value` | a setting is created or updated |
-| `ug.co.smsone.settings.FeatureFlagChanged` | settings | `key, enabled` | a feature flag is created or toggled |
+| `ug.co.smsone.settings.FeatureFlagChanged` | settings | `key, enabled, occurredAt` | a feature flag is created or toggled |
+
+`occurredAt` lets idempotent consumers dedupe redelivery of the *same* change while still reacting to a genuine later re-toggle to the same state.
 
 ## Consumers
 

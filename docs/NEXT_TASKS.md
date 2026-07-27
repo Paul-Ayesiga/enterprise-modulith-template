@@ -91,6 +91,26 @@ a publisher. Keep `EventInbox` on all consumers (at-least-once stays at-least-on
 **Done when:** an `@Externalized` event reaches a real broker container in an IT with the registry
 still tracking completion.
 
+## 7. Notification delivery — scalability hardening (deferred from adversarial review)
+
+**Context:** the delivery queue (`notification_delivery`) is correct and non-blocking; a 4-lens review
+fixed the correctness items (SMTP timeouts, split send/markSent, re-toggle dedup, pool sizing,
+graceful shutdown, `text` recipient, ms stale-lock, dead-letter log). These are the deferred
+scalability/observability items (no correctness impact today):
+- **Claim index:** the `claim` OR-predicate + `FOR UPDATE` falls to a seq-scan+sort; claim cost grows
+  with table size. `EXPLAIN` it, then split into two index-friendly queries (due-PENDING UNION
+  stale-PROCESSING) or add a partial index on `(locked_at) where status='PROCESSING'`.
+- **Purge:** add `create index ... (created_at) where status='SENT'` and chunk the delete
+  (`... where id in (select id ... limit 1000)` looped); also purge/alert on old `FAILED` rows.
+- **Dedicated worker DataSource + batched terminal writes:** give the worker its own small pool and
+  `batchUpdate` the SENT/FAILED updates grouped by outcome, decoupling send fan-out from DB-write concurrency.
+- **Idempotency key + metrics:** pass the delivery row id into `NotificationMessage` metadata as an
+  idempotency key (downstream dedupe of the at-least-once tail); add a Micrometer counter on
+  `deadLetter()` tagged by channel+reason, with an alert.
+- **Per-channel rate limits + real SMS/push providers** via the `NotificationChannelSender` SPI.
+**Done when:** `EXPLAIN` shows an index scan on claim; a bulk purge doesn't lock the table; a
+dead-letter increments a metric.
+
 ## Small items (bundle into any PR)
 
 - Postman: import `docs/openapi/openapi.yaml`, verify the Keycloak authorization-code flow against
