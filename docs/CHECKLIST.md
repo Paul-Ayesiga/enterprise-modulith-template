@@ -38,13 +38,13 @@ its acceptance gate verified. Updated as work lands — this file is the single 
 - [x] First business module (**settings**: entity/service/controller/`SettingChanged` event, role-gated writes); `shared` marked OPEN; DB-backed event publication registry (Modulith JDBC v2 schema via Flyway)
 - [x] **Gate:** secured endpoint validates a real Keycloak JWT; `verify()` passes with 2 modules; spec exports; `bootRun` health UP with 401-envelope on secured routes
 
-## Phase 2 — API surface + Files
+## Phase 2 — API surface + Files ✅ (2026-07-27)
 
-- [ ] `page[number]`/`page[size]`/`sort` resolver; collections return `meta.page` + `links`
-- [ ] `files` module — `FileStorageProvider` + `S3StorageProvider` (AWS S3 v2) + presigner + bucket bootstrap
-- [ ] SeaweedFS 4.40 (s3-config.json) + mailpit in Compose
-- [ ] Testcontainers IT vs real SeaweedFS: put/get/delete/presign/multipart
-- [ ] **Gate:** upload/download/presign works; paginated envelope verified
+- [x] **Cursor pagination** (user decision, supersedes offset): `page[size]` + `page[after]` keyset cursors, `meta.page {size,count,hasMore,nextCursor}` + `links.next`; Spring Data `Window` scrolling; 422 on bad cursors
+- [x] `files` module — `FileStorageProvider` + `S3StorageProvider` (AWS S3 v2, path-style) + presigner + idempotent bucket bootstrap (REST surface deferred until a consuming feature defines it)
+- [x] SeaweedFS 4.40 (s3-config.json — no MINIO_* env shortcut) + mailpit in Compose
+- [x] Testcontainers IT vs real SeaweedFS: put/get/delete/presign(GET+PUT via raw HTTP)/11MB multipart
+- [x] **Gate:** storage flows green against SeaweedFS; cursor-paginated envelope verified end-to-end
 
 ## Phase 3 — Caching, scheduling, resilience, patterns
 

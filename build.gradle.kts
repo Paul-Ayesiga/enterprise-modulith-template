@@ -40,6 +40,11 @@ dependencies {
     implementation(libs.boot.security)
     implementation(libs.boot.oauth2.rs)
 
+    // storage bundle (files module — SeaweedFS/S3 via AWS SDK v2)
+    implementation(platform(libs.awssdk.bom))
+    implementation(libs.awssdk.s3)
+    implementation(libs.awssdk.apache.client)
+
     // persistence bundle
     implementation(libs.boot.data.jpa)
     implementation(libs.boot.flyway)

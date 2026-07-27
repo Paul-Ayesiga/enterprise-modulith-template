@@ -1,4 +1,10 @@
 # Test profile: no telemetry export — tests must not depend on a running OTLP collector.
+# Bucket bootstrap off by default; the files IT re-enables it against its SeaweedFS container.
+app:
+  storage:
+    bootstrap-bucket: false
+
+
 management:
   otlp:
     metrics:

@@ -1,0 +1,14 @@
+{
+  "identities": [
+    {
+      "name": "smsone",
+      "credentials": [
+        {
+          "accessKey": "smsone",
+          "secretKey": "smsone-secret"
+        }
+      ],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

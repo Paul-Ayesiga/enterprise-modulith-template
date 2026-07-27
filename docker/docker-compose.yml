@@ -29,6 +29,21 @@ services:
     volumes:
       - ./keycloak:/opt/keycloak/data/import:ro
 
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.40
+    command: ["server", "-s3", "-s3.config=/etc/seaweedfs/s3-config.json", "-dir=/data"]
+    ports:
+      - "${S3_PORT:-8333}:8333"     # S3 API
+    volumes:
+      - ./seaweedfs/s3-config.json:/etc/seaweedfs/s3-config.json:ro
+      - seaweedfs-data:/data
+
+  mailpit:
+    image: axllent/mailpit:v1.30.2
+    ports:
+      - "${MAILPIT_UI_PORT:-8025}:8025"  # Web UI
+      - "${SMTP_PORT:-1025}:1025"        # SMTP sink
+
   otel-lgtm:
     image: grafana/otel-lgtm:0.28.0
     ports:
@@ -38,3 +53,4 @@ services:
 
 volumes:
   postgres-data:
+  seaweedfs-data:

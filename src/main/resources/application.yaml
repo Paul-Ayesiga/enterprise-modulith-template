@@ -36,6 +36,15 @@ server:
     whitelabel:
       enabled: false
 
+app:
+  storage:
+    endpoint: ${S3_ENDPOINT:http://localhost:8333}
+    region: ${S3_REGION:us-east-1}
+    access-key: ${S3_ACCESS_KEY:smsone}
+    secret-key: ${S3_SECRET_KEY:smsone-secret}
+    bucket: ${S3_BUCKET:smsone}
+    bootstrap-bucket: ${S3_BOOTSTRAP_BUCKET:true}
+
 springdoc:
   paths-to-exclude: /test/**   # test-classpath contract endpoints must never reach the spec
 
