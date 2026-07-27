@@ -36,6 +36,8 @@ boot-cache          = { module = "org.springframework.boot:spring-boot-starter-c
 boot-otel           = { module = "org.springframework.boot:spring-boot-starter-opentelemetry" }
 boot-test           = { module = "org.springframework.boot:spring-boot-starter-test" }
 boot-webmvc-test    = { module = "org.springframework.boot:spring-boot-webmvc-test" }  # Boot 4 split: @AutoConfigureMockMvc/@WebMvcTest live here
+boot-resttestclient = { module = "org.springframework.boot:spring-boot-resttestclient" }  # Boot 4 split: TestRestTemplate lives here
+boot-restclient     = { module = "org.springframework.boot:spring-boot-restclient" }      # Boot 4 split: RestTemplateBuilder (needed by resttestclient)
 boot-docker-compose = { module = "org.springframework.boot:spring-boot-docker-compose" }
 boot-flyway         = { module = "org.springframework.boot:spring-boot-starter-flyway" }  # Boot 4 split: Flyway autoconfig lives here
 boot-testcontainers = { module = "org.springframework.boot:spring-boot-testcontainers" }

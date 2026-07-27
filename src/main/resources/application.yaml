@@ -33,6 +33,9 @@ server:
     whitelabel:
       enabled: false
 
+springdoc:
+  paths-to-exclude: /test/**   # test-classpath contract endpoints must never reach the spec
+
 management:
   endpoints:
     web:

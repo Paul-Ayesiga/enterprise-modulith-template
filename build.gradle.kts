@@ -50,6 +50,8 @@ dependencies {
 
     testImplementation(libs.boot.test)
     testImplementation(libs.boot.webmvc.test)
+    testImplementation(libs.boot.resttestclient)
+    testImplementation(libs.boot.restclient)
     testImplementation(libs.security.test)
     testImplementation(libs.boot.testcontainers)
     testImplementation(libs.testcontainers.postgres)
@@ -58,6 +60,16 @@ dependencies {
     testImplementation(libs.archunit)
     // Later phases: data-jpa/flyway/postgresql, security/oauth2-rs, awssdk s3, data-redis/cache/caffeine,
     //               shedlock, duckdb, resilience4j, bucket4j, testcontainers-*  (all in the catalog)
+}
+
+// Re-runs only the tagged export test; the spec also refreshes on every normal build.
+tasks.register<Test>("exportOpenApi") {
+    description = "Boots the app (test profile) and writes docs/openapi/openapi.{yaml,json}"
+    group = "documentation"
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    useJUnitPlatform { includeTags("openapi-export") }
+    outputs.upToDateWhen { false }
 }
 
 tasks.withType<Test> {
