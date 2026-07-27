@@ -11,5 +11,6 @@ public record AnalyticsProperties(
         @DefaultValue("data/analytics.duckdb") String databasePath,
         @DefaultValue("data/snapshots") String snapshotDir,
         @DefaultValue("2") int threads,
-        @DefaultValue("512MB") String memoryLimit) {
+        @DefaultValue("512MB") String memoryLimit,
+        @DefaultValue("2") int maxEphemeralConcurrency) {
 }

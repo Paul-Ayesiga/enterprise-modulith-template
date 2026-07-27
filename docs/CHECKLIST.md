@@ -55,10 +55,11 @@ its acceptance gate verified. Updated as work lands — this file is the single 
 - [x] **Gate:** job fires once across 2 instances; cache verified (incl. real mid-flight Valkey outage); breaker opens under fault
 - [x] Adversarial review (3 lenses, 17 verified findings, 14 confirmed & fixed): per-principal idempotency keys + takeover lease + 4xx-not-stored + body cap; tight Lettuce timeouts; no-broadcast-on-failed-L2-evict; breaker scoped to remote calls with not-found ignored; problem+json negotiation in filters; single-error pointers kept; framework headers preserved
 
-## Phase 3A — Embedded analytics
+## Phase 3A — Embedded analytics ✅ (2026-07-27)
 
-- [ ] `analytics` module — DuckDB, guarded connection, thread/memory caps, Parquet snapshots
-- [ ] **Gate:** KPI query over Postgres data without starving the JVM
+- [x] `analytics` module — DuckDB 1.5.5.0, `AnalyticsEngine` seam, guarded durable connection + capped throwaway in-memory DBs (permit-bounded), thread/memory caps (global per instance — verified), native Parquet snapshots (statically linked, no network)
+- [x] Marts: cursor-streamed materialization from Postgres (autocommit off), `DECIMAL(p,s)` fidelity (no double drift), `TIMESTAMPTZ` + pinned UTC sessions (host-independent day buckets), atomic staging swap (failed refresh leaves the old mart), traversal-proof snapshot paths
+- [x] **Gate:** KPI aggregates over Postgres-born data via DuckDB with caps applied; adversarial review — 8 confirmed findings fixed with regression tests (exact money sums, UTC buckets, swap survival)
 
 ## Phase 4 — Documentation
 

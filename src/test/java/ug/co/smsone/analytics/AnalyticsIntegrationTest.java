@@ -1,6 +1,7 @@
 package ug.co.smsone.analytics;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -72,5 +73,66 @@ class AnalyticsIntegrationTest extends AbstractIntegrationTest {
     void ephemeralQueriesRunOnAThrowawayDatabase() {
         List<Map<String, Object>> answer = analytics.queryEphemeral("select 41 + 1 as answer");
         assertThat(((Number) answer.getFirst().get("answer")).intValue()).isEqualTo(42);
+    }
+
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
+    @Test
+    void decimalsStayExactMoneyNeverDrifts() {
+        // the classic double-drift repro: 10,000 * 0.01 must be EXACTLY 100.0000
+        jdbcTemplate.execute("drop table if exists kpi_amounts");
+        jdbcTemplate.execute("create table kpi_amounts (id bigint, amount numeric(19,4))");
+        jdbcTemplate.execute("""
+                insert into kpi_amounts select g, 0.01 from generate_series(1, 10000) g""");
+
+        analytics.materializeFromPostgres("select id, amount from kpi_amounts", "mart_amounts");
+        Object sum = analytics.query("select sum(amount) as total from mart_amounts")
+                .getFirst().get("total");
+
+        assertThat(new java.math.BigDecimal(sum.toString()))
+                .isEqualByComparingTo(new java.math.BigDecimal("100.0000"));
+    }
+
+    @Test
+    void dayBucketsAreUtcDeterministicRegardlessOfHostTimezone() {
+        // 23:30 UTC belongs to July 27 in UTC — a naive local-wallclock mart on a UTC+3 host
+        // would put it in July 28
+        jdbcTemplate.execute("drop table if exists kpi_events");
+        jdbcTemplate.execute("create table kpi_events (id bigint, at timestamptz)");
+        jdbcTemplate.execute("insert into kpi_events values (1, timestamptz '2026-07-27 23:30:00+00')");
+
+        analytics.materializeFromPostgres("select id, at from kpi_events", "mart_events");
+        Object day = analytics.query(
+                "select cast(date_trunc('day', \"at\") as date) as day from mart_events")
+                .getFirst().get("day");
+
+        assertThat(day).hasToString("2026-07-27");
+    }
+
+    @Test
+    void failedRefreshLeavesThePreviousMartIntact() {
+        settingService.put("atomic.probe", "x", null);
+        analytics.materializeFromPostgres("select setting_key from setting", "mart_atomic");
+        long before = ((Number) analytics.query("select count(*) as c from mart_atomic")
+                .getFirst().get("c")).longValue();
+        assertThat(before).isPositive();
+
+        assertThatThrownBy(() -> analytics.materializeFromPostgres(
+                "select no_such_column from setting", "mart_atomic"))
+                .isInstanceOf(AnalyticsException.class);
+
+        // the old mart still serves — no empty/partial table swapped in
+        long after = ((Number) analytics.query("select count(*) as c from mart_atomic")
+                .getFirst().get("c")).longValue();
+        assertThat(after).isEqualTo(before);
+    }
+
+    @Test
+    void snapshotFileNamesCannotEscapeTheSnapshotDirectory() {
+        assertThatThrownBy(() -> analytics.exportParquet("select 1", "../evil.parquet"))
+                .isInstanceOf(AnalyticsException.class);
+        assertThatThrownBy(() -> analytics.exportParquet("select 1", "/etc/passwd"))
+                .isInstanceOf(AnalyticsException.class);
     }
 }
