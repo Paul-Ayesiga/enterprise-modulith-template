@@ -6,6 +6,7 @@
 |_Configuration properties_
 
 * `u.c.s.s.cache.CacheProperties`
+* `u.c.s.s.ratelimit.RateLimitProperties`
 
 _Others_
 
@@ -19,6 +20,8 @@ _Others_
 * `u.c.s.s.idempotency.IdempotencyFilter`
 * `u.c.s.s.idempotency.IdempotencyStore`
 * `u.c.s.s.persistence.JpaAuditingConfig`
+* `u.c.s.s.ratelimit.DistributedRateLimiter`
+* `u.c.s.s.ratelimit.RateLimitFilter`
 * `u.c.s.s.security.ApiAccessDeniedHandler`
 * `u.c.s.s.security.ApiAuthenticationEntryPoint`
 * `u.c.s.s.security.ApiPermissionEvaluator`

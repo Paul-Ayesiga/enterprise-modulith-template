@@ -86,8 +86,9 @@ security-test           = { module = "org.springframework.security:spring-securi
 resilience4j = { module = "io.github.resilience4j:resilience4j-spring-boot4", version.ref = "resilience4j" }
 aspectjweaver = { module = "org.aspectj:aspectjweaver" }  # Boot 4 dropped starter-aop; @CircuitBreaker/@Retry aspects need this (BOM-managed)
 
-# Deferred
-bucket4j     = { module = "com.bucket4j:bucket4j_jdk17-core", version.ref = "bucket4j" }
+# Rate limiting (token bucket + Lettuce/Valkey distributed proxy manager)
+bucket4j         = { module = "com.bucket4j:bucket4j_jdk17-core", version.ref = "bucket4j" }
+bucket4j-lettuce = { module = "com.bucket4j:bucket4j_jdk17-lettuce", version.ref = "bucket4j" }
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "springBoot" }

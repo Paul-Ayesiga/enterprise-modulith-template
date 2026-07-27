@@ -1,0 +1,177 @@
+package ug.co.smsone.shared.ratelimit;
+
+import io.github.bucket4j.Bandwidth;
+import io.github.bucket4j.BucketConfiguration;
+import io.github.bucket4j.ConsumptionProbe;
+import io.github.bucket4j.distributed.BucketProxy;
+import io.github.bucket4j.distributed.ExpirationAfterWriteStrategy;
+import io.github.bucket4j.redis.lettuce.Bucket4jLettuce;
+import io.github.bucket4j.redis.lettuce.cas.LettuceBasedProxyManager;
+import io.lettuce.core.RedisClient;
+import io.lettuce.core.api.StatefulRedisConnection;
+import io.lettuce.core.codec.ByteArrayCodec;
+import io.lettuce.core.codec.RedisCodec;
+import io.lettuce.core.codec.StringCodec;
+import jakarta.annotation.PreDestroy;
+import java.time.Duration;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.stereotype.Component;
+
+/**
+ * Distributed token-bucket limiter over Valkey (Bucket4j) — shared by the edge filter and the
+ * notification egress limiter. Fail-open by default: if the backend is unavailable the request is
+ * allowed (a limiter must never be a single point of failure); callers may opt into fail-closed.
+ * When rate limiting is disabled (no client bean) every check allows.
+ *
+ * <p>Resilience: the connection is opened lazily with a tight timeout so neither startup nor an
+ * outage blocks anything. After any backend error a short "don't retry" window keeps the outage from
+ * turning into a per-request connect storm, and a {@link ReentrantLock} (not {@code synchronized})
+ * guards lazy init so a blocking connect never pins a virtual thread.
+ *
+ * <p>Note: Bucket4j applies a {@link BucketConfiguration} only when a key is first created, so a
+ * capacity change takes effect for an active key at most {@link #BUCKET_TTL} later.
+ */
+@Component
+public class DistributedRateLimiter {
+
+    private static final Logger log = LoggerFactory.getLogger(DistributedRateLimiter.class);
+    private static final Duration BUCKET_TTL = Duration.ofMinutes(10);
+    private static final long BACKOFF_NANOS = Duration.ofSeconds(2).toNanos();
+
+    private final ObjectProvider<RedisClient> clientProvider;
+    private final ReentrantLock initLock = new ReentrantLock();
+
+    private volatile StatefulRedisConnection<String, byte[]> connection;
+    private volatile LettuceBasedProxyManager<String> proxyManager;
+    private volatile long retryNotBefore;
+    private volatile boolean disabledLogged;
+
+    public DistributedRateLimiter(ObjectProvider<RedisClient> clientProvider) {
+        this.clientProvider = clientProvider;
+    }
+
+    public RateLimitVerdict tryConsume(String key, long capacity, Duration refillPeriod, boolean failClosed) {
+        long window = Math.max(1, refillPeriod.toSeconds());
+        RedisClient client = clientProvider.getIfAvailable();
+        if (client == null) {
+            logDisabledOnce();
+            return RateLimitVerdict.allowed(capacity, capacity, window); // rate limiting disabled -> allow
+        }
+        if (System.nanoTime() < retryNotBefore) {
+            return failOpen(capacity, window, failClosed); // recent backend error -> fail fast, don't touch Valkey
+        }
+        LettuceBasedProxyManager<String> manager = proxyManager(client);
+        if (manager == null) {
+            return failOpen(capacity, window, failClosed);
+        }
+        try {
+            BucketProxy bucket = manager.builder().build(key, configuration(capacity, refillPeriod));
+            ConsumptionProbe probe = bucket.tryConsumeAndReturnRemaining(1);
+            if (probe.isConsumed()) {
+                return RateLimitVerdict.allowed(capacity, Math.max(0, probe.getRemainingTokens()), window);
+            }
+            long retryAfter = (probe.getNanosToWaitForRefill() / 1_000_000_000L) + 1;
+            return RateLimitVerdict.denied(capacity, retryAfter, window);
+        } catch (RuntimeException ex) {
+            retryNotBefore = System.nanoTime() + BACKOFF_NANOS;
+            log.warn("Rate-limit backend error for '{}' (fail-{}): {}", redact(key), failClosed ? "closed" : "open", ex.toString());
+            return failOpen(capacity, window, failClosed);
+        }
+    }
+
+    /** Best-effort return of one token — used to refund a send that never reached its provider. */
+    public void addToken(String key, long capacity, Duration refillPeriod) {
+        RedisClient client = clientProvider.getIfAvailable();
+        if (client == null || System.nanoTime() < retryNotBefore) {
+            return;
+        }
+        LettuceBasedProxyManager<String> manager = proxyManager(client);
+        if (manager == null) {
+            return;
+        }
+        try {
+            manager.builder().build(key, configuration(capacity, refillPeriod)).addTokens(1); // capped at capacity
+        } catch (RuntimeException ex) {
+            retryNotBefore = System.nanoTime() + BACKOFF_NANOS;
+        }
+    }
+
+    private static RateLimitVerdict failOpen(long capacity, long window, boolean failClosed) {
+        return failClosed
+                ? RateLimitVerdict.denied(capacity, window, window)
+                : RateLimitVerdict.allowed(capacity, capacity, window);
+    }
+
+    /** Lazily connect + build the proxy manager. Returns {@code null} (fail-open) only if connect fails. */
+    private LettuceBasedProxyManager<String> proxyManager(RedisClient client) {
+        LettuceBasedProxyManager<String> cached = proxyManager;
+        if (cached != null) {
+            return cached;
+        }
+        // Block on a ReentrantLock (virtual-thread friendly — no carrier pinning, unlike `synchronized`)
+        // during the one-time connect, so a concurrent cold-start burst all shares the connection rather
+        // than half of them failing open. Connect is bounded by the client's tight connect timeout.
+        initLock.lock();
+        try {
+            if (proxyManager != null) {
+                return proxyManager;
+            }
+            if (System.nanoTime() < retryNotBefore) {
+                return null; // a very recent connect attempt failed — don't retry-storm, fail open
+            }
+            StatefulRedisConnection<String, byte[]> conn =
+                    client.connect(RedisCodec.of(StringCodec.UTF8, ByteArrayCodec.INSTANCE));
+            try {
+                LettuceBasedProxyManager<String> manager = Bucket4jLettuce.casBasedBuilder(conn)
+                        .expirationAfterWrite(ExpirationAfterWriteStrategy
+                                .basedOnTimeForRefillingBucketUpToMax(BUCKET_TTL))
+                        .build();
+                this.connection = conn;
+                this.proxyManager = manager;
+                return manager;
+            } catch (RuntimeException ex) {
+                conn.close(); // never orphan the Netty channel if bucket setup fails
+                throw ex;
+            }
+        } catch (RuntimeException ex) {
+            retryNotBefore = System.nanoTime() + BACKOFF_NANOS;
+            log.warn("Rate-limit backend connect failed; failing open ~{}s: {}", BACKOFF_NANOS / 1_000_000_000L, ex.toString());
+            return null;
+        } finally {
+            initLock.unlock();
+        }
+    }
+
+    private void logDisabledOnce() {
+        if (!disabledLogged) {
+            disabledLogged = true;
+            log.warn("Rate limiting is disabled (no Valkey client) — edge AND per-channel egress limits are NOT enforced");
+        }
+    }
+
+    /** Drop the scope value (tenant/sub/IP) from a key before logging, keeping only prefix:tier. */
+    private static String redact(String key) {
+        int last = key.lastIndexOf(':');
+        return last > 0 ? key.substring(0, last) : key;
+    }
+
+    private static Supplier<BucketConfiguration> configuration(long capacity, Duration refillPeriod) {
+        Bandwidth limit = Bandwidth.builder()
+                .capacity(capacity)
+                .refillGreedy(capacity, refillPeriod)
+                .build();
+        return () -> BucketConfiguration.builder().addLimit(limit).build();
+    }
+
+    @PreDestroy
+    void closeConnection() {
+        StatefulRedisConnection<String, byte[]> conn = this.connection;
+        if (conn != null) {
+            conn.close();
+        }
+    }
+}

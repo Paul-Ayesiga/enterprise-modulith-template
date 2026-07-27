@@ -19,6 +19,10 @@ app:
   # L1-only in tests; the Valkey IT re-enables L2 against its own container.
   cache:
     l2-enabled: false
+  # Rate limiting needs Valkey; off by default in tests. The rate-limit IT re-enables it against
+  # its own Valkey container.
+  rate-limit:
+    enabled: false
   # Delivery worker is driven explicitly by tests (deterministic, no cross-context background polling).
   notification:
     delivery:

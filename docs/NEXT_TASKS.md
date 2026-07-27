@@ -71,17 +71,33 @@ Secrets via External Secrets Operator in prod overlay (plaintext env only in loc
 **Done when:** `kubectl kustomize` renders all overlays; app boots on a kind/k3d cluster against
 in-cluster Postgres+Valkey with probes passing (document the smoke run).
 
-## 5. Rate limiting (deferred from the plan)
+## 5. Rate limiting ✅ (2026-07-28)
 
-**Context:** catalog pins `com.bucket4j:bucket4j_jdk17-core:8.14.0` (note the `_jdk17` suffix) —
-**deferred/verify-first**, same drill as resilience4j: check on repo1 (search.maven lags) whether
-a newer/renamed artifact or a Boot-4-ready integration exists before wiring.
-**Do:** filter after `RequestIdFilter`, keyed per principal (fall back to IP for public routes),
-buckets in Valkey (bucket4j-redis/lettuce module — verify TC2/Lettuce 7 compat) so limits are
-cluster-wide; 429 through `EnvelopeErrorWriter` (new `ErrorCode.RATE_LIMITED`), `Retry-After`
-header; per-route config under `app.rate-limit.*`. IT with real Valkey.
-**Done when:** N+1th request 429s with envelope + problem+json variants; limits shared across two
-app contexts in the IT.
+**Done:** distributed token-bucket (`bucket4j_jdk17-core` + `bucket4j_jdk17-lettuce` 8.14.0 over
+Valkey) in `shared.ratelimit`. Edge `RateLimitFilter` (`@Order(-1)`, after security) on `/api/**`:
+per-route tiers keyed **tenant → sub → IP**, `429` via `EnvelopeErrorWriter` (`ErrorCode.RATE_LIMITED`)
+with `Retry-After` + `RateLimit`/`RateLimit-Policy` (draft-ietf) + legacy `X-RateLimit-*`, fail-open.
+Notification **egress** per-channel limits via the same `DistributedRateLimiter`. `app.rate-limit.*`
++ `app.notification.delivery.rate.*` config; IT against real Valkey (edge 429, per-tenant isolation, egress throttle).
+
+**Deferred hardening (follow-up):**
+- **Per-tenant needs a real claim.** JWTs carry no `tenant` claim yet (no organization module), so
+  keying degrades to `sub`/IP. Add the claim (Keycloak mapper / organization module) to activate true
+  per-tenant quotas — the resolver already reads `app.rate-limit.tenant-claim`.
+- **Coarse pre-auth per-IP shield** belongs at the K8s ingress/gateway (this filter is post-auth,
+  identity-aware) — add it with the Kustomize work (task 4).
+- **Fail-open → local fallback.** On Valkey outage the limiter fails open; upgrade to a Resilience4j
+  circuit breaker + per-instance in-memory fallback bucket (`global_limit / instanceCount`) for
+  bounded protection, with a per-tier `on-backend-error: OPEN|LOCAL|CLOSED` flag.
+- **Emit `RateLimit` headers on success** responses too (not just 429) so clients self-pace; add a
+  Micrometer counter on throttles/429s.
+- **Decouple egress from the edge flag.** `RATE_LIMIT_ENABLED=false` currently also drops the
+  notification per-channel egress caps (both share the Valkey client); the limiter now WARN-logs the
+  no-op state, but give egress its own `app.notification.delivery.rate-limit.enabled` +
+  Valkey-availability-gated client so an API-limit toggle can't silently unthrottle SMS/SMTP.
+- **Config-change latency:** Bucket4j applies a bucket's capacity only at key creation, so a raised
+  limit takes up to `BUCKET_TTL` (10 min) to apply to an active key — document, or use
+  `replaceConfiguration` if immediate reconfig is required.
 
 ## 6. Event externalization (when a broker arrives — Phase 5)
 

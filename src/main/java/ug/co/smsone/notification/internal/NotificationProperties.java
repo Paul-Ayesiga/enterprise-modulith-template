@@ -2,7 +2,9 @@ package ug.co.smsone.notification.internal;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import ug.co.smsone.notification.NotificationChannel;
 
 /**
  * Notification configuration. {@code admins} are notified by
@@ -44,7 +46,10 @@ public record NotificationProperties(
             Duration retention,
             Duration purgeInterval,
             int maxDrainBatches,
-            Boolean workerAutoStart) {
+            Boolean workerAutoStart,
+            Duration throttleDelay,
+            Duration throttleMaxAge,
+            Map<NotificationChannel, ChannelRate> rate) {
 
         public Delivery {
             if (batchSize <= 0) {
@@ -80,10 +85,32 @@ public record NotificationProperties(
             if (workerAutoStart == null) {
                 workerAutoStart = Boolean.TRUE; // absent => on; only an explicit false (tests) disables it
             }
+            if (throttleDelay == null || throttleDelay.isNegative()) {
+                throttleDelay = Duration.ofSeconds(1); // how long to defer a delivery throttled by its channel rate
+            }
+            if (throttleMaxAge == null || throttleMaxAge.isZero() || throttleMaxAge.isNegative()) {
+                throttleMaxAge = Duration.ofHours(1); // dead-letter a delivery throttled longer than this (mis-set rate guard)
+            }
+            rate = rate == null ? Map.of() : Map.copyOf(rate);
         }
 
         static Delivery defaults() {
-            return new Delivery(0, 0, 0, null, null, null, null, null, null, 0, null);
+            return new Delivery(0, 0, 0, null, null, null, null, null, null, 0, null, null, null, null);
+        }
+    }
+
+    /**
+     * Outbound per-channel provider limit (cluster-wide via Valkey) — protects downstream providers
+     * (SMS gateway, SMTP relay, …) from being overrun regardless of instance count.
+     */
+    public record ChannelRate(long capacity, Duration period) {
+        public ChannelRate {
+            if (capacity <= 0) {
+                capacity = 1;
+            }
+            if (period == null || period.isZero() || period.isNegative()) {
+                period = Duration.ofSeconds(1);
+            }
         }
     }
 }

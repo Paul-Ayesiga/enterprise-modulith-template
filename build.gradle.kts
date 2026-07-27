@@ -59,6 +59,10 @@ dependencies {
     // notification bundle (email via SMTP; Mailpit in dev — event-driven consumer)
     implementation(libs.boot.mail)
 
+    // rate limiting bundle (Bucket4j token bucket; distributed over Valkey via Lettuce)
+    implementation(libs.bucket4j)
+    implementation(libs.bucket4j.lettuce)
+
     // storage bundle (files module — SeaweedFS/S3 via AWS SDK v2)
     implementation(platform(libs.awssdk.bom))
     implementation(libs.awssdk.s3)

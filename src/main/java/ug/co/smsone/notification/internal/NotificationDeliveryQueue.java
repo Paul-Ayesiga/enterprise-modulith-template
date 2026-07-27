@@ -71,7 +71,7 @@ class NotificationDeliveryQueue {
                     for update skip locked
                 ) c
                 where d.id = c.id
-                returning d.id, d.channel, d.recipient, d.subject, d.body, d.attempts, d.max_attempts
+                returning d.id, d.channel, d.recipient, d.subject, d.body, d.attempts, d.max_attempts, d.created_at
                 """,
                 (rs, rowNum) -> new ClaimedDelivery(
                         rs.getObject("id", UUID.class),
@@ -80,7 +80,8 @@ class NotificationDeliveryQueue {
                         rs.getString("subject"),
                         rs.getString("body"),
                         rs.getInt("attempts"),
-                        rs.getInt("max_attempts")),
+                        rs.getInt("max_attempts"),
+                        rs.getTimestamp("created_at").toInstant()),
                 staleLock.toMillis(), batchSize); // millis, not seconds — a sub-second staleLock must not floor to 0
     }
 
@@ -91,6 +92,14 @@ class NotificationDeliveryQueue {
     void reschedule(UUID id, Instant nextAttemptAt, String error) {
         jdbc.update("update notification_delivery set status = 'PENDING', next_attempt_at = ?, locked_at = null, last_error = ? where id = ?",
                 Timestamp.from(nextAttemptAt), truncate(error, MAX_ERROR), id);
+    }
+
+    void rescheduleThrottled(UUID id, Instant nextAttemptAt) {
+        // Throttling is not a failed attempt — undo the claim's increment so a rate-limited delivery
+        // is never dead-lettered for lack of trying.
+        jdbc.update("update notification_delivery set status = 'PENDING', next_attempt_at = ?, "
+                + "locked_at = null, attempts = greatest(attempts - 1, 0) where id = ?",
+                Timestamp.from(nextAttemptAt), id);
     }
 
     void deadLetter(UUID id, String error) {

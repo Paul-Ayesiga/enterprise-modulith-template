@@ -15,7 +15,8 @@ _Others_
 * `u.c.s.n.NotificationChannelSender` (via `u.c.s.n.internal.SmsChannelSender`)
 * `u.c.s.n.NotificationChannelSender` (via `u.c.s.n.internal.WebhookChannelSender`)
 |Bean references
-|* `u.c.s.s.events.EventInbox` (in Shared Kernel)
+|* `u.c.s.s.ratelimit.DistributedRateLimiter` (in Shared Kernel)
+* `u.c.s.s.events.EventInbox` (in Shared Kernel)
 * `u.c.s.s.security.CurrentUserProvider` (in Shared Kernel)
 |Events listened to
 |* `u.c.s.s.FeatureFlagChanged` (async) 

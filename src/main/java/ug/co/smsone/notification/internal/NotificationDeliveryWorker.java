@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -36,6 +37,7 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
 
     private final NotificationDeliveryQueue queue;
     private final ChannelRegistry channels;
+    private final ChannelRateLimiter channelRateLimiter;
     private final NotificationProperties.Delivery config;
 
     private final ExecutorService sendExecutor = Executors.newVirtualThreadPerTaskExecutor();
@@ -46,9 +48,10 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
     private volatile Instant lastPurge = Instant.EPOCH;
 
     NotificationDeliveryWorker(NotificationDeliveryQueue queue, ChannelRegistry channels,
-            NotificationProperties properties) {
+            ChannelRateLimiter channelRateLimiter, NotificationProperties properties) {
         this.queue = queue;
         this.channels = channels;
+        this.channelRateLimiter = channelRateLimiter;
         this.config = properties.delivery();
         this.permits = new Semaphore(config.concurrency());
     }
@@ -170,9 +173,25 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
             queue.deadLetter(delivery.id(), "No sender registered for channel " + delivery.channel());
             return;
         }
+        Optional<Duration> defer = channelRateLimiter.check(delivery.channel());
+        if (defer.isPresent()) {
+            // Channel provider quota exhausted. Defer without burning an attempt — but dead-letter if
+            // it has been throttled longer than throttleMaxAge, so a mis-set rate can't spin forever.
+            if (Duration.between(delivery.createdAt(), Instant.now()).compareTo(config.throttleMaxAge()) > 0) {
+                log.warn("Delivery {} to {} via {} dead-lettered: throttled beyond {}",
+                        delivery.id(), delivery.recipient(), delivery.channel(), config.throttleMaxAge());
+                queue.deadLetter(delivery.id(), "Throttled beyond max age " + config.throttleMaxAge());
+            } else {
+                queue.rescheduleThrottled(delivery.id(), Instant.now().plus(defer.get()));
+            }
+            return;
+        }
         try {
             sender.send(new NotificationMessage(delivery.recipient(), delivery.subject(), delivery.body(), Map.of()));
         } catch (RuntimeException ex) {
+            // The send may never have reached the provider — refund the channel token so a retry
+            // storm doesn't burn provider quota and starve healthy messages.
+            channelRateLimiter.refund(delivery.channel());
             if (delivery.attempts() >= delivery.maxAttempts()) {
                 queue.deadLetter(delivery.id(), ex.getMessage());
                 log.warn("Delivery {} to {} via {} dead-lettered after {} attempts: {}",

@@ -64,6 +64,30 @@ server:
       enabled: false
 
 app:
+  rate-limit:
+    enabled: ${RATE_LIMIT_ENABLED:true}
+    key-prefix: rl
+    tenant-claim: ${RATE_LIMIT_TENANT_CLAIM:tenant}   # JWT claim; falls back to sub then IP when absent
+    backend-timeout: ${RATE_LIMIT_BACKEND_TIMEOUT:PT0.25S}
+    trust-forwarded-for: ${RATE_LIMIT_TRUST_XFF:false} # only true behind a trusted proxy/gateway
+    tiers:
+      - id: write
+        path-pattern: /api/**
+        methods: [POST, PUT, PATCH, DELETE]
+        scope: TENANT
+        capacity: ${RATE_LIMIT_WRITE_CAPACITY:60}
+        refill-period: PT1M
+      - id: read
+        path-pattern: /api/**
+        methods: [GET]
+        scope: TENANT
+        capacity: ${RATE_LIMIT_READ_CAPACITY:600}
+        refill-period: PT1M
+    default-tier:
+      id: default
+      scope: PRINCIPAL
+      capacity: 300
+      refill-period: PT1M
   notification:
     from: ${NOTIFICATION_FROM:no-reply@smsone.co.ug}
     slack-webhook-url: ${NOTIFICATION_SLACK_WEBHOOK:}
@@ -80,6 +104,12 @@ app:
       retention: ${NOTIFICATION_RETENTION:P7D}
       purge-interval: ${NOTIFICATION_PURGE_INTERVAL:PT1H}
       max-drain-batches: ${NOTIFICATION_MAX_DRAIN:25}
+      throttle-delay: ${NOTIFICATION_THROTTLE_DELAY:PT1S}     # how long to defer a delivery its channel rate throttled
+      throttle-max-age: ${NOTIFICATION_THROTTLE_MAX_AGE:PT1H} # dead-letter if throttled longer than this (mis-set-rate guard)
+      # Per-channel outbound provider limits (cluster-wide via Valkey). Unset = unlimited. Example:
+      # rate:
+      #   EMAIL: {capacity: 200, period: PT1S}
+      #   SMS:   {capacity: 10,  period: PT1S}
     admins:
       - username: ${NOTIFICATION_ADMIN_USER:david}
         email: ${NOTIFICATION_ADMIN_EMAIL:admin@smsone.co.ug}
