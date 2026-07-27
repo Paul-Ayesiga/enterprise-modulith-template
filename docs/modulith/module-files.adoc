@@ -1,0 +1,7 @@
+[%autowidth.stretch, cols="h,a"]
+|===
+|Base package
+|`ug.co.smsone.files`
+|Spring components
+|* `u.c.s.f.FileStorageProvider` (via `u.c.s.f.internal.S3StorageProvider`)
+|===

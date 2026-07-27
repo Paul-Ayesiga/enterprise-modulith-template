@@ -1,0 +1,23 @@
+== Application
+plantuml::components.puml[,,format=svg]
+
+== Analytics
+plantuml::module-analytics.puml[,,format=svg]
+include::module-analytics.adoc[]
+
+== Files
+plantuml::module-files.puml[,,format=svg]
+include::module-files.adoc[]
+
+== Shared Kernel
+plantuml::module-shared.puml[,,format=svg]
+include::module-shared.adoc[]
+
+== Scheduler
+plantuml::module-scheduler.puml[,,format=svg]
+include::module-scheduler.adoc[]
+
+== Settings
+plantuml::module-settings.puml[,,format=svg]
+include::module-settings.adoc[]
+

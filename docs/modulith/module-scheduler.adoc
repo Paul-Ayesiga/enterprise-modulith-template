@@ -1,0 +1,7 @@
+[%autowidth.stretch, cols="h,a"]
+|===
+|Base package
+|`ug.co.smsone.scheduler`
+|Bean references
+|* `u.c.s.s.idempotency.IdempotencyStore` (in Shared Kernel)
+|===

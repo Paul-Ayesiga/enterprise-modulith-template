@@ -1,0 +1,7 @@
+[%autowidth.stretch, cols="h,a"]
+|===
+|Base package
+|`ug.co.smsone.analytics`
+|Spring components
+|* `u.c.s.a.AnalyticsEngine` (via `u.c.s.a.internal.DuckDbAnalyticsEngine`)
+|===

@@ -7,7 +7,9 @@ through events, and hide infrastructure behind interfaces.
 - Roadmap (the *what*): [docs/Enterprise_Spring_Modulith_Template_Roadmap_v2.md](docs/Enterprise_Spring_Modulith_Template_Roadmap_v2.md)
 - Implementation plan (the *how* — pinned versions, contracts, build order): [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)
 - Progress checklist (ticked as gates pass): [docs/CHECKLIST.md](docs/CHECKLIST.md)
-- Decisions: [docs/adr/](docs/adr/)
+- Architecture (module map, request path, generated C4/PlantUML): [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- Event catalog: [docs/EVENTS.md](docs/EVENTS.md) · Decisions: [docs/adr/](docs/adr/)
+- Next work, pickup-ready: [docs/NEXT_TASKS.md](docs/NEXT_TASKS.md)
 
 ## Stack
 
@@ -47,13 +49,17 @@ Spring Modulith application modules are Java packages under `ug.co.smsone`:
 ```text
 ug.co.smsone
 ├── Application.java      # @Modulithic @SpringBootApplication (module root, not a module)
-├── shared/               # shared kernel: web envelope, errors, security, persistence, observability
-└── <business modules>    # identity, organization, notification, files, scheduler, …
+├── shared/               # OPEN kernel: envelope, errors, security, persistence, cache, idempotency, events
+├── settings/             # key/value configuration + feature flags (SettingChanged, FeatureFlagChanged)
+├── files/                # FileStorageProvider → SeaweedFS/S3 (presign, multipart, circuit breaker)
+├── scheduler/            # ShedLock-guarded cron (event-registry + idempotency purges)
+└── analytics/            # AnalyticsEngine → embedded DuckDB (marts, KPIs, Parquet snapshots)
 ```
 
 `ApplicationModules.verify()` runs in the test suite on every build — boundary violations fail the build.
 
 ## Status
 
-Phase 0 (platform skeleton) — see the [phased roadmap](docs/IMPLEMENTATION_PLAN.md#6-phased-implementation-roadmap)
-for what lands in each phase.
+Phases 0–4 complete and gated — see [docs/CHECKLIST.md](docs/CHECKLIST.md). Remaining work is
+queued in [docs/NEXT_TASKS.md](docs/NEXT_TASKS.md) (CI verification, notification/identity/
+organization modules, Kubernetes migration, rate limiting, event externalization).

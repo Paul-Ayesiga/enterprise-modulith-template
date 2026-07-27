@@ -61,6 +61,13 @@ its acceptance gate verified. Updated as work lands — this file is the single 
 - [x] Marts: cursor-streamed materialization from Postgres (autocommit off), `DECIMAL(p,s)` fidelity (no double drift), `TIMESTAMPTZ` + pinned UTC sessions (host-independent day buckets), atomic staging swap (failed refresh leaves the old mart), traversal-proof snapshot paths
 - [x] **Gate:** KPI aggregates over Postgres-born data via DuckDB with caps applied; adversarial review — 8 confirmed findings fixed with regression tests (exact money sums, UTC buckets, swap survival)
 
-## Phase 4 — Documentation
+## Phase 4 — Documentation ✅ (2026-07-27)
 
-- [ ] Modulith Documenter diagrams, C4/PlantUML, event catalog, ADR backlog
+- [x] Modulith Documenter → `docs/modulith/` (C4 `components.puml` + per-module PlantUML + canvases with events), refreshed every build, `./gradlew exportModulithDocs`
+- [x] `docs/ARCHITECTURE.md` (Mermaid module map + request-path sequence + contract index); `docs/EVENTS.md` event catalog
+- [x] ADR backlog written: 0002 cursor pagination · 0003 Testcontainers-only · 0004 two-level cache · 0005 idempotency keys · 0006 embedded DuckDB
+- [x] `docs/NEXT_TASKS.md` — pickup-ready backlog for the next agent (CI, notification, identity/organization, K8s, rate limiting, event externalization)
+
+---
+
+**All planned phases (0–4) complete and gated.** Remaining work: [NEXT_TASKS.md](NEXT_TASKS.md).

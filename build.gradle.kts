@@ -84,6 +84,15 @@ dependencies {
     //               shedlock, duckdb, resilience4j, bucket4j, testcontainers-*  (all in the catalog)
 }
 
+tasks.register<Test>("exportModulithDocs") {
+    description = "Writes Modulith C4 diagrams + module canvases to docs/modulith/"
+    group = "documentation"
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    useJUnitPlatform { includeTags("docs-export") }
+    outputs.upToDateWhen { false }
+}
+
 // Re-runs only the tagged export test; the spec also refreshes on every normal build.
 tasks.register<Test>("exportOpenApi") {
     description = "Boots the app (test profile) and writes docs/openapi/openapi.{yaml,json}"

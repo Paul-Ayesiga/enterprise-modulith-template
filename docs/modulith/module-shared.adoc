@@ -1,0 +1,36 @@
+[%autowidth.stretch, cols="h,a"]
+|===
+|Base package
+|`ug.co.smsone.shared`
+|Spring components
+|_Configuration properties_
+
+* `u.c.s.s.cache.CacheProperties`
+
+_Others_
+
+* `u.c.s.s.cache.CacheConfig`
+* `u.c.s.s.cache.CacheInvalidationBroadcaster`
+* `u.c.s.s.cache.TwoLevelCacheManager`
+* `u.c.s.s.config.AsyncConfig`
+* `u.c.s.s.config.ClockConfig`
+* `u.c.s.s.error.GlobalExceptionHandler`
+* `u.c.s.s.events.EventInbox`
+* `u.c.s.s.idempotency.IdempotencyFilter`
+* `u.c.s.s.idempotency.IdempotencyStore`
+* `u.c.s.s.persistence.JpaAuditingConfig`
+* `u.c.s.s.security.ApiAccessDeniedHandler`
+* `u.c.s.s.security.ApiAuthenticationEntryPoint`
+* `u.c.s.s.security.ApiPermissionEvaluator`
+* `u.c.s.s.security.CurrentUserArgumentResolver`
+* `u.c.s.s.security.CurrentUserProvider`
+* `u.c.s.s.security.KeycloakJwtAuthenticationConverter`
+* `u.c.s.s.security.SecurityConfig`
+* `u.c.s.s.web.ApiMetaFactory`
+* `u.c.s.s.web.CursorPageRequestArgumentResolver`
+* `u.c.s.s.web.EnvelopeErrorWriter`
+* `u.c.s.s.web.EnvelopeResponseBodyAdvice`
+* `u.c.s.s.web.OpenApiConfig`
+* `u.c.s.s.web.RequestIdFilter`
+* `u.c.s.s.web.WebMvcConfig`
+|===
