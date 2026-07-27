@@ -45,6 +45,11 @@ server:
       enabled: false
 
 app:
+  analytics:
+    database-path: ${ANALYTICS_DB_PATH:data/analytics.duckdb}
+    snapshot-dir: ${ANALYTICS_SNAPSHOT_DIR:data/snapshots}
+    threads: ${ANALYTICS_THREADS:2}
+    memory-limit: ${ANALYTICS_MEMORY_LIMIT:512MB}
   cache:
     l1-ttl: ${CACHE_L1_TTL:PT60S}
     l1-max-size: ${CACHE_L1_MAX_SIZE:10000}

@@ -40,6 +40,9 @@ dependencies {
     implementation(libs.boot.security)
     implementation(libs.boot.oauth2.rs)
 
+    // analytics bundle (embedded OLAP — in-process, not a container)
+    implementation(libs.duckdb)
+
     // resilience bundle (verified: -spring-boot4 artifact; -spring-boot3 fail-fasts on Boot 4)
     implementation(libs.resilience4j)
     implementation(libs.aspectjweaver)

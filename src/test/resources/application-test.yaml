@@ -3,6 +3,10 @@
 app:
   storage:
     bootstrap-bucket: false
+  # keep DuckDB artifacts inside the build dir
+  analytics:
+    database-path: build/test-analytics/analytics.duckdb
+    snapshot-dir: build/test-analytics/snapshots
   # L1-only in tests; the Valkey IT re-enables L2 against its own container.
   cache:
     l2-enabled: false
