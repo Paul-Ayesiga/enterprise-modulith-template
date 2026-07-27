@@ -1,0 +1,78 @@
+[versions]
+# --- Anchors ---
+springBoot = "4.1.0"
+springModulith = "2.1.0"
+java = "21"
+
+# --- Pinned (NOT managed by any BOM) ---
+springdoc = "3.0.3"          # OpenAPI 3.1 + Swagger UI — 3.0.x is the Boot 4 line (2.8.x = Boot 3)
+mapstruct = "1.6.3"
+archunit = "1.4.2"
+shedlock = "7.7.0"
+logstashEncoder = "9.0"
+awssdk = "2.49.3"            # S3 v2 SDK BOM — drives SeaweedFS + managed S3
+tcKeycloak = "4.1.1"         # community dasniko Testcontainers module
+duckdb = "1.5.5.0"           # embedded OLAP (Phase 3A)
+ulid = "5.2.3"               # sortable request IDs
+
+# --- Deferred / verify-before-commit on Boot 4.1 ---
+resilience4j = "2.4.0"       # Phase 3 — artifact still named -spring-boot3; smoke-test first
+bucket4j = "8.14.0"          # Phase 5 — note the _jdk17 artifact suffix
+
+[libraries]
+boot-bom            = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "springBoot" }
+spring-modulith-bom = { module = "org.springframework.modulith:spring-modulith-bom", version.ref = "springModulith" }
+awssdk-bom          = { module = "software.amazon.awssdk:bom", version.ref = "awssdk" }
+
+# Spring Boot starters (BOM-managed — no version)
+boot-web            = { module = "org.springframework.boot:spring-boot-starter-web" }
+boot-validation     = { module = "org.springframework.boot:spring-boot-starter-validation" }
+boot-actuator       = { module = "org.springframework.boot:spring-boot-starter-actuator" }
+boot-security       = { module = "org.springframework.boot:spring-boot-starter-security" }
+boot-oauth2-rs      = { module = "org.springframework.boot:spring-boot-starter-oauth2-resource-server" }
+boot-data-jpa       = { module = "org.springframework.boot:spring-boot-starter-data-jpa" }
+boot-data-redis     = { module = "org.springframework.boot:spring-boot-starter-data-redis" }
+boot-cache          = { module = "org.springframework.boot:spring-boot-starter-cache" }
+boot-otel           = { module = "org.springframework.boot:spring-boot-starter-opentelemetry" }
+boot-test           = { module = "org.springframework.boot:spring-boot-starter-test" }
+boot-docker-compose = { module = "org.springframework.boot:spring-boot-docker-compose" }
+boot-testcontainers = { module = "org.springframework.boot:spring-boot-testcontainers" }
+
+# Spring Modulith (BOM-managed)
+modulith-core          = { module = "org.springframework.modulith:spring-modulith-starter-core" }
+modulith-test          = { module = "org.springframework.modulith:spring-modulith-starter-test" }
+modulith-actuator      = { module = "org.springframework.modulith:spring-modulith-actuator" }
+modulith-observability = { module = "org.springframework.modulith:spring-modulith-observability" }
+
+# Persistence (BOM-managed, except DuckDB)
+postgresql        = { module = "org.postgresql:postgresql" }
+flyway-core       = { module = "org.flywaydb:flyway-core" }
+flyway-postgresql = { module = "org.flywaydb:flyway-database-postgresql" }  # MANDATORY companion since Flyway 10
+caffeine          = { module = "com.github.ben-manes.caffeine:caffeine" }
+duckdb            = { module = "org.duckdb:duckdb_jdbc", version.ref = "duckdb" }
+
+# Pinned libraries
+springdoc           = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version.ref = "springdoc" }
+mapstruct           = { module = "org.mapstruct:mapstruct", version.ref = "mapstruct" }
+mapstruct-processor = { module = "org.mapstruct:mapstruct-processor", version.ref = "mapstruct" }
+archunit            = { module = "com.tngtech.archunit:archunit-junit5", version.ref = "archunit" }
+shedlock-spring     = { module = "net.javacrumbs.shedlock:shedlock-spring", version.ref = "shedlock" }
+shedlock-jdbc       = { module = "net.javacrumbs.shedlock:shedlock-provider-jdbc-template", version.ref = "shedlock" }
+logstash-encoder    = { module = "net.logstash.logback:logstash-logback-encoder", version.ref = "logstashEncoder" }
+ulid-creator        = { module = "com.github.f4b6a3:ulid-creator", version.ref = "ulid" }
+
+# Storage (Files module) — AWS S3 v2 via BOM
+awssdk-s3            = { module = "software.amazon.awssdk:s3" }
+awssdk-apache-client = { module = "software.amazon.awssdk:apache-client" }
+
+# Test
+testcontainers-postgres = { module = "org.testcontainers:postgresql" }
+testcontainers-junit    = { module = "org.testcontainers:junit-jupiter" }
+testcontainers-keycloak = { module = "com.github.dasniko:testcontainers-keycloak", version.ref = "tcKeycloak" }
+
+# Deferred
+resilience4j = { module = "io.github.resilience4j:resilience4j-spring-boot3", version.ref = "resilience4j" }
+bucket4j     = { module = "com.bucket4j:bucket4j_jdk17-core", version.ref = "bucket4j" }
+
+[plugins]
+spring-boot = { id = "org.springframework.boot", version.ref = "springBoot" }

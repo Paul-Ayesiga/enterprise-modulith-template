@@ -1,0 +1,25 @@
+# Gradle
+.gradle/
+build/
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+out/
+
+# OS
+.DS_Store
+
+# Environment / secrets — commit .env.example, never .env
+.env
+
+# Local data (DuckDB marts, Parquet snapshots)
+/data/
+*.duckdb
+*.duckdb.wal
+
+# Logs
+*.log

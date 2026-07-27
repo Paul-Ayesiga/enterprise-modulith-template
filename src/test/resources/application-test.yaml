@@ -1,0 +1,12 @@
+# Test profile: no telemetry export — tests must not depend on a running OTLP collector.
+management:
+  otlp:
+    metrics:
+      export:
+        enabled: false
+    tracing:
+      export:
+        enabled: false
+    logging:
+      export:
+        enabled: false

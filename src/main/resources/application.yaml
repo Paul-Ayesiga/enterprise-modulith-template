@@ -1,0 +1,34 @@
+spring:
+  application:
+    name: enterprise-modulith-template
+  jackson:
+    default-property-inclusion: non_null
+  docker:
+    compose:
+      file: docker/docker-compose.yml
+
+server:
+  port: ${SERVER_PORT:8080}
+  error:
+    include-stacktrace: never
+    include-message: never
+    include-binding-errors: never
+    include-exception: false
+    whitelabel:
+      enabled: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true

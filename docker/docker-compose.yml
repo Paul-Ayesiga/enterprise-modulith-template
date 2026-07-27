@@ -1,0 +1,29 @@
+name: enterprise-modulith-template
+
+services:
+  postgres:
+    image: postgres:18.4-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-modulith}
+      POSTGRES_USER: ${POSTGRES_USER:-modulith}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-modulith}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # postgres:18 images keep PGDATA under /var/lib/postgresql — mount the parent, not /data
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-modulith} -d ${POSTGRES_DB:-modulith}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  otel-lgtm:
+    image: grafana/otel-lgtm:0.28.0
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"   # Grafana UI
+      - "${OTLP_GRPC_PORT:-4317}:4317" # OTLP gRPC
+      - "${OTLP_HTTP_PORT:-4318}:4318" # OTLP HTTP
+
+volumes:
+  postgres-data:
