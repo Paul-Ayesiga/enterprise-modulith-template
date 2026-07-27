@@ -35,6 +35,10 @@ dependencies {
     implementation(libs.micrometer.java21)
     implementation(libs.ulid.creator)
 
+    // security bundle
+    implementation(libs.boot.security)
+    implementation(libs.boot.oauth2.rs)
+
     // persistence bundle
     implementation(libs.boot.data.jpa)
     implementation(libs.boot.flyway)
@@ -46,6 +50,7 @@ dependencies {
 
     testImplementation(libs.boot.test)
     testImplementation(libs.boot.webmvc.test)
+    testImplementation(libs.security.test)
     testImplementation(libs.boot.testcontainers)
     testImplementation(libs.testcontainers.postgres)
     testImplementation(libs.testcontainers.junit)

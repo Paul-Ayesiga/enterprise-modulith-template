@@ -29,11 +29,11 @@ its acceptance gate verified. Updated as work lands — this file is the single 
 - [x] `shared/error` — `GlobalExceptionHandler` (multi-error 422, catch-all 500 = only trace sink)
 - [x] Tests: envelope wrapping, `meta.requestId`, **no stack-trace leakage** (MockMvc + ArchUnit rules)
 - [x] `shared/observability` — `logback-spring.xml` JSON (human console for local/test), requestId+traceId in MDC, OTLP export, micrometer-java21 + virtual threads
-- [ ] `shared/security` — Keycloak in Compose + realm import; OAuth2 Resource Server
-- [ ] `shared/security` — JWT roles → `ROLE_*`, `@EnableMethodSecurity`, `CurrentUser`, `PermissionEvaluator`
-- [ ] `shared/persistence` — `BaseEntity`/`AggregateRoot`, UUID keys, auditing, soft-delete, specifications
-- [ ] `shared/persistence` — Flyway (core + postgresql) `V1__baseline.sql`
-- [ ] Testcontainers: Postgres `@ServiceConnection`, Keycloak (dasniko) — **real containers, no H2/fakes**
+- [x] `shared/security` — Keycloak 26.7.0 in Compose + realm import (smsone); OAuth2 Resource Server
+- [x] `shared/security` — JWT roles → `ROLE_*`, `@EnableMethodSecurity`, `CurrentUser` + resolver, `PermissionEvaluator` seam; 401/403 as envelope; real-JWT gate test vs Keycloak container (dasniko dropped — TC1-only)
+- [x] `shared/persistence` — `BaseEntity`/`AggregateRoot`, UUID keys, auditing, soft-delete
+- [x] `shared/persistence` — Flyway (starter + postgresql module) `V1__baseline.sql`
+- [x] Testcontainers: Postgres `@ServiceConnection` singleton — **real containers, no H2/fakes** (Keycloak container lands with security)
 - [ ] `OpenApiConfig` + `./gradlew exportOpenApi` → `docs/openapi/*` (imports into Postman)
 - [ ] First business module; `shared` marked OPEN; DB-backed event publication registry
 - [ ] **Gate:** secured endpoint validates Keycloak JWT; `verify()` passes with ≥1 module; spec exports

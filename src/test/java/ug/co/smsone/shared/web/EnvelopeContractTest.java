@@ -1,6 +1,7 @@
 package ug.co.smsone.shared.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -26,7 +27,7 @@ class EnvelopeContractTest extends AbstractIntegrationTest {
 
     @Test
     void wrapsSuccessInEnvelopeWithRequestId() throws Exception {
-        MvcResult result = mockMvc.perform(get("/test/echo"))
+        MvcResult result = mockMvc.perform(get("/test/echo").with(jwt()))
                 .andExpect(status().isOk())
                 .andExpect(header().exists(RequestIdFilter.REQUEST_ID_HEADER))
                 .andExpect(jsonPath("$.data.message").value("hello"))
@@ -42,7 +43,7 @@ class EnvelopeContractTest extends AbstractIntegrationTest {
 
     @Test
     void echoesValidInboundRequestId() throws Exception {
-        mockMvc.perform(get("/test/echo").header(RequestIdFilter.REQUEST_ID_HEADER, "client-id_123"))
+        mockMvc.perform(get("/test/echo").with(jwt()).header(RequestIdFilter.REQUEST_ID_HEADER, "client-id_123"))
                 .andExpect(status().isOk())
                 .andExpect(header().string(RequestIdFilter.REQUEST_ID_HEADER, "client-id_123"))
                 .andExpect(jsonPath("$.meta.requestId").value("client-id_123"));
@@ -50,14 +51,14 @@ class EnvelopeContractTest extends AbstractIntegrationTest {
 
     @Test
     void replacesMalformedInboundRequestId() throws Exception {
-        mockMvc.perform(get("/test/echo").header(RequestIdFilter.REQUEST_ID_HEADER, "bad id \n<script>"))
+        mockMvc.perform(get("/test/echo").with(jwt()).header(RequestIdFilter.REQUEST_ID_HEADER, "bad id \n<script>"))
                 .andExpect(status().isOk())
                 .andExpect(header().string(RequestIdFilter.REQUEST_ID_HEADER, Matchers.matchesPattern(ULID_PATTERN)));
     }
 
     @Test
     void returnsMultiErrorEnvelopeForValidationFailure() throws Exception {
-        mockMvc.perform(post("/test/signup")
+        mockMvc.perform(post("/test/signup").with(jwt())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\":\"not-an-email\",\"name\":\"\"}"))
                 .andExpect(status().isUnprocessableEntity())
@@ -72,7 +73,7 @@ class EnvelopeContractTest extends AbstractIntegrationTest {
 
     @Test
     void translatesBusinessExceptionToEnvelope() throws Exception {
-        mockMvc.perform(get("/test/missing"))
+        mockMvc.perform(get("/test/missing").with(jwt()))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.errors[0].code").value("RESOURCE_NOT_FOUND"))
                 .andExpect(jsonPath("$.errors[0].status").value("404"))
@@ -82,19 +83,19 @@ class EnvelopeContractTest extends AbstractIntegrationTest {
 
     @Test
     void translatesFrameworkErrorsToEnvelope() throws Exception {
-        mockMvc.perform(get("/no/such/resource"))
+        mockMvc.perform(get("/no/such/resource").with(jwt()))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.errors[0].code").value("RESOURCE_NOT_FOUND"))
                 .andExpect(jsonPath("$.meta.requestId").exists());
 
-        mockMvc.perform(post("/test/echo"))
+        mockMvc.perform(post("/test/echo").with(jwt()))
                 .andExpect(status().isMethodNotAllowed())
                 .andExpect(jsonPath("$.errors[0].code").value("METHOD_NOT_ALLOWED"));
     }
 
     @Test
     void neverLeaksStackTracesOrInternalDetails() throws Exception {
-        MvcResult result = mockMvc.perform(get("/test/boom"))
+        MvcResult result = mockMvc.perform(get("/test/boom").with(jwt()))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.errors[0].code").value("INTERNAL_ERROR"))
                 .andExpect(jsonPath("$.errors[0].status").value("500"))

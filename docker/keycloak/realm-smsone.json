@@ -1,0 +1,46 @@
+{
+  "realm": "smsone",
+  "enabled": true,
+  "registrationAllowed": false,
+  "roles": {
+    "realm": [
+      { "name": "ADMIN", "description": "Full administrative access" },
+      { "name": "USER", "description": "Standard user" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "smsone-web",
+      "name": "SMSOne Web/SPA client",
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": ["http://localhost:*", "https://oauth.pstmn.io/v1/callback"],
+      "webOrigins": ["+"],
+      "attributes": { "pkce.code.challenge.method": "S256" }
+    }
+  ],
+  "users": [
+    {
+      "username": "david",
+      "enabled": true,
+      "email": "david@smsone.co.ug",
+      "emailVerified": true,
+      "firstName": "David",
+      "lastName": "Smsone",
+      "credentials": [{ "type": "password", "value": "david123", "temporary": false }],
+      "realmRoles": ["ADMIN", "USER"]
+    },
+    {
+      "username": "jane",
+      "enabled": true,
+      "email": "jane@smsone.co.ug",
+      "emailVerified": true,
+      "firstName": "Jane",
+      "lastName": "User",
+      "credentials": [{ "type": "password", "value": "jane123", "temporary": false }],
+      "realmRoles": ["USER"]
+    }
+  ]
+}

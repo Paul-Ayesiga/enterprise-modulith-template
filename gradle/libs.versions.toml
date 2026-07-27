@@ -73,7 +73,9 @@ awssdk-apache-client = { module = "software.amazon.awssdk:apache-client" }
 # Test — Testcontainers 2.x (Boot 4.1 BOM) renamed modules with a testcontainers- prefix
 testcontainers-postgres = { module = "org.testcontainers:testcontainers-postgresql" }
 testcontainers-junit    = { module = "org.testcontainers:testcontainers-junit-jupiter" }
-testcontainers-keycloak = { module = "com.github.dasniko:testcontainers-keycloak", version.ref = "tcKeycloak" }
+# dasniko testcontainers-keycloak DROPPED: it depends on TC1-era org.testcontainers:testcontainers,
+# which clashes with TC2's renamed artifacts. Keycloak runs as a plain TC2 GenericContainer instead.
+security-test           = { module = "org.springframework.security:spring-security-test" }
 
 # Deferred
 resilience4j = { module = "io.github.resilience4j:resilience4j-spring-boot3", version.ref = "resilience4j" }

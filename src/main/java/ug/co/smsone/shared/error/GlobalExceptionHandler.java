@@ -134,6 +134,24 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
                 .body(ApiResponse.errors(List.of(error), meta));
     }
 
+    // --- Method-security denials: must not fall into the 500 catch-all ---
+
+    @ExceptionHandler(org.springframework.security.access.AccessDeniedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleAccessDenied(
+            org.springframework.security.access.AccessDeniedException ex) {
+        ApiMeta meta = metaFactory.create();
+        ApiError error = new ApiError(
+                meta.requestId() + "-1",
+                String.valueOf(ErrorCode.FORBIDDEN.httpStatus().value()),
+                ErrorCode.FORBIDDEN.code(),
+                ErrorCode.FORBIDDEN.title(),
+                "You do not have permission to perform this operation.",
+                null);
+        return ResponseEntity.status(ErrorCode.FORBIDDEN.httpStatus())
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(ApiResponse.errors(List.of(error), meta));
+    }
+
     // --- Catch-all: fixed safe 500; the ONLY place the stack trace is logged ---
 
     @ExceptionHandler(Exception.class)
