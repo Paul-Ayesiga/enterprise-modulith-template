@@ -6,6 +6,7 @@ import java.net.URL;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -27,6 +28,7 @@ import ug.co.smsone.files.FileStorageException;
 import ug.co.smsone.files.FileStorageProvider;
 
 @Component
+@CircuitBreaker(name = "storage")
 class S3StorageProvider implements FileStorageProvider {
 
     /** S3 minimum part size is 5 MiB (except the last part). */

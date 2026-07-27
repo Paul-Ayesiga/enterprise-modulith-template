@@ -40,6 +40,10 @@ dependencies {
     implementation(libs.boot.security)
     implementation(libs.boot.oauth2.rs)
 
+    // resilience bundle (verified: -spring-boot4 artifact; -spring-boot3 fail-fasts on Boot 4)
+    implementation(libs.resilience4j)
+    implementation(libs.aspectjweaver)
+
     // scheduling bundle (ShedLock — one job execution across all instances)
     implementation(libs.shedlock.spring)
     implementation(libs.shedlock.jdbc)

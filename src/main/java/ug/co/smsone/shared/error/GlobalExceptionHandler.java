@@ -17,6 +17,8 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 import ug.co.smsone.shared.web.ApiError;
@@ -26,9 +28,9 @@ import ug.co.smsone.shared.web.ApiResponse;
 import ug.co.smsone.shared.web.ApiSource;
 
 /**
- * Translates every failure into the envelope: framework exceptions (via
- * {@link #handleExceptionInternal}), bean-validation failures (multi-error 422), the
- * {@link ApiException} hierarchy, and a catch-all 500 — the only place a stack trace is logged.
+ * Translates every failure into the envelope — or, when the client sends
+ * {@code Accept: application/problem+json}, into RFC 9457 Problem Details (same data, standard
+ * shape). The catch-all 500 is the only place a stack trace is logged.
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
@@ -51,127 +53,123 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         AtomicInteger index = new AtomicInteger(1);
         List<ApiError> errors = new ArrayList<>();
         for (FieldError fieldError : ex.getBindingResult().getFieldErrors()) {
-            errors.add(new ApiError(
-                    errorId(meta, index),
-                    String.valueOf(ErrorCode.VALIDATION_FAILED.httpStatus().value()),
+            errors.add(error(meta, index, ErrorCode.VALIDATION_FAILED,
                     validationCode(fieldError.getCode()),
-                    ErrorCode.VALIDATION_FAILED.title(),
                     fieldError.getDefaultMessage(),
                     ApiSource.pointer("/data/attributes/" + fieldError.getField())));
         }
-        ex.getBindingResult().getGlobalErrors().forEach(objectError -> errors.add(new ApiError(
-                errorId(meta, index),
-                String.valueOf(ErrorCode.VALIDATION_FAILED.httpStatus().value()),
-                ErrorCode.VALIDATION_FAILED.code(),
-                ErrorCode.VALIDATION_FAILED.title(),
-                objectError.getDefaultMessage(),
-                ApiSource.pointer("/data"))));
-        return ResponseEntity.status(ErrorCode.VALIDATION_FAILED.httpStatus())
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(ApiResponse.errors(errors, meta));
+        ex.getBindingResult().getGlobalErrors().forEach(objectError -> errors.add(
+                error(meta, index, ErrorCode.VALIDATION_FAILED, ErrorCode.VALIDATION_FAILED.code(),
+                        objectError.getDefaultMessage(), ApiSource.pointer("/data"))));
+        return render(ErrorCode.VALIDATION_FAILED, errors, meta);
     }
 
-    // --- Bean validation on @RequestParam / @PathVariable and service-layer validation ---
+    // --- Bean validation on parameters and service-layer validation ---
 
     @ExceptionHandler(ConstraintViolationException.class)
-    public ResponseEntity<ApiResponse<Void>> handleConstraintViolation(ConstraintViolationException ex) {
+    public ResponseEntity<Object> handleConstraintViolation(ConstraintViolationException ex) {
         ApiMeta meta = metaFactory.create();
         AtomicInteger index = new AtomicInteger(1);
         List<ApiError> errors = ex.getConstraintViolations().stream()
-                .map(violation -> new ApiError(
-                        errorId(meta, index),
-                        String.valueOf(ErrorCode.VALIDATION_FAILED.httpStatus().value()),
-                        ErrorCode.VALIDATION_FAILED.code(),
-                        ErrorCode.VALIDATION_FAILED.title(),
-                        violation.getMessage(),
+                .map(violation -> error(meta, index, ErrorCode.VALIDATION_FAILED,
+                        ErrorCode.VALIDATION_FAILED.code(), violation.getMessage(),
                         ApiSource.parameter(lastPathNode(violation.getPropertyPath().toString()))))
-                .map(ApiError.class::cast)
                 .toList();
-        return ResponseEntity.status(ErrorCode.VALIDATION_FAILED.httpStatus())
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(ApiResponse.errors(errors, meta));
+        return render(ErrorCode.VALIDATION_FAILED, errors, meta);
     }
 
     // --- Business exceptions ---
 
     @ExceptionHandler(ApiException.class)
-    public ResponseEntity<ApiResponse<Void>> handleApiException(ApiException ex) {
+    public ResponseEntity<Object> handleApiException(ApiException ex) {
         ApiMeta meta = metaFactory.create();
         ErrorCode errorCode = ex.errorCode();
-        ApiError error = new ApiError(
-                meta.requestId() + "-1",
-                String.valueOf(errorCode.httpStatus().value()),
-                errorCode.code(),
-                errorCode.title(),
-                ex.detail(),
-                ex.source());
-        return ResponseEntity.status(errorCode.httpStatus())
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(ApiResponse.errors(List.of(error), meta));
-    }
-
-    // --- Framework exceptions: base-class handlers funnel through here; translate to envelope ---
-
-    @Override
-    protected ResponseEntity<Object> handleExceptionInternal(Exception ex, Object body,
-            HttpHeaders headers, HttpStatusCode statusCode, WebRequest request) {
-        ApiMeta meta = metaFactory.create();
-        HttpStatus status = HttpStatus.resolve(statusCode.value());
-        ErrorCode errorCode = mapStatus(status);
-        String detail = body instanceof ProblemDetail problemDetail && problemDetail.getDetail() != null
-                ? problemDetail.getDetail()
-                : errorCode.title();
-        ApiError error = new ApiError(
-                meta.requestId() + "-1",
-                String.valueOf(statusCode.value()),
-                errorCode.code(),
-                errorCode.title(),
-                detail,
-                null);
-        return ResponseEntity.status(statusCode)
-                .headers(headers)
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(ApiResponse.errors(List.of(error), meta));
+        return render(errorCode, List.of(error(meta, new AtomicInteger(1), errorCode,
+                errorCode.code(), ex.detail(), ex.source())), meta);
     }
 
     // --- Method-security denials: must not fall into the 500 catch-all ---
 
     @ExceptionHandler(org.springframework.security.access.AccessDeniedException.class)
-    public ResponseEntity<ApiResponse<Void>> handleAccessDenied(
+    public ResponseEntity<Object> handleAccessDenied(
             org.springframework.security.access.AccessDeniedException ex) {
         ApiMeta meta = metaFactory.create();
-        ApiError error = new ApiError(
-                meta.requestId() + "-1",
-                String.valueOf(ErrorCode.FORBIDDEN.httpStatus().value()),
-                ErrorCode.FORBIDDEN.code(),
-                ErrorCode.FORBIDDEN.title(),
-                "You do not have permission to perform this operation.",
-                null);
-        return ResponseEntity.status(ErrorCode.FORBIDDEN.httpStatus())
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(ApiResponse.errors(List.of(error), meta));
+        return render(ErrorCode.FORBIDDEN, List.of(error(meta, new AtomicInteger(1),
+                ErrorCode.FORBIDDEN, ErrorCode.FORBIDDEN.code(),
+                "You do not have permission to perform this operation.", null)), meta);
+    }
+
+    // --- Framework exceptions: base-class handlers funnel through here ---
+
+    @Override
+    protected ResponseEntity<Object> handleExceptionInternal(Exception ex, Object body,
+            HttpHeaders headers, HttpStatusCode statusCode, WebRequest request) {
+        ApiMeta meta = metaFactory.create();
+        ErrorCode errorCode = mapStatus(HttpStatus.resolve(statusCode.value()));
+        String detail = body instanceof ProblemDetail problemDetail && problemDetail.getDetail() != null
+                ? problemDetail.getDetail()
+                : errorCode.title();
+        ApiError error = new ApiError(meta.requestId() + "-1", String.valueOf(statusCode.value()),
+                errorCode.code(), errorCode.title(), detail, null);
+        return render(statusCode, errorCode, List.of(error), meta);
     }
 
     // --- Catch-all: fixed safe 500; the ONLY place the stack trace is logged ---
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<ApiResponse<Void>> handleUnexpected(Exception ex) {
+    public ResponseEntity<Object> handleUnexpected(Exception ex) {
         ApiMeta meta = metaFactory.create();
         log.error("Unhandled exception [requestId={}]", meta.requestId(), ex);
-        ApiError error = new ApiError(
-                meta.requestId() + "-1",
-                String.valueOf(ErrorCode.INTERNAL_ERROR.httpStatus().value()),
-                ErrorCode.INTERNAL_ERROR.code(),
-                ErrorCode.INTERNAL_ERROR.title(),
-                "An unexpected error occurred. Contact support with the request id.",
-                null);
-        return ResponseEntity.status(ErrorCode.INTERNAL_ERROR.httpStatus())
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(ApiResponse.errors(List.of(error), meta));
+        return render(ErrorCode.INTERNAL_ERROR, List.of(error(meta, new AtomicInteger(1),
+                ErrorCode.INTERNAL_ERROR, ErrorCode.INTERNAL_ERROR.code(),
+                "An unexpected error occurred. Contact support with the request id.", null)), meta);
     }
 
-    private static String errorId(ApiMeta meta, AtomicInteger index) {
-        return meta.requestId() + "-" + index.getAndIncrement();
+    // --- Rendering: envelope by default, RFC 9457 when the client asks for problem+json ---
+
+    private ResponseEntity<Object> render(ErrorCode errorCode, List<ApiError> errors, ApiMeta meta) {
+        return render(errorCode.httpStatus(), errorCode, errors, meta);
+    }
+
+    private ResponseEntity<Object> render(HttpStatusCode status, ErrorCode errorCode,
+            List<ApiError> errors, ApiMeta meta) {
+        if (problemJsonRequested()) {
+            ProblemDetail problem = ProblemDetail.forStatus(status);
+            problem.setTitle(errorCode.title());
+            problem.setDetail(errors.size() == 1
+                    ? errors.getFirst().detail()
+                    : errors.size() + " validation errors — see the errors extension.");
+            problem.setProperty("code", errorCode.code());
+            problem.setProperty("requestId", meta.requestId());
+            if (errors.size() > 1) {
+                problem.setProperty("errors", errors);
+            }
+            return ResponseEntity.status(status)
+                    .contentType(MediaType.APPLICATION_PROBLEM_JSON)
+                    .body(problem);
+        }
+        return ResponseEntity.status(status)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(ApiResponse.errors(errors, meta));
+    }
+
+    private static boolean problemJsonRequested() {
+        if (!(RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attributes)) {
+            return false;
+        }
+        String accept = attributes.getRequest().getHeader(HttpHeaders.ACCEPT);
+        return accept != null && accept.contains(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
+    }
+
+    private static ApiError error(ApiMeta meta, AtomicInteger index, ErrorCode errorCode,
+            String code, String detail, ApiSource source) {
+        return new ApiError(
+                meta.requestId() + "-" + index.getAndIncrement(),
+                String.valueOf(errorCode.httpStatus().value()),
+                code,
+                errorCode.title(),
+                detail,
+                source);
     }
 
     private static String validationCode(String constraintCode) {
