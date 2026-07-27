@@ -19,6 +19,10 @@ spring:
     hibernate:
       ddl-auto: validate
     open-in-view: false
+  data:
+    redis:
+      host: ${VALKEY_HOST:localhost}
+      port: ${VALKEY_PORT:6379}
   modulith:
     events:
       republish-outstanding-events-on-restart: true
@@ -37,6 +41,11 @@ server:
       enabled: false
 
 app:
+  cache:
+    l1-ttl: ${CACHE_L1_TTL:PT60S}
+    l1-max-size: ${CACHE_L1_MAX_SIZE:10000}
+    l2-ttl: ${CACHE_L2_TTL:PT10M}
+    l2-enabled: ${CACHE_L2_ENABLED:true}
   storage:
     endpoint: ${S3_ENDPOINT:http://localhost:8333}
     region: ${S3_REGION:us-east-1}

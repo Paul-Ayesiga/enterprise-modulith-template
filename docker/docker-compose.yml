@@ -29,6 +29,20 @@ services:
     volumes:
       - ./keycloak:/opt/keycloak/data/import:ro
 
+  valkey:
+    image: valkey/valkey:8-alpine
+    labels:
+      org.springframework.boot.service-connection: redis
+    ports:
+      - "${VALKEY_PORT:-6379}:6379"
+    volumes:
+      - valkey-data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   seaweedfs:
     image: chrislusf/seaweedfs:4.40
     command: ["server", "-s3", "-s3.config=/etc/seaweedfs/s3-config.json", "-dir=/data"]
@@ -54,3 +68,4 @@ services:
 volumes:
   postgres-data:
   seaweedfs-data:
+  valkey-data:

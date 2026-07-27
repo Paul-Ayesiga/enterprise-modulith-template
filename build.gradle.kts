@@ -40,6 +40,11 @@ dependencies {
     implementation(libs.boot.security)
     implementation(libs.boot.oauth2.rs)
 
+    // caching bundle (Caffeine L1 + Valkey L2)
+    implementation(libs.boot.cache)
+    implementation(libs.boot.data.redis)
+    implementation(libs.caffeine)
+
     // storage bundle (files module — SeaweedFS/S3 via AWS SDK v2)
     implementation(platform(libs.awssdk.bom))
     implementation(libs.awssdk.s3)

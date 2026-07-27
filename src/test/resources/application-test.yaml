@@ -3,6 +3,9 @@
 app:
   storage:
     bootstrap-bucket: false
+  # L1-only in tests; the Valkey IT re-enables L2 against its own container.
+  cache:
+    l2-enabled: false
 
 
 management:
