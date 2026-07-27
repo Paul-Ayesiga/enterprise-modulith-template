@@ -15,8 +15,9 @@ tcKeycloak = "4.1.1"         # community dasniko Testcontainers module
 duckdb = "1.5.5.0"           # embedded OLAP (Phase 3A)
 ulid = "5.2.3"               # sortable request IDs
 
+resilience4j = "2.4.0"       # -spring-boot4 artifact (verified on repo1; search.maven index lags)
+
 # --- Deferred / verify-before-commit on Boot 4.1 ---
-resilience4j = "2.4.0"       # Phase 3 — artifact still named -spring-boot3; smoke-test first
 bucket4j = "8.14.0"          # Phase 5 — note the _jdk17 artifact suffix
 
 [libraries]
@@ -80,8 +81,11 @@ testcontainers-junit    = { module = "org.testcontainers:testcontainers-junit-ju
 # which clashes with TC2's renamed artifacts. Keycloak runs as a plain TC2 GenericContainer instead.
 security-test           = { module = "org.springframework.security:spring-security-test" }
 
+# Resilience — NEVER use -spring-boot3 on Boot 4 (its SpringBoot3Verifier fail-fasts at startup)
+resilience4j = { module = "io.github.resilience4j:resilience4j-spring-boot4", version.ref = "resilience4j" }
+boot-aop     = { module = "org.springframework.boot:spring-boot-starter-aop" }  # required by the @CircuitBreaker/@Retry aspects
+
 # Deferred
-resilience4j = { module = "io.github.resilience4j:resilience4j-spring-boot3", version.ref = "resilience4j" }
 bucket4j     = { module = "com.bucket4j:bucket4j_jdk17-core", version.ref = "bucket4j" }
 
 [plugins]

@@ -40,6 +40,10 @@ dependencies {
     implementation(libs.boot.security)
     implementation(libs.boot.oauth2.rs)
 
+    // scheduling bundle (ShedLock — one job execution across all instances)
+    implementation(libs.shedlock.spring)
+    implementation(libs.shedlock.jdbc)
+
     // caching bundle (Caffeine L1 + Valkey L2)
     implementation(libs.boot.cache)
     implementation(libs.boot.data.redis)

@@ -13,6 +13,8 @@ import org.springframework.data.redis.cache.RedisCacheConfiguration;
 import org.springframework.data.redis.cache.RedisCacheManager;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.serializer.GenericJacksonJsonRedisSerializer;
+import org.springframework.data.redis.serializer.RedisSerializationContext;
 import org.springframework.data.redis.listener.ChannelTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 
@@ -37,7 +39,10 @@ public class CacheConfig {
     RedisCacheManager redisCacheManager(RedisConnectionFactory connectionFactory, CacheProperties properties) {
         RedisCacheConfiguration cacheConfiguration = RedisCacheConfiguration.defaultCacheConfig()
                 .entryTtl(properties.l2Ttl())
-                .prefixCacheNameWith(CACHE_PREFIX);
+                .prefixCacheNameWith(CACHE_PREFIX)
+                // Jackson 3 JSON values (readable in Valkey, no Serializable/JVM coupling)
+                .serializeValuesWith(RedisSerializationContext.SerializationPair.fromSerializer(
+                        GenericJacksonJsonRedisSerializer.builder().build()));
         return RedisCacheManager.builder(connectionFactory)
                 .cacheDefaults(cacheConfiguration)
                 .build();
