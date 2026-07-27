@@ -16,6 +16,12 @@ message id from business identity (e.g. `"setting:" + key + ":" + version`).
 | `ug.co.smsone.settings.SettingChanged` | settings | `key, value` | a setting is created or updated |
 | `ug.co.smsone.settings.FeatureFlagChanged` | settings | `key, enabled` | a feature flag is created or toggled |
 
+## Consumers
+
+| Event | Consumed by | Effect (idempotent via `EventInbox`) |
+|---|---|---|
+| `ug.co.smsone.settings.FeatureFlagChanged` | notification | Notifies administrators (email + in-app) that a flag was toggled |
+
 The generated per-module canvases in [modulith/](modulith/) list published/listened events per
 module and are refreshed on every build — treat this file as the narrative companion, and add a row
 whenever a new event type lands.

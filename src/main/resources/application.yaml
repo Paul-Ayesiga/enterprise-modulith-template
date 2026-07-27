@@ -27,6 +27,15 @@ spring:
       # timeout is 60s, which would stall every cache call during a Valkey outage.
       timeout: ${VALKEY_TIMEOUT:2s}
       connect-timeout: ${VALKEY_CONNECT_TIMEOUT:2s}
+  mail:
+    host: ${SMTP_HOST:localhost}
+    port: ${SMTP_PORT:1025}
+    properties:
+      mail:
+        smtp:
+          auth: false
+          starttls:
+            enable: false
   modulith:
     events:
       republish-outstanding-events-on-restart: true
@@ -45,6 +54,13 @@ server:
       enabled: false
 
 app:
+  notification:
+    from: ${NOTIFICATION_FROM:no-reply@smsone.co.ug}
+    slack-webhook-url: ${NOTIFICATION_SLACK_WEBHOOK:}
+    webhook-timeout-seconds: ${NOTIFICATION_WEBHOOK_TIMEOUT:5}
+    admins:
+      - username: ${NOTIFICATION_ADMIN_USER:david}
+        email: ${NOTIFICATION_ADMIN_EMAIL:admin@smsone.co.ug}
   analytics:
     database-path: ${ANALYTICS_DB_PATH:data/analytics.duckdb}
     snapshot-dir: ${ANALYTICS_SNAPSHOT_DIR:data/snapshots}

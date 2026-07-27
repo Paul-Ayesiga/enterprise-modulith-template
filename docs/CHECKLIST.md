@@ -68,6 +68,17 @@ its acceptance gate verified. Updated as work lands — this file is the single 
 - [x] ADR backlog written: 0002 cursor pagination · 0003 Testcontainers-only · 0004 two-level cache · 0005 idempotency keys · 0006 embedded DuckDB
 - [x] `docs/NEXT_TASKS.md` — pickup-ready backlog for the next agent (CI, notification, identity/organization, K8s, rate limiting, event externalization)
 
+## Notification module ✅ (2026-07-28)
+
+- [x] Pluggable channel SPI (`NotificationChannelSender`) + `Notifications` facade / `NotificationRequest` / `Recipient` (per-recipient channel addressing)
+- [x] Channels: Email (SMTP), In-app (persisted + REST), Webhook (HTTP POST), Slack (incoming-webhook POST), SMS (dev stub, `app.notification.sms.stub=false` to replace)
+- [x] `notification_log` audit (per-channel SENT/FAILED); one channel failing never aborts the others
+- [x] `@ApplicationModuleListener` on `FeatureFlagChanged` → notifies admins (email + in-app), idempotent via `EventInbox`; V8 migration
+- [x] In-app REST: `GET /api/v1/notifications` (cursor-paginated, own only), `POST /api/v1/notifications/{id}/read`
+- [x] Test-infra: capped Hikari pool + Postgres `max_connections=400` (suite outgrew the default 100)
+- [x] **Gate:** flag toggle lands an email in real Mailpit + an in-app row; webhook fan-out verified; `verify()` green with 6 modules; full `./gradlew build` green; OpenAPI + Modulith docs regenerated
+
 ---
 
-**All planned phases (0–4) complete and gated.** Remaining work: [NEXT_TASKS.md](NEXT_TASKS.md).
+**Phases 0–4 + notification module complete and gated.** Remaining work: [NEXT_TASKS.md](NEXT_TASKS.md)
+(next free migration: **V9**). Completed modules: [COMPLETED_MODULES.md](COMPLETED_MODULES.md).

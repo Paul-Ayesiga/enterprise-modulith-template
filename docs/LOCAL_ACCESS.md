@@ -16,6 +16,7 @@ set -a; . docker/.env; set +a
 SERVER_PORT=$SERVER_PORT \
 KEYCLOAK_ISSUER_URI=http://localhost:$KEYCLOAK_PORT/realms/smsone \
 S3_ENDPOINT=http://localhost:$S3_PORT \
+SMTP_HOST=localhost SMTP_PORT=$SMTP_PORT \
 ./gradlew bootRun
 
 # stop the app: Ctrl-C  (Compose stops with it — lifecycle is start-and-stop)
@@ -89,6 +90,8 @@ Keycloak admin: `admin` / `admin`. SeaweedFS creds live in `docker/seaweedfs/s3-
 | `GET` | `/api/v1/feature-flags` | USER | Cursor-paginated list |
 | `GET` | `/api/v1/feature-flags/{key}` | USER | Single flag |
 | `PUT` | `/api/v1/feature-flags/{key}` | **ADMIN** | Body `{"enabled":bool,"description?"}` |
+| `GET` | `/api/v1/notifications` | USER | Current user's in-app notifications (cursor-paginated) |
+| `POST` | `/api/v1/notifications/{id}/read` | USER | Mark an in-app notification read |
 
 `files`, `scheduler`, and `analytics` modules have no REST surface yet (event/job/query-driven).
 
@@ -110,4 +113,9 @@ scripts/api.sh PUT /api/v1/settings/bad -d '{"value":""}'   # 422 multi-error en
 API_USER=jane scripts/api.sh PUT /api/v1/feature-flags/z -d '{"enabled":true}'   # 403 (no ADMIN)
 curl -s -H "Authorization: Bearer $(scripts/token.sh)" \
   -H "Accept: application/problem+json" http://localhost:18080/api/v1/settings/nope   # RFC 9457
+
+# notifications: toggling a flag emails admins (Mailpit UI :18025) AND creates an in-app message
+scripts/api.sh PUT /api/v1/feature-flags/beta -d '{"enabled":true}'
+scripts/api.sh GET /api/v1/notifications        # david sees the in-app notification
+# then mark one read:  scripts/api.sh POST /api/v1/notifications/<id>/read
 ```

@@ -16,7 +16,10 @@ public abstract class AbstractIntegrationTest {
 
     @ServiceConnection
     public static final PostgreSQLContainer<?> POSTGRES =
-            new PostgreSQLContainer<>("postgres:18.4-alpine");
+            new PostgreSQLContainer<>("postgres:18.4-alpine")
+                    // Headroom for the many cached Spring test contexts sharing this one container
+                    // (each keeps a small Hikari pool — see application-test.yaml).
+                    .withCommand("postgres", "-c", "max_connections=400");
 
     static {
         POSTGRES.start();

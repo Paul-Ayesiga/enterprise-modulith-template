@@ -1,5 +1,14 @@
 # Test profile: no telemetry export — tests must not depend on a running OTLP collector.
 # Bucket bootstrap off by default; the files IT re-enables it against its SeaweedFS container.
+spring:
+  datasource:
+    hikari:
+      # The suite keeps many cached Spring contexts alive against one Postgres container; a large
+      # pool per context exhausts max_connections ("too many clients already"). Keep it small — 3
+      # covers a request thread + an async @ApplicationModuleListener needing its own connection.
+      maximum-pool-size: 3
+      minimum-idle: 1
+
 app:
   storage:
     bootstrap-bucket: false

@@ -56,6 +56,9 @@ dependencies {
     implementation(libs.boot.data.redis)
     implementation(libs.caffeine)
 
+    // notification bundle (email via SMTP; Mailpit in dev — event-driven consumer)
+    implementation(libs.boot.mail)
+
     // storage bundle (files module — SeaweedFS/S3 via AWS SDK v2)
     implementation(platform(libs.awssdk.bom))
     implementation(libs.awssdk.s3)

@@ -1,5 +1,5 @@
 @startuml
-title <size:24>Application</size>
+title <size:24>Notification</size>
 
 set separator none
 top to bottom direction
@@ -18,7 +18,6 @@ top to bottom direction
 System_Boundary("Application_boundary", "Application", $tags="") {
   Container_Boundary("Application.Application_boundary", "Application", $tags="") {
     Component(Application.Application.SharedKernel, "Shared Kernel", $techn="Module", $descr="", $tags="", $link="")
-    Component(Application.Application.Scheduler, "Scheduler", $techn="Module", $descr="", $tags="", $link="")
     Component(Application.Application.Settings, "Settings", $techn="Module", $descr="", $tags="", $link="")
     Component(Application.Application.Notification, "Notification", $techn="Module", $descr="", $tags="", $link="")
   }
@@ -27,7 +26,6 @@ System_Boundary("Application_boundary", "Application", $tags="") {
 
 Rel(Application.Application.Notification, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Settings, Application.Application.SharedKernel, "depends on", $techn="", $tags="", $link="")
-Rel(Application.Application.Scheduler, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Notification, Application.Application.Settings, "listens to", $techn="", $tags="", $link="")
 
 SHOW_LEGEND(true)

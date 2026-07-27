@@ -34,6 +34,7 @@ boot-oauth2-rs      = { module = "org.springframework.boot:spring-boot-starter-o
 boot-data-jpa       = { module = "org.springframework.boot:spring-boot-starter-data-jpa" }
 boot-data-redis     = { module = "org.springframework.boot:spring-boot-starter-data-redis" }
 boot-cache          = { module = "org.springframework.boot:spring-boot-starter-cache" }
+boot-mail           = { module = "org.springframework.boot:spring-boot-starter-mail" }
 boot-otel           = { module = "org.springframework.boot:spring-boot-starter-opentelemetry" }
 boot-test           = { module = "org.springframework.boot:spring-boot-starter-test" }
 boot-webmvc-test    = { module = "org.springframework.boot:spring-boot-webmvc-test" }  # Boot 4 split: @AutoConfigureMockMvc/@WebMvcTest live here
