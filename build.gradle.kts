@@ -25,6 +25,7 @@ dependencies {
     implementation(libs.boot.validation)
     implementation(libs.springdoc)
     implementation(libs.modulith.core)
+    implementation(libs.modulith.jdbc)
 
     // observability bundle
     implementation(libs.boot.actuator)

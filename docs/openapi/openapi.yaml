@@ -18,8 +18,100 @@ servers:
 security:
 - bearerAuth: []
 - keycloak: []
-paths: {}
+paths:
+  /api/v1/settings/{key}:
+    get:
+      tags:
+      - setting-controller
+      operationId: get
+      parameters:
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+    put:
+      tags:
+      - setting-controller
+      operationId: put
+      parameters:
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertSettingRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+  /api/v1/settings:
+    get:
+      tags:
+      - setting-controller
+      operationId: all
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceObject"
 components:
+  schemas:
+    UpsertSettingRequest:
+      type: object
+      properties:
+        value:
+          type: string
+          minLength: 1
+        description:
+          type: string
+      required:
+      - value
+    ResourceObject:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        attributes: {}
   securitySchemes:
     bearerAuth:
       type: http

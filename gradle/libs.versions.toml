@@ -44,6 +44,7 @@ boot-testcontainers = { module = "org.springframework.boot:spring-boot-testconta
 
 # Spring Modulith (BOM-managed)
 modulith-core          = { module = "org.springframework.modulith:spring-modulith-starter-core" }
+modulith-jdbc          = { module = "org.springframework.modulith:spring-modulith-starter-jdbc" }  # DB-backed event publication registry
 modulith-test          = { module = "org.springframework.modulith:spring-modulith-starter-test" }
 modulith-actuator      = { module = "org.springframework.modulith:spring-modulith-actuator" }
 modulith-observability = { module = "org.springframework.modulith:spring-modulith-observability" }

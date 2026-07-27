@@ -408,4 +408,24 @@ storage default `seaweedfs` with `local` filesystem as zero-dependency fallback.
 
 ---
 
-_End of plan. On approval, Phase 0 is scaffolded first (build system + skeleton + compose + health), then Phase 1._
+## 10. Build-time findings (Phase 0/1, 2026-07-27)
+
+Corrections discovered against the real Boot 4.1 artifacts — the catalog above reflects them:
+
+1. **Boot 4 modularization**: several features left `spring-boot-autoconfigure`/`starter-test` —
+   Flyway needs `spring-boot-starter-flyway`; `@AutoConfigureMockMvc`/`@WebMvcTest` live in
+   `spring-boot-webmvc-test`; `TestRestTemplate` lives in `spring-boot-resttestclient`
+   (+ needs `spring-boot-restclient`, and the bean is opt-in via `@AutoConfigureTestRestTemplate`).
+2. **Testcontainers 2.0.5** (pinned by the Boot BOM): all modules renamed with a `testcontainers-`
+   prefix (`testcontainers-postgresql`, `testcontainers-junit-jupiter`); the socket override is
+   env-var-only (`TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE`, defaulted in `build.gradle.kts` for
+   VM-based Docker like Colima/Docker Desktop).
+3. **dasniko testcontainers-keycloak dropped** (was pinned 4.1.1): it depends on TC1-era
+   `org.testcontainers:testcontainers`, which clashes with TC2's renamed artifacts. Keycloak
+   integration tests run the official image via a plain TC2 `GenericContainer` instead.
+4. **Gradle-native BOMs don't cross configurations**: `developmentOnly` needed its own
+   `platform(boot-bom)` import.
+5. **Jackson 3**: Boot 4.1's `ObjectMapper` is `tools.jackson.databind.ObjectMapper` (used by the
+   security entry point/denied handler).
+
+_End of plan. Phase 0 + Phase 1 are implemented and gated — see `docs/CHECKLIST.md` for live status._

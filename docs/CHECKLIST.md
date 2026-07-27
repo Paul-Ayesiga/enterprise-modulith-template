@@ -35,8 +35,8 @@ its acceptance gate verified. Updated as work lands — this file is the single 
 - [x] `shared/persistence` — Flyway (starter + postgresql module) `V1__baseline.sql`
 - [x] Testcontainers: Postgres `@ServiceConnection` singleton — **real containers, no H2/fakes** (Keycloak container lands with security)
 - [x] `OpenApiConfig` (bearer + Keycloak OAuth2 schemes, X-Request-Id header on all ops) + `./gradlew exportOpenApi` → `docs/openapi/*` (Postman imports the 3.1 spec natively)
-- [ ] First business module; `shared` marked OPEN; DB-backed event publication registry
-- [ ] **Gate:** secured endpoint validates Keycloak JWT; `verify()` passes with ≥1 module; spec exports
+- [x] First business module (**settings**: entity/service/controller/`SettingChanged` event, role-gated writes); `shared` marked OPEN; DB-backed event publication registry (Modulith JDBC v2 schema via Flyway)
+- [x] **Gate:** secured endpoint validates a real Keycloak JWT; `verify()` passes with 2 modules; spec exports; `bootRun` health UP with 401-envelope on secured routes
 
 ## Phase 2 — API surface + Files
 
