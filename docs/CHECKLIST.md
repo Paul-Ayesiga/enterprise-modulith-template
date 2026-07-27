@@ -46,13 +46,14 @@ its acceptance gate verified. Updated as work lands — this file is the single 
 - [x] Testcontainers IT vs real SeaweedFS: put/get/delete/presign(GET+PUT via raw HTTP)/11MB multipart
 - [x] **Gate:** storage flows green against SeaweedFS; cursor-paginated envelope verified end-to-end
 
-## Phase 3 — Caching, scheduling, resilience, patterns
+## Phase 3 — Caching, scheduling, resilience, patterns ✅ (2026-07-27)
 
-- [ ] Valkey 8 in Compose (`service-connection: redis` label); Caffeine L1 + Valkey L2
-- [ ] Scheduler module — `@Scheduled` + ShedLock JDBC
-- [ ] Resilience4j 2.4.0 — smoke-test on Boot 4.1 first
-- [ ] Idempotency-key store; Outbox/Inbox; RFC 9457 adapter; DB-backed feature flags
-- [ ] **Gate:** job fires once across 2 instances; cache verified; breaker opens under fault
+- [x] Valkey 8 in Compose (`service-connection: redis` label); two-level cache: Caffeine L1 + Valkey L2, pub/sub cross-instance L1 invalidation, L2 outage degrades gracefully
+- [x] Scheduler module — `@Scheduled` + ShedLock JDBC (`usingDbTime`, TIMESTAMP-no-tz DDL); event-registry + idempotency purge jobs
+- [x] Resilience4j — **`resilience4j-spring-boot4` 2.4.0** (research: `-spring-boot3` fail-fasts on Boot 4; Boot 4 dropped starter-aop → aspectjweaver); storage circuit breaker
+- [x] Idempotency-key store (claim-first, replay, 409 on payload mismatch); Inbox (`EventInbox` idempotent consumer — outbox = Modulith registry); RFC 9457 content-negotiated adapter; DB-backed feature flags with cached evaluator
+- [x] **Gate:** job fires once across 2 instances; cache verified (incl. real mid-flight Valkey outage); breaker opens under fault
+- [x] Adversarial review (3 lenses, 17 verified findings, 14 confirmed & fixed): per-principal idempotency keys + takeover lease + 4xx-not-stored + body cap; tight Lettuce timeouts; no-broadcast-on-failed-L2-evict; breaker scoped to remote calls with not-found ignored; problem+json negotiation in filters; single-error pointers kept; framework headers preserved
 
 ## Phase 3A — Embedded analytics
 

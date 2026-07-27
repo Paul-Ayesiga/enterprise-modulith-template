@@ -53,6 +53,43 @@ class ProblemDetailContractTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void singleValidationErrorKeepsItsSourcePointer() throws Exception {
+        mockMvc.perform(post("/test/signup").with(jwt())
+                        .header(HttpHeaders.ACCEPT, MediaType.APPLICATION_PROBLEM_JSON_VALUE)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"ok@smsone.co.ug\",\"name\":\"\"}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.errors.length()").value(1))
+                .andExpect(jsonPath("$.errors[0].source.pointer").value("/data/attributes/name"));
+    }
+
+    @Test
+    void catchAll500NeverLeaksInProblemJsonEither() throws Exception {
+        MvcResult result = mockMvc.perform(get("/test/boom").with(jwt())
+                        .header(HttpHeaders.ACCEPT, MediaType.APPLICATION_PROBLEM_JSON_VALUE))
+                .andExpect(status().isInternalServerError())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("INTERNAL_ERROR"))
+                .andExpect(jsonPath("$.requestId").isNotEmpty())
+                .andReturn();
+        assertThat(result.getResponse().getContentAsString())
+                .doesNotContain("Exception")
+                .doesNotContain("at ug.")
+                .doesNotContain("secret-internal-detail")
+                .doesNotContain("IllegalState");
+    }
+
+    @Test
+    void securityErrorsNegotiateProblemJsonToo() throws Exception {
+        mockMvc.perform(get("/api/v1/settings")
+                        .header(HttpHeaders.ACCEPT, MediaType.APPLICATION_PROBLEM_JSON_VALUE))
+                .andExpect(status().isUnauthorized())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("UNAUTHORIZED"))
+                .andExpect(jsonPath("$.requestId").isNotEmpty());
+    }
+
+    @Test
     void defaultAcceptStillGetsTheEnvelope() throws Exception {
         mockMvc.perform(get("/test/missing").with(jwt()))
                 .andExpect(status().isNotFound())

@@ -22,7 +22,7 @@ public class ApiAccessDeniedHandler implements AccessDeniedHandler {
     @Override
     public void handle(HttpServletRequest request, HttpServletResponse response,
             AccessDeniedException accessDeniedException) throws IOException {
-        errorWriter.write(response, ErrorCode.FORBIDDEN,
+        errorWriter.write(request, response, ErrorCode.FORBIDDEN,
                 "You do not have permission to access this resource.", null);
     }
 }

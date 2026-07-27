@@ -11,7 +11,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 
 @Configuration(proxyBeanMethods = false)
 @EnableScheduling
-@EnableSchedulerLock(defaultLockAtMostFor = "PT10M")
+@EnableSchedulerLock(defaultLockAtMostFor = "PT10M", defaultLockAtLeastFor = "PT30S")
 class SchedulingConfig {
 
     @Bean

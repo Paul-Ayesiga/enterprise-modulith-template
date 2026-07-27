@@ -23,6 +23,10 @@ spring:
     redis:
       host: ${VALKEY_HOST:localhost}
       port: ${VALKEY_PORT:6379}
+      # Tight timeouts are what make "degrade to L1-only" real — Lettuce's default command
+      # timeout is 60s, which would stall every cache call during a Valkey outage.
+      timeout: ${VALKEY_TIMEOUT:2s}
+      connect-timeout: ${VALKEY_CONNECT_TIMEOUT:2s}
   modulith:
     events:
       republish-outstanding-events-on-restart: true
@@ -62,6 +66,8 @@ resilience4j:
         minimum-number-of-calls: 5
         failure-rate-threshold: 50
         wait-duration-in-open-state: ${STORAGE_BREAKER_WAIT:PT10S}
+        ignore-exceptions:
+          - ug.co.smsone.files.FileNotFoundException   # business not-found never trips the breaker
 
 springdoc:
   paths-to-exclude: /test/**   # test-classpath contract endpoints must never reach the spec

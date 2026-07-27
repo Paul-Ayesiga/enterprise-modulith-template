@@ -8,10 +8,16 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.util.HexFormat;
 import java.util.Set;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.annotation.Order;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.util.ContentCachingResponseWrapper;
@@ -21,8 +27,9 @@ import ug.co.smsone.shared.web.EnvelopeErrorWriter;
 
 /**
  * HTTP idempotency for unsafe methods: send an {@code Idempotency-Key} header and retries of the
- * same request replay the stored response instead of re-executing. Claim-first design: the key row
- * is claimed before the handler runs, so concurrent duplicates get a 409 instead of racing.
+ * same request replay the stored response instead of re-executing. Claim-first design with a
+ * takeover lease (a crashed instance never wedges a key); keys are scoped per authenticated
+ * principal; only successful outcomes (status &lt; 400) are stored — errors stay retryable.
  * Ordered after the security chain — unauthenticated requests never claim keys.
  */
 @Component
@@ -32,15 +39,22 @@ public class IdempotencyFilter extends OncePerRequestFilter {
     public static final String KEY_HEADER = "Idempotency-Key";
     public static final String REPLAYED_HEADER = "Idempotency-Replayed";
 
+    private static final Logger log = LoggerFactory.getLogger(IdempotencyFilter.class);
     private static final Pattern VALID_KEY = Pattern.compile("^[A-Za-z0-9_-]{1,128}$");
     private static final Set<String> UNSAFE_METHODS = Set.of("POST", "PUT", "PATCH");
 
     private final IdempotencyStore store;
     private final EnvelopeErrorWriter errorWriter;
+    private final Duration inProgressLease;
+    private final int maxBodyBytes;
 
-    public IdempotencyFilter(IdempotencyStore store, EnvelopeErrorWriter errorWriter) {
+    public IdempotencyFilter(IdempotencyStore store, EnvelopeErrorWriter errorWriter,
+            @Value("${app.idempotency.in-progress-lease:PT5M}") Duration inProgressLease,
+            @Value("${app.idempotency.max-body-bytes:262144}") int maxBodyBytes) {
         this.store = store;
         this.errorWriter = errorWriter;
+        this.inProgressLease = inProgressLease;
+        this.maxBodyBytes = maxBodyBytes;
     }
 
     @Override
@@ -55,57 +69,71 @@ public class IdempotencyFilter extends OncePerRequestFilter {
             FilterChain filterChain) throws ServletException, IOException {
         String key = request.getHeader(KEY_HEADER);
         if (!VALID_KEY.matcher(key).matches()) {
-            errorWriter.write(response, ErrorCode.VALIDATION_FAILED,
+            errorWriter.write(request, response, ErrorCode.VALIDATION_FAILED,
                     "Idempotency-Key must be 1-128 characters of [A-Za-z0-9_-].",
                     ApiSource.header(KEY_HEADER));
             return;
         }
-
-        byte[] body = request.getInputStream().readAllBytes();
+        byte[] body = request.getInputStream().readNBytes(maxBodyBytes + 1);
+        if (body.length > maxBodyBytes) {
+            errorWriter.write(request, response, ErrorCode.PAYLOAD_TOO_LARGE,
+                    "Idempotent requests are limited to " + maxBodyBytes + " body bytes.",
+                    ApiSource.header(KEY_HEADER));
+            return;
+        }
+        String principal = currentPrincipal();
         String requestHash = sha256(request.getMethod() + '\n' + request.getRequestURI() + '\n', body);
 
-        if (store.claim(key, requestHash)) {
-            execute(new CachedBodyRequestWrapper(request, body), response, filterChain, key);
+        if (store.claim(principal, key, requestHash, inProgressLease)) {
+            execute(new CachedBodyRequestWrapper(request, body), response, filterChain, principal, key);
         } else {
-            respondFromStore(response, key, requestHash);
+            respondFromStore(request, response, principal, key, requestHash);
         }
     }
 
     private void execute(HttpServletRequest request, HttpServletResponse response,
-            FilterChain filterChain, String key) throws ServletException, IOException {
+            FilterChain filterChain, String principal, String key) throws ServletException, IOException {
         ContentCachingResponseWrapper responseWrapper = new ContentCachingResponseWrapper(response);
         try {
             filterChain.doFilter(request, responseWrapper);
         } catch (ServletException | IOException | RuntimeException e) {
-            store.release(key); // failed execution must stay retryable
+            safeRelease(principal, key); // failed execution must stay retryable
             throw e;
         }
-        if (responseWrapper.getStatus() >= 500) {
-            store.release(key); // server errors are not idempotent outcomes — let the client retry
-        } else {
-            store.complete(key, responseWrapper.getStatus(),
-                    new String(responseWrapper.getContentAsByteArray(), StandardCharsets.UTF_8),
-                    responseWrapper.getContentType());
+        try {
+            if (responseWrapper.getStatus() < 400) {
+                store.complete(principal, key, responseWrapper.getStatus(),
+                        new String(responseWrapper.getContentAsByteArray(), StandardCharsets.UTF_8),
+                        responseWrapper.getContentType());
+            } else {
+                // 4xx/5xx are not idempotent outcomes: errors have no side effects worth replaying
+                store.release(principal, key);
+            }
+        } catch (RuntimeException e) {
+            log.warn("Idempotency bookkeeping failed for key '{}' — releasing: {}", key, e.getMessage());
+            safeRelease(principal, key);
         }
+        // the business result is already committed — the client must receive it regardless
         responseWrapper.copyBodyToResponse();
     }
 
-    private void respondFromStore(HttpServletResponse response, String key, String requestHash)
-            throws IOException {
-        IdempotencyStore.StoredResponse stored = store.find(key).orElse(null);
+    private void respondFromStore(HttpServletRequest request, HttpServletResponse response,
+            String principal, String key, String requestHash) throws IOException {
+        IdempotencyStore.StoredResponse stored = store.find(principal, key).orElse(null);
         if (stored == null || stored.inProgress()) {
-            errorWriter.write(response, ErrorCode.CONFLICT,
+            errorWriter.write(request, response, ErrorCode.CONFLICT,
                     "A request with this Idempotency-Key is still in progress. Retry shortly.",
                     ApiSource.header(KEY_HEADER));
             return;
         }
         if (!stored.requestHash().equals(requestHash)) {
-            errorWriter.write(response, ErrorCode.CONFLICT,
+            errorWriter.write(request, response, ErrorCode.CONFLICT,
                     "This Idempotency-Key was already used with a different request payload.",
                     ApiSource.header(KEY_HEADER));
             return;
         }
         response.setStatus(stored.status());
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name()); // stored bodies are UTF-8
         if (stored.contentType() != null) {
             response.setContentType(stored.contentType());
         }
@@ -113,6 +141,21 @@ public class IdempotencyFilter extends OncePerRequestFilter {
         if (stored.body() != null) {
             response.getWriter().write(stored.body());
         }
+    }
+
+    private void safeRelease(String principal, String key) {
+        try {
+            store.release(principal, key);
+        } catch (RuntimeException e) {
+            log.warn("Failed to release idempotency key '{}' (lease will expire): {}", key, e.getMessage());
+        }
+    }
+
+    private static String currentPrincipal() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return authentication != null && authentication.isAuthenticated()
+                ? authentication.getName()
+                : "anonymous";
     }
 
     private static String sha256(String prefix, byte[] body) {

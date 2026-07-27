@@ -111,7 +111,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
                 : errorCode.title();
         ApiError error = new ApiError(meta.requestId() + "-1", String.valueOf(statusCode.value()),
                 errorCode.code(), errorCode.title(), detail, null);
-        return render(statusCode, errorCode, List.of(error), meta);
+        return render(statusCode, errorCode, List.of(error), meta, headers);
     }
 
     // --- Catch-all: fixed safe 500; the ONLY place the stack trace is logged ---
@@ -128,11 +128,15 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     // --- Rendering: envelope by default, RFC 9457 when the client asks for problem+json ---
 
     private ResponseEntity<Object> render(ErrorCode errorCode, List<ApiError> errors, ApiMeta meta) {
-        return render(errorCode.httpStatus(), errorCode, errors, meta);
+        return render(errorCode.httpStatus(), errorCode, errors, meta, null);
     }
 
     private ResponseEntity<Object> render(HttpStatusCode status, ErrorCode errorCode,
-            List<ApiError> errors, ApiMeta meta) {
+            List<ApiError> errors, ApiMeta meta, HttpHeaders headers) {
+        ResponseEntity.BodyBuilder builder = ResponseEntity.status(status);
+        if (headers != null) {
+            builder.headers(headers); // keep framework-supplied headers (e.g. Allow on 405)
+        }
         if (problemJsonRequested()) {
             ProblemDetail problem = ProblemDetail.forStatus(status);
             problem.setTitle(errorCode.title());
@@ -141,16 +145,12 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
                     : errors.size() + " validation errors — see the errors extension.");
             problem.setProperty("code", errorCode.code());
             problem.setProperty("requestId", meta.requestId());
-            if (errors.size() > 1) {
-                problem.setProperty("errors", errors);
+            if (errors.size() > 1 || errors.getFirst().source() != null) {
+                problem.setProperty("errors", errors); // pointers survive even for a single error
             }
-            return ResponseEntity.status(status)
-                    .contentType(MediaType.APPLICATION_PROBLEM_JSON)
-                    .body(problem);
+            return builder.contentType(MediaType.APPLICATION_PROBLEM_JSON).body(problem);
         }
-        return ResponseEntity.status(status)
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(ApiResponse.errors(errors, meta));
+        return builder.contentType(MediaType.APPLICATION_JSON).body(ApiResponse.errors(errors, meta));
     }
 
     private static boolean problemJsonRequested() {

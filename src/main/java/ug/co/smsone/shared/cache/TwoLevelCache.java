@@ -89,33 +89,49 @@ class TwoLevelCache implements Cache {
                 log.warn("L2 cache '{}' put failed, entry is L1-only: {}", name, e.getMessage());
             }
         }
-        broadcast(key);
+        // regardless of L2 outcome: peers drop stale L1 and reload from L2-or-DB
+        if (key instanceof String stringKey) {
+            broadcast(stringKey);
+        }
     }
 
     @Override
     public void evict(Object key) {
         l1.evict(key);
+        boolean l2Evicted = true;
         if (l2 != null) {
             try {
                 l2.evict(key);
             } catch (RuntimeException e) {
-                log.warn("L2 cache '{}' evict failed: {}", name, e.getMessage());
+                // do NOT broadcast: peers would refill their L1 from the still-stale L2 entry.
+                // Everyone stays equally stale until the L1/L2 TTLs expire.
+                l2Evicted = false;
+                log.warn("L2 cache '{}' evict failed — skipping invalidation broadcast: {}",
+                        name, e.getMessage());
             }
         }
-        broadcast(key);
+        if (l2Evicted) {
+            // non-String keys can't be round-tripped through the text topic — clear peers' cache
+            broadcast(key instanceof String stringKey ? stringKey : null);
+        }
     }
 
     @Override
     public void clear() {
         l1.clear();
+        boolean l2Cleared = true;
         if (l2 != null) {
             try {
                 l2.clear();
             } catch (RuntimeException e) {
-                log.warn("L2 cache '{}' clear failed: {}", name, e.getMessage());
+                l2Cleared = false;
+                log.warn("L2 cache '{}' clear failed — skipping invalidation broadcast: {}",
+                        name, e.getMessage());
             }
         }
-        broadcast(null);
+        if (l2Cleared) {
+            broadcast(null);
+        }
     }
 
     /** Drops the local L1 entry only — used when another instance broadcasts an invalidation. */

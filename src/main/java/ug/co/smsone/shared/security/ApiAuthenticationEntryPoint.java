@@ -22,7 +22,7 @@ public class ApiAuthenticationEntryPoint implements AuthenticationEntryPoint {
     @Override
     public void commence(HttpServletRequest request, HttpServletResponse response,
             AuthenticationException authException) throws IOException {
-        errorWriter.write(response, ErrorCode.UNAUTHORIZED,
+        errorWriter.write(request, response, ErrorCode.UNAUTHORIZED,
                 "A valid bearer token is required to access this resource.", null);
     }
 }

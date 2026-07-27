@@ -24,11 +24,11 @@ import software.amazon.awssdk.services.s3.model.UploadPartRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
+import ug.co.smsone.files.FileNotFoundException;
 import ug.co.smsone.files.FileStorageException;
 import ug.co.smsone.files.FileStorageProvider;
 
 @Component
-@CircuitBreaker(name = "storage")
 class S3StorageProvider implements FileStorageProvider {
 
     /** S3 minimum part size is 5 MiB (except the last part). */
@@ -44,7 +44,11 @@ class S3StorageProvider implements FileStorageProvider {
         this.properties = properties;
     }
 
+    // The breaker guards REMOTE calls only — presigning is local crypto and must not
+    // mask (or be blocked by) storage outages.
+
     @Override
+    @CircuitBreaker(name = "storage")
     public void put(String key, InputStream content, long contentLength, String contentType) {
         try {
             s3.putObject(PutObjectRequest.builder()
@@ -59,6 +63,7 @@ class S3StorageProvider implements FileStorageProvider {
     }
 
     @Override
+    @CircuitBreaker(name = "storage")
     public void putLarge(String key, InputStream content, long contentLength, String contentType) {
         String uploadId = s3.createMultipartUpload(CreateMultipartUploadRequest.builder()
                 .bucket(properties.bucket())
@@ -94,6 +99,7 @@ class S3StorageProvider implements FileStorageProvider {
     }
 
     @Override
+    @CircuitBreaker(name = "storage")
     public InputStream get(String key) {
         try {
             return s3.getObject(GetObjectRequest.builder()
@@ -101,11 +107,13 @@ class S3StorageProvider implements FileStorageProvider {
                     .key(key)
                     .build());
         } catch (NoSuchKeyException e) {
-            throw new FileStorageException("no object for key " + key, e);
+            // distinct type: a business not-found must never trip the breaker (ignore-exceptions)
+            throw new FileNotFoundException("no object for key " + key, e);
         }
     }
 
     @Override
+    @CircuitBreaker(name = "storage")
     public boolean exists(String key) {
         try {
             s3.headObject(HeadObjectRequest.builder().bucket(properties.bucket()).key(key).build());
@@ -121,6 +129,7 @@ class S3StorageProvider implements FileStorageProvider {
     }
 
     @Override
+    @CircuitBreaker(name = "storage")
     public void delete(String key) {
         s3.deleteObject(DeleteObjectRequest.builder().bucket(properties.bucket()).key(key).build());
     }
