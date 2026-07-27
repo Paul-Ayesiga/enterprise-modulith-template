@@ -24,6 +24,30 @@ SMTP_HOST=localhost SMTP_PORT=$SMTP_PORT \
 docker compose -f docker/docker-compose.yml --env-file docker/.env down
 ```
 
+### Run the whole stack standalone (infra only, without the app)
+`./gradlew bootRun` auto-starts the Compose stack for you (Spring Boot's docker-compose support), so
+you rarely need this. But to bring up the services on their own — to inspect them, or to run the app
+from your IDE — use Compose directly (always pass `--env-file docker/.env` so the port overrides apply):
+
+```bash
+docker compose -f docker/docker-compose.yml --env-file docker/.env up -d      # start postgres, keycloak, valkey, seaweedfs, mailpit, otel-lgtm
+docker compose -f docker/docker-compose.yml --env-file docker/.env ps         # status + published ports
+docker compose -f docker/docker-compose.yml --env-file docker/.env logs -f keycloak
+docker compose -f docker/docker-compose.yml --env-file docker/.env down        # stop  (add -v to also wipe volumes/data)
+```
+
+Then run the app against the already-running stack by disabling its Compose management:
+```bash
+set -a; . docker/.env; set +a
+SPRING_DOCKER_COMPOSE_ENABLED=false SERVER_PORT=$SERVER_PORT \
+  KEYCLOAK_ISSUER_URI=http://localhost:$KEYCLOAK_PORT/realms/smsone \
+  S3_ENDPOINT=http://localhost:$S3_PORT SMTP_HOST=localhost SMTP_PORT=$SMTP_PORT \
+  POSTGRES_PORT=$POSTGRES_PORT VALKEY_PORT=$VALKEY_PORT ./gradlew bootRun
+```
+
+> On this machine (Colima): pre-pull images before the first `up` to avoid the pull-storm crash —
+> `postgres:18.4-alpine quay.io/keycloak/keycloak:26.7.0 valkey/valkey:8-alpine chrislusf/seaweedfs:4.40 axllent/mailpit:v1.30.2 grafana/otel-lgtm:0.28.0`.
+
 ---
 
 ## Get a token (the simple command)
@@ -65,7 +89,9 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:18080/api/v1/setting
 | **Mailpit** (dev email inbox) | http://localhost:18025 | none |
 | **Postgres** (OLTP) | `localhost:15432` db `modulith` | `modulith` / `modulith` |
 | **Valkey** (cache + locks) | `localhost:16379` | none |
-| **SeaweedFS** S3 API | http://localhost:18333 | access `smsone` / secret `smsone-secret`, bucket `smsone` |
+| **SeaweedFS** S3 API | http://localhost:18333 | access `smsone` / secret `smsone-secret`, bucket `smsone` (SigV4-signed only — a browser hitting it gets `403 AccessDenied`, which is normal) |
+| SeaweedFS **Filer UI** | http://localhost:18888 | none — browse uploaded objects under **`/buckets/smsone/`** |
+| SeaweedFS **Master UI** | http://localhost:19333 | none — cluster status / topology |
 | SMTP sink (Mailpit) | `localhost:11025` | none |
 | OTLP ingest | `localhost:4317` (gRPC) · `localhost:4318` (HTTP) | none |
 

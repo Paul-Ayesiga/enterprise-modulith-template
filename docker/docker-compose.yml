@@ -47,7 +47,9 @@ services:
     image: chrislusf/seaweedfs:4.40
     command: ["server", "-s3", "-s3.config=/etc/seaweedfs/s3-config.json", "-dir=/data"]
     ports:
-      - "${S3_PORT:-8333}:8333"     # S3 API
+      - "${S3_PORT:-8333}:8333"                    # S3 API
+      - "${SEAWEED_FILER_PORT:-8888}:8888"         # Filer web UI — browse objects under /buckets/<bucket>
+      - "${SEAWEED_MASTER_PORT:-9333}:9333"        # Master web UI — cluster status/topology
     volumes:
       - ./seaweedfs/s3-config.json:/etc/seaweedfs/s3-config.json:ro
       - seaweedfs-data:/data
