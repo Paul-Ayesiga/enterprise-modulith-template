@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Print a Keycloak access token for a dev user.
+#
+#   scripts/token.sh                 # david (ADMIN+USER)
+#   scripts/token.sh jane            # jane  (USER)
+#   scripts/token.sh david david123  # explicit password
+#   TOKEN=$(scripts/token.sh)        # capture into a variable
+#
+# Ports are read from docker/.env (falls back to template defaults).
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+[ -f "$root/docker/.env" ] && { set -a; . "$root/docker/.env"; set +a; }
+
+KC_PORT="${KEYCLOAK_PORT:-8081}"
+REALM="${KEYCLOAK_REALM:-smsone}"
+CLIENT="${KEYCLOAK_CLIENT:-smsone-web}"
+USER_NAME="${1:-david}"
+PASSWORD="${2:-${USER_NAME}123}"   # dev convention: david->david123, jane->jane123
+
+resp="$(curl -fsS -X POST \
+  "http://localhost:${KC_PORT}/realms/${REALM}/protocol/openid-connect/token" \
+  -d grant_type=password -d "client_id=${CLIENT}" \
+  -d "username=${USER_NAME}" -d "password=${PASSWORD}" 2>/dev/null || true)"
+
+token="$(printf '%s' "$resp" | { \
+  if command -v jq >/dev/null 2>&1; then jq -r '.access_token // empty'; \
+  else python3 -c 'import sys,json;print(json.load(sys.stdin).get("access_token",""))' 2>/dev/null; fi; })"
+
+if [ -z "$token" ]; then
+  echo "ERROR: could not obtain token for '${USER_NAME}' from http://localhost:${KC_PORT}/realms/${REALM}" >&2
+  echo "Response: ${resp:-<empty>}" >&2
+  exit 1
+fi
+printf '%s\n' "$token"
