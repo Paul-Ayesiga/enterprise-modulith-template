@@ -35,11 +35,20 @@ dependencies {
     implementation(libs.micrometer.java21)
     implementation(libs.ulid.creator)
 
+    // persistence bundle
+    implementation(libs.boot.data.jpa)
+    implementation(libs.boot.flyway)
+    runtimeOnly(libs.flyway.postgresql)
+    runtimeOnly(libs.postgresql)
+
     developmentOnly(platform(libs.boot.bom)) // developmentOnly does not inherit implementation's platforms
     developmentOnly(libs.boot.docker.compose)
 
     testImplementation(libs.boot.test)
     testImplementation(libs.boot.webmvc.test)
+    testImplementation(libs.boot.testcontainers)
+    testImplementation(libs.testcontainers.postgres)
+    testImplementation(libs.testcontainers.junit)
     testImplementation(libs.modulith.test)
     testImplementation(libs.archunit)
     // Later phases: data-jpa/flyway/postgresql, security/oauth2-rs, awssdk s3, data-redis/cache/caffeine,
@@ -48,4 +57,9 @@ dependencies {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+    // Testcontainers 2.x only reads this as an env var. With VM-based Docker (Colima, Docker
+    // Desktop) Ryuk must mount the VM-internal socket, not the host-side proxy socket path.
+    if (System.getenv("TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE") == null) {
+        environment("TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE", "/var/run/docker.sock")
+    }
 }

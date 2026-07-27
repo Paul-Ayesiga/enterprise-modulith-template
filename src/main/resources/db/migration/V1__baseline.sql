@@ -1,0 +1,3 @@
+-- V1: schema baseline.
+-- Intentionally empty: tables land with the modules that own them (modules own their data).
+-- Flyway records this migration so every later change is versioned from a common root.

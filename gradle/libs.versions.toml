@@ -37,6 +37,7 @@ boot-otel           = { module = "org.springframework.boot:spring-boot-starter-o
 boot-test           = { module = "org.springframework.boot:spring-boot-starter-test" }
 boot-webmvc-test    = { module = "org.springframework.boot:spring-boot-webmvc-test" }  # Boot 4 split: @AutoConfigureMockMvc/@WebMvcTest live here
 boot-docker-compose = { module = "org.springframework.boot:spring-boot-docker-compose" }
+boot-flyway         = { module = "org.springframework.boot:spring-boot-starter-flyway" }  # Boot 4 split: Flyway autoconfig lives here
 boot-testcontainers = { module = "org.springframework.boot:spring-boot-testcontainers" }
 
 # Spring Modulith (BOM-managed)
@@ -69,9 +70,9 @@ ulid-creator        = { module = "com.github.f4b6a3:ulid-creator", version.ref =
 awssdk-s3            = { module = "software.amazon.awssdk:s3" }
 awssdk-apache-client = { module = "software.amazon.awssdk:apache-client" }
 
-# Test
-testcontainers-postgres = { module = "org.testcontainers:postgresql" }
-testcontainers-junit    = { module = "org.testcontainers:junit-jupiter" }
+# Test — Testcontainers 2.x (Boot 4.1 BOM) renamed modules with a testcontainers- prefix
+testcontainers-postgres = { module = "org.testcontainers:testcontainers-postgresql" }
+testcontainers-junit    = { module = "org.testcontainers:testcontainers-junit-jupiter" }
 testcontainers-keycloak = { module = "com.github.dasniko:testcontainers-keycloak", version.ref = "tcKeycloak" }
 
 # Deferred

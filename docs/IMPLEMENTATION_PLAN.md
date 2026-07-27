@@ -103,9 +103,9 @@ ulid-creator     = { module = "com.github.f4b6a3:ulid-creator", version.ref = "u
 awssdk-s3            = { module = "software.amazon.awssdk:s3" }
 awssdk-apache-client = { module = "software.amazon.awssdk:apache-client" }
 
-# Test
-testcontainers-postgres = { module = "org.testcontainers:postgresql" }
-testcontainers-junit    = { module = "org.testcontainers:junit-jupiter" }
+# Test — Testcontainers 2.x names (Boot 4.1 BOM pins TC 2.0.5; modules gained a testcontainers- prefix)
+testcontainers-postgres = { module = "org.testcontainers:testcontainers-postgresql" }
+testcontainers-junit    = { module = "org.testcontainers:testcontainers-junit-jupiter" }
 testcontainers-keycloak = { module = "com.github.dasniko:testcontainers-keycloak", version.ref = "tcKeycloak" }
 
 # Deferred

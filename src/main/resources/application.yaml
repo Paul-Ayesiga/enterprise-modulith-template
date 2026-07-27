@@ -6,6 +6,14 @@ spring:
       enabled: true
   jackson:
     default-property-inclusion: non_null
+  datasource:
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:modulith}
+    username: ${POSTGRES_USER:modulith}
+    password: ${POSTGRES_PASSWORD:modulith}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
   docker:
     compose:
       file: docker/docker-compose.yml
