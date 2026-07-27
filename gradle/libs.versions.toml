@@ -45,6 +45,9 @@ modulith-test          = { module = "org.springframework.modulith:spring-modulit
 modulith-actuator      = { module = "org.springframework.modulith:spring-modulith-actuator" }
 modulith-observability = { module = "org.springframework.modulith:spring-modulith-observability" }
 
+# Observability (BOM-managed)
+micrometer-java21 = { module = "io.micrometer:micrometer-java21" }  # virtual-thread metrics
+
 # Persistence (BOM-managed, except DuckDB)
 postgresql        = { module = "org.postgresql:postgresql" }
 flyway-core       = { module = "org.flywaydb:flyway-core" }

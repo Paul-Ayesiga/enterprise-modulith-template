@@ -1,6 +1,9 @@
 spring:
   application:
     name: enterprise-modulith-template
+  threads:
+    virtual:
+      enabled: true
   jackson:
     default-property-inclusion: non_null
   docker:

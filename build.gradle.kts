@@ -32,6 +32,7 @@ dependencies {
     implementation(libs.modulith.actuator)
     implementation(libs.modulith.observability)
     implementation(libs.logstash.encoder)
+    implementation(libs.micrometer.java21)
     implementation(libs.ulid.creator)
 
     developmentOnly(platform(libs.boot.bom)) // developmentOnly does not inherit implementation's platforms

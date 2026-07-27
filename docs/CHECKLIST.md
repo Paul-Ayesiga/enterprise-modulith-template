@@ -28,7 +28,7 @@ its acceptance gate verified. Updated as work lands — this file is the single 
 - [x] `shared/error` — `ErrorCode` enum + `ApiException` hierarchy
 - [x] `shared/error` — `GlobalExceptionHandler` (multi-error 422, catch-all 500 = only trace sink)
 - [x] Tests: envelope wrapping, `meta.requestId`, **no stack-trace leakage** (MockMvc + ArchUnit rules)
-- [ ] `shared/observability` — `logback-spring.xml` JSON, requestId+traceId in MDC, OTLP export
+- [x] `shared/observability` — `logback-spring.xml` JSON (human console for local/test), requestId+traceId in MDC, OTLP export, micrometer-java21 + virtual threads
 - [ ] `shared/security` — Keycloak in Compose + realm import; OAuth2 Resource Server
 - [ ] `shared/security` — JWT roles → `ROLE_*`, `@EnableMethodSecurity`, `CurrentUser`, `PermissionEvaluator`
 - [ ] `shared/persistence` — `BaseEntity`/`AggregateRoot`, UUID keys, auditing, soft-delete, specifications
