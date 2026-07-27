@@ -249,9 +249,12 @@ Error (multi-error validation, 422):
 `status` is a **string** (spec mandate). `code` is a stable enum key (client's switch value). `detail` is
 **always** a curated string — never `ex.getMessage()`.
 
-Pagination: `page[number]` (0-based, 1:1 with Spring `Pageable`), `page[size]` (clamp ≤ 100), `sort=-createdAt`
-(`-` = desc); response carries `meta.page {number,size,totalRecords,totalPages}` and `links.first/prev/next/last`
-(`null` when unavailable). The `page[...]` bracket resolver is wired when the first collection endpoint arrives.
+Pagination — **cursor/keyset (decided 2026-07-27, supersedes the original offset design)**:
+`page[size]` (clamp ≤ 100, default 20) + `page[after]` (opaque base64url keyset cursor); response
+carries `meta.page {size, count, hasMore, nextCursor}` and `links.next` (`null` when exhausted).
+No totals — that's the point (no COUNT, stable under concurrent writes). Backed by Spring Data
+keyset scrolling (`Window`/`KeysetScrollPosition`) over a stable unique sort (createdAt desc, id
+desc); invalid cursors → 422 with `source.parameter: page[after]`.
 
 Shared building blocks (`shared/web`, `shared/error`):
 - `ApiResponse<T>` / `ApiError` / `ApiSource` / `ApiMeta` / `PageMeta` — records, null fields omitted via

@@ -76,7 +76,13 @@ paths:
     get:
       tags:
       - setting-controller
-      operationId: all
+      operationId: list
+      parameters:
+      - name: page
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CursorPageRequest"
       responses:
         "200":
           description: OK
@@ -89,9 +95,7 @@ paths:
           content:
             '*/*':
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/ResourceObject"
+                $ref: "#/components/schemas/WindowedResultResourceObject"
 components:
   schemas:
     UpsertSettingRequest:
@@ -112,6 +116,36 @@ components:
         type:
           type: string
         attributes: {}
+    CursorPageRequest:
+      type: object
+      properties:
+        size:
+          type: integer
+          format: int32
+        after:
+          type: string
+    PageMeta:
+      type: object
+      properties:
+        size:
+          type: integer
+          format: int32
+        count:
+          type: integer
+          format: int32
+        hasMore:
+          type: boolean
+        nextCursor:
+          type: string
+    WindowedResultResourceObject:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResourceObject"
+        page:
+          $ref: "#/components/schemas/PageMeta"
   securitySchemes:
     bearerAuth:
       type: http

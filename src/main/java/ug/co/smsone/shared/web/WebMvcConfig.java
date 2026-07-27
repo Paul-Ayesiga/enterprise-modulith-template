@@ -10,13 +10,17 @@ import ug.co.smsone.shared.security.CurrentUserArgumentResolver;
 public class WebMvcConfig implements WebMvcConfigurer {
 
     private final CurrentUserArgumentResolver currentUserArgumentResolver;
+    private final CursorPageRequestArgumentResolver cursorPageRequestArgumentResolver;
 
-    public WebMvcConfig(CurrentUserArgumentResolver currentUserArgumentResolver) {
+    public WebMvcConfig(CurrentUserArgumentResolver currentUserArgumentResolver,
+            CursorPageRequestArgumentResolver cursorPageRequestArgumentResolver) {
         this.currentUserArgumentResolver = currentUserArgumentResolver;
+        this.cursorPageRequestArgumentResolver = cursorPageRequestArgumentResolver;
     }
 
     @Override
     public void addArgumentResolvers(List<HandlerMethodArgumentResolver> resolvers) {
         resolvers.add(currentUserArgumentResolver);
+        resolvers.add(cursorPageRequestArgumentResolver);
     }
 }

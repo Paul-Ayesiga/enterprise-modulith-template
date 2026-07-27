@@ -2,7 +2,6 @@ package ug.co.smsone.settings.internal;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
-import java.util.List;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -10,7 +9,9 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import ug.co.smsone.shared.web.CursorPageRequest;
 import ug.co.smsone.shared.web.ResourceObject;
+import ug.co.smsone.shared.web.WindowedResult;
 
 @RestController
 @RequestMapping("/api/v1/settings")
@@ -31,8 +32,8 @@ class SettingController {
     }
 
     @GetMapping
-    List<ResourceObject> all() {
-        return settingService.all().stream().map(SettingController::toResource).toList();
+    WindowedResult<ResourceObject> list(CursorPageRequest page) {
+        return WindowedResult.of(settingService.list(page), page, SettingController::toResource);
     }
 
     @GetMapping("/{key}")

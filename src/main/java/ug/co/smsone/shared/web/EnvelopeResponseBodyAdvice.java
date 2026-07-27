@@ -38,6 +38,14 @@ public class EnvelopeResponseBodyAdvice implements ResponseBodyAdvice<Object> {
         if (!selectedContentType.isCompatibleWith(MediaType.APPLICATION_JSON)) {
             return body;
         }
-        return ApiResponse.of(body, metaFactory.create(), ApiLinks.self(request.getURI().getPath()));
+        String selfPath = request.getURI().getPath();
+        if (body instanceof WindowedResult<?> windowed) {
+            PageMeta page = windowed.page();
+            String next = page.nextCursor() == null ? null
+                    : selfPath + "?page[size]=" + page.size() + "&page[after]=" + page.nextCursor();
+            return ApiResponse.of(windowed.items(), metaFactory.create().withPage(page),
+                    new ApiLinks(selfPath, null, null, next, null));
+        }
+        return ApiResponse.of(body, metaFactory.create(), ApiLinks.self(selfPath));
     }
 }
