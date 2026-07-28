@@ -17,10 +17,13 @@ top to bottom direction
 
 System_Boundary("Application_boundary", "Application", $tags="") {
   Container_Boundary("Application.Application_boundary", "Application", $tags="") {
+    Component(Application.Application.SharedKernel, "Shared Kernel", $techn="Module", $descr="", $tags="", $link="")
     Component(Application.Application.Analytics, "Analytics", $techn="Module", $descr="", $tags="", $link="")
   }
 
 }
+
+Rel(Application.Application.Analytics, Application.Application.SharedKernel, "depends on", $techn="", $tags="", $link="")
 
 SHOW_LEGEND(true)
 hide stereotypes

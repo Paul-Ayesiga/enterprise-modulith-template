@@ -1,0 +1,63 @@
+package ug.co.smsone.analytics.internal;
+
+import java.util.Arrays;
+import java.util.Optional;
+
+/**
+ * The fixed catalog of curated reports. Each carries **developer-authored** SQL only (never end-user
+ * input, per the {@code AnalyticsEngine} contract): a Postgres {@code sourceSql} materialized into the
+ * DuckDB mart {@code martTable}, then an aggregate {@code martQuery} run against that mart.
+ */
+enum AnalyticsReport {
+
+    USERS_BY_STATUS("users-by-status",
+            "Provisioned users grouped by lifecycle status",
+            "select status from app_user",
+            "mart_users_by_status",
+            "select status, count(*) as total from mart_users_by_status group by status order by total desc"),
+
+    DELIVERY_OUTCOMES("delivery-outcomes",
+            "Notification deliveries grouped by channel and status",
+            "select channel, status from notification_delivery",
+            "mart_delivery_outcomes",
+            "select channel, status, count(*) as total from mart_delivery_outcomes "
+                    + "group by channel, status order by channel, status");
+
+    private final String code;
+    private final String description;
+    private final String sourceSql;
+    private final String martTable;
+    private final String martQuery;
+
+    AnalyticsReport(String code, String description, String sourceSql, String martTable, String martQuery) {
+        this.code = code;
+        this.description = description;
+        this.sourceSql = sourceSql;
+        this.martTable = martTable;
+        this.martQuery = martQuery;
+    }
+
+    static Optional<AnalyticsReport> fromCode(String code) {
+        return Arrays.stream(values()).filter(report -> report.code.equals(code)).findFirst();
+    }
+
+    String code() {
+        return code;
+    }
+
+    String description() {
+        return description;
+    }
+
+    String sourceSql() {
+        return sourceSql;
+    }
+
+    String martTable() {
+        return martTable;
+    }
+
+    String martQuery() {
+        return martQuery;
+    }
+}

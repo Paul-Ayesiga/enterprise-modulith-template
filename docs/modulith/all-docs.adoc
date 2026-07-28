@@ -1,6 +1,10 @@
 == Application
 plantuml::components.puml[,,format=svg]
 
+== Shared Kernel
+plantuml::module-shared.puml[,,format=svg]
+include::module-shared.adoc[]
+
 == Analytics
 plantuml::module-analytics.puml[,,format=svg]
 include::module-analytics.adoc[]
@@ -8,10 +12,6 @@ include::module-analytics.adoc[]
 == Files
 plantuml::module-files.puml[,,format=svg]
 include::module-files.adoc[]
-
-== Shared Kernel
-plantuml::module-shared.puml[,,format=svg]
-include::module-shared.adoc[]
 
 == Identity
 plantuml::module-identity.puml[,,format=svg]

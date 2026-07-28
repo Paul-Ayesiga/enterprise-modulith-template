@@ -91,8 +91,13 @@ Keycloak admin: `admin` / `admin`. SeaweedFS creds live in `docker/seaweedfs/s3-
 | `PUT` | `/api/v1/orgs/{orgId}/members/{subject}/role` | `member:role:assign` | Reassign role (last-owner protected) |
 | `DELETE` | `/api/v1/orgs/{orgId}/members/{subject}` | `member:remove` | Remove member (keeps the Keycloak user) |
 | `GET`/`POST`/`PUT`/`DELETE` | `/api/v1/orgs/{orgId}/roles[/{roleId}]` | `role:*` | Custom-role CRUD (system roles immutable) |
-
-`files`, `scheduler`, and `analytics` modules have no REST surface yet (event/job/query-driven).
+| `POST` | `/api/v1/files` | USER | Multipart upload (`file`); key namespaced under `u/<sub>/…` |
+| `GET` | `/api/v1/files/{key}` | USER (owner/ADMIN) | 302 → short-lived presigned download URL |
+| `DELETE` | `/api/v1/files/{key}` | USER (owner/ADMIN) | Delete an object |
+| `POST` | `/api/v1/files/presign` | USER (owner/ADMIN) | Presigned `PUT`/`GET` URL. Body `{"operation","key?","contentType?"}` |
+| `GET` | `/api/v1/scheduler/locks` | **ADMIN** | ShedLock rows (clustered-job observability) |
+| `GET` | `/api/v1/analytics/reports` | **ADMIN** | Curated report catalog |
+| `GET` | `/api/v1/analytics/reports/{code}` | **ADMIN** | Run a report (Postgres → DuckDB → aggregate) |
 
 ### Organizations & org-scoped RBAC (no-JIT)
 Org endpoints need the token's **active org** to match `{orgId}` — `scripts/token.sh` requests the

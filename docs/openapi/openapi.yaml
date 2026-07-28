@@ -470,6 +470,71 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/files:
+    post:
+      tags:
+      - file-controller
+      operationId: upload
+      parameters:
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+              required:
+              - file
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+  /api/v1/files/presign:
+    post:
+      tags:
+      - file-controller
+      operationId: presign
+      parameters:
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PresignRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/orgs/{orgId}:
     get:
       tags:
@@ -549,11 +614,31 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/WindowedResultResourceObject"
+  /api/v1/scheduler/locks:
+    get:
+      tags:
+      - scheduler-controller
+      operationId: list_3
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceObject"
   /api/v1/permissions:
     get:
       tags:
       - permission-catalog-controller
-      operationId: list_3
+      operationId: list_4
       responses:
         "200":
           description: OK
@@ -573,7 +658,7 @@ paths:
     get:
       tags:
       - notification-controller
-      operationId: list_4
+      operationId: list_5
       parameters:
       - name: page
         in: query
@@ -611,11 +696,60 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/files/{key}:
+    get:
+      tags:
+      - file-controller
+      operationId: download
+      parameters:
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+    delete:
+      tags:
+      - file-controller
+      operationId: delete_1
+      parameters:
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      responses:
+        "204":
+          description: No Content
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
   /api/v1/feature-flags:
     get:
       tags:
       - feature-flag-controller
-      operationId: list_5
+      operationId: list_6
       parameters:
       - name: page
         in: query
@@ -635,11 +769,55 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/WindowedResultResourceObject"
+  /api/v1/analytics/reports:
+    get:
+      tags:
+      - analytics-report-controller
+      operationId: catalog
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceObject"
+  /api/v1/analytics/reports/{code}:
+    get:
+      tags:
+      - analytics-report-controller
+      operationId: run
+      parameters:
+      - name: code
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/admin/users:
     get:
       tags:
       - user-admin-controller
-      operationId: list_6
+      operationId: list_7
       parameters:
       - name: page
         in: query
@@ -805,6 +983,37 @@ components:
       required:
       - email
       - roleCode
+    CurrentUser:
+      type: object
+      properties:
+        subject:
+          type: string
+        username:
+          type: string
+        email:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+          uniqueItems: true
+        activeOrgAlias:
+          type: string
+        activeOrgId:
+          type: string
+          format: uuid
+    PresignRequest:
+      type: object
+      properties:
+        operation:
+          type: string
+          minLength: 1
+        key:
+          type: string
+        contentType:
+          type: string
+      required:
+      - operation
     UpdateOrganizationRequest:
       type: object
       properties:

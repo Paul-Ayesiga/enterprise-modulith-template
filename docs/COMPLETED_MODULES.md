@@ -12,9 +12,9 @@ _Last updated: 2026-07-28._
 |---|---|---|---|---|
 | **shared** (kernel) | Cross-cutting foundation reused by every module | envelope/error/probes | — | ✅ |
 | **settings** | System settings + feature flags | `/api/v1/settings`, `/api/v1/feature-flags` | `SettingChanged`, `FeatureFlagChanged` | ✅ |
-| **files** | S3-compatible object storage | — (provider API) | — | ✅ |
-| **scheduler** | Clustered scheduled jobs | — | — | ✅ |
-| **analytics** | Embedded OLAP / reporting | — (query API) | — | ✅ |
+| **files** | S3-compatible object storage | `/api/v1/files` | — | ✅ |
+| **scheduler** | Clustered scheduled jobs | `/api/v1/scheduler/locks` | — | ✅ |
+| **analytics** | Embedded OLAP / reporting | `/api/v1/analytics/reports` | — | ✅ |
 | **notification** | Multi-channel, pluggable delivery | `/api/v1/notifications` | — (consumes `FeatureFlagChanged`) | ✅ |
 | **identity** | Admin-driven user provisioning (no JIT) | `/api/v1/me`, `/api/v1/admin/users` | `UserProvisioned`, `UserActivated` | ✅ |
 | **organization** | Keycloak orgs + org-scoped RBAC authority | `/api/v1/orgs/**`, `/api/v1/permissions` | `OrganizationRegistered`, `MembershipCreated`, `MembershipRoleChanged`, `MemberRemoved`, `RolePermissionsChanged` | ✅ |
@@ -41,18 +41,21 @@ System-wide configuration and feature flags (feature flags replaced Togglz — n
 ## files
 Object storage behind a single S3 abstraction (AWS SDK v2).
 - **API**: `FileStorageProvider` — put/get/delete/exists, presigned GET/PUT, multipart.
-- One code path drives local **SeaweedFS**, self-hosted, or managed **S3/R2/B2** (only endpoint + creds change). No REST surface yet — a consuming feature will define it.
-- Verified against real SeaweedFS 4.40 (put/get/delete/presign/11 MB multipart).
+- One code path drives local **SeaweedFS**, self-hosted, or managed **S3/R2/B2** (only endpoint + creds change).
+- **Endpoints**: `POST /api/v1/files` (multipart upload), `GET`/`DELETE /api/v1/files/{key}`, `POST /api/v1/files/presign`. Keys are namespaced per caller (`u/<sub>/…`); read/delete/presign are owner-or-ADMIN. Download 302s to a short-lived presigned URL, so bytes stream straight from storage (correct content-type, no app proxying).
+- Verified against real SeaweedFS 4.40 (put/get/delete/presign/11 MB multipart); the REST surface is covered with the provider mocked.
 
 ## scheduler
 Scheduled jobs that fire exactly once across all instances.
 - `@Scheduled` + **ShedLock** (JDBC provider, `usingDbTime`).
 - Ships the event-publication-registry purge and idempotency-key purge jobs.
+- **Endpoints**: `GET /api/v1/scheduler/locks` (ADMIN) — read-only observability into the ShedLock rows (which instance holds/last held each job's lock). No trigger endpoint: jobs are time-driven by design.
 
 ## analytics
 Embedded OLAP for dashboards/KPIs/reports, in-process (no server).
 - **Engine**: DuckDB 1.5.5.0 behind an `AnalyticsEngine` seam; thread/memory caps; native Parquet snapshots.
 - Marts materialized from Postgres with exact `DECIMAL` money fidelity and UTC-pinned day buckets; atomic staging swap (a failed refresh leaves the old mart intact).
+- **Endpoints**: `GET /api/v1/analytics/reports[/{code}]` (ADMIN) — a **fixed catalog** of curated reports; clients pick a report by code and never supply SQL (the engine's contract: developer-authored analytics SQL only). Each run materializes its mart from Postgres, then aggregates.
 
 ## notification
 Multi-channel, **pluggable** delivery of messages to recipients.
