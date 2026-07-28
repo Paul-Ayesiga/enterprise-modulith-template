@@ -1,5 +1,5 @@
 @startuml
-title <size:24>Organization</size>
+title <size:24>Webhooks</size>
 
 set separator none
 top to bottom direction
@@ -18,14 +18,14 @@ top to bottom direction
 System_Boundary("Application_boundary", "Application", $tags="") {
   Container_Boundary("Application.Application_boundary", "Application", $tags="") {
     Component(Application.Application.Organization, "Organization", $techn="Module", $descr="", $tags="", $link="")
+    Component(Application.Application.Webhooks, "Webhooks", $techn="Module", $descr="", $tags="", $link="")
     Component(Application.Application.SharedKernel, "Shared Kernel", $techn="Module", $descr="", $tags="", $link="")
-    Component(Application.Application.Identity, "Identity", $techn="Module", $descr="", $tags="", $link="")
   }
 
 }
 
-Rel(Application.Application.Identity, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
-Rel(Application.Application.Organization, Application.Application.Identity, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Webhooks, Application.Application.Organization, "listens to", $techn="", $tags="", $link="")
+Rel(Application.Application.Webhooks, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Organization, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 
 SHOW_LEGEND(true)

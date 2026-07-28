@@ -26,7 +26,8 @@ public enum Permission {
     ROLE_UPDATE("role:update"),
     ROLE_DELETE("role:delete"),
 
-    AUDIT_READ("audit:read");
+    AUDIT_READ("audit:read"),
+    WEBHOOK_MANAGE("webhook:manage");
 
     private static final Map<String, Permission> BY_CODE =
             Arrays.stream(values()).collect(Collectors.toUnmodifiableMap(Permission::code, permission -> permission));

@@ -4,6 +4,8 @@ import org.springframework.stereotype.Component;
 import ug.co.smsone.notification.NotificationChannel;
 import ug.co.smsone.notification.NotificationChannelSender;
 import ug.co.smsone.notification.NotificationMessage;
+import ug.co.smsone.shared.http.SafeOutboundUrl;
+import ug.co.smsone.shared.http.UnsafeOutboundUrlException;
 
 /**
  * Slack delivery via an incoming webhook: HTTP POST {@code {"text": ...}}. The recipient address is
@@ -34,7 +36,11 @@ class SlackChannelSender implements NotificationChannelSender {
         // Same SSRF guard as the webhook channel — the recipient address here is equally
         // caller-supplied; only the configured fallback URL is operator-trusted, and guarding it
         // too is harmless (Slack's endpoints are public).
-        SafeHttpTargets.requireSafe(url, properties.webhookAllowPrivateHosts());
+        try {
+            SafeOutboundUrl.requireSafe(url, properties.webhookAllowPrivateHosts());
+        } catch (UnsafeOutboundUrlException ex) {
+            throw new NotificationDeliveryException(ex.getMessage(), !ex.retryable());
+        }
         String text = message.subject()
                 + (message.body() == null || message.body().isBlank() ? "" : "\n" + message.body());
         String json = "{\"text\":" + HttpChannels.jsonString(text) + "}";

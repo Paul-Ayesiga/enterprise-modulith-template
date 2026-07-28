@@ -19,6 +19,7 @@ _Last updated: 2026-07-28._
 | **identity** | Admin-driven user provisioning (no JIT) | `/api/v1/me`, `/api/v1/admin/users` | `UserProvisioned`, `UserActivated` | ✅ |
 | **organization** | Keycloak orgs + org-scoped RBAC authority | `/api/v1/orgs/**`, `/api/v1/permissions` | `OrganizationRegistered`, `MembershipCreated`, `MembershipRoleChanged`, `MemberRemoved`, `RolePermissionsChanged`, `OrganizationStatusChanged` | ✅ |
 | **audit** | Append-only audit trail (who/when/where/what/from→to) | `/api/v1/audit`, `/api/v1/orgs/{orgId}/audit` | — (records via the `AuditLog` port) | ✅ |
+| **webhooks** | Per-org outbound event subscriptions (signed, durable) | `/api/v1/orgs/{orgId}/webhooks/**` | — (consumes org events) | ✅ |
 
 ---
 
@@ -94,3 +95,11 @@ An append-only trail: **who / when / where / what / from→to** for every state 
 - **Instrumented**: organization (org create/rename/suspend/reactivate, member add/remove/role-change, role create/update/delete), identity (user provisioned), settings (setting changed, feature-flag changed) — each capturing the **before/after** state.
 - **Query**: `GET /api/v1/audit` (platform `ADMIN`, all orgs) and `GET /api/v1/orgs/{orgId}/audit` (org-scoped, gated by the **`audit:read`** permission — an org's own admins review their trail without platform access). Both cursor-paginated (newest first) and filterable by `action` + a `from`/`to` ISO-instant window.
 - Verified: capture through a real service records who + what + from→to atomically (and null actor for system changes); REST filtering, pagination, platform-admin gating, and org-scoped `audit:read` with cross-org isolation.
+
+## webhooks
+Per-org **outbound event subscriptions**: tenants register an endpoint + the events they want, and receive **signed, durably-delivered** POSTs.
+- **Subscriptions**: org-scoped CRUD (`webhook:manage` permission). A subscription is a URL + a generated HMAC secret + a set of event codes (`org.member.added`, `org.member.removed`, `org.member.role_changed`, `org.role.permissions_changed`, `org.status_changed`). The secret is returned **once** on create and masked on every later read. The URL is SSRF-guarded at create.
+- **Delivery**: an `@ApplicationModuleListener` fans each organization event out to matching active subscriptions and enqueues one durable delivery each (idempotent via `EventInbox`). A background worker claims batches with `SELECT … FOR UPDATE SKIP LOCKED` (joining the subscription for its URL + secret, so the secret never lands in the delivery row), **HMAC-SHA256-signs** the exact JSON body (`X-Webhook-Signature: sha256=…`), POSTs it through the shared **`SafeOutboundUrl`** SSRF guard on **virtual threads** with a whole-exchange timeout, and retries with backoff / dead-letters. Fenced status updates so a re-claimed row can't be corrupted by a stale claimant.
+- **Delivery log**: `GET …/webhooks/{id}/deliveries` (cursor-paginated) — per-attempt status, response code, error.
+- The SSRF guard was promoted to `shared.http.SafeOutboundUrl` and is now shared by the notification webhook/Slack channels and webhooks (one security control, not two). It blocks loopback/private/link-local/CGNAT/ULA/NAT64-embedded/special-purpose targets at create **and** send. **Residual**: it can't close DNS-rebinding on its own (the client re-resolves at connect), so production must also enforce an **egress network policy** denying the workload's egress to link-local/metadata/RFC-1918 — the guard is the first line, not the only one.
+- Verified: subscription REST + validation + org-scoped authz; the fan-out enqueues on a real published event (Modulith `Scenario`); the worker delivers a **signature-verified** payload to a real receiver and **retries a 5xx to dead-letter** across the attempt budget.

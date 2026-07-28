@@ -115,6 +115,16 @@ app:
       scope: PRINCIPAL
       capacity: 300
       refill-period: PT1M
+  webhooks:
+    worker-auto-start: ${WEBHOOKS_WORKER_AUTOSTART:true}
+    batch-size: ${WEBHOOKS_BATCH_SIZE:50}
+    poll-interval: ${WEBHOOKS_POLL_INTERVAL:PT5S}
+    stale-lock: ${WEBHOOKS_STALE_LOCK:PT2M}
+    max-attempts: ${WEBHOOKS_MAX_ATTEMPTS:5}
+    retry-base-backoff: ${WEBHOOKS_RETRY_BASE:PT10S}
+    retry-max-backoff: ${WEBHOOKS_RETRY_MAX:PT1H}
+    timeout-seconds: ${WEBHOOKS_TIMEOUT:5}
+    allow-private-hosts: ${WEBHOOKS_ALLOW_PRIVATE_HOSTS:false} # only true behind a trusted egress boundary
   notification:
     from: ${NOTIFICATION_FROM:no-reply@smsone.co.ug}
     slack-webhook-url: ${NOTIFICATION_SLACK_WEBHOOK:}

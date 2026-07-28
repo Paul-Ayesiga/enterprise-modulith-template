@@ -72,11 +72,104 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}/webhooks/{id}:
+    get:
+      tags:
+      - webhook-controller
+      operationId: get_1
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+    put:
+      tags:
+      - webhook-controller
+      operationId: update
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateWebhookRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+    delete:
+      tags:
+      - webhook-controller
+      operationId: delete
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "204":
+          description: No Content
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
   /api/v1/orgs/{orgId}/roles/{roleId}:
     get:
       tags:
       - role-controller
-      operationId: get_1
+      operationId: get_2
       parameters:
       - name: orgId
         in: path
@@ -106,7 +199,7 @@ paths:
     put:
       tags:
       - role-controller
-      operationId: update
+      operationId: update_1
       parameters:
       - name: orgId
         in: path
@@ -142,7 +235,7 @@ paths:
     delete:
       tags:
       - role-controller
-      operationId: delete
+      operationId: delete_1
       parameters:
       - name: orgId
         in: path
@@ -205,7 +298,7 @@ paths:
     get:
       tags:
       - feature-flag-controller
-      operationId: get_2
+      operationId: get_3
       parameters:
       - name: key
         in: path
@@ -278,6 +371,63 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}/webhooks:
+    get:
+      tags:
+      - webhook-controller
+      operationId: list
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceObject"
+    post:
+      tags:
+      - webhook-controller
+      operationId: create_1
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWebhookRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/orgs/{orgId}/suspend:
     post:
       tags:
@@ -307,7 +457,7 @@ paths:
     get:
       tags:
       - role-controller
-      operationId: list
+      operationId: list_1
       parameters:
       - name: orgId
         in: path
@@ -333,7 +483,7 @@ paths:
     post:
       tags:
       - role-controller
-      operationId: create_1
+      operationId: create_2
       parameters:
       - name: orgId
         in: path
@@ -389,7 +539,7 @@ paths:
     get:
       tags:
       - member-controller
-      operationId: list_1
+      operationId: list_2
       parameters:
       - name: orgId
         in: path
@@ -539,7 +689,7 @@ paths:
     get:
       tags:
       - organization-controller
-      operationId: get_3
+      operationId: get_4
       parameters:
       - name: orgId
         in: path
@@ -563,7 +713,7 @@ paths:
     patch:
       tags:
       - organization-controller
-      operationId: update_1
+      operationId: update_2
       parameters:
       - name: orgId
         in: path
@@ -594,7 +744,7 @@ paths:
     get:
       tags:
       - setting-controller
-      operationId: list_2
+      operationId: list_3
       parameters:
       - name: page
         in: query
@@ -618,7 +768,7 @@ paths:
     get:
       tags:
       - scheduler-controller
-      operationId: list_3
+      operationId: list_4
       responses:
         "200":
           description: OK
@@ -638,7 +788,7 @@ paths:
     get:
       tags:
       - permission-catalog-controller
-      operationId: list_4
+      operationId: list_5
       responses:
         "200":
           description: OK
@@ -654,6 +804,42 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}/webhooks/{id}/deliveries:
+    get:
+      tags:
+      - webhook-controller
+      operationId: deliveries
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: page
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CursorPageRequest"
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/WindowedResultResourceObject"
   /api/v1/orgs/{orgId}/audit:
     get:
       tags:
@@ -703,7 +889,7 @@ paths:
     get:
       tags:
       - notification-controller
-      operationId: list_5
+      operationId: list_6
       parameters:
       - name: page
         in: query
@@ -769,7 +955,7 @@ paths:
     delete:
       tags:
       - file-controller
-      operationId: delete_1
+      operationId: delete_2
       parameters:
       - name: key
         in: path
@@ -794,7 +980,7 @@ paths:
     get:
       tags:
       - feature-flag-controller
-      operationId: list_6
+      operationId: list_7
       parameters:
       - name: page
         in: query
@@ -907,7 +1093,7 @@ paths:
     get:
       tags:
       - user-admin-controller
-      operationId: list_7
+      operationId: list_8
       parameters:
       - name: page
         in: query
@@ -973,6 +1159,23 @@ components:
         type:
           type: string
         attributes: {}
+    UpdateWebhookRequest:
+      type: object
+      properties:
+        url:
+          type: string
+          minLength: 1
+        events:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          uniqueItems: true
+        status:
+          type: string
+      required:
+      - events
+      - url
     UpdateRoleRequest:
       type: object
       properties:
@@ -1032,6 +1235,21 @@ components:
       - alias
       - name
       - ownerEmail
+    CreateWebhookRequest:
+      type: object
+      properties:
+        url:
+          type: string
+          minLength: 1
+        events:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          uniqueItems: true
+      required:
+      - events
+      - url
     CreateRoleRequest:
       type: object
       properties:

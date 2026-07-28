@@ -33,6 +33,8 @@ message id from business identity (e.g. `"setting:" + key + ":" + version`).
 | `ug.co.smsone.settings.FeatureFlagChanged` | notification | Notifies administrators (email + in-app) that a flag was toggled |
 | `RolePermissionsChanged` / `MembershipRoleChanged` / `MembershipCreated` / `MemberRemoved` / `OrganizationStatusChanged` | organization | Evicts the `org-permissions` cache so a role/membership/org-status change takes effect promptly (coarse clear-all) |
 
+| `MembershipCreated` / `MemberRemoved` / `MembershipRoleChanged` / `RolePermissionsChanged` / `OrganizationStatusChanged` | webhooks | Fans the org event out to matching active subscriptions and enqueues a signed delivery each (idempotent via `EventInbox`) |
+
 _(The **audit** module does not consume events — it records synchronously via the shared `AuditLog` port at each mutation, so it captures the actor and before/after state the events don't carry.)_
 
 The generated per-module canvases in [modulith/](modulith/) list published/listened events per

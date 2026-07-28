@@ -1,0 +1,132 @@
+package ug.co.smsone.webhooks.internal;
+
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+import org.springframework.data.domain.Window;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.bind.annotation.RestController;
+import ug.co.smsone.shared.error.ValidationException;
+import ug.co.smsone.shared.web.ApiSource;
+import ug.co.smsone.shared.web.CursorPageRequest;
+import ug.co.smsone.shared.web.ResourceObject;
+import ug.co.smsone.shared.web.WindowedResult;
+
+/**
+ * Per-org webhook subscriptions + their delivery log. Org-scoped via {@code webhook:manage}. The signing
+ * secret is returned in full only on create; every other read masks it.
+ */
+@RestController
+@RequestMapping("/api/v1/orgs/{orgId}/webhooks")
+class WebhookController {
+
+    private static final String RESOURCE_TYPE = "webhook";
+    private static final String DELIVERY_TYPE = "webhook-delivery";
+
+    private final WebhookSubscriptionService service;
+
+    WebhookController(WebhookSubscriptionService service) {
+        this.service = service;
+    }
+
+    record WebhookAttributes(String url, Set<String> events, String status, String secret) {
+    }
+
+    record DeliveryAttributes(String eventType, String status, int attempts, int maxAttempts,
+            Integer responseStatus, String lastError) {
+    }
+
+    record CreateWebhookRequest(@NotBlank String url, @NotEmpty Set<String> events) {
+    }
+
+    record UpdateWebhookRequest(@NotBlank String url, @NotEmpty Set<String> events, String status) {
+    }
+
+    @PostMapping
+    @PreAuthorize("hasPermission(#orgId, 'organization', 'webhook:manage')")
+    @ResponseStatus(HttpStatus.CREATED)
+    ResourceObject create(@PathVariable UUID orgId, @Valid @RequestBody CreateWebhookRequest request) {
+        WebhookSubscription created = service.create(orgId, request.url(), request.events());
+        return toResource(created, created.getSecret()); // full secret, shown once
+    }
+
+    @GetMapping
+    @PreAuthorize("hasPermission(#orgId, 'organization', 'webhook:manage')")
+    List<ResourceObject> list(@PathVariable UUID orgId) {
+        return service.list(orgId).stream().map(subscription -> toResource(subscription, mask(subscription.getSecret())))
+                .toList();
+    }
+
+    @GetMapping("/{id}")
+    @PreAuthorize("hasPermission(#orgId, 'organization', 'webhook:manage')")
+    ResourceObject get(@PathVariable UUID orgId, @PathVariable UUID id) {
+        WebhookSubscription subscription = service.require(orgId, id);
+        return toResource(subscription, mask(subscription.getSecret()));
+    }
+
+    @PutMapping("/{id}")
+    @PreAuthorize("hasPermission(#orgId, 'organization', 'webhook:manage')")
+    ResourceObject update(@PathVariable UUID orgId, @PathVariable UUID id,
+            @Valid @RequestBody UpdateWebhookRequest request) {
+        WebhookSubscription updated = service.update(orgId, id, request.url(), request.events(),
+                parseStatus(request.status()));
+        return toResource(updated, mask(updated.getSecret()));
+    }
+
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasPermission(#orgId, 'organization', 'webhook:manage')")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    void delete(@PathVariable UUID orgId, @PathVariable UUID id) {
+        service.delete(orgId, id);
+    }
+
+    @GetMapping("/{id}/deliveries")
+    @PreAuthorize("hasPermission(#orgId, 'organization', 'webhook:manage')")
+    WindowedResult<ResourceObject> deliveries(@PathVariable UUID orgId, @PathVariable UUID id,
+            CursorPageRequest page) {
+        Window<WebhookDelivery> window = service.deliveries(orgId, id, page);
+        return WindowedResult.of(window, page, WebhookController::toDeliveryResource);
+    }
+
+    private static SubscriptionStatus parseStatus(String status) {
+        if (status == null || status.isBlank()) {
+            return SubscriptionStatus.ACTIVE;
+        }
+        try {
+            return SubscriptionStatus.valueOf(status.trim().toUpperCase());
+        } catch (IllegalArgumentException ex) {
+            throw new ValidationException("status must be ACTIVE or DISABLED.",
+                    ApiSource.pointer("/data/attributes/status"));
+        }
+    }
+
+    private static String mask(String secret) {
+        // Reveal none of the random secret — only the (non-secret) scheme prefix. The full value is
+        // shown exactly once, at create.
+        return secret != null && secret.startsWith("whsec_") ? "whsec_••••••" : "••••••";
+    }
+
+    private static ResourceObject toResource(WebhookSubscription subscription, String secret) {
+        return new ResourceObject(subscription.getId().toString(), RESOURCE_TYPE,
+                new WebhookAttributes(subscription.getUrl(), subscription.eventTypeSet(),
+                        subscription.getStatus().name(), secret));
+    }
+
+    private static ResourceObject toDeliveryResource(WebhookDelivery delivery) {
+        return new ResourceObject(delivery.getId().toString(), DELIVERY_TYPE,
+                new DeliveryAttributes(delivery.getEventType(), delivery.getStatus(), delivery.getAttempts(),
+                        delivery.getMaxAttempts(), delivery.getResponseStatus(), delivery.getLastError()));
+    }
+}
