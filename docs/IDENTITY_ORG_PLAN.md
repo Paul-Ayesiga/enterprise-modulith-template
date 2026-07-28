@@ -52,7 +52,7 @@ Keycloak calls precede the short local transaction; a mid-flight failure leaves 
 - **V11** `organization` (id = kc org id, alias unique), `role` (org_id FK, code, system_role, unique(org_id,code)), `role_permission` (role_id FK, permission), `membership` (org_id FK, user_subject soft-ref, role_id FK, unique(org_id,user_subject)).
 
 ## Realm changes (`docker/keycloak/realm-smsone.json`)
-1. `"organizationsEnabled": true`. 2. built-in `organization` client scope w/ `oidc-organization-membership-mapper` + `addOrganizationId=true`. 3. `smsone-web` gets `optionalClientScopes:["organization"]` (SPA requests `scope=organization:<alias>`). 4. new confidential `smsone-admin` (service account) with realm-management roles `manage-organizations`,`view-organizations`,`query-organizations`,`manage-users`,`view-users`. 5. seed org `acme` with `david` as OWNER for local dev.
+1. `"organizationsEnabled": true`. 2. built-in `organization` client scope w/ `oidc-organization-membership-mapper` + `addOrganizationId=true`. 3. `smsone-web` gets `optionalClientScopes:["organization"]` (SPA requests `scope=organization:<alias>`). 4. new confidential `smsone-admin` (service account) with realm-management roles `manage-organizations`,`view-organizations`,`query-organizations`,`manage-users`,`view-users`. 5. seed org `acme` with `paul` as OWNER for local dev.
 
 ## Dependencies
 One new starter: `spring-boot-starter-oauth2-client` (BOM-managed) for the service-account token. RestClient from existing `spring-boot-starter-web`; JSON via Boot Jackson 3. No `org.keycloak:*`.

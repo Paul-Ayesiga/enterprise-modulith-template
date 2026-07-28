@@ -43,7 +43,7 @@ public class OpenApiConfig {
                                 Enterprise Spring Modulith template API. Every response uses the \
                                 unified envelope ({data | errors, meta, links}) with meta.requestId \
                                 always present; quote the requestId when reporting issues.""")
-                        .contact(new Contact().name("SMSOne").email("david@smsone.co.ug")))
+                        .contact(new Contact().name("SMSOne").email("ayesigapo@gmail.com")))
                 .servers(List.of(
                         new Server().url(localUrl).description("Local"),
                         new Server().url(stagingUrl).description("Staging"),

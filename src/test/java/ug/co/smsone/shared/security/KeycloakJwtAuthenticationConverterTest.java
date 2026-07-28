@@ -19,7 +19,7 @@ class KeycloakJwtAuthenticationConverterTest {
         Jwt jwt = Jwt.withTokenValue("token")
                 .header("alg", "RS256")
                 .subject("3f0f7a5e-0000-0000-0000-000000000001")
-                .claim("preferred_username", "david")
+                .claim("preferred_username", "paul")
                 .claim("realm_access", Map.of("roles", List.of("ADMIN", "USER")))
                 .claim("resource_access", Map.of("smsone-web", Map.of("roles", List.of("dashboard-viewer"))))
                 .issuedAt(Instant.now())
@@ -28,7 +28,7 @@ class KeycloakJwtAuthenticationConverterTest {
 
         AbstractAuthenticationToken authentication = converter.convert(jwt);
 
-        assertThat(authentication.getName()).isEqualTo("david");
+        assertThat(authentication.getName()).isEqualTo("paul");
         // Client roles are namespaced by client id — a client role named ADMIN must never satisfy
         // hasRole('ADMIN'), which is reserved for the realm role.
         assertThat(authentication.getAuthorities()).extracting(GrantedAuthority::getAuthority)

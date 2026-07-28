@@ -6,7 +6,7 @@ info:
     \ quote the requestId when reporting issues."
   contact:
     name: SMSOne
-    email: david@smsone.co.ug
+    email: ayesigapo@gmail.com
   version: "1"
 servers:
 - url: http://localhost:8080

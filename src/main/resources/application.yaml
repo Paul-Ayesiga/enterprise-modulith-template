@@ -79,6 +79,13 @@ app:
     invite-lifespan: ${PROVISIONING_INVITE_LIFESPAN:PT12H}
     redirect-uri: ${PROVISIONING_REDIRECT_URI:}
     app-client-id: ${PROVISIONING_APP_CLIENT:smsone-web}
+  identity:
+    dev-bootstrap:
+      # Off by default. When on, projects the local app_user row for an EXISTING Keycloak account so a
+      # realm-imported platform admin passes the no-JIT gate without owning an org. Never creates the
+      # Keycloak account. Idempotent; needs Keycloak reachable.
+      enabled: ${IDENTITY_DEV_BOOTSTRAP_ENABLED:false}
+      email: ${IDENTITY_DEV_BOOTSTRAP_EMAIL:ayesigapo@gmail.com}
   organization:
     dev-bootstrap:
       # Off by default. When on, seeds a Keycloak org + local projection with an OWNER at startup so
@@ -86,9 +93,9 @@ app:
       enabled: ${ORG_DEV_BOOTSTRAP_ENABLED:false}
       alias: ${ORG_DEV_BOOTSTRAP_ALIAS:acme}
       name: ${ORG_DEV_BOOTSTRAP_NAME:Acme}
-      owner-email: ${ORG_DEV_BOOTSTRAP_OWNER_EMAIL:david@smsone.co.ug}
-      owner-first-name: ${ORG_DEV_BOOTSTRAP_OWNER_FIRST:David}
-      owner-last-name: ${ORG_DEV_BOOTSTRAP_OWNER_LAST:Smsone}
+      owner-email: ${ORG_DEV_BOOTSTRAP_OWNER_EMAIL:ayesigapo@gmail.com}
+      owner-first-name: ${ORG_DEV_BOOTSTRAP_OWNER_FIRST:Paul}
+      owner-last-name: ${ORG_DEV_BOOTSTRAP_OWNER_LAST:Ayesiga}
   rate-limit:
     enabled: ${RATE_LIMIT_ENABLED:true}
     key-prefix: rl
@@ -150,7 +157,7 @@ app:
     admins:
       # In-app targeting resolves the admin's Keycloak subject from this email (identity module) —
       # the default matches the shipped dev realm's admin user so in-app delivery works out of the box.
-      - email: ${NOTIFICATION_ADMIN_EMAIL:david@smsone.co.ug}
+      - email: ${NOTIFICATION_ADMIN_EMAIL:ayesigapo@gmail.com}
   analytics:
     database-path: ${ANALYTICS_DB_PATH:data/analytics.duckdb}
     snapshot-dir: ${ANALYTICS_SNAPSHOT_DIR:data/snapshots}

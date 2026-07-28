@@ -14,8 +14,11 @@ COMPOSE      := docker compose -f $(COMPOSE_FILE) --env-file $(ENV_FILE)
 # App port + non-ServiceConnection endpoints are derived from the mapped ports in docker/.env
 # (falling back to clean-machine defaults). Keycloak needs BOTH the issuer URI (token validation)
 # and the base URL (Admin API / provisioning) pointed at the mapped port. Sourced fresh per run.
+# IDENTITY_DEV_BOOTSTRAP_ENABLED seeds the platform admin's app_user row locally (dev-only; the
+# property defaults to false so nothing is seeded outside these targets).
 RUN_ENV = set -a; . $(ENV_FILE); set +a; \
 	SERVER_PORT=$${SERVER_PORT:-8080} \
+	IDENTITY_DEV_BOOTSTRAP_ENABLED=true \
 	KEYCLOAK_ISSUER_URI=http://localhost:$${KEYCLOAK_PORT:-8081}/realms/smsone \
 	KEYCLOAK_URL=http://localhost:$${KEYCLOAK_PORT:-8081} \
 	S3_ENDPOINT=http://localhost:$${S3_PORT:-8333} \
@@ -50,13 +53,13 @@ ps: ## Show stack status + published ports
 logs: ## Tail stack logs — `make logs S=keycloak` for a single service
 	$(COMPOSE) logs -f $(S)
 
-run: env ## Run the app + auto-started stack (Ctrl-C stops both)
+run: env ## Run the app + auto-started stack (Ctrl-C stops both); seeds the platform admin
 	@$(RUN_ENV) ./gradlew bootRun
 
-seed: env ## Like `run`, but seeds the demo org (acme, owner david) at startup
+seed: env ## Like `run`, but also seeds the demo org (acme, owner paul) at startup
 	@$(RUN_ENV) ORG_DEV_BOOTSTRAP_ENABLED=true ./gradlew bootRun
 
-token: ## Print a dev access token — `make token U=jane` for another user
+token: ## Print a dev access token for the platform admin — `make token U=<user>` for another user
 	@scripts/token.sh $(U)
 
 build: ## Compile + assemble the app (skips tests)

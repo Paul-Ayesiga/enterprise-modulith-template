@@ -15,7 +15,7 @@ record OrgDevBootstrapProperties(String alias, String name, String ownerEmail,
             name = "Acme";
         }
         if (ownerEmail == null || ownerEmail.isBlank()) {
-            ownerEmail = "david@smsone.co.ug";
+            ownerEmail = "ayesigapo@gmail.com";
         }
     }
 }

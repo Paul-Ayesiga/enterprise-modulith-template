@@ -226,7 +226,7 @@ Success (single resource, 200):
 ```json
 {
   "data": { "id": "7d3f…", "type": "user",
-            "attributes": { "email": "david@smsone.co.ug", "status": "ACTIVE" } },
+            "attributes": { "email": "ayesigapo@gmail.com", "status": "ACTIVE" } },
   "meta": { "requestId": "01J9Z8Q7Y3M4K5N6P7R8S9T0AB", "timestamp": "2026-07-27T09:14:03.512Z", "apiVersion": "1" },
   "links": { "self": "/api/v1/users/7d3f…" }
 }
