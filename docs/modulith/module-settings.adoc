@@ -2,4 +2,6 @@
 |===
 |Base package
 |`ug.co.smsone.settings`
+|Bean references
+|* `u.c.s.s.audit.AuditLog` (in Shared Kernel)
 |===

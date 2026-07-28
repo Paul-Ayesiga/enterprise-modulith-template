@@ -40,9 +40,10 @@ class AuditApiTest extends AbstractIntegrationTest {
 
     private void seed(UUID orgId, String action, String target) {
         jdbc.update("""
-                insert into audit_log (id, org_id, action, target, detail, occurred_at, version, created_at)
-                values (?, ?, ?, ?, ?, now(), 0, now())
-                """, UUID.randomUUID(), orgId, action, target, "seed");
+                insert into audit_log
+                    (id, org_id, action, actor, target, from_state, to_state, occurred_at, version, created_at)
+                values (?, ?, ?, ?, ?, ?, ?, now(), 0, now())
+                """, UUID.randomUUID(), orgId, action, "admin-seed", target, "before", "after");
     }
 
     @Test
@@ -57,7 +58,10 @@ class AuditApiTest extends AbstractIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(2))
                 .andExpect(jsonPath("$.data[0].type").value("audit-entry"))
-                .andExpect(jsonPath("$.data[0].attributes.action").value(action));
+                .andExpect(jsonPath("$.data[0].attributes.action").value(action))
+                .andExpect(jsonPath("$.data[0].attributes.actor").value("admin-seed"))
+                .andExpect(jsonPath("$.data[0].attributes.fromState").value("before"))
+                .andExpect(jsonPath("$.data[0].attributes.toState").value("after"));
     }
 
     @Test

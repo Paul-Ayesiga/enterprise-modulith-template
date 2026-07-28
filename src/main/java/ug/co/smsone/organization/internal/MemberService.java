@@ -15,6 +15,7 @@ import ug.co.smsone.identity.ProvisionRequest;
 import ug.co.smsone.identity.ProvisionedUser;
 import ug.co.smsone.identity.UserProvisioning;
 import ug.co.smsone.organization.MemberRemoved;
+import ug.co.smsone.shared.audit.AuditLog;
 import ug.co.smsone.shared.error.ConflictException;
 import ug.co.smsone.shared.error.NotFoundException;
 import ug.co.smsone.shared.web.CursorPageRequest;
@@ -45,10 +46,12 @@ class MemberService {
     private final ApplicationEventPublisher events;
     private final PermissionEscalationGuard escalationGuard;
     private final TransactionTemplate transactionTemplate;
+    private final AuditLog auditLog;
 
     MemberService(MembershipRepository memberships, RoleRepository roles, UserProvisioning userProvisioning,
             KeycloakOrgAdminGateway keycloakOrg, ApplicationEventPublisher events,
-            PermissionEscalationGuard escalationGuard, TransactionTemplate transactionTemplate) {
+            PermissionEscalationGuard escalationGuard, TransactionTemplate transactionTemplate,
+            AuditLog auditLog) {
         this.memberships = memberships;
         this.roles = roles;
         this.userProvisioning = userProvisioning;
@@ -56,6 +59,7 @@ class MemberService {
         this.events = events;
         this.escalationGuard = escalationGuard;
         this.transactionTemplate = transactionTemplate;
+        this.auditLog = auditLog;
     }
 
     Membership invite(UUID orgId, String email, String firstName, String lastName, String roleCode) {
@@ -74,7 +78,10 @@ class MemberService {
         return memberships.findByOrgIdAndUserSubject(orgId, subject)
                 .orElseGet(() -> {
                     try {
-                        return memberships.save(Membership.create(orgId, subject, role.getId(), role.getCode()));
+                        Membership created = memberships.save(
+                                Membership.create(orgId, subject, role.getId(), role.getCode()));
+                        auditLog.record("organization.member_added", orgId, subject, null, "role=" + role.getCode());
+                        return created;
                     } catch (DataIntegrityViolationException ex) {
                         return memberships.findByOrgIdAndUserSubject(orgId, subject)
                                 .orElseThrow(() -> ex);
@@ -97,8 +104,12 @@ class MemberService {
         }
         escalationGuard.requireCallerHolds(orgId, newRole.getPermissions());
         guardLastOwnerLoss(orgId, membership); // demoting the last owner would lock the org out
+        String previousRole = roles.findById(membership.getRoleId()).map(Role::getCode).orElse(null);
         membership.assignRole(newRole.getId()); // publishes MembershipRoleChanged
-        return memberships.save(membership);
+        Membership saved = memberships.save(membership);
+        auditLog.record("organization.member_role_changed", orgId, subject,
+                "role=" + previousRole, "role=" + newRole.getCode());
+        return saved;
     }
 
     void remove(UUID orgId, String subject) {
@@ -108,9 +119,11 @@ class MemberService {
         transactionTemplate.executeWithoutResult(tx -> {
             Membership membership = requireMembership(orgId, subject);
             guardLastOwnerLoss(orgId, membership);
+            String previousRole = roles.findById(membership.getRoleId()).map(Role::getCode).orElse(null);
             memberships.delete(membership);
             // A delete does not trigger @DomainEvents, so publish explicitly — evicts the permission cache.
             events.publishEvent(new MemberRemoved(orgId, subject, Instant.now()));
+            auditLog.record("organization.member_removed", orgId, subject, "role=" + previousRole, null);
         });
         try {
             keycloakOrg.removeMember(orgId, subject); // unlink from the Keycloak org; user account is kept

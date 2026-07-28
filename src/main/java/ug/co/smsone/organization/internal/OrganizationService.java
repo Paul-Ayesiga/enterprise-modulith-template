@@ -6,6 +6,7 @@ import org.springframework.transaction.annotation.Transactional;
 import ug.co.smsone.identity.ProvisionRequest;
 import ug.co.smsone.identity.ProvisionedUser;
 import ug.co.smsone.identity.UserProvisioning;
+import ug.co.smsone.shared.audit.AuditLog;
 import ug.co.smsone.shared.error.ConflictException;
 import ug.co.smsone.shared.error.NotFoundException;
 
@@ -24,13 +25,15 @@ class OrganizationService {
     private final KeycloakOrgAdminGateway keycloakOrg;
     private final UserProvisioning userProvisioning;
     private final OrgProjectionWriter projectionWriter;
+    private final AuditLog auditLog;
 
     OrganizationService(OrganizationRepository organizations, KeycloakOrgAdminGateway keycloakOrg,
-            UserProvisioning userProvisioning, OrgProjectionWriter projectionWriter) {
+            UserProvisioning userProvisioning, OrgProjectionWriter projectionWriter, AuditLog auditLog) {
         this.organizations = organizations;
         this.keycloakOrg = keycloakOrg;
         this.userProvisioning = userProvisioning;
         this.projectionWriter = projectionWriter;
+        this.auditLog = auditLog;
     }
 
     /**
@@ -47,7 +50,10 @@ class OrganizationService {
             throw new ConflictException("An organization with alias '" + normalizedAlias + "' already exists.");
         }
         UUID kcOrgId = keycloakOrg.createOrganization(normalizedAlias, name); // concurrent duplicate -> 409
-        return provisionOwner(kcOrgId, normalizedAlias, name, ownerEmail, ownerFirstName, ownerLastName);
+        Organization organization = provisionOwner(kcOrgId, normalizedAlias, name,
+                ownerEmail, ownerFirstName, ownerLastName);
+        auditLog.record("organization.created", kcOrgId, normalizedAlias, null, "owner=" + ownerEmail);
+        return organization;
     }
 
     /** Idempotent get-or-create for the dev bootstrap: reuses the local projection if present. */
@@ -85,22 +91,33 @@ class OrganizationService {
     @Transactional
     Organization rename(UUID kcOrgId, String name) {
         Organization organization = require(kcOrgId);
+        String previousName = organization.getName();
         organization.rename(name);
-        return organizations.save(organization);
+        Organization saved = organizations.save(organization);
+        auditLog.record("organization.renamed", kcOrgId, organization.getAlias(), previousName, name);
+        return saved;
     }
 
     @Transactional
     Organization suspend(UUID kcOrgId) {
         Organization organization = require(kcOrgId);
+        String previousStatus = organization.getStatus().name();
         organization.suspend(); // publishes OrganizationStatusChanged -> permission cache eviction
-        return organizations.save(organization);
+        Organization saved = organizations.save(organization);
+        auditLog.record("organization.suspended", kcOrgId, organization.getAlias(),
+                previousStatus, organization.getStatus().name());
+        return saved;
     }
 
     @Transactional
     Organization reactivate(UUID kcOrgId) {
         Organization organization = require(kcOrgId);
+        String previousStatus = organization.getStatus().name();
         organization.reactivate();
-        return organizations.save(organization);
+        Organization saved = organizations.save(organization);
+        auditLog.record("organization.reactivated", kcOrgId, organization.getAlias(),
+                previousStatus, organization.getStatus().name());
+        return saved;
     }
 
     private static String normalize(String alias) {

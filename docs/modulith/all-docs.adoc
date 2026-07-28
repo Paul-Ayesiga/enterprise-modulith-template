@@ -9,6 +9,10 @@ include::module-shared.adoc[]
 plantuml::module-analytics.puml[,,format=svg]
 include::module-analytics.adoc[]
 
+== Audit
+plantuml::module-audit.puml[,,format=svg]
+include::module-audit.adoc[]
+
 == Files
 plantuml::module-files.puml[,,format=svg]
 include::module-files.adoc[]
@@ -32,8 +36,4 @@ include::module-notification.adoc[]
 == Organization
 plantuml::module-organization.puml[,,format=svg]
 include::module-organization.adoc[]
-
-== Audit
-plantuml::module-audit.puml[,,format=svg]
-include::module-audit.adoc[]
 

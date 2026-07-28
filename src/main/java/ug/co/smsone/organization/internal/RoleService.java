@@ -5,10 +5,12 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ug.co.smsone.organization.Permission;
+import ug.co.smsone.shared.audit.AuditLog;
 import ug.co.smsone.shared.error.ConflictException;
 import ug.co.smsone.shared.error.ForbiddenException;
 import ug.co.smsone.shared.error.NotFoundException;
@@ -24,12 +26,14 @@ class RoleService {
     private final RoleRepository roles;
     private final MembershipRepository memberships;
     private final PermissionEscalationGuard escalationGuard;
+    private final AuditLog auditLog;
 
     RoleService(RoleRepository roles, MembershipRepository memberships,
-            PermissionEscalationGuard escalationGuard) {
+            PermissionEscalationGuard escalationGuard, AuditLog auditLog) {
         this.roles = roles;
         this.memberships = memberships;
         this.escalationGuard = escalationGuard;
+        this.auditLog = auditLog;
     }
 
     List<Role> list(UUID orgId) {
@@ -56,7 +60,9 @@ class RoleService {
         try {
             // Flush now so a concurrent same-code create surfaces here as the documented 409
             // (uq_org_role_org_code), not as a 500 at commit.
-            return roles.saveAndFlush(Role.create(orgId, code, name, false, description, granted));
+            Role saved = roles.saveAndFlush(Role.create(orgId, code, name, false, description, granted));
+            auditLog.record("organization.role_created", orgId, code, null, codes(granted));
+            return saved;
         } catch (DataIntegrityViolationException ex) {
             throw new ConflictException("A role with code '" + code + "' already exists.");
         }
@@ -67,10 +73,13 @@ class RoleService {
         Role role = require(orgId, roleId);
         Set<Permission> granted = toPermissions(permissionCodes);
         escalationGuard.requireCallerHolds(orgId, granted);
+        String previousPermissions = codes(role.getPermissions());
         // requireEditable() inside replacePermissions/rename rejects system roles with a 403.
         role.replacePermissions(granted); // publishes RolePermissionsChanged
         role.rename(name, description);
-        return roles.save(role); // save() flushes AND publishes the registered event (cache eviction)
+        Role saved = roles.save(role); // save() flushes AND publishes the registered event (cache eviction)
+        auditLog.record("organization.role_updated", orgId, role.getCode(), previousPermissions, codes(granted));
+        return saved;
     }
 
     @Transactional
@@ -88,6 +97,11 @@ class RoleService {
         } catch (DataIntegrityViolationException ex) {
             throw new ConflictException("Role is still assigned to members; reassign them first.");
         }
+        auditLog.record("organization.role_deleted", orgId, role.getCode(), codes(role.getPermissions()), null);
+    }
+
+    private static String codes(Set<Permission> permissions) {
+        return permissions.stream().map(Permission::code).sorted().collect(Collectors.joining(", "));
     }
 
     private static String normalizeCode(String code) {

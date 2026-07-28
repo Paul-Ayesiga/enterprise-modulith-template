@@ -11,6 +11,7 @@
 
 _Others_
 
+* `u.c.s.s.audit.AuditLog`
 * `u.c.s.s.cache.CacheConfig`
 * `u.c.s.s.cache.CacheInvalidationBroadcaster`
 * `u.c.s.s.cache.TwoLevelCacheManager`

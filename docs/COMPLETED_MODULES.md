@@ -18,7 +18,7 @@ _Last updated: 2026-07-28._
 | **notification** | Multi-channel, pluggable delivery | `/api/v1/notifications` | — (consumes `FeatureFlagChanged`) | ✅ |
 | **identity** | Admin-driven user provisioning (no JIT) | `/api/v1/me`, `/api/v1/admin/users` | `UserProvisioned`, `UserActivated` | ✅ |
 | **organization** | Keycloak orgs + org-scoped RBAC authority | `/api/v1/orgs/**`, `/api/v1/permissions` | `OrganizationRegistered`, `MembershipCreated`, `MembershipRoleChanged`, `MemberRemoved`, `RolePermissionsChanged`, `OrganizationStatusChanged` | ✅ |
-| **audit** | Append-only audit trail (event consumer) | `/api/v1/audit`, `/api/v1/orgs/{orgId}/audit` | — (consumes every module's events) | ✅ |
+| **audit** | Append-only audit trail (who/when/where/what/from→to) | `/api/v1/audit`, `/api/v1/orgs/{orgId}/audit` | — (records via the `AuditLog` port) | ✅ |
 
 ---
 
@@ -89,8 +89,8 @@ Local projection of **Keycloak Organizations** + the **org-scoped RBAC authority
 - Verified: OWNER/ADMIN/MEMBER matrix + cross-org & no-active-org denial (HTTP), invite provisioning across modules (Keycloak mocked), last-owner block, unknown-permission `422`, and **async permission-cache eviction** after a role change. A **live Testcontainers Keycloak IT** pins the Organizations Admin-API wire contract (create-org, search-by-alias, add-member, remove-member) end-to-end.
 
 ## audit
-An append-only trail of state changes — the first pure **event consumer** (it publishes nothing).
-- **Recording**: `@ApplicationModuleListener`s turn every module's domain events (`UserProvisioned`/`UserActivated`, all six `organization` events, `SettingChanged`/`FeatureFlagChanged`) into an `audit_log` row — action, org, target, detail, occurred-at. **Idempotent via `EventInbox`** so at-least-once redelivery never doubles a row.
-- **Query**: `GET /api/v1/audit` (platform `ADMIN`, all orgs) and `GET /api/v1/orgs/{orgId}/audit` (org-scoped, gated by a new **`audit:read`** permission — an org's own admins review their trail without platform access). Both cursor-paginated (newest first) and filterable by `action` + an `from`/`to` ISO-instant window.
-- **Actor** is a reserved (nullable) column: today's domain events record *what* changed, not *who* changed it (async listeners have no security context). Populating it is a clean follow-up — enrich the events with the acting principal at publish time.
-- Verified: event → row recording (Modulith `Scenario`) + `EventInbox` dedup; REST filtering, pagination, platform-admin gating, and org-scoped `audit:read` (with cross-org isolation).
+An append-only trail: **who / when / where / what / from→to** for every state change.
+- **Recording**: a shared **`AuditLog` port** that mutation services call at the point of change, *inside the changing transaction* — so the audit row commits (or rolls back) atomically with the change and the acting principal is still on the thread. The audit module's impl fills in **who** from the security context (null for system-triggered changes — dev bootstrap, startup reconciliation) and **when** from the clock. A no-op default `AuditLog` lives in `shared` so single-module slice tests boot without the audit module (the real impl is `@Primary`).
+- **Instrumented**: organization (org create/rename/suspend/reactivate, member add/remove/role-change, role create/update/delete), identity (user provisioned), settings (setting changed, feature-flag changed) — each capturing the **before/after** state.
+- **Query**: `GET /api/v1/audit` (platform `ADMIN`, all orgs) and `GET /api/v1/orgs/{orgId}/audit` (org-scoped, gated by the **`audit:read`** permission — an org's own admins review their trail without platform access). Both cursor-paginated (newest first) and filterable by `action` + a `from`/`to` ISO-instant window.
+- Verified: capture through a real service records who + what + from→to atomically (and null actor for system changes); REST filtering, pagination, platform-admin gating, and org-scoped `audit:read` with cross-org isolation.

@@ -8,6 +8,7 @@ import ug.co.smsone.identity.ProvisionRequest;
 import ug.co.smsone.identity.ProvisionedUser;
 import ug.co.smsone.identity.UserProvisioning;
 import ug.co.smsone.identity.internal.KeycloakUserAdminGateway.KeycloakUser;
+import ug.co.smsone.shared.audit.AuditLog;
 
 /**
  * Provisions a user: create-or-reuse the Keycloak account, invite it if it has no credentials yet,
@@ -22,11 +23,14 @@ class UserProvisioningService implements UserProvisioning {
     private final KeycloakUserAdminGateway keycloak;
     private final UserRepository users;
     private final Clock clock;
+    private final AuditLog auditLog;
 
-    UserProvisioningService(KeycloakUserAdminGateway keycloak, UserRepository users, Clock clock) {
+    UserProvisioningService(KeycloakUserAdminGateway keycloak, UserRepository users, Clock clock,
+            AuditLog auditLog) {
         this.keycloak = keycloak;
         this.users = users;
         this.clock = clock;
+        this.auditLog = auditLog;
     }
 
     @Override
@@ -43,6 +47,7 @@ class UserProvisioningService implements UserProvisioning {
                 keycloak.issueTemporaryCredentials(kcUser.id());
             }
             saveLocalUser(kcUser.id(), request.email());
+            auditLog.record("identity.user_provisioned", null, kcUser.id(), null, "email=" + request.email());
         }
         return new ProvisionedUser(kcUser.id(), request.email(), alreadyProvisioned);
     }

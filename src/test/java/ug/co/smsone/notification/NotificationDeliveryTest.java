@@ -224,15 +224,16 @@ class NotificationDeliveryTest {
             assertThat(statusFor(subject)).isEqualTo("PENDING"); // rescheduled, not dead yet
             assertThat(hits.get()).isEqualTo(1);
 
-            // Fast-forward the backoff instead of sleeping through it, drain, repeat to exhaustion.
+            // Fast-forward the backoff instead of sleeping through it and drain, repeating until the
+            // delivery is dead-lettered — tolerant of a drain that doesn't deliver under load (the next
+            // poll fast-forwards and retries), instead of assuming exactly one delivery per iteration.
             int maxAttempts = 5; // app.notification.delivery.max-attempts default
-            for (int attempt = 2; attempt <= maxAttempts; attempt++) {
+            await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
                 jdbc.update("update notification_delivery set next_attempt_at = now() where subject = ?", subject);
                 drainFully();
-            }
-
+                assertThat(statusFor(subject)).isEqualTo("FAILED");
+            });
             assertThat(hits.get()).isEqualTo(maxAttempts);
-            assertThat(statusFor(subject)).isEqualTo("FAILED");
         } finally {
             server.stop(0);
         }

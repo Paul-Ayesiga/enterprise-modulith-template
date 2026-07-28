@@ -6,6 +6,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.domain.Window;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import ug.co.smsone.shared.audit.AuditLog;
 import ug.co.smsone.shared.error.NotFoundException;
 import ug.co.smsone.shared.web.CursorPageRequest;
 
@@ -16,9 +17,11 @@ public class SettingService {
     public static final String VALUES_CACHE = "setting-values";
 
     private final SettingRepository repository;
+    private final AuditLog auditLog;
 
-    public SettingService(SettingRepository repository) {
+    public SettingService(SettingRepository repository, AuditLog auditLog) {
         this.repository = repository;
+        this.auditLog = auditLog;
     }
 
     @Transactional(readOnly = true)
@@ -45,12 +48,16 @@ public class SettingService {
 
     @CacheEvict(cacheNames = VALUES_CACHE, key = "#key")
     public Setting put(String key, String value, String description) {
-        Setting setting = repository.findByKey(key)
-                .map(existing -> {
-                    existing.change(value, description);
-                    return existing;
+        var existing = repository.findByKey(key);
+        String previousValue = existing.map(Setting::getValue).orElse(null);
+        Setting setting = existing
+                .map(current -> {
+                    current.change(value, description);
+                    return current;
                 })
                 .orElseGet(() -> Setting.create(key, value, description));
-        return repository.save(setting);
+        Setting saved = repository.save(setting);
+        auditLog.record("settings.changed", null, key, previousValue, value);
+        return saved;
     }
 }

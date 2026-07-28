@@ -38,8 +38,8 @@ class AuditController {
         this.entries = entries;
     }
 
-    record AuditAttributes(String action, String orgId, String target, String actor, String detail,
-            Instant occurredAt, Instant recordedAt) {
+    record AuditAttributes(String action, String actor, String orgId, String target,
+            String fromState, String toState, Instant occurredAt, Instant recordedAt) {
     }
 
     @GetMapping("/api/v1/audit")
@@ -108,10 +108,11 @@ class AuditController {
         return new ResourceObject(entry.getId().toString(), RESOURCE_TYPE,
                 new AuditAttributes(
                         entry.getAction(),
+                        entry.getActor(),
                         entry.getOrgId() == null ? null : entry.getOrgId().toString(),
                         entry.getTarget(),
-                        entry.getActor(),
-                        entry.getDetail(),
+                        entry.getFromState(),
+                        entry.getToState(),
                         entry.getOccurredAt(),
                         entry.getCreatedAt()));
     }
