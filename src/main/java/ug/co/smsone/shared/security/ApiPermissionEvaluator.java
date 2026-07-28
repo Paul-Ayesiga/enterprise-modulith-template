@@ -1,31 +1,60 @@
 package ug.co.smsone.shared.security;
 
 import java.io.Serializable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.security.access.PermissionEvaluator;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Component;
 
 /**
- * Deliberate seam for object-level authorization ({@code hasPermission(...)} in method security).
- * Default-deny until a real policy (RBAC/ABAC) lands; role checks via {@code hasRole} are unaffected.
+ * Object-level authorization seam for method security. For org-scoped checks —
+ * {@code @PreAuthorize("hasPermission(#orgId, 'organization', 'member:invite')")} — it delegates to
+ * the {@link OrgAuthorization} port (implemented by the organization module): the caller's token must
+ * be scoped to {@code #orgId} (cross-org attempts denied before any DB hit) AND their role in that
+ * org must carry the permission. Default-deny when no policy is present or the token has no active org.
  */
 @Component
 public class ApiPermissionEvaluator implements PermissionEvaluator {
 
-    private static final Logger log = LoggerFactory.getLogger(ApiPermissionEvaluator.class);
+    private static final String ORG_TARGET = "organization";
+
+    private final CurrentUserProvider currentUserProvider;
+    private final ObjectProvider<OrgAuthorization> orgAuthorization;
+
+    public ApiPermissionEvaluator(CurrentUserProvider currentUserProvider,
+            ObjectProvider<OrgAuthorization> orgAuthorization) {
+        this.currentUserProvider = currentUserProvider;
+        this.orgAuthorization = orgAuthorization;
+    }
 
     @Override
     public boolean hasPermission(Authentication authentication, Object targetDomainObject, Object permission) {
-        log.debug("hasPermission({}, {}) denied by default-deny policy", targetDomainObject, permission);
-        return false;
+        return false; // object-form unused for org RBAC
     }
 
     @Override
     public boolean hasPermission(Authentication authentication, Serializable targetId, String targetType,
             Object permission) {
-        log.debug("hasPermission({}, {}, {}) denied by default-deny policy", targetType, targetId, permission);
-        return false;
+        if (!ORG_TARGET.equals(targetType)) {
+            return false;
+        }
+        OrgAuthorization authz = orgAuthorization.getIfAvailable();
+        if (authz == null) {
+            return false; // no policy wired -> default deny
+        }
+        CurrentUser user = currentUserProvider.currentUser().orElse(null);
+        if (user == null || user.activeOrgId() == null) {
+            return false; // token not scoped to a single org -> deny
+        }
+        if (!matchesActiveOrg(user, targetId)) {
+            return false; // acting on an org the token isn't scoped to -> deny
+        }
+        return authz.hasPermission(user.subject(), user.activeOrgId(), String.valueOf(permission));
+    }
+
+    private static boolean matchesActiveOrg(CurrentUser user, Serializable targetId) {
+        String target = String.valueOf(targetId);
+        return target.equals(String.valueOf(user.activeOrgId()))
+                || target.equalsIgnoreCase(user.activeOrgAlias());
     }
 }
