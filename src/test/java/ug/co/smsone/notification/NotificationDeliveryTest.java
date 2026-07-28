@@ -133,16 +133,17 @@ class NotificationDeliveryTest {
         String hookUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/hook";
         try {
             notifications.dispatch(new NotificationRequest("Deploy complete", "Release v1.2.3 is live.",
-                    List.of(Recipient.webhook(hookUrl), Recipient.inApp("jane"), Recipient.email("jane@smsone.co.ug")),
+                    List.of(Recipient.webhook(hookUrl), Recipient.inApp("recipient-1"),
+                            Recipient.email("recipient-1@smsone.co.ug")),
                     Map.of()));
             drainFully();
 
             synchronized (webhookBody) {
                 assertThat(webhookBody.toString()).contains("Deploy complete").contains("v1.2.3");
             }
-            assertThat(inAppFor("jane", "Deploy complete")).isGreaterThanOrEqualTo(1);
+            assertThat(inAppFor("recipient-1", "Deploy complete")).isGreaterThanOrEqualTo(1);
             await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
-                    assertThat(mailpitMessages()).contains("jane@smsone.co.ug").contains("Deploy complete"));
+                    assertThat(mailpitMessages()).contains("recipient-1@smsone.co.ug").contains("Deploy complete"));
         } finally {
             server.stop(0);
         }

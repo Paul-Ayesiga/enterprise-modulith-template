@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Print a Keycloak access token for a dev user.
 #
-#   scripts/token.sh                 # david (ADMIN+USER)
-#   scripts/token.sh jane            # jane  (USER)
-#   scripts/token.sh david david123  # explicit password
+#   scripts/token.sh                 # paul — the platform super-admin (ADMIN+USER)
+#   scripts/token.sh paul Paul123    # explicit password
+#   scripts/token.sh someone pass    # any user you added to the realm yourself
 #   TOKEN=$(scripts/token.sh)        # capture into a variable
 #
 # Ports are read from docker/.env (falls back to template defaults).
@@ -16,8 +16,9 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KC_PORT="${KEYCLOAK_PORT:-8081}"
 REALM="${KEYCLOAK_REALM:-smsone}"
 CLIENT="${KEYCLOAK_CLIENT:-smsone-web}"
-USER_NAME="${1:-david}"
-PASSWORD="${2:-${USER_NAME}123}"   # dev convention: david->david123, jane->jane123
+USER_NAME="${1:-paul}"
+# The realm ships exactly one dev user (paul / Paul123); pass arg 2 for any user you add yourself.
+PASSWORD="${2:-${KEYCLOAK_PASSWORD:-Paul123}}"
 # Request the optional 'organization' scope so the token carries the active-org claim that org-scoped
 # @PreAuthorize checks require. Use e.g. KEYCLOAK_SCOPE='organization:acme' to pin a single org.
 SCOPE="${KEYCLOAK_SCOPE:-organization}"

@@ -15,13 +15,13 @@ lists every target:
 
 | Target | What it does |
 |---|---|
-| `make run` | App + auto-started stack (Ctrl-C stops both) |
-| `make seed` | Like `run`, plus seeds the `acme` demo org (owner `david`) at startup |
+| `make run` | App + auto-started stack (Ctrl-C stops both); provisions the platform admin `paul` |
+| `make seed` | Like `run`, plus seeds the `acme` demo org (owner `paul`) at startup |
 | `make up` · `down` · `restart` | Infra stack only — e.g. to run the app from your IDE |
 | `make ps` · `logs S=keycloak` | Stack status · tail one service's logs |
 | `make env` | Create `docker/.env` from the example (one-time) |
 | `make pull` | Pre-pull images (Colima pull-storm workaround, one-time) |
-| `make token U=jane` | Print a dev access token (default `david`) |
+| `make token` | Print a dev access token for `paul` (`U=<user>` for one you added) |
 | `make build` · `test` · `openapi` | Build (no tests) · full suite · regenerate the OpenAPI spec |
 | `make nuke` | `down -v` — wipe data volumes for a clean slate |
 
@@ -30,12 +30,15 @@ lists every target:
 ## Get a token
 
 ```bash
-make token                       # david (ADMIN+USER);  make token U=jane for jane (USER)
+make token                       # paul — the platform super-admin (ADMIN + USER)
 TOKEN=$(scripts/token.sh)        # capture into a variable
 scripts/api.sh GET "/api/v1/settings?page[size]=5"           # auto-fetches a token, encodes page[...]
 scripts/api.sh PUT /api/v1/settings/my.key -d '{"value":"hi"}'
-API_USER=jane scripts/api.sh PUT /api/v1/feature-flags/x -d '{"enabled":true}'   # -> 403
+scripts/api.sh GET /api/v1/admin/users                       # platform-admin user listing
 ```
+
+Only the super-admin ships in the realm. To exercise a 403, add a plain `USER` in the Keycloak admin
+console and call with `API_USER=<name> API_PASSWORD=<pass> scripts/api.sh …`.
 
 ---
 
@@ -61,10 +64,22 @@ API_USER=jane scripts/api.sh PUT /api/v1/feature-flags/x -d '{"enabled":true}'  
 
 ## Dev users (Keycloak realm `smsone`)
 
-| Username | Password | Realm roles |
-|---|---|---|
-| `david` | `david123` | `ADMIN`, `USER` |
-| `jane` | `jane123` | `USER` |
+| Username | Password | Email | Realm roles |
+|---|---|---|---|
+| `paul` | `Paul123` | `ayesigapo@gmail.com` | `ADMIN`, `USER` — platform super-admin |
+
+`ADMIN` is the platform role behind every `/api/v1/admin/**` route. Because access is **no-JIT**, a
+valid JWT alone is not access: the subject also needs a local `app_user` row. `make run`/`make seed`
+set `IDENTITY_DEV_BOOTSTRAP_ENABLED=true`, which projects that row for the realm account matching
+`app.identity.dev-bootstrap.email` (default `ayesigapo@gmail.com`) — it never creates the Keycloak
+account, and the property is `false` by default so nothing is seeded outside those targets.
+
+```bash
+scripts/api.sh GET "/api/v1/admin/users?page[size]=10"   # -> 200 with paul's own row
+```
+
+Changing the realm export only takes effect on a fresh Keycloak container (`--import-realm` skips an
+existing realm): run `make restart`, or `make nuke && make up` to also wipe the app DB.
 
 Keycloak admin: `admin` / `admin`. SeaweedFS creds live in `docker/seaweedfs/s3-config.json`.
 
@@ -105,10 +120,10 @@ Keycloak admin: `admin` / `admin`. SeaweedFS creds live in `docker/seaweedfs/s3-
 
 ### Organizations & org-scoped RBAC (no-JIT)
 Org endpoints need the token's **active org** to match `{orgId}` — `scripts/token.sh` requests the
-`organization` scope so david's token carries it. The Keycloak Admin API (provisioning, org creation)
+`organization` scope so paul's token carries it. The Keycloak Admin API (provisioning, org creation)
 uses the `smsone-admin` service account; its dev secret is baked in (override `KEYCLOAK_ADMIN_SECRET`
-in prod). To seed a demo org `acme` with david as OWNER at startup, run the app with
-`ORG_DEV_BOOTSTRAP_ENABLED=true` (needs Keycloak up; idempotent, best-effort).
+in prod). To seed a demo org `acme` with paul as OWNER at startup, run `make seed` (or set
+`ORG_DEV_BOOTSTRAP_ENABLED=true`; needs Keycloak up, idempotent, best-effort).
 ```bash
 # once bootstrapped (or after POST /orgs), find your active org id and drive the RBAC surface:
 scripts/api.sh GET /api/v1/me                              # -> data.attributes.activeOrgId
@@ -118,7 +133,7 @@ scripts/api.sh POST "/api/v1/orgs/$ORG/members" \
   -d '{"email":"newbie@smsone.co.ug","firstName":"New","roleCode":"MEMBER"}'   # invites + emails creds
 scripts/api.sh POST "/api/v1/orgs/$ORG/roles" \
   -d '{"code":"AUDITOR","name":"Auditor","permissions":["org:read","member:read"]}'
-API_USER=jane scripts/api.sh GET "/api/v1/orgs/$ORG/members"   # 403 (jane isn't a member of the org)
+API_USER=other API_PASSWORD=... scripts/api.sh GET "/api/v1/orgs/$ORG/members"   # 403 (not a member)
 ```
 
 ### Response envelope (every response)

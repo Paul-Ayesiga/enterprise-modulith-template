@@ -1,13 +1,18 @@
 package ug.co.smsone.shared.security;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
@@ -62,12 +67,30 @@ class KeycloakIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void securedEndpointAcceptsRealKeycloakJwt() throws Exception {
-        String token = passwordGrantToken("david", "david123");
+        String token = passwordGrantToken("paul", "Paul123");
 
         mockMvc.perform(get("/test/echo").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.message").value("hello"))
                 .andExpect(jsonPath("$.meta.requestId").exists());
+    }
+
+    /**
+     * Regression: a realm export that declares {@code clientScopes} REPLACES Keycloak's built-ins, so
+     * dropping {@code basic}/{@code roles} mints tokens with no {@code sub} and no {@code realm_access}
+     * — the resource server still accepts them, then every request authorizes as nobody (403 on
+     * everything, users that look "not provisioned"). Assert the claims the app authorizes on.
+     */
+    @Test
+    void realmMintsTokensCarryingSubjectAndRealmRoles() throws Exception {
+        String payload = new String(Base64.getUrlDecoder()
+                .decode(passwordGrantToken("paul", "Paul123").split("\\.")[1]), StandardCharsets.UTF_8);
+        JsonNode claims = new ObjectMapper().readTree(payload);
+
+        assertThat(claims.path("sub").asText()).isNotBlank();
+        assertThat(claims.path("preferred_username").asText()).isEqualTo("paul");
+        assertThat(claims.path("realm_access").path("roles"))
+                .extracting(JsonNode::asText).contains("ADMIN", "USER");
     }
 
     @Test

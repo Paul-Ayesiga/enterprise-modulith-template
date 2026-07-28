@@ -17,6 +17,8 @@ import org.springframework.data.redis.serializer.GenericJacksonJsonRedisSerializ
 import org.springframework.data.redis.serializer.RedisSerializationContext;
 import org.springframework.data.redis.listener.ChannelTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
+import tools.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
+import tools.jackson.databind.jsontype.PolymorphicTypeValidator;
 
 @Configuration(proxyBeanMethods = false)
 @EnableCaching
@@ -24,6 +26,22 @@ import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 public class CacheConfig {
 
     private static final String CACHE_PREFIX = "smsone:cache:";
+
+    /**
+     * L2 stores JSON, which is type-free: without type ids a cached {@code Set<String>} reads back as
+     * an {@code ArrayList} and a record as a {@code LinkedHashMap}, so the {@code @Cacheable} proxy
+     * throws ClassCastException — and only after L1 expires, which makes it look intermittent.
+     * Typing is therefore ON, but never {@code enableUnsafeDefaultTyping()}: a cache is attacker-
+     * reachable if Valkey is, so the validator allows only our own types and the JDK value types we
+     * actually cache. Anything else fails closed at deserialization.
+     */
+    private static final PolymorphicTypeValidator CACHE_TYPE_VALIDATOR = BasicPolymorphicTypeValidator.builder()
+            .allowIfSubType("ug.co.smsone.")
+            .allowIfSubType("java.util.")
+            .allowIfSubType("java.lang.")
+            .allowIfSubType("java.time.")
+            .allowIfSubType("java.math.")
+            .build();
 
     @Bean
     CaffeineCacheManager caffeineCacheManager(CacheProperties properties) {
@@ -40,9 +58,12 @@ public class CacheConfig {
         RedisCacheConfiguration cacheConfiguration = RedisCacheConfiguration.defaultCacheConfig()
                 .entryTtl(properties.l2Ttl())
                 .prefixCacheNameWith(CACHE_PREFIX)
-                // Jackson 3 JSON values (readable in Valkey, no Serializable/JVM coupling)
+                // Jackson 3 JSON values (readable in Valkey, no Serializable/JVM coupling), carrying
+                // the type id needed to reconstruct non-scalar values — see CACHE_TYPE_VALIDATOR.
                 .serializeValuesWith(RedisSerializationContext.SerializationPair.fromSerializer(
-                        GenericJacksonJsonRedisSerializer.builder().build()));
+                        GenericJacksonJsonRedisSerializer.builder()
+                                .enableDefaultTyping(CACHE_TYPE_VALIDATOR)
+                                .build()));
         return RedisCacheManager.builder(connectionFactory)
                 .cacheDefaults(cacheConfiguration)
                 .build();
