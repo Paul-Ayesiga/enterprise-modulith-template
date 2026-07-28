@@ -1,0 +1,64 @@
+package ug.co.smsone.organization.internal;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Table;
+import java.time.Instant;
+import java.util.UUID;
+import ug.co.smsone.organization.OrganizationRegistered;
+import ug.co.smsone.shared.persistence.AggregateRoot;
+
+/** Local projection of a Keycloak organization. {@code kcOrgId} is the tenant key used everywhere. */
+@Entity
+@Table(name = "organization")
+class Organization extends AggregateRoot {
+
+    @Column(name = "kc_org_id", nullable = false, unique = true, updatable = false)
+    private UUID kcOrgId;
+
+    @Column(nullable = false, unique = true, length = 120)
+    private String alias;
+
+    @Column(nullable = false, length = 200)
+    private String name;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private OrganizationStatus status;
+
+    protected Organization() {
+        // JPA
+    }
+
+    static Organization register(UUID kcOrgId, String alias, String name) {
+        Organization organization = new Organization();
+        organization.kcOrgId = kcOrgId;
+        organization.alias = alias;
+        organization.name = name;
+        organization.status = OrganizationStatus.ACTIVE;
+        organization.registerEvent(new OrganizationRegistered(kcOrgId, alias, Instant.now()));
+        return organization;
+    }
+
+    void rename(String name) {
+        this.name = name;
+    }
+
+    UUID getKcOrgId() {
+        return kcOrgId;
+    }
+
+    String getAlias() {
+        return alias;
+    }
+
+    String getName() {
+        return name;
+    }
+
+    OrganizationStatus getStatus() {
+        return status;
+    }
+}
