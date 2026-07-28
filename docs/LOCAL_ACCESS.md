@@ -8,69 +8,33 @@ live in `docker/.env.example` and the Keycloak realm export — never used in st
 
 ---
 
-## Start / stop the app
+## Run it
 
-```bash
-# start (brings up the whole Compose stack + the app on $SERVER_PORT)
-set -a; . docker/.env; set +a
-SERVER_PORT=$SERVER_PORT \
-KEYCLOAK_ISSUER_URI=http://localhost:$KEYCLOAK_PORT/realms/smsone \
-S3_ENDPOINT=http://localhost:$S3_PORT \
-SMTP_HOST=localhost SMTP_PORT=$SMTP_PORT \
-./gradlew bootRun
+`make run` starts the app, which **auto-starts the whole Compose stack** for you. `make` (no target)
+lists every target:
 
-# stop the app: Ctrl-C  (Compose stops with it — lifecycle is start-and-stop)
-# stop infra manually if needed:
-docker compose -f docker/docker-compose.yml --env-file docker/.env down
-```
-
-### Run the whole stack standalone (infra only, without the app)
-`./gradlew bootRun` auto-starts the Compose stack for you (Spring Boot's docker-compose support), so
-you rarely need this. But to bring up the services on their own — to inspect them, or to run the app
-from your IDE — use Compose directly (always pass `--env-file docker/.env` so the port overrides apply):
-
-```bash
-docker compose -f docker/docker-compose.yml --env-file docker/.env up -d      # start postgres, keycloak, valkey, seaweedfs, mailpit, otel-lgtm
-docker compose -f docker/docker-compose.yml --env-file docker/.env ps         # status + published ports
-docker compose -f docker/docker-compose.yml --env-file docker/.env logs -f keycloak
-docker compose -f docker/docker-compose.yml --env-file docker/.env down        # stop  (add -v to also wipe volumes/data)
-```
-
-Then run the app against the already-running stack by disabling its Compose management:
-```bash
-set -a; . docker/.env; set +a
-SPRING_DOCKER_COMPOSE_ENABLED=false SERVER_PORT=$SERVER_PORT \
-  KEYCLOAK_ISSUER_URI=http://localhost:$KEYCLOAK_PORT/realms/smsone \
-  S3_ENDPOINT=http://localhost:$S3_PORT SMTP_HOST=localhost SMTP_PORT=$SMTP_PORT \
-  POSTGRES_PORT=$POSTGRES_PORT VALKEY_PORT=$VALKEY_PORT ./gradlew bootRun
-```
-
-> On this machine (Colima): pre-pull images before the first `up` to avoid the pull-storm crash —
-> `postgres:18.4-alpine quay.io/keycloak/keycloak:26.7.0 valkey/valkey:8-alpine chrislusf/seaweedfs:4.40 axllent/mailpit:v1.30.2 grafana/otel-lgtm:0.28.0`.
+| Target | What it does |
+|---|---|
+| `make run` | App + auto-started stack (Ctrl-C stops both) |
+| `make seed` | Like `run`, plus seeds the `acme` demo org (owner `david`) at startup |
+| `make up` · `down` · `restart` | Infra stack only — e.g. to run the app from your IDE |
+| `make ps` · `logs S=keycloak` | Stack status · tail one service's logs |
+| `make env` | Create `docker/.env` from the example (one-time) |
+| `make pull` | Pre-pull images (Colima pull-storm workaround, one-time) |
+| `make token U=jane` | Print a dev access token (default `david`) |
+| `make build` · `test` · `openapi` | Build (no tests) · full suite · regenerate the OpenAPI spec |
+| `make nuke` | `down -v` — wipe data volumes for a clean slate |
 
 ---
 
-## Get a token (the simple command)
+## Get a token
 
 ```bash
-scripts/token.sh                 # david  (ADMIN + USER)
-scripts/token.sh jane            # jane   (USER only)
+make token                       # david (ADMIN+USER);  make token U=jane for jane (USER)
 TOKEN=$(scripts/token.sh)        # capture into a variable
-
-# one-off authenticated call (auto-fetches a token, encodes page[...] for you):
-scripts/api.sh GET "/api/v1/settings?page[size]=5"
-scripts/api.sh PUT /api/v1/settings/my.key -d '{"value":"hi","description":"demo"}'
+scripts/api.sh GET "/api/v1/settings?page[size]=5"           # auto-fetches a token, encodes page[...]
+scripts/api.sh PUT /api/v1/settings/my.key -d '{"value":"hi"}'
 API_USER=jane scripts/api.sh PUT /api/v1/feature-flags/x -d '{"enabled":true}'   # -> 403
-```
-
-Raw curl equivalent (note the **URL-encoded brackets** `%5B%5D` — Tomcat rejects raw `[ ]`):
-
-```bash
-TOKEN=$(curl -s -X POST http://localhost:18081/realms/smsone/protocol/openid-connect/token \
-  -d grant_type=password -d client_id=smsone-web -d username=david -d password=david123 \
-  | python3 -c 'import sys,json;print(json.load(sys.stdin)["access_token"])')
-
-curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:18080/api/v1/settings?page%5Bsize%5D=5"
 ```
 
 ---
@@ -158,17 +122,3 @@ API_USER=jane scripts/api.sh GET "/api/v1/orgs/$ORG/members"   # 403 (jane isn't
 - Errors use `{"errors":[{id,status,code,title,detail,source}], "meta":{requestId}}` — **never** a stack trace.
 - **Cursor pagination**: `meta.page {size,count,hasMore,nextCursor}` + `links.next` (no total counts).
 - Add `-H "Accept: application/problem+json"` to any error to get the RFC 9457 variant instead.
-
-### Things worth trying
-```bash
-scripts/api.sh GET "/api/v1/settings?page[size]=1"          # then follow meta.page.nextCursor
-scripts/api.sh PUT /api/v1/settings/bad -d '{"value":""}'   # 422 multi-error envelope
-API_USER=jane scripts/api.sh PUT /api/v1/feature-flags/z -d '{"enabled":true}'   # 403 (no ADMIN)
-curl -s -H "Authorization: Bearer $(scripts/token.sh)" \
-  -H "Accept: application/problem+json" http://localhost:18080/api/v1/settings/nope   # RFC 9457
-
-# notifications: toggling a flag emails admins (Mailpit UI :18025) AND creates an in-app message
-scripts/api.sh PUT /api/v1/feature-flags/beta -d '{"enabled":true}'
-scripts/api.sh GET /api/v1/notifications        # david sees the in-app notification
-# then mark one read:  scripts/api.sh POST /api/v1/notifications/<id>/read
-```
