@@ -198,11 +198,53 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/WindowedResultResourceObject"
+  /api/v1/me:
+    get:
+      tags:
+      - me-controller
+      operationId: me
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/feature-flags:
     get:
       tags:
       - feature-flag-controller
       operationId: list_2
+      parameters:
+      - name: page
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CursorPageRequest"
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/WindowedResultResourceObject"
+  /api/v1/admin/users:
+    get:
+      tags:
+      - user-admin-controller
+      operationId: list_3
       parameters:
       - name: page
         in: query

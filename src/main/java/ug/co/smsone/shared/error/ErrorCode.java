@@ -11,6 +11,8 @@ public enum ErrorCode {
     BAD_REQUEST(HttpStatus.BAD_REQUEST, "Bad request"),
     UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "Authentication required"),
     FORBIDDEN(HttpStatus.FORBIDDEN, "Access denied"),
+    ACCOUNT_NOT_PROVISIONED(HttpStatus.FORBIDDEN, "Account not provisioned"),
+    ACCOUNT_DISABLED(HttpStatus.FORBIDDEN, "Account disabled"),
     RESOURCE_NOT_FOUND(HttpStatus.NOT_FOUND, "Resource not found"),
     METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "Method not allowed"),
     CONFLICT(HttpStatus.CONFLICT, "Conflict"),

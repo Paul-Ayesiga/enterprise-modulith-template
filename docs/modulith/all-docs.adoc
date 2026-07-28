@@ -13,6 +13,10 @@ include::module-files.adoc[]
 plantuml::module-shared.puml[,,format=svg]
 include::module-shared.adoc[]
 
+== Identity
+plantuml::module-identity.puml[,,format=svg]
+include::module-identity.adoc[]
+
 == Scheduler
 plantuml::module-scheduler.puml[,,format=svg]
 include::module-scheduler.adoc[]

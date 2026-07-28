@@ -23,6 +23,10 @@ app:
   # its own Valkey container.
   rate-limit:
     enabled: false
+  # No-JIT provisioning gate off by default (existing API tests use jwt() mocks with no User row);
+  # the identity IT re-enables it and provisions users to exercise the gate.
+  provisioning:
+    gate-enabled: false
   # Delivery worker is driven explicitly by tests (deterministic, no cross-context background polling).
   notification:
     delivery:

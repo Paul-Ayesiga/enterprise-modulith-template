@@ -6,6 +6,7 @@
 |_Configuration properties_
 
 * `u.c.s.s.cache.CacheProperties`
+* `u.c.s.s.keycloak.KeycloakAdminProperties`
 * `u.c.s.s.ratelimit.RateLimitProperties`
 
 _Others_

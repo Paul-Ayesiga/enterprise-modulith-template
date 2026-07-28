@@ -64,6 +64,17 @@ server:
       enabled: false
 
 app:
+  keycloak-admin:
+    base-url: ${KEYCLOAK_URL:http://localhost:8081}
+    realm: ${KEYCLOAK_REALM:smsone}
+    client-id: ${KEYCLOAK_ADMIN_CLIENT_ID:smsone-admin}
+    client-secret: ${KEYCLOAK_ADMIN_SECRET:}
+  provisioning:
+    gate-enabled: ${PROVISIONING_GATE_ENABLED:true}          # no-JIT: a valid JWT is not access
+    temp-credential-mode: ${PROVISIONING_TEMP_MODE:EMAIL}    # EMAIL (execute-actions-email) | TEMP_PASSWORD
+    invite-lifespan: ${PROVISIONING_INVITE_LIFESPAN:PT12H}
+    redirect-uri: ${PROVISIONING_REDIRECT_URI:}
+    app-client-id: ${PROVISIONING_APP_CLIENT:smsone-web}
   rate-limit:
     enabled: ${RATE_LIMIT_ENABLED:true}
     key-prefix: rl

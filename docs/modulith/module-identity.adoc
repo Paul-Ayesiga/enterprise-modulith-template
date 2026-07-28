@@ -1,0 +1,12 @@
+[%autowidth.stretch, cols="h,a"]
+|===
+|Base package
+|`ug.co.smsone.identity`
+|Spring components
+|_Services_
+
+* `u.c.s.i.UserProvisioning` (via `u.c.s.i.internal.UserProvisioningService`)
+|Bean references
+|* `u.c.s.s.security.CurrentUserProvider` (in Shared Kernel)
+* `u.c.s.s.web.EnvelopeErrorWriter` (in Shared Kernel)
+|===
