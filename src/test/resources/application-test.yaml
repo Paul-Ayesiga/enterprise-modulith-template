@@ -27,6 +27,10 @@ app:
   # the identity IT re-enables it and provisions users to exercise the gate.
   provisioning:
     gate-enabled: false
+  # No Keycloak in unit/IT context by default — the org dev-bootstrap runner must not fire.
+  organization:
+    dev-bootstrap:
+      enabled: false
   # Delivery worker is driven explicitly by tests (deterministic, no cross-context background polling).
   notification:
     delivery:

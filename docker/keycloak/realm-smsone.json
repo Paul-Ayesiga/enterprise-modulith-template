@@ -2,12 +2,43 @@
   "realm": "smsone",
   "enabled": true,
   "registrationAllowed": false,
+  "organizationsEnabled": true,
   "roles": {
     "realm": [
       { "name": "ADMIN", "description": "Full administrative access" },
       { "name": "USER", "description": "Standard user" }
     ]
   },
+  "clientScopes": [
+    {
+      "name": "organization",
+      "description": "Adds the active Keycloak organization (alias + id) to the token as the 'organization' claim",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "organization",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-organization-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true",
+            "claim.name": "organization",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "addOrganizationId": "true",
+            "addOrganizationAttributes": "false"
+          }
+        }
+      ]
+    }
+  ],
   "clients": [
     {
       "clientId": "smsone-web",
@@ -18,10 +49,35 @@
       "directAccessGrantsEnabled": true,
       "redirectUris": ["http://localhost:*", "https://oauth.pstmn.io/v1/callback"],
       "webOrigins": ["+"],
-      "attributes": { "pkce.code.challenge.method": "S256" }
+      "attributes": { "pkce.code.challenge.method": "S256" },
+      "optionalClientScopes": ["organization", "address", "phone", "offline_access", "microprofile-jwt"]
+    },
+    {
+      "clientId": "smsone-admin",
+      "name": "SMSOne Admin (service account for Keycloak Admin API)",
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "smsone-admin-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false
     }
   ],
   "users": [
+    {
+      "username": "service-account-smsone-admin",
+      "enabled": true,
+      "serviceAccountClientId": "smsone-admin",
+      "clientRoles": {
+        "realm-management": [
+          "manage-organizations",
+          "view-organizations",
+          "query-organizations",
+          "manage-users",
+          "view-users"
+        ]
+      }
+    },
     {
       "username": "david",
       "enabled": true,

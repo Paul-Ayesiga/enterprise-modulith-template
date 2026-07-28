@@ -68,13 +68,24 @@ app:
     base-url: ${KEYCLOAK_URL:http://localhost:8081}
     realm: ${KEYCLOAK_REALM:smsone}
     client-id: ${KEYCLOAK_ADMIN_CLIENT_ID:smsone-admin}
-    client-secret: ${KEYCLOAK_ADMIN_SECRET:}
+    # Dev default matches the shipped realm's smsone-admin secret; ALWAYS override in production.
+    client-secret: ${KEYCLOAK_ADMIN_SECRET:smsone-admin-secret}
   provisioning:
     gate-enabled: ${PROVISIONING_GATE_ENABLED:true}          # no-JIT: a valid JWT is not access
     temp-credential-mode: ${PROVISIONING_TEMP_MODE:EMAIL}    # EMAIL (execute-actions-email) | TEMP_PASSWORD
     invite-lifespan: ${PROVISIONING_INVITE_LIFESPAN:PT12H}
     redirect-uri: ${PROVISIONING_REDIRECT_URI:}
     app-client-id: ${PROVISIONING_APP_CLIENT:smsone-web}
+  organization:
+    dev-bootstrap:
+      # Off by default. When on, seeds a Keycloak org + local projection with an OWNER at startup so
+      # org RBAC is exercisable out of the box (docker/dev). Idempotent; needs Keycloak reachable.
+      enabled: ${ORG_DEV_BOOTSTRAP_ENABLED:false}
+      alias: ${ORG_DEV_BOOTSTRAP_ALIAS:acme}
+      name: ${ORG_DEV_BOOTSTRAP_NAME:Acme}
+      owner-email: ${ORG_DEV_BOOTSTRAP_OWNER_EMAIL:david@smsone.co.ug}
+      owner-first-name: ${ORG_DEV_BOOTSTRAP_OWNER_FIRST:David}
+      owner-last-name: ${ORG_DEV_BOOTSTRAP_OWNER_LAST:Smsone}
   rate-limit:
     enabled: ${RATE_LIMIT_ENABLED:true}
     key-prefix: rl

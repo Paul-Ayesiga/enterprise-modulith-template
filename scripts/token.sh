@@ -18,10 +18,13 @@ REALM="${KEYCLOAK_REALM:-smsone}"
 CLIENT="${KEYCLOAK_CLIENT:-smsone-web}"
 USER_NAME="${1:-david}"
 PASSWORD="${2:-${USER_NAME}123}"   # dev convention: david->david123, jane->jane123
+# Request the optional 'organization' scope so the token carries the active-org claim that org-scoped
+# @PreAuthorize checks require. Use e.g. KEYCLOAK_SCOPE='organization:acme' to pin a single org.
+SCOPE="${KEYCLOAK_SCOPE:-organization}"
 
 resp="$(curl -fsS -X POST \
   "http://localhost:${KC_PORT}/realms/${REALM}/protocol/openid-connect/token" \
-  -d grant_type=password -d "client_id=${CLIENT}" \
+  -d grant_type=password -d "client_id=${CLIENT}" -d "scope=${SCOPE}" \
   -d "username=${USER_NAME}" -d "password=${PASSWORD}" 2>/dev/null || true)"
 
 token="$(printf '%s' "$resp" | { \
