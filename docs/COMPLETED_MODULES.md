@@ -72,6 +72,7 @@ Business projection of Keycloak users + **admin-driven provisioning — no JIT**
 - **`UserDirectory` public port**: resolve a provisioned user's immutable subject by email (used by notification's in-app targeting).
 - **Keycloak Admin API** via Spring `RestClient` + a self-managed service-account token (`client_credentials`, cached, refreshed early) — **no** `keycloak-admin-client` (Jackson-2/RESTEasy drag).
 - **Endpoints**: `GET /api/v1/me` (self + active org + provisioning status), `GET /api/v1/admin/users` (platform `ADMIN`, cursor-paginated).
+- Verified: orchestration + no-JIT gate against real Postgres (Keycloak mocked), plus a **live Testcontainers Keycloak IT** that provisions a user and asserts the `execute-actions-email` invite reaches a real **Mailpit** SMTP sink end-to-end.
 
 ## organization
 Local projection of **Keycloak Organizations** + the **org-scoped RBAC authority**.

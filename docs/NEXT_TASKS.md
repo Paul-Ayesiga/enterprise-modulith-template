@@ -64,8 +64,10 @@ Testcontainers Keycloak IT** (`KeycloakOrgAdminIntegrationTest`) pinning the Org
 wire contract — which caught two real gateway bugs now fixed: `findOrganizationIdByAlias` used
 `exact=true` (Keycloak `search` matches name/domain, not alias → always empty), and `addMember` was
 not idempotent (Keycloak returns 409 on re-add, breaking re-invite/re-adopt — now swallowed).
-**Follow-up (optional):** the identity `execute-actions-email` provisioning wire is still only
-covered with the gateway mocked — a live IT would need realm SMTP (point it at a Mailpit container).
+Both Keycloak wires are now runtime-verified: `KeycloakOrgAdminIntegrationTest` (org Admin API) and
+`KeycloakProvisioningIntegrationTest` (create-user + `execute-actions-email` invite, asserted against a
+real Mailpit reached over a shared Docker network). The realm now ships an SMTP server pointing at
+`mailpit:1025`, so provisioning invites also work in dev (previously the realm had no SMTP → 500).
 
 ## 4. Kubernetes migration (config, not code — plan §5.2 has the full table)
 

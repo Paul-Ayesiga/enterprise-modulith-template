@@ -3,6 +3,15 @@
   "enabled": true,
   "registrationAllowed": false,
   "organizationsEnabled": true,
+  "smtpServer": {
+    "host": "mailpit",
+    "port": "1025",
+    "from": "noreply@smsone.co.ug",
+    "fromDisplayName": "SMSOne",
+    "ssl": "false",
+    "starttls": "false",
+    "auth": "false"
+  },
   "roles": {
     "realm": [
       { "name": "ADMIN", "description": "Full administrative access" },
