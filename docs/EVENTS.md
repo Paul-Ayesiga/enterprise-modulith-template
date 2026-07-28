@@ -32,6 +32,7 @@ message id from business identity (e.g. `"setting:" + key + ":" + version`).
 |---|---|---|
 | `ug.co.smsone.settings.FeatureFlagChanged` | notification | Notifies administrators (email + in-app) that a flag was toggled |
 | `RolePermissionsChanged` / `MembershipRoleChanged` / `MembershipCreated` / `MemberRemoved` / `OrganizationStatusChanged` | organization | Evicts the `org-permissions` cache so a role/membership/org-status change takes effect promptly (coarse clear-all) |
+| **every** identity / organization / settings event above | audit | Records one append-only `audit_log` row per event |
 
 The generated per-module canvases in [modulith/](modulith/) list published/listened events per
 module and are refreshed on every build — treat this file as the narrative companion, and add a row

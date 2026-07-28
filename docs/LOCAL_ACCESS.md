@@ -95,6 +95,8 @@ Keycloak admin: `admin` / `admin`. SeaweedFS creds live in `docker/seaweedfs/s3-
 | `GET` | `/api/v1/files/{key}` | USER (owner/ADMIN) | 302 → short-lived presigned download URL |
 | `DELETE` | `/api/v1/files/{key}` | USER (owner/ADMIN) | Delete an object |
 | `POST` | `/api/v1/files/presign` | USER (owner/ADMIN) | Presigned `PUT`/`GET` URL. Body `{"operation","key?","contentType?"}` |
+| `GET` | `/api/v1/audit` | **ADMIN** | Audit trail (all orgs); filter `action`/`from`/`to`, cursor-paginated |
+| `GET` | `/api/v1/orgs/{orgId}/audit` | `audit:read` | That org's audit trail (org admins) |
 | `GET` | `/api/v1/scheduler/locks` | **ADMIN** | ShedLock rows (clustered-job observability) |
 | `GET` | `/api/v1/analytics/reports` | **ADMIN** | Curated report catalog |
 | `GET` | `/api/v1/analytics/reports/{code}` | **ADMIN** | Run a report (Postgres → DuckDB → aggregate) |

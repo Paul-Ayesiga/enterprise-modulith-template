@@ -24,7 +24,9 @@ public enum Permission {
     ROLE_READ("role:read"),
     ROLE_CREATE("role:create"),
     ROLE_UPDATE("role:update"),
-    ROLE_DELETE("role:delete");
+    ROLE_DELETE("role:delete"),
+
+    AUDIT_READ("audit:read");
 
     private static final Map<String, Permission> BY_CODE =
             Arrays.stream(values()).collect(Collectors.toUnmodifiableMap(Permission::code, permission -> permission));

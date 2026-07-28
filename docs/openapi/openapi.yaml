@@ -654,6 +654,51 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}/audit:
+    get:
+      tags:
+      - audit-controller
+      operationId: forOrg
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: action
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: from
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: to
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: page
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CursorPageRequest"
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/WindowedResultResourceObject"
   /api/v1/notifications:
     get:
       tags:
@@ -751,6 +796,51 @@ paths:
       - feature-flag-controller
       operationId: list_6
       parameters:
+      - name: page
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CursorPageRequest"
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/WindowedResultResourceObject"
+  /api/v1/audit:
+    get:
+      tags:
+      - audit-controller
+      operationId: platform
+      parameters:
+      - name: org
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - name: action
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: from
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: to
+        in: query
+        required: false
+        schema:
+          type: string
       - name: page
         in: query
         required: true

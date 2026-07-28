@@ -17,7 +17,8 @@ _Last updated: 2026-07-28._
 | **analytics** | Embedded OLAP / reporting | `/api/v1/analytics/reports` | — | ✅ |
 | **notification** | Multi-channel, pluggable delivery | `/api/v1/notifications` | — (consumes `FeatureFlagChanged`) | ✅ |
 | **identity** | Admin-driven user provisioning (no JIT) | `/api/v1/me`, `/api/v1/admin/users` | `UserProvisioned`, `UserActivated` | ✅ |
-| **organization** | Keycloak orgs + org-scoped RBAC authority | `/api/v1/orgs/**`, `/api/v1/permissions` | `OrganizationRegistered`, `MembershipCreated`, `MembershipRoleChanged`, `MemberRemoved`, `RolePermissionsChanged` | ✅ |
+| **organization** | Keycloak orgs + org-scoped RBAC authority | `/api/v1/orgs/**`, `/api/v1/permissions` | `OrganizationRegistered`, `MembershipCreated`, `MembershipRoleChanged`, `MemberRemoved`, `RolePermissionsChanged`, `OrganizationStatusChanged` | ✅ |
+| **audit** | Append-only audit trail (event consumer) | `/api/v1/audit`, `/api/v1/orgs/{orgId}/audit` | — (consumes every module's events) | ✅ |
 
 ---
 
@@ -86,3 +87,10 @@ Local projection of **Keycloak Organizations** + the **org-scoped RBAC authority
 - **Endpoints**: `POST /orgs`, `GET/PATCH /orgs/{orgId}`, `POST /orgs/{orgId}/suspend|reactivate` (platform `ADMIN`), `GET/POST /orgs/{orgId}/members`, `PUT /orgs/{orgId}/members/{subject}/role`, `DELETE /orgs/{orgId}/members/{subject}`, `GET/POST/PUT/DELETE /orgs/{orgId}/roles[/{roleId}]`, `GET /api/v1/permissions`. Writes honor `Idempotency-Key` transparently.
 - **Active org** comes from the JWT Keycloak `organization` claim (`addOrganizationId=true`); a token scoped to ≠1 org has no active org → org-scoped checks deny. `scripts/token.sh` requests `scope=organization`.
 - Verified: OWNER/ADMIN/MEMBER matrix + cross-org & no-active-org denial (HTTP), invite provisioning across modules (Keycloak mocked), last-owner block, unknown-permission `422`, and **async permission-cache eviction** after a role change. A **live Testcontainers Keycloak IT** pins the Organizations Admin-API wire contract (create-org, search-by-alias, add-member, remove-member) end-to-end.
+
+## audit
+An append-only trail of state changes — the first pure **event consumer** (it publishes nothing).
+- **Recording**: `@ApplicationModuleListener`s turn every module's domain events (`UserProvisioned`/`UserActivated`, all six `organization` events, `SettingChanged`/`FeatureFlagChanged`) into an `audit_log` row — action, org, target, detail, occurred-at. **Idempotent via `EventInbox`** so at-least-once redelivery never doubles a row.
+- **Query**: `GET /api/v1/audit` (platform `ADMIN`, all orgs) and `GET /api/v1/orgs/{orgId}/audit` (org-scoped, gated by a new **`audit:read`** permission — an org's own admins review their trail without platform access). Both cursor-paginated (newest first) and filterable by `action` + an `from`/`to` ISO-instant window.
+- **Actor** is a reserved (nullable) column: today's domain events record *what* changed, not *who* changed it (async listeners have no security context). Populating it is a clean follow-up — enrich the events with the acting principal at publish time.
+- Verified: event → row recording (Modulith `Scenario`) + `EventInbox` dedup; REST filtering, pagination, platform-admin gating, and org-scoped `audit:read` (with cross-org isolation).
