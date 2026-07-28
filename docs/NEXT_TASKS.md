@@ -47,18 +47,21 @@ Externalize SMTP via `${SMTP_HOST:localhost}/${SMTP_PORT:1025}`. IT: real mailpi
 **Done when:** toggling a flag lands an email in mailpit in the IT; `verify()` still green;
 EVENTS.md row updated.
 
-## 3. Identity + Organization modules
+## 3. Identity + Organization modules ✅ (2026-07-28)
 
-**Context:** roadmap Phase 2 core. Keycloak owns credentials; these modules own the *business*
-projection (profile, org membership, roles-as-data). Realm: `docker/keycloak/realm-smsone.json`.
-**Do:** `identity`: `User` aggregate (subject = Keycloak `sub`, email, display name, status) +
-just-in-time provisioning on first authenticated request (filter or `CurrentUserProvider` hook),
-events `UserProvisioned/UserDisabled`. `organization`: `Organization`/`Membership`
-(user ↔ org ↔ role), events `MemberAdded/MemberRemoved`. Follow the settings module as the
-blueprint (aggregate + internal service/controller + cursor-paginated list + V8/V9 migrations +
-`@ApplicationModuleTest` + API IT with `jwt()`).
-**Done when:** JIT provisioning IT passes with a real Keycloak token; org CRUD + membership APIs
-gated by roles; `verify()` green with 7 modules.
+**Done:** shipped as `identity` + `organization` (see [IDENTITY_ORG_PLAN.md](IDENTITY_ORG_PLAN.md),
+[COMPLETED_MODULES.md](COMPLETED_MODULES.md)). Notable design changes vs. the original sketch:
+- **No JIT** (a deliberate reversal): a valid JWT is *not* access. Users are admin-provisioned via the
+  Keycloak Admin API (create user + temporary credentials), recorded as a local `app_user` (`INVITED`),
+  and a `ProvisioningGateFilter` rejects unknown subjects. Events `UserProvisioned`/`UserActivated`.
+- **Org-scoped RBAC** on **Keycloak 26 Organizations**: fixed permission catalog + DB-editable roles
+  (seeded OWNER/ADMIN/MEMBER), `OrgAuthorization` port → live `@PreAuthorize("hasPermission(#orgId,…)")`,
+  cached + evicted on change. Org/member/role REST with last-owner protection and a
+  grant-only-what-you-hold guard. Active org from the JWT `organization` claim.
+**Verified:** Modulith `verify()` green with 8 modules; HTTP RBAC matrix + cross-org/no-active-org
+denial + invite orchestration + async cache eviction; identity provisioning + gate ITs.
+**Follow-up (optional):** a Testcontainers Keycloak IT that pins the exact Organizations Admin-API
+wire contract (create-org body, add-member format) end-to-end against a live realm.
 
 ## 4. Kubernetes migration (config, not code — plan §5.2 has the full table)
 
@@ -81,9 +84,9 @@ Notification **egress** per-channel limits via the same `DistributedRateLimiter`
 + `app.notification.delivery.rate.*` config; IT against real Valkey (edge 429, per-tenant isolation, egress throttle).
 
 **Deferred hardening (follow-up):**
-- **Per-tenant needs a real claim.** JWTs carry no `tenant` claim yet (no organization module), so
-  keying degrades to `sub`/IP. Add the claim (Keycloak mapper / organization module) to activate true
-  per-tenant quotas — the resolver already reads `app.rate-limit.tenant-claim`.
+- **Per-tenant claim now exists.** The `organization` module ships the Keycloak `organization` claim
+  (active org id) — point `app.rate-limit.tenant-claim` at it (or map the org id to the configured
+  claim) to activate true per-tenant quotas instead of the `sub`/IP fallback.
 - **Coarse pre-auth per-IP shield** belongs at the K8s ingress/gateway (this filter is post-auth,
   identity-aware) — add it with the Kustomize work (task 4).
 - **Fail-open → local fallback.** On Valkey outage the limiter fails open; upgrade to a Resilience4j

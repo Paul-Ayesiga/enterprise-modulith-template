@@ -50,10 +50,10 @@ class MemberService {
         return saveMembership(orgId, provisioned.subject(), role);
     }
 
-    @Transactional
     Membership saveMembership(UUID orgId, String subject, Role role) {
         // Idempotent: a re-invite of an existing member returns the current membership unchanged
-        // (role changes go through assignRole, which is last-owner protected).
+        // (role changes go through assignRole, which is last-owner protected). No @Transactional needed
+        // — this is a single save; the uq_membership_org_user constraint backstops a concurrent insert.
         return memberships.findByOrgIdAndUserSubject(orgId, subject)
                 .orElseGet(() -> memberships.save(Membership.create(orgId, subject, role.getId(), role.getCode())));
     }
@@ -91,7 +91,8 @@ class MemberService {
         if (owner == null || !membership.getRoleId().equals(owner.getId())) {
             return; // not an owner — removing/demoting is always fine
         }
-        long owners = memberships.countByOrgIdAndRoleIdAndStatus(orgId, owner.getId(), MembershipStatus.ACTIVE);
+        // Row-lock the owner set so concurrent removals/demotions serialize (no zero-owner race).
+        long owners = memberships.lockByOrgIdAndRoleIdAndStatus(orgId, owner.getId(), MembershipStatus.ACTIVE).size();
         if (owners <= 1) {
             throw new ConflictException("Cannot remove or demote the last owner of the organization.");
         }

@@ -4,7 +4,7 @@ What is **built, tested, and gated** today. Backlog/not-yet-built work lives in
 [NEXT_TASKS.md](NEXT_TASKS.md); this file lists only finished modules. Every module owns its data,
 talks to others through events, and is boundary-verified by Spring Modulith (`./gradlew test`).
 
-_Last updated: 2026-07-27._
+_Last updated: 2026-07-28._
 
 ## Summary
 
@@ -16,6 +16,8 @@ _Last updated: 2026-07-27._
 | **scheduler** | Clustered scheduled jobs | — | — | ✅ |
 | **analytics** | Embedded OLAP / reporting | — (query API) | — | ✅ |
 | **notification** | Multi-channel, pluggable delivery | `/api/v1/notifications` | — (consumes `FeatureFlagChanged`) | ✅ |
+| **identity** | Admin-driven user provisioning (no JIT) | `/api/v1/me`, `/api/v1/admin/users` | `UserProvisioned`, `UserActivated` | ✅ |
+| **organization** | Keycloak orgs + org-scoped RBAC authority | `/api/v1/orgs/**`, `/api/v1/permissions` | `OrganizationRegistered`, `MembershipCreated`, `MembershipRoleChanged`, `MemberRemoved`, `RolePermissionsChanged` | ✅ |
 
 ---
 
@@ -61,3 +63,19 @@ Multi-channel, **pluggable** delivery of messages to recipients.
 - **Async, scalable fan-out**: `dispatch` is non-blocking — it enqueues one row per recipient/channel into `notification_delivery`, then a background worker claims batches with `SELECT … FOR UPDATE SKIP LOCKED` and sends on a bounded pool of **virtual threads** (Java 21), **outside any DB transaction**, with exponential-backoff **retry**, **dead-lettering**, and stale-lock recovery. SKIP LOCKED lets N instances share the queue with no double-sends → fans out to thousands without blocking the caller. One channel/recipient failing never aborts the rest.
 - **Per-channel egress limits**: before a send, a cluster-wide (Valkey) token bucket per channel throttles downstream providers (SMS/SMTP/…) — throttled deliveries are deferred, not failed (attempt not burned). Configure `app.notification.delivery.rate.<CHANNEL>`.
 - Verified against real Mailpit (email), a real webhook receiver (fan-out), a **300-recipient concurrency test** (each hit exactly once, no duplicates), and a **per-channel throttle test** (2 of 5 sent, 3 deferred).
+
+## identity
+Business projection of Keycloak users + **admin-driven provisioning — no JIT** (a valid JWT is *not* access).
+- **Provisioning** (`UserProvisioning` public port): create-or-reuse the Keycloak user via the Admin API, issue **temporary credentials** (default `execute-actions-email` — the admin never sees a password; `TEMP_PASSWORD` fallback), and upsert a local `app_user` row as `INVITED`. Idempotent; Keycloak calls run outside the local transaction so a mid-flight failure leaves at most an INVITED row and no access.
+- **Access gate** (`ProvisioningGateFilter`, after JWT auth): an unknown `sub` → `403 account_not_provisioned`; `DISABLED` → 403; `INVITED` → lazily activated to `ACTIVE` (+`UserActivated`) then allowed; `GET /api/v1/me` is reachable while INVITED. Config-gated (`app.provisioning.gate-enabled`).
+- **Keycloak Admin API** via Spring `RestClient` + a self-managed service-account token (`client_credentials`, cached, refreshed early) — **no** `keycloak-admin-client` (Jackson-2/RESTEasy drag).
+- **Endpoints**: `GET /api/v1/me` (self + active org + provisioning status), `GET /api/v1/admin/users` (platform `ADMIN`, cursor-paginated).
+
+## organization
+Local projection of **Keycloak Organizations** + the **org-scoped RBAC authority**.
+- **Model**: permissions are a **fixed enum catalog** (`org:*`, `member:*`, `role:*`); roles are **DB-editable bundles** of permissions with seeded, immutable **OWNER/ADMIN/MEMBER** (OWNER=all, ADMIN=all-but-`org:delete`, MEMBER=read-only). `org_id` everywhere is the Keycloak org UUID (the tenant key). Cross-module member links are soft refs (`user_subject`, no FK).
+- **Authority**: implements the shared `OrgAuthorization` port → makes `@PreAuthorize("hasPermission(#orgId, 'organization', 'member:invite')")` live. A check passes only when the token's **active org == `#orgId`** (cross-org denied before any DB hit) **and** the caller's role in that org carries the permission. Effective permissions are cached (Caffeine L1 + Valkey L2), **evicted on role/membership change** via `@ApplicationModuleListener`.
+- **Provisioning orchestration**: `POST /orgs` (platform `ADMIN`) creates the Keycloak org, projects it, seeds roles, and installs the first **OWNER**; `POST /orgs/{orgId}/members` provisions the identity (Keycloak user + temp creds) and links the membership in one call. **Last-owner protection** on remove/role-reassign; member removal keeps the Keycloak user account.
+- **Endpoints**: `POST /orgs`, `GET/PATCH /orgs/{orgId}`, `GET/POST /orgs/{orgId}/members`, `PUT /orgs/{orgId}/members/{subject}/role`, `DELETE /orgs/{orgId}/members/{subject}`, `GET/POST/PUT/DELETE /orgs/{orgId}/roles[/{roleId}]`, `GET /api/v1/permissions`. Writes honor `Idempotency-Key` transparently.
+- **Active org** comes from the JWT Keycloak `organization` claim (`addOrganizationId=true`); a token scoped to ≠1 org has no active org → org-scoped checks deny. `scripts/token.sh` requests `scope=organization`.
+- Verified: OWNER/ADMIN/MEMBER matrix + cross-org & no-active-org denial (HTTP), invite provisioning across modules (Keycloak mocked), last-owner block, unknown-permission `422`, and **async permission-cache eviction** after a role change.

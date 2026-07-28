@@ -57,12 +57,14 @@ Keycloak calls precede the short local transaction; a mid-flight failure leaves 
 ## Dependencies
 One new starter: `spring-boot-starter-oauth2-client` (BOM-managed) for the service-account token. RestClient from existing `spring-boot-starter-web`; JSON via Boot Jackson 3. No `org.keycloak:*`.
 
-## Build order (phased)
-1. **Shared plumbing** — `OrgAuthorization` port, `keycloakAdminRestClient` (oauth2-client), extend `CurrentUser`/provider (parse org claim) + `ApiPermissionEvaluator`; realm JSON; verify claim end-to-end. (No behavior change — evaluator denies with no impl.)
-2. **identity** — V10, `User`/status/repo, Keycloak user gateway (create + temp creds), provisioning service + port, `ProvisioningGateFilter`, `GET /me`. TC Keycloak IT.
-3. **organization** — V11, `Permission`, `Role`/`Membership`/`Organization` + repos, `RoleSeeder`, org sync + KC org gateway, `OrgAuthorizationImpl` (+cache+eviction). Evaluator now live.
-4. **Provisioning + REST** — member/role/org controllers `@PreAuthorize`, Idempotency-Key.
-5. **Hardening** — ModularityTests, RBAC matrix tests (owner/admin/member, cross-org denial, unprovisioned 403), cache eviction, adversarial review, docs.
+## Build order (phased) — ✅ all shipped (2026-07-28)
+1. ✅ **Shared plumbing** — `OrgAuthorization` port, `keycloakAdminRestClient`, `CurrentUser`/provider org-claim parsing, `ApiPermissionEvaluator`. _(commit 15193a7)_
+2. ✅ **identity** — V10, `User`/status/repo, Keycloak user gateway, provisioning service + port, `ProvisioningGateFilter`, `GET /me`, `/admin/users`. _(commit a17d421)_
+3. ✅ **organization** — V11, `Permission`, `Role`/`Membership`/`Organization` + repos, `RoleSeeder`, `PermissionResolver`, `OrgAuthorizationImpl` (+cache+eviction). Evaluator live. _(commit 66afd19)_
+4. ✅ **Provisioning + REST** — KC org gateway, org/member/role services, controllers with `@PreAuthorize`, last-owner protection, realm changes, dev bootstrap; Idempotency-Key transparent. _(commit f332099)_
+5. ✅ **Hardening** — Modulith verify, HTTP RBAC matrix + cross-org/no-active-org denial, invite orchestration, last-owner block, async cache-eviction test, adversarial review, docs.
+
+Note vs. the original outline: org creation installs the first OWNER (solves the `member:invite` chicken-and-egg); the `organization` scope ships as an **optional** client scope (`scripts/token.sh` requests it) so multi-org switching stays possible.
 
 ## Open confirmations
 - SPA must actually request `scope=organization:<alias>` or the claim (and all org `@PreAuthorize`) silently denies — the biggest live-config gotcha.

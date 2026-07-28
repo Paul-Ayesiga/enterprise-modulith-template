@@ -72,11 +72,140 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}/roles/{roleId}:
+    get:
+      tags:
+      - role-controller
+      operationId: get_1
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: roleId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+    put:
+      tags:
+      - role-controller
+      operationId: update
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: roleId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRoleRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+    delete:
+      tags:
+      - role-controller
+      operationId: delete
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: roleId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "204":
+          description: No Content
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+  /api/v1/orgs/{orgId}/members/{subject}/role:
+    put:
+      tags:
+      - member-controller
+      operationId: assignRole
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: subject
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssignRoleRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/feature-flags/{key}:
     get:
       tags:
       - feature-flag-controller
-      operationId: get_1
+      operationId: get_2
       parameters:
       - name: key
         in: path
@@ -125,6 +254,147 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs:
+    post:
+      tags:
+      - organization-controller
+      operationId: create
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrganizationRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}/roles:
+    get:
+      tags:
+      - role-controller
+      operationId: list
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceObject"
+    post:
+      tags:
+      - role-controller
+      operationId: create_1
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRoleRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}/members:
+    get:
+      tags:
+      - member-controller
+      operationId: list_1
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: page
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CursorPageRequest"
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/WindowedResultResourceObject"
+    post:
+      tags:
+      - member-controller
+      operationId: invite
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InviteMemberRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/notifications/{id}/read:
     post:
       tags:
@@ -150,11 +420,66 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}:
+    get:
+      tags:
+      - organization-controller
+      operationId: get_3
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+    patch:
+      tags:
+      - organization-controller
+      operationId: update_1
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateOrganizationRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/settings:
     get:
       tags:
       - setting-controller
-      operationId: list
+      operationId: list_2
       parameters:
       - name: page
         in: query
@@ -174,11 +499,31 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/WindowedResultResourceObject"
+  /api/v1/permissions:
+    get:
+      tags:
+      - permission-catalog-controller
+      operationId: list_3
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceObject"
   /api/v1/notifications:
     get:
       tags:
       - notification-controller
-      operationId: list_1
+      operationId: list_4
       parameters:
       - name: page
         in: query
@@ -220,7 +565,7 @@ paths:
     get:
       tags:
       - feature-flag-controller
-      operationId: list_2
+      operationId: list_5
       parameters:
       - name: page
         in: query
@@ -244,7 +589,7 @@ paths:
     get:
       tags:
       - user-admin-controller
-      operationId: list_3
+      operationId: list_6
       parameters:
       - name: page
         in: query
@@ -264,6 +609,32 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/WindowedResultResourceObject"
+  /api/v1/orgs/{orgId}/members/{subject}:
+    delete:
+      tags:
+      - member-controller
+      operationId: remove
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: subject
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: No Content
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
 components:
   schemas:
     UpsertSettingRequest:
@@ -284,6 +655,32 @@ components:
         type:
           type: string
         attributes: {}
+    UpdateRoleRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 120
+          minLength: 0
+        description:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          uniqueItems: true
+      required:
+      - name
+      - permissions
+    AssignRoleRequest:
+      type: object
+      properties:
+        roleCode:
+          type: string
+          minLength: 1
+      required:
+      - roleCode
     ToggleFeatureFlagRequest:
       type: object
       properties:
@@ -293,6 +690,80 @@ components:
           type: string
       required:
       - enabled
+    CreateOrganizationRequest:
+      type: object
+      properties:
+        alias:
+          type: string
+          maxLength: 120
+          minLength: 0
+          pattern: "^[a-z0-9][a-z0-9-]{0,118}[a-z0-9]$"
+        name:
+          type: string
+          maxLength: 200
+          minLength: 0
+        ownerEmail:
+          type: string
+          format: email
+          minLength: 1
+        ownerFirstName:
+          type: string
+        ownerLastName:
+          type: string
+      required:
+      - alias
+      - name
+      - ownerEmail
+    CreateRoleRequest:
+      type: object
+      properties:
+        code:
+          type: string
+          maxLength: 64
+          minLength: 0
+          pattern: "^[A-Za-z][A-Za-z0-9_]{1,62}$"
+        name:
+          type: string
+          maxLength: 120
+          minLength: 0
+        description:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          uniqueItems: true
+      required:
+      - code
+      - name
+      - permissions
+    InviteMemberRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          minLength: 1
+        firstName:
+          type: string
+        lastName:
+          type: string
+        roleCode:
+          type: string
+          minLength: 1
+      required:
+      - email
+      - roleCode
+    UpdateOrganizationRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 200
+          minLength: 0
+      required:
+      - name
     CursorPageRequest:
       type: object
       properties:

@@ -11,7 +11,10 @@ import ug.co.smsone.organization.Permission;
 import ug.co.smsone.shared.error.ConflictException;
 import ug.co.smsone.shared.error.ForbiddenException;
 import ug.co.smsone.shared.error.NotFoundException;
+import ug.co.smsone.shared.error.UnauthorizedException;
 import ug.co.smsone.shared.error.ValidationException;
+import ug.co.smsone.shared.security.CurrentUser;
+import ug.co.smsone.shared.security.CurrentUserProvider;
 import ug.co.smsone.shared.web.ApiSource;
 
 /** CRUD for org-scoped custom roles (bundles of permissions). System roles are read-only. */
@@ -22,10 +25,15 @@ class RoleService {
 
     private final RoleRepository roles;
     private final MembershipRepository memberships;
+    private final PermissionResolver permissions;
+    private final CurrentUserProvider currentUser;
 
-    RoleService(RoleRepository roles, MembershipRepository memberships) {
+    RoleService(RoleRepository roles, MembershipRepository memberships, PermissionResolver permissions,
+            CurrentUserProvider currentUser) {
         this.roles = roles;
         this.memberships = memberships;
+        this.permissions = permissions;
+        this.currentUser = currentUser;
     }
 
     List<Role> list(UUID orgId) {
@@ -47,14 +55,18 @@ class RoleService {
         if (roles.findByOrgIdAndCode(orgId, code).isPresent()) {
             throw new ConflictException("A role with code '" + code + "' already exists.");
         }
-        return roles.save(Role.create(orgId, code, name, false, description, toPermissions(permissionCodes)));
+        Set<Permission> granted = toPermissions(permissionCodes);
+        requireCallerHolds(orgId, granted);
+        return roles.save(Role.create(orgId, code, name, false, description, granted));
     }
 
     @Transactional
     Role update(UUID orgId, UUID roleId, String name, String description, Set<String> permissionCodes) {
         Role role = require(orgId, roleId);
+        Set<Permission> granted = toPermissions(permissionCodes);
+        requireCallerHolds(orgId, granted);
         // requireEditable() inside replacePermissions/rename rejects system roles with a 403.
-        role.replacePermissions(toPermissions(permissionCodes)); // publishes RolePermissionsChanged
+        role.replacePermissions(granted); // publishes RolePermissionsChanged
         role.rename(name, description);
         return roles.save(role); // save() flushes AND publishes the registered event (cache eviction)
     }
@@ -69,6 +81,27 @@ class RoleService {
             throw new ConflictException("Role is still assigned to members; reassign them first.");
         }
         roles.delete(role);
+    }
+
+    /**
+     * Privilege-escalation guard: a role editor may only grant permissions they themselves currently
+     * hold in this org. Without it, anyone with {@code role:create}/{@code role:update} could mint a
+     * role carrying permissions above their own (e.g. ADMIN — which lacks {@code org:delete} — granting
+     * itself {@code org:delete}). OWNER holds everything, so it is unconstrained.
+     */
+    private void requireCallerHolds(UUID orgId, Set<Permission> granted) {
+        CurrentUser caller = currentUser.currentUser()
+                .orElseThrow(() -> new UnauthorizedException("Authentication required."));
+        Set<String> held = permissions.resolve(caller.subject(), orgId);
+        List<String> escalated = granted.stream()
+                .map(Permission::code)
+                .filter(code -> !held.contains(code))
+                .sorted()
+                .toList();
+        if (!escalated.isEmpty()) {
+            throw new ForbiddenException("You cannot grant permissions you do not hold: "
+                    + String.join(", ", escalated));
+        }
     }
 
     private static String normalizeCode(String code) {

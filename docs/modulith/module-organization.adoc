@@ -1,0 +1,12 @@
+[%autowidth.stretch, cols="h,a"]
+|===
+|Base package
+|`ug.co.smsone.organization`
+|Bean references
+|* `u.c.s.i.UserProvisioning` (in Identity)
+* `u.c.s.s.security.CurrentUserProvider` (in Shared Kernel)
+|Events listened to
+|* `u.c.s.o.MemberRemoved` (async) 
+* `u.c.s.o.MembershipRoleChanged` (async) 
+* `u.c.s.o.RolePermissionsChanged` (async) 
+|===

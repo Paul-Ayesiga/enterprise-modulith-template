@@ -1,7 +1,9 @@
 package ug.co.smsone.organization.internal;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
+import java.time.Duration;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -90,5 +92,21 @@ class OrgRbacAuthorityTest extends AbstractIntegrationTest {
         // The owner of `orgId` is a stranger in an unrelated org — no leakage across the tenant boundary.
         assertThat(authorization.permissions(owner, otherOrg)).isEmpty();
         assertThat(authorization.hasPermission(owner, otherOrg, Permission.ORG_READ.code())).isFalse();
+    }
+
+    @Test
+    void permissionCacheIsEvictedAfterAMembershipRoleChange() {
+        // Prime the cache: as a MEMBER, the subject must NOT have org:delete.
+        assertThat(authorization.hasPermission(member, orgId, Permission.ORG_DELETE.code())).isFalse();
+
+        // Promote to OWNER — assignRole registers MembershipRoleChanged, save() publishes it, and the
+        // OrgPermissionCacheEvictor clears 'org-permissions' after commit (async).
+        Membership membership = memberships.findByOrgIdAndUserSubject(orgId, member).orElseThrow();
+        UUID ownerRoleId = roles.findByOrgIdAndCode(orgId, "OWNER").orElseThrow().getId();
+        membership.assignRole(ownerRoleId);
+        memberships.save(membership);
+
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
+                assertThat(authorization.hasPermission(member, orgId, Permission.ORG_DELETE.code())).isTrue());
     }
 }

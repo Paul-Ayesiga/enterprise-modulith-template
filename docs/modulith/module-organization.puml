@@ -1,5 +1,5 @@
 @startuml
-title <size:24>Application</size>
+title <size:24>Organization</size>
 
 set separator none
 top to bottom direction
@@ -20,18 +20,11 @@ System_Boundary("Application_boundary", "Application", $tags="") {
     Component(Application.Application.Organization, "Organization", $techn="Module", $descr="", $tags="", $link="")
     Component(Application.Application.SharedKernel, "Shared Kernel", $techn="Module", $descr="", $tags="", $link="")
     Component(Application.Application.Identity, "Identity", $techn="Module", $descr="", $tags="", $link="")
-    Component(Application.Application.Scheduler, "Scheduler", $techn="Module", $descr="", $tags="", $link="")
-    Component(Application.Application.Settings, "Settings", $techn="Module", $descr="", $tags="", $link="")
-    Component(Application.Application.Notification, "Notification", $techn="Module", $descr="", $tags="", $link="")
   }
 
 }
 
-Rel(Application.Application.Scheduler, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
-Rel(Application.Application.Notification, Application.Application.Settings, "listens to", $techn="", $tags="", $link="")
-Rel(Application.Application.Notification, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Identity, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
-Rel(Application.Application.Settings, Application.Application.SharedKernel, "depends on", $techn="", $tags="", $link="")
 Rel(Application.Application.Organization, Application.Application.Identity, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Organization, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 

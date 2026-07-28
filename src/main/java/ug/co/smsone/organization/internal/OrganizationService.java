@@ -3,47 +3,63 @@ package ug.co.smsone.organization.internal;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import ug.co.smsone.identity.ProvisionRequest;
+import ug.co.smsone.identity.ProvisionedUser;
+import ug.co.smsone.identity.UserProvisioning;
 import ug.co.smsone.shared.error.ConflictException;
 import ug.co.smsone.shared.error.NotFoundException;
 
 /**
- * Organization lifecycle. Creating an org provisions it in Keycloak, projects it locally, seeds the
- * system roles, and installs the first OWNER (so the org is never left without an administrator — the
- * chicken-and-egg that {@code member:invite} would otherwise create). The Keycloak org creation runs
- * before the local transaction; the owner invite provisions that user and mails temporary credentials.
+ * Organization lifecycle. Creating an org provisions it in Keycloak, provisions the first OWNER
+ * (Keycloak user + temporary credentials), links the Keycloak org membership, and only then writes the
+ * local projection (org + seeded roles + OWNER membership) in a single atomic transaction. All Keycloak
+ * steps are get-or-create / idempotent, so a mid-flight failure writes no partial local state and a
+ * retry heals cleanly (re-adopting an org that survived a local-DB reset) — the org is never left
+ * without an owner (the chicken-and-egg that {@code member:invite} alone would create).
  */
 @Service
 class OrganizationService {
 
     private final OrganizationRepository organizations;
     private final KeycloakOrgAdminGateway keycloakOrg;
-    private final RoleSeeder roleSeeder;
-    private final MemberService members;
+    private final UserProvisioning userProvisioning;
+    private final OrgProjectionWriter projectionWriter;
 
     OrganizationService(OrganizationRepository organizations, KeycloakOrgAdminGateway keycloakOrg,
-            RoleSeeder roleSeeder, MemberService members) {
+            UserProvisioning userProvisioning, OrgProjectionWriter projectionWriter) {
         this.organizations = organizations;
         this.keycloakOrg = keycloakOrg;
-        this.roleSeeder = roleSeeder;
-        this.members = members;
+        this.userProvisioning = userProvisioning;
+        this.projectionWriter = projectionWriter;
     }
 
     Organization create(String alias, String name, String ownerEmail, String ownerFirstName, String ownerLastName) {
-        String normalizedAlias = alias == null ? "" : alias.trim().toLowerCase();
+        String normalizedAlias = normalize(alias);
         if (organizations.existsByAlias(normalizedAlias)) {
             throw new ConflictException("An organization with alias '" + normalizedAlias + "' already exists.");
         }
-        UUID kcOrgId = keycloakOrg.createOrganization(normalizedAlias, name);
-        Organization organization = persist(kcOrgId, normalizedAlias, name);
-        members.invite(kcOrgId, ownerEmail, ownerFirstName, ownerLastName, "OWNER");
-        return organization;
+        return provision(normalizedAlias, name, ownerEmail, ownerFirstName, ownerLastName);
     }
 
-    @Transactional
-    Organization persist(UUID kcOrgId, String alias, String name) {
-        Organization organization = organizations.save(Organization.register(kcOrgId, alias, name));
-        roleSeeder.seedSystemRoles(kcOrgId);
-        return organization;
+    /** Idempotent get-or-create for the dev bootstrap: reuses the local projection if present. */
+    Organization ensureBootstrap(String alias, String name, String ownerEmail,
+            String ownerFirstName, String ownerLastName) {
+        String normalizedAlias = normalize(alias);
+        return organizations.findByAlias(normalizedAlias)
+                .orElseGet(() -> provision(normalizedAlias, name, ownerEmail, ownerFirstName, ownerLastName));
+    }
+
+    /**
+     * Keycloak-first provisioning, then one atomic local write. Reached only when no local projection
+     * exists for the alias; each Keycloak call is get-or-create / idempotent so it is safe to retry.
+     */
+    private Organization provision(String alias, String name, String ownerEmail,
+            String ownerFirstName, String ownerLastName) {
+        UUID kcOrgId = keycloakOrg.findOrganizationIdByAlias(alias)
+                .orElseGet(() -> keycloakOrg.createOrganization(alias, name));
+        ProvisionedUser owner = userProvisioning.provision(new ProvisionRequest(ownerEmail, ownerFirstName, ownerLastName));
+        keycloakOrg.addMember(kcOrgId, owner.subject());
+        return projectionWriter.projectWithOwner(kcOrgId, alias, name, owner.subject());
     }
 
     Organization require(UUID kcOrgId) {
@@ -58,21 +74,7 @@ class OrganizationService {
         return organizations.save(organization);
     }
 
-    /**
-     * Idempotent get-or-create for the dev bootstrap: reuses the local projection if present, otherwise
-     * re-adopts an existing Keycloak org by alias (or creates one), seeds roles, and ensures the owner
-     * membership. Tolerant of a local-DB reset while Keycloak state survives.
-     */
-    Organization ensureBootstrap(String alias, String name, String ownerEmail,
-            String ownerFirstName, String ownerLastName) {
-        String normalizedAlias = alias == null ? "" : alias.trim().toLowerCase();
-        Organization existing = organizations.findByAlias(normalizedAlias).orElse(null);
-        UUID kcOrgId = existing != null
-                ? existing.getKcOrgId()
-                : keycloakOrg.findOrganizationIdByAlias(normalizedAlias)
-                        .orElseGet(() -> keycloakOrg.createOrganization(normalizedAlias, name));
-        Organization organization = existing != null ? existing : persist(kcOrgId, normalizedAlias, name);
-        members.invite(kcOrgId, ownerEmail, ownerFirstName, ownerLastName, "OWNER"); // idempotent
-        return organization;
+    private static String normalize(String alias) {
+        return alias == null ? "" : alias.trim().toLowerCase();
     }
 }

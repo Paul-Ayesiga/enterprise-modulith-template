@@ -29,3 +29,7 @@ include::module-settings.adoc[]
 plantuml::module-notification.puml[,,format=svg]
 include::module-notification.adoc[]
 
+== Organization
+plantuml::module-organization.puml[,,format=svg]
+include::module-organization.adoc[]
+

@@ -118,8 +118,35 @@ Keycloak admin: `admin` / `admin`. SeaweedFS creds live in `docker/seaweedfs/s3-
 | `PUT` | `/api/v1/feature-flags/{key}` | **ADMIN** | Body `{"enabled":bool,"description?"}` |
 | `GET` | `/api/v1/notifications` | USER | Current user's in-app notifications (cursor-paginated) |
 | `POST` | `/api/v1/notifications/{id}/read` | USER | Mark an in-app notification read |
+| `GET` | `/api/v1/me` | USER | Self + roles + active org + provisioning status (allowed while `INVITED`) |
+| `GET` | `/api/v1/admin/users` | **ADMIN** | Platform user list (cursor-paginated) |
+| `GET` | `/api/v1/permissions` | USER | The fixed permission catalog |
+| `POST` | `/api/v1/orgs` | **ADMIN** | Create org + first owner. Body `{"alias","name","ownerEmail","ownerFirstName?","ownerLastName?"}` |
+| `GET`/`PATCH` | `/api/v1/orgs/{orgId}` | `org:read` / `org:update` | Read / rename an org |
+| `GET`/`POST` | `/api/v1/orgs/{orgId}/members` | `member:read` / `member:invite` | List / invite (provisions identity + temp creds) |
+| `PUT` | `/api/v1/orgs/{orgId}/members/{subject}/role` | `member:role:assign` | Reassign role (last-owner protected) |
+| `DELETE` | `/api/v1/orgs/{orgId}/members/{subject}` | `member:remove` | Remove member (keeps the Keycloak user) |
+| `GET`/`POST`/`PUT`/`DELETE` | `/api/v1/orgs/{orgId}/roles[/{roleId}]` | `role:*` | Custom-role CRUD (system roles immutable) |
 
 `files`, `scheduler`, and `analytics` modules have no REST surface yet (event/job/query-driven).
+
+### Organizations & org-scoped RBAC (no-JIT)
+Org endpoints need the token's **active org** to match `{orgId}` — `scripts/token.sh` requests the
+`organization` scope so david's token carries it. The Keycloak Admin API (provisioning, org creation)
+uses the `smsone-admin` service account; its dev secret is baked in (override `KEYCLOAK_ADMIN_SECRET`
+in prod). To seed a demo org `acme` with david as OWNER at startup, run the app with
+`ORG_DEV_BOOTSTRAP_ENABLED=true` (needs Keycloak up; idempotent, best-effort).
+```bash
+# once bootstrapped (or after POST /orgs), find your active org id and drive the RBAC surface:
+scripts/api.sh GET /api/v1/me                              # -> data.attributes.activeOrgId
+ORG=<activeOrgId>
+scripts/api.sh GET  "/api/v1/orgs/$ORG/members"            # owner/admin: 200; unscoped token: 403
+scripts/api.sh POST "/api/v1/orgs/$ORG/members" \
+  -d '{"email":"newbie@smsone.co.ug","firstName":"New","roleCode":"MEMBER"}'   # invites + emails creds
+scripts/api.sh POST "/api/v1/orgs/$ORG/roles" \
+  -d '{"code":"AUDITOR","name":"Auditor","permissions":["org:read","member:read"]}'
+API_USER=jane scripts/api.sh GET "/api/v1/orgs/$ORG/members"   # 403 (jane isn't a member of the org)
+```
 
 ### Response envelope (every response)
 ```json
