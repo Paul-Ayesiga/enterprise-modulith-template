@@ -120,6 +120,31 @@ class RateLimitIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void edgeFilterKeysByActiveOrgFromTheOrganizationClaim() throws Exception {
+        UUID orgId = UUID.randomUUID();
+        RequestPostProcessor org = orgToken(orgId, "user");
+        // A DIFFERENT user in the SAME org — proves the bucket is keyed by org, not by sub.
+        RequestPostProcessor sameOrgOtherUser = orgToken(orgId, "someone-else");
+
+        mockMvc.perform(get("/api/v1/settings").with(org)).andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/settings").with(org)).andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/settings").with(sameOrgOtherUser)).andExpect(status().isOk()); // 3rd of the org
+        mockMvc.perform(get("/api/v1/settings").with(org))
+                .andExpect(status().isTooManyRequests()); // 4th in the org -> throttled regardless of which user
+
+        // A different org has its own bucket.
+        mockMvc.perform(get("/api/v1/settings").with(orgToken(UUID.randomUUID(), "user")))
+                .andExpect(status().isOk());
+    }
+
+    private static RequestPostProcessor orgToken(UUID orgId, String subject) {
+        return jwt()
+                .jwt(builder -> builder.subject(subject)
+                        .claim("organization", Map.of("acme", Map.of("id", orgId.toString()))))
+                .authorities(new SimpleGrantedAuthority("ROLE_USER"));
+    }
+
+    @Test
     void egressChannelLimitDefersExcessDeliveries() throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.setExecutor(Executors.newFixedThreadPool(8));

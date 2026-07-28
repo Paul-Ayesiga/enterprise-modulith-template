@@ -90,9 +90,10 @@ Notification **egress** per-channel limits via the same `DistributedRateLimiter`
 + `app.notification.delivery.rate.*` config; IT against real Valkey (edge 429, per-tenant isolation, egress throttle).
 
 **Deferred hardening (follow-up):**
-- **Per-tenant claim now exists.** The `organization` module ships the Keycloak `organization` claim
-  (active org id) — point `app.rate-limit.tenant-claim` at it (or map the org id to the configured
-  claim) to activate true per-tenant quotas instead of the `sub`/IP fallback.
+- ~~Per-tenant claim.~~ ✅ (2026-07-28) TENANT tiers now key by the caller's **active org id**
+  (parsed from the Keycloak `organization` claim via `CurrentUserProvider`); the flat
+  `app.rate-limit.tenant-claim` remains a fallback for non-org IdPs, then sub, then IP. IT proves two
+  users in one org share a bucket while a different org is independent.
 - **Coarse pre-auth per-IP shield** belongs at the K8s ingress/gateway (this filter is post-auth,
   identity-aware) — add it with the Kustomize work (task 4).
 - **Fail-open → local fallback.** On Valkey outage the limiter fails open; upgrade to a Resilience4j

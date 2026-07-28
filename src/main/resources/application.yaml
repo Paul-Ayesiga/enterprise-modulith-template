@@ -92,7 +92,9 @@ app:
   rate-limit:
     enabled: ${RATE_LIMIT_ENABLED:true}
     key-prefix: rl
-    tenant-claim: ${RATE_LIMIT_TENANT_CLAIM:tenant}   # JWT claim; falls back to sub then IP when absent
+    # TENANT tiers key by the caller's active org (Keycloak 'organization' claim). This flat claim is a
+    # fallback for non-org IdPs; if neither is present, keying falls back to sub then IP.
+    tenant-claim: ${RATE_LIMIT_TENANT_CLAIM:tenant}
     backend-timeout: ${RATE_LIMIT_BACKEND_TIMEOUT:PT0.25S}
     trust-forwarded-for: ${RATE_LIMIT_TRUST_XFF:false} # only true behind a trusted proxy/gateway
     tiers:

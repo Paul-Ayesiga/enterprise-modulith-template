@@ -1,6 +1,7 @@
 package ug.co.smsone.shared.ratelimit;
 
 import jakarta.servlet.http.HttpServletRequest;
+import java.util.UUID;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -8,42 +9,67 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Component;
 import ug.co.smsone.shared.ratelimit.RateLimitProperties.Tier;
+import ug.co.smsone.shared.security.CurrentUser;
+import ug.co.smsone.shared.security.CurrentUserProvider;
 
 /**
  * Resolves the bucket key for a request: {@code <prefix>:<tier>:<scopeType>:<scopeValue>}. Scope
- * degrades gracefully — TENANT uses the configured tenant claim, falling back to the principal
- * ({@code sub}) then the client IP; PRINCIPAL falls back to IP for anonymous routes.
+ * degrades gracefully — TENANT keys by the caller's active organization (the Keycloak
+ * {@code organization} claim), falling back to a configured flat tenant claim, then the principal
+ * ({@code sub}), then the client IP; PRINCIPAL falls back to IP for anonymous routes.
  */
 @Component
 @ConditionalOnProperty(name = "app.rate-limit.enabled", havingValue = "true", matchIfMissing = true)
 class RateLimitKeyResolver {
 
     private final RateLimitProperties properties;
+    private final CurrentUserProvider currentUserProvider;
 
-    RateLimitKeyResolver(RateLimitProperties properties) {
+    RateLimitKeyResolver(RateLimitProperties properties, CurrentUserProvider currentUserProvider) {
         this.properties = properties;
+        this.currentUserProvider = currentUserProvider;
     }
 
     String resolve(HttpServletRequest request, Tier tier) {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        Jwt jwt = jwt(authentication);
 
-        String type;
-        String value;
-        String tenant = (tier.scope() == RateLimitScope.TENANT && jwt != null)
-                ? jwt.getClaimAsString(properties.tenantClaim())
-                : null;
-        if (tenant != null && !tenant.isBlank()) {
-            type = "tenant";
-            value = tenant;
-        } else if ((tier.scope() == RateLimitScope.TENANT || tier.scope() == RateLimitScope.PRINCIPAL)
-                && isAuthenticated(authentication)) {
-            type = "sub";
-            value = authentication.getName();
-        } else {
-            type = "ip";
-            value = clientIp(request);
+        if (tier.scope() == RateLimitScope.TENANT) {
+            String tenant = tenantKey(authentication);
+            if (tenant != null) {
+                return key(tier, "tenant", tenant);
+            }
         }
+        if ((tier.scope() == RateLimitScope.TENANT || tier.scope() == RateLimitScope.PRINCIPAL)
+                && isAuthenticated(authentication)) {
+            return key(tier, "sub", authentication.getName());
+        }
+        return key(tier, "ip", clientIp(request));
+    }
+
+    /**
+     * The tenant identity for a TENANT-scoped tier: the active organization id (parsed from the
+     * Keycloak {@code organization} claim — the canonical tenant), or a configured flat tenant claim
+     * for non-org identity providers. {@code null} when neither is present (the caller then keys by sub).
+     */
+    private String tenantKey(Authentication authentication) {
+        String org = currentUserProvider.currentUser()
+                .map(CurrentUser::activeOrgId)
+                .map(UUID::toString)
+                .orElse(null);
+        if (org != null) {
+            return org;
+        }
+        Jwt jwt = jwt(authentication);
+        if (jwt != null) {
+            String flat = jwt.getClaimAsString(properties.tenantClaim());
+            if (flat != null && !flat.isBlank()) {
+                return flat;
+            }
+        }
+        return null;
+    }
+
+    private String key(Tier tier, String type, String value) {
         return properties.keyPrefix() + ":" + tier.id() + ":" + type + ":" + value;
     }
 
