@@ -28,11 +28,25 @@ class KeycloakServiceAccountTokens {
     private volatile Instant expiresAt = Instant.EPOCH;
 
     KeycloakServiceAccountTokens(KeycloakAdminProperties properties) {
-        this.tokenClient = RestClient.create(properties.tokenUri());
+        this.tokenClient = RestClient.builder()
+                .baseUrl(properties.tokenUri())
+                .requestFactory(KeycloakAdminClientConfig.timedRequestFactory(properties))
+                .build();
         this.form = new LinkedMultiValueMap<>();
         form.add("grant_type", "client_credentials");
         form.add("client_id", properties.clientId());
         form.add("client_secret", properties.clientSecret());
+    }
+
+    /** Drop the cached token (it was rejected) so the next {@link #bearer()} fetches a fresh one. */
+    void invalidate() {
+        lock.lock();
+        try {
+            this.accessToken = null;
+            this.expiresAt = Instant.EPOCH;
+        } finally {
+            lock.unlock();
+        }
     }
 
     String bearer() {

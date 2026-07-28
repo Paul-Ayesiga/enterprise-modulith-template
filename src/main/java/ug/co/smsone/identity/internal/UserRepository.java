@@ -8,4 +8,6 @@ import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 interface UserRepository extends JpaRepository<User, UUID>, JpaSpecificationExecutor<User> {
 
     Optional<User> findBySubject(String subject);
+
+    Optional<User> findFirstByEmailIgnoreCaseOrderByProvisionedAtAsc(String email);
 }

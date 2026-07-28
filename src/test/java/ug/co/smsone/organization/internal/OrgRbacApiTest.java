@@ -208,6 +208,101 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void adminCannotSelfPromoteToOwner() throws Exception {
+        // The escalation guard applies to role ASSIGNMENT too: handing yourself OWNER would grant
+        // org:delete, which ADMIN does not hold. Without this, member:role:assign == OWNER.
+        mockMvc.perform(put("/api/v1/orgs/{orgId}/members/{subject}/role", orgId, admin)
+                        .with(token(admin, orgId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"roleCode\":\"OWNER\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errors[0].code").value("FORBIDDEN"));
+
+        org.junit.jupiter.api.Assertions.assertEquals(
+                roles.findByOrgIdAndCode(orgId, "ADMIN").orElseThrow().getId(),
+                memberships.findByOrgIdAndUserSubject(orgId, admin).orElseThrow().getRoleId());
+    }
+
+    @Test
+    void adminCannotInviteAnOwner() throws Exception {
+        mockMvc.perform(post("/api/v1/orgs/{orgId}/members", orgId)
+                        .with(token(admin, orgId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"boss@smsone.co.ug\",\"roleCode\":\"OWNER\"}"))
+                .andExpect(status().isForbidden());
+
+        then(userProvisioning).should(never()).provision(any()); // rejected before provisioning
+    }
+
+    @Test
+    void ownerCanPromoteAMemberToOwner() throws Exception {
+        mockMvc.perform(put("/api/v1/orgs/{orgId}/members/{subject}/role", orgId, member)
+                        .with(token(owner, orgId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"roleCode\":\"OWNER\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.attributes.roleCode").value("OWNER"));
+    }
+
+    @Test
+    void duplicateAliasCreateIsConflictNotAdoption() throws Exception {
+        Organization existing = organizations.findByKcOrgId(orgId).orElseThrow();
+
+        mockMvc.perform(post("/api/v1/orgs")
+                        .with(platformAdmin())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"alias\":\"" + existing.getAlias() + "\",\"name\":\"Impostor\","
+                                + "\"ownerEmail\":\"evil@smsone.co.ug\"}"))
+                .andExpect(status().isConflict());
+
+        then(userProvisioning).should(never()).provision(any()); // no second OWNER ever provisioned
+        then(keycloakOrg).should(never()).createOrganization(any(), any());
+    }
+
+    @Test
+    void createRefusesToAdoptAnExistingKeycloakOrg() throws Exception {
+        // Local projection absent but the alias exists Keycloak-side (e.g. a concurrent create won):
+        // strict create must 409, never silently attach a new OWNER to someone else's org.
+        given(keycloakOrg.findOrganizationIdByAlias("taken-alias")).willReturn(java.util.Optional.of(UUID.randomUUID()));
+
+        mockMvc.perform(post("/api/v1/orgs")
+                        .with(platformAdmin())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"alias\":\"taken-alias\",\"name\":\"Impostor\","
+                                + "\"ownerEmail\":\"evil@smsone.co.ug\"}"))
+                .andExpect(status().isConflict());
+
+        then(userProvisioning).should(never()).provision(any());
+        then(keycloakOrg).should(never()).createOrganization(any(), any());
+    }
+
+    @Test
+    void suspendIsPlatformAdminOnlyAndCutsMemberAccess() throws Exception {
+        // An org OWNER is not a platform admin — suspension is out of tenant reach.
+        mockMvc.perform(post("/api/v1/orgs/{orgId}/suspend", orgId).with(token(owner, orgId)))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(post("/api/v1/orgs/{orgId}/suspend", orgId).with(platformAdmin()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.attributes.status").value("SUSPENDED"));
+
+        // Fresh subject: nothing cached, so the resolver's org-status check applies immediately.
+        String lateJoiner = attach("late-" + UUID.randomUUID(), "OWNER");
+        mockMvc.perform(get("/api/v1/orgs/{orgId}/members", orgId).with(token(lateJoiner, orgId)))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(post("/api/v1/orgs/{orgId}/reactivate", orgId).with(platformAdmin()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.attributes.status").value("ACTIVE"));
+    }
+
+    /** A platform administrator: realm ADMIN role, no org scoping needed. */
+    private JwtRequestPostProcessor platformAdmin() {
+        return jwt().jwt(jwt -> jwt.subject("platform-admin"))
+                .authorities(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_ADMIN"));
+    }
+
+    @Test
     void removingTheLastOwnerIsBlocked() throws Exception {
         mockMvc.perform(delete("/api/v1/orgs/{orgId}/members/{subject}", orgId, owner).with(token(owner, orgId)))
                 .andExpect(status().isConflict())

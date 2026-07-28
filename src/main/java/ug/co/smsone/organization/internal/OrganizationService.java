@@ -33,12 +33,21 @@ class OrganizationService {
         this.projectionWriter = projectionWriter;
     }
 
+    /**
+     * Strict create: any pre-existing org with this alias — local projection OR Keycloak-side — is a
+     * 409, never a silent adoption. Adoption would let the loser of a concurrent duplicate-alias race
+     * attach ITS owner to the winner's org (an unintended second OWNER). The race on the Keycloak
+     * create itself is closed by Keycloak's unique-alias 409, which the gateway maps to a Conflict.
+     * Healing an org that survived a local-DB reset goes through {@link #ensureBootstrap} (dev) or ops.
+     */
     Organization create(String alias, String name, String ownerEmail, String ownerFirstName, String ownerLastName) {
         String normalizedAlias = normalize(alias);
-        if (organizations.existsByAlias(normalizedAlias)) {
+        if (organizations.existsByAlias(normalizedAlias)
+                || keycloakOrg.findOrganizationIdByAlias(normalizedAlias).isPresent()) {
             throw new ConflictException("An organization with alias '" + normalizedAlias + "' already exists.");
         }
-        return provision(normalizedAlias, name, ownerEmail, ownerFirstName, ownerLastName);
+        UUID kcOrgId = keycloakOrg.createOrganization(normalizedAlias, name); // concurrent duplicate -> 409
+        return provisionOwner(kcOrgId, normalizedAlias, name, ownerEmail, ownerFirstName, ownerLastName);
     }
 
     /** Idempotent get-or-create for the dev bootstrap: reuses the local projection if present. */
@@ -50,13 +59,19 @@ class OrganizationService {
     }
 
     /**
-     * Keycloak-first provisioning, then one atomic local write. Reached only when no local projection
-     * exists for the alias; each Keycloak call is get-or-create / idempotent so it is safe to retry.
+     * Get-or-create for the dev bootstrap ONLY: re-adopts a Keycloak org that survived a local-DB
+     * reset. The admin-facing {@link #create} must never adopt — see its javadoc.
      */
     private Organization provision(String alias, String name, String ownerEmail,
             String ownerFirstName, String ownerLastName) {
         UUID kcOrgId = keycloakOrg.findOrganizationIdByAlias(alias)
                 .orElseGet(() -> keycloakOrg.createOrganization(alias, name));
+        return provisionOwner(kcOrgId, alias, name, ownerEmail, ownerFirstName, ownerLastName);
+    }
+
+    /** Provision the owner identity, link the Keycloak membership, then one atomic local write. */
+    private Organization provisionOwner(UUID kcOrgId, String alias, String name, String ownerEmail,
+            String ownerFirstName, String ownerLastName) {
         ProvisionedUser owner = userProvisioning.provision(new ProvisionRequest(ownerEmail, ownerFirstName, ownerLastName));
         keycloakOrg.addMember(kcOrgId, owner.subject());
         return projectionWriter.projectWithOwner(kcOrgId, alias, name, owner.subject());
@@ -71,6 +86,20 @@ class OrganizationService {
     Organization rename(UUID kcOrgId, String name) {
         Organization organization = require(kcOrgId);
         organization.rename(name);
+        return organizations.save(organization);
+    }
+
+    @Transactional
+    Organization suspend(UUID kcOrgId) {
+        Organization organization = require(kcOrgId);
+        organization.suspend(); // publishes OrganizationStatusChanged -> permission cache eviction
+        return organizations.save(organization);
+    }
+
+    @Transactional
+    Organization reactivate(UUID kcOrgId) {
+        Organization organization = require(kcOrgId);
+        organization.reactivate();
         return organizations.save(organization);
     }
 

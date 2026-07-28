@@ -4,20 +4,14 @@ import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.UUID;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
-import ug.co.smsone.identity.internal.ProvisioningProperties.TempCredentialMode;
 
 /** Keycloak Admin REST calls for the user lifecycle (find/create user, issue temporary credentials). */
 @Component
 class KeycloakUserAdminGateway {
-
-    private static final Logger log = LoggerFactory.getLogger(KeycloakUserAdminGateway.class);
 
     private final RestClient keycloakAdminRestClient;
     private final ProvisioningProperties properties;
@@ -63,33 +57,35 @@ class KeycloakUserAdminGateway {
         return new KeycloakUser(path.substring(path.lastIndexOf('/') + 1), email);
     }
 
+    /** True when the account has at least one stored credential (e.g. a password). */
+    boolean hasCredentials(String userId) {
+        List<?> credentials = keycloakAdminRestClient.get()
+                .uri("/users/{id}/credentials", userId)
+                .retrieve()
+                .body(List.class);
+        return credentials != null && !credentials.isEmpty();
+    }
+
+    /**
+     * Invite via Keycloak's {@code execute-actions-email}: the user receives an action link to set
+     * their password (the admin never sees a credential). This is the ONLY credential mode — a
+     * server-generated temporary password had no delivery channel, which stranded accounts.
+     */
     void issueTemporaryCredentials(String userId) {
-        if (properties.tempCredentialMode() == TempCredentialMode.EMAIL) {
-            keycloakAdminRestClient.put()
-                    .uri(uri -> {
-                        var builder = uri.path("/users/{id}/execute-actions-email")
-                                .queryParam("client_id", properties.appClientId())
-                                .queryParam("lifespan", properties.inviteLifespan().toSeconds());
-                        if (properties.redirectUri() != null && !properties.redirectUri().isBlank()) {
-                            builder.queryParam("redirect_uri", properties.redirectUri());
-                        }
-                        return builder.build(userId);
-                    })
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(List.of("UPDATE_PASSWORD", "VERIFY_EMAIL"))
-                    .retrieve()
-                    .toBodilessEntity();
-        } else {
-            // TEMP_PASSWORD: single-use random password (forced change at first login); deliver out-of-band.
-            String temporary = UUID.randomUUID() + "Aa1!";
-            keycloakAdminRestClient.put()
-                    .uri("/users/{id}/reset-password", userId)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(Map.of("type", "password", "value", temporary, "temporary", true))
-                    .retrieve()
-                    .toBodilessEntity();
-            log.info("Temporary password set for Keycloak user {} — deliver out-of-band (mode=TEMP_PASSWORD)", userId);
-        }
+        keycloakAdminRestClient.put()
+                .uri(uri -> {
+                    var builder = uri.path("/users/{id}/execute-actions-email")
+                            .queryParam("client_id", properties.appClientId())
+                            .queryParam("lifespan", properties.inviteLifespan().toSeconds());
+                    if (properties.redirectUri() != null && !properties.redirectUri().isBlank()) {
+                        builder.queryParam("redirect_uri", properties.redirectUri());
+                    }
+                    return builder.build(userId);
+                })
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(List.of("UPDATE_PASSWORD", "VERIFY_EMAIL"))
+                .retrieve()
+                .toBodilessEntity();
     }
 
     private static String nullToEmpty(String value) {

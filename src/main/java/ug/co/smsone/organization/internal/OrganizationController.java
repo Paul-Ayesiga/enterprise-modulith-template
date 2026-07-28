@@ -70,6 +70,21 @@ class OrganizationController {
         return toResource(organizations.rename(orgId, request.name()));
     }
 
+    // Suspension is a platform action (like create): a suspended org's members lose all org access
+    // immediately, so it cannot be gated on a permission held inside that same org.
+
+    @PostMapping("/{orgId}/suspend")
+    @PreAuthorize("hasRole('ADMIN')")
+    ResourceObject suspend(@PathVariable UUID orgId) {
+        return toResource(organizations.suspend(orgId));
+    }
+
+    @PostMapping("/{orgId}/reactivate")
+    @PreAuthorize("hasRole('ADMIN')")
+    ResourceObject reactivate(@PathVariable UUID orgId) {
+        return toResource(organizations.reactivate(orgId));
+    }
+
     private static ResourceObject toResource(Organization organization) {
         return new ResourceObject(organization.getKcOrgId().toString(), RESOURCE_TYPE,
                 new OrganizationAttributes(organization.getAlias(), organization.getName(),

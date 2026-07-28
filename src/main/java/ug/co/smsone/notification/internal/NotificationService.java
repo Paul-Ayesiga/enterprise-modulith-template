@@ -1,9 +1,10 @@
 package ug.co.smsone.notification.internal;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Stream;
 import org.springframework.stereotype.Service;
+import ug.co.smsone.identity.UserDirectory;
 import ug.co.smsone.notification.NotificationRequest;
 import ug.co.smsone.notification.Notifications;
 import ug.co.smsone.notification.Recipient;
@@ -19,10 +20,13 @@ class NotificationService implements Notifications {
 
     private final NotificationDeliveryQueue queue;
     private final NotificationProperties properties;
+    private final UserDirectory userDirectory;
 
-    NotificationService(NotificationDeliveryQueue queue, NotificationProperties properties) {
+    NotificationService(NotificationDeliveryQueue queue, NotificationProperties properties,
+            UserDirectory userDirectory) {
         this.queue = queue;
         this.properties = properties;
+        this.userDirectory = userDirectory;
     }
 
     @Override
@@ -39,9 +43,15 @@ class NotificationService implements Notifications {
 
     @Override
     public void notifyAdmins(String subject, String body) {
-        List<Recipient> recipients = properties.admins().stream()
-                .flatMap(admin -> Stream.of(Recipient.email(admin.email()), Recipient.inApp(admin.username())))
-                .toList();
+        List<Recipient> recipients = new ArrayList<>();
+        for (NotificationProperties.Admin admin : properties.admins()) {
+            recipients.add(Recipient.email(admin.email()));
+            // In-app targets are addressed by the immutable Keycloak subject, never by a
+            // mutable/recyclable name — resolved from the admin's email at enqueue time. An
+            // unprovisioned admin can't log in to read in-app anyway; e-mail still goes out.
+            userDirectory.findSubjectByEmail(admin.email())
+                    .ifPresent(adminSubject -> recipients.add(Recipient.inApp(adminSubject)));
+        }
         if (recipients.isEmpty()) {
             return;
         }

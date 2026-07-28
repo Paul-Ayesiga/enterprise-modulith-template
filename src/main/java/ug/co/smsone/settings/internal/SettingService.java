@@ -33,7 +33,7 @@ public class SettingService {
     @Transactional(readOnly = true)
     public Window<Setting> list(CursorPageRequest page) {
         return repository.findBy((root, query, cb) -> cb.conjunction(),
-                q -> q.limit(page.size()).sortBy(LIST_SORT).scroll(page.scrollPosition()));
+                q -> q.limit(page.size()).sortBy(LIST_SORT).scroll(page.scrollPosition(LIST_SORT)));
     }
 
     /** Hot read path for other modules: cached in L1+L2, evicted on {@link #put}. */

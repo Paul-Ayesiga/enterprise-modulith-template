@@ -12,7 +12,11 @@ import ug.co.smsone.shared.security.CurrentUser;
 import ug.co.smsone.shared.security.CurrentUserProvider;
 import ug.co.smsone.shared.web.CursorPageRequest;
 
-/** Read side of in-app notifications: each user sees and marks read only their own. */
+/**
+ * Read side of in-app notifications: each user sees and marks read only their own. Rows are keyed
+ * by the immutable Keycloak subject — a mutable {@code preferred_username} could be renamed and
+ * reassigned, handing the new holder the previous user's notifications.
+ */
 @Service
 @Transactional
 class InAppNotificationService {
@@ -32,23 +36,27 @@ class InAppNotificationService {
 
     @Transactional(readOnly = true)
     Window<InAppNotification> listForCurrentUser(CursorPageRequest page) {
-        String recipient = currentUsername();
+        String recipient = currentSubject();
         return repository.findBy(
                 (root, query, cb) -> cb.equal(root.get("recipient"), recipient),
-                query -> query.limit(page.size()).sortBy(LIST_SORT).scroll(page.scrollPosition()));
+                query -> query.limit(page.size()).sortBy(LIST_SORT).scroll(page.scrollPosition(LIST_SORT)));
     }
 
     InAppNotification markRead(UUID id) {
-        String recipient = currentUsername();
-        InAppNotification notification = repository.findByIdAndRecipient(id, recipient)
+        String recipient = currentSubject();
+        if (repository.findByIdAndRecipient(id, recipient).isEmpty()) {
+            throw new NotFoundException("Notification '" + id + "' does not exist.");
+        }
+        // Conditional bulk update: idempotent under concurrency (no @Version bump, so a parallel
+        // mark-read can never surface as an optimistic-lock 500).
+        repository.markReadIfUnread(id, recipient, clock.instant());
+        return repository.findByIdAndRecipient(id, recipient)
                 .orElseThrow(() -> new NotFoundException("Notification '" + id + "' does not exist."));
-        notification.markRead(clock.instant());
-        return repository.save(notification);
     }
 
-    private String currentUsername() {
+    private String currentSubject() {
         return currentUserProvider.currentUser()
-                .map(CurrentUser::username)
+                .map(CurrentUser::subject)
                 .orElseThrow(() -> new UnauthorizedException("Authentication required."));
     }
 }

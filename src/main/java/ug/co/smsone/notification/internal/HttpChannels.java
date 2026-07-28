@@ -1,12 +1,15 @@
 package ug.co.smsone.notification.internal;
 
-import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /** Minimal JSON HTTP POST used by the webhook and Slack channels (no Jackson on this path). */
 final class HttpChannels {
@@ -24,16 +27,35 @@ final class HttpChannels {
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
                 .build();
+        // Bound the WHOLE exchange. HttpRequest.timeout() only covers time-to-headers, so a receiver
+        // that returns headers then holds the body open would otherwise hang the sending thread —
+        // and one hung send stalls the delivery worker's whole batch. get(timeout) (NOT orTimeout,
+        // which completes the future and makes cancel a no-op) leaves the future pending on timeout,
+        // so cancel(true) actually aborts the underlying connection instead of leaking it.
+        CompletableFuture<HttpResponse<Void>> exchange =
+                CLIENT.sendAsync(request, HttpResponse.BodyHandlers.discarding());
+        HttpResponse<Void> response;
         try {
-            HttpResponse<Void> response = CLIENT.send(request, HttpResponse.BodyHandlers.discarding());
-            if (response.statusCode() >= 300) {
-                throw new NotificationDeliveryException("HTTP " + response.statusCode() + " from " + url);
-            }
-        } catch (IOException ex) {
-            throw new NotificationDeliveryException("POST to " + url + " failed: " + ex.getMessage(), ex);
+            response = exchange.get(timeoutSeconds, TimeUnit.SECONDS);
+        } catch (TimeoutException ex) {
+            exchange.cancel(true);
+            throw new NotificationDeliveryException(
+                    "POST to " + url + " timed out after " + timeoutSeconds + "s", ex);
         } catch (InterruptedException ex) {
+            exchange.cancel(true);
             Thread.currentThread().interrupt();
             throw new NotificationDeliveryException("POST to " + url + " was interrupted", ex);
+        } catch (ExecutionException ex) {
+            Throwable cause = ex.getCause() == null ? ex : ex.getCause();
+            throw new NotificationDeliveryException("POST to " + url + " failed: " + cause.getMessage(), cause);
+        }
+        if (response.statusCode() >= 300) {
+            // 3xx/4xx are the receiver's contract (bad URL, auth, gone) — retrying cannot help.
+            // 408 (timeout) and 429 (throttled) are the transient exceptions; 5xx is retryable.
+            boolean permanent = response.statusCode() < 500
+                    && response.statusCode() != 408 && response.statusCode() != 429;
+            throw new NotificationDeliveryException(
+                    "HTTP " + response.statusCode() + " from " + url, permanent);
         }
     }
 

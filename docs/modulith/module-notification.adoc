@@ -18,6 +18,7 @@ _Others_
 |* `u.c.s.s.ratelimit.DistributedRateLimiter` (in Shared Kernel)
 * `u.c.s.s.events.EventInbox` (in Shared Kernel)
 * `u.c.s.s.security.CurrentUserProvider` (in Shared Kernel)
+* `u.c.s.i.UserDirectory` (in Identity)
 |Events listened to
 |* `u.c.s.s.FeatureFlagChanged` (async) 
 |===

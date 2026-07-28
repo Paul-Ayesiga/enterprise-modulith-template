@@ -53,16 +53,68 @@ class IdentityProvisioningTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void reProvisioningExistingUserIsIdempotentAndSendsNoInvite() {
+    void preExistingKeycloakAccountWithCredentialsGetsNoInvite() {
         String subject = "kc-" + UUID.randomUUID();
         String email = subject + "@smsone.co.ug";
         given(keycloak.findByEmail(email)).willReturn(Optional.of(new KeycloakUser(subject, email)));
+        given(keycloak.hasCredentials(subject)).willReturn(true); // a real account with a password
 
         ProvisionedUser result = provisioning.provision(new ProvisionRequest(email, "Bob", "K"));
 
-        assertThat(result.alreadyExisted()).isTrue();
+        assertThat(result.alreadyExisted()).isFalse(); // no local row yet — this provisions it
         assertThat(users.findBySubject(subject)).isPresent();
-        then(keycloak).should(never()).issueTemporaryCredentials(subject);
+        then(keycloak).should(never()).issueTemporaryCredentials(subject); // never reset a real account
+    }
+
+    @Test
+    void retryAfterFailedInviteReissuesCredentials() {
+        // First attempt created the Keycloak account but the credential e-mail failed: account
+        // exists, no credentials, no local row. The retry must re-send the invite — not silently
+        // report success and strand a credential-less account.
+        String subject = "kc-" + UUID.randomUUID();
+        String email = subject + "@smsone.co.ug";
+        given(keycloak.findByEmail(email)).willReturn(Optional.of(new KeycloakUser(subject, email)));
+        given(keycloak.hasCredentials(subject)).willReturn(false);
+
+        ProvisionedUser result = provisioning.provision(new ProvisionRequest(email, "Jane", "Doe"));
+
+        assertThat(result.alreadyExisted()).isFalse();
+        assertThat(users.findBySubject(subject)).isPresent();
+        then(keycloak).should().issueTemporaryCredentials(subject);
+    }
+
+    @Test
+    void fullyProvisionedUserIsIdempotentAndSendsNoInvite() {
+        String subject = "kc-" + UUID.randomUUID();
+        String email = subject + "@smsone.co.ug";
+        given(keycloak.findByEmail(email)).willReturn(Optional.empty());
+        given(keycloak.createUser(email, null, null)).willReturn(new KeycloakUser(subject, email));
+        provisioning.provision(new ProvisionRequest(email, null, null));
+
+        // The account now exists in Keycloak; a re-invite finds it instead of re-creating.
+        given(keycloak.findByEmail(email)).willReturn(Optional.of(new KeycloakUser(subject, email)));
+        ProvisionedUser again = provisioning.provision(new ProvisionRequest(email, null, null));
+
+        assertThat(again.alreadyExisted()).isTrue();
+        assertThat(users.findAll().stream().filter(u -> subject.equals(u.getSubject()))).hasSize(1);
+        then(keycloak).should().issueTemporaryCredentials(subject); // exactly once, from the first call
+    }
+
+    @Test
+    void disabledUserIsDeniedByBothAuthorizeAndPeek() {
+        String subject = "kc-" + UUID.randomUUID();
+        String email = subject + "@smsone.co.ug";
+        given(keycloak.findByEmail(email)).willReturn(Optional.empty());
+        given(keycloak.createUser(email, null, null)).willReturn(new KeycloakUser(subject, email));
+        provisioning.provision(new ProvisionRequest(email, null, null));
+
+        User user = users.findBySubject(subject).orElseThrow();
+        user.disable();
+        users.save(user);
+
+        assertThat(access.authorize(subject)).isEqualTo(Decision.DISABLED);
+        // peek() backs the lenient GET /me path — DISABLED must be a hard stop there too.
+        assertThat(access.peek(subject)).isEqualTo(Decision.DISABLED);
     }
 
     @Test

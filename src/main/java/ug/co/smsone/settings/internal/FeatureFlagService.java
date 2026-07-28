@@ -39,7 +39,7 @@ public class FeatureFlagService {
     @Transactional(readOnly = true)
     public Window<FeatureFlag> list(CursorPageRequest page) {
         return repository.findBy((root, query, cb) -> cb.conjunction(),
-                q -> q.limit(page.size()).sortBy(LIST_SORT).scroll(page.scrollPosition()));
+                q -> q.limit(page.size()).sortBy(LIST_SORT).scroll(page.scrollPosition(LIST_SORT)));
     }
 
     @CacheEvict(cacheNames = FLAGS_CACHE, key = "#key")

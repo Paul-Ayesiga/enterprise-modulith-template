@@ -11,6 +11,29 @@
   },
   "clientScopes": [
     {
+      "name": "smsone-api-audience",
+      "description": "Stamps the smsone-api audience into access tokens — the resource server rejects tokens without it",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "smsone-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "smsone-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
       "name": "organization",
       "description": "Adds the active Keycloak organization (alias + id) to the token as the 'organization' claim",
       "protocol": "openid-connect",
@@ -50,6 +73,7 @@
       "redirectUris": ["http://localhost:*", "https://oauth.pstmn.io/v1/callback"],
       "webOrigins": ["+"],
       "attributes": { "pkce.code.challenge.method": "S256" },
+      "defaultClientScopes": ["web-origins", "acr", "profile", "roles", "basic", "email", "smsone-api-audience"],
       "optionalClientScopes": ["organization", "address", "phone", "offline_access", "microprofile-jwt"]
     },
     {

@@ -18,6 +18,7 @@ import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
@@ -48,7 +49,7 @@ class NotificationDeliveryTest {
     private static final int MAILPIT_SMTP = 1025;
     private static final int MAILPIT_HTTP = 8025;
     private static final String ADMIN_EMAIL = "ops@smsone.co.ug";
-    private static final String ADMIN_USER = "david";
+    private static final String ADMIN_SUBJECT = "kc-sub-admin-0001"; // app_user row seeded per test
 
     @ServiceConnection
     static final PostgreSQLContainer<?> POSTGRES = AbstractIntegrationTest.POSTGRES;
@@ -66,8 +67,10 @@ class NotificationDeliveryTest {
     static void properties(DynamicPropertyRegistry registry) {
         registry.add("spring.mail.host", MAILPIT::getHost);
         registry.add("spring.mail.port", () -> MAILPIT.getMappedPort(MAILPIT_SMTP));
-        registry.add("app.notification.admins[0].username", () -> ADMIN_USER);
         registry.add("app.notification.admins[0].email", () -> ADMIN_EMAIL);
+        // Longer than any drainFully() loop: a failed delivery must stay parked until the test
+        // explicitly fast-forwards next_attempt_at, making retry counts deterministic.
+        registry.add("app.notification.delivery.retry-base-backoff", () -> "PT5S");
     }
 
     @Autowired
@@ -79,18 +82,40 @@ class NotificationDeliveryTest {
     @Autowired
     private JdbcTemplate jdbc;
 
+    @BeforeEach
+    void resetQueue() {
+        // Shared singleton Postgres: other classes (any feature-flag toggle fans admin rows into this
+        // queue) leave rows behind, and the worker drains/claims globally. Start each test from empty.
+        jdbc.update("delete from notification_delivery");
+        jdbc.update("delete from in_app_notification");
+    }
+
     @Test
     void flagToggleEnqueuesThenWorkerDeliversEmailAndInApp(Scenario scenario) throws Exception {
+        seedProvisionedAdmin(); // in-app targeting resolves the admin's SUBJECT from this app_user row
+
         scenario.publish(new FeatureFlagChanged("new-billing", true, Instant.now()))
                 // listener enqueues synchronously (email + in-app); wait for the two queued rows
                 .andWaitForStateChange(() -> queuedLike("new-billing") >= 2 ? Boolean.TRUE : null)
                 .andVerify(ready -> assertThat(queuedLike("new-billing")).isGreaterThanOrEqualTo(2));
 
-        drainFully();
-
-        assertThat(inAppFor(ADMIN_USER, "new-billing")).isGreaterThanOrEqualTo(1);
+        // Deliver, tolerating the async send pipeline: processBatch waits on a latch with a timeout, so
+        // under load drainFully() can return with a send still in flight. Re-drain until the in-app row
+        // (keyed by the immutable Keycloak subject, never the mutable username) has actually landed.
+        await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
+            drainFully();
+            assertThat(inAppFor(ADMIN_SUBJECT, "new-billing")).isGreaterThanOrEqualTo(1);
+        });
         await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
                 assertThat(mailpitMessages()).contains(ADMIN_EMAIL).contains("new-billing").contains("enabled"));
+    }
+
+    private void seedProvisionedAdmin() {
+        jdbc.update("""
+                insert into app_user (id, subject, email, status, provisioned_at, version, created_at)
+                values (?, ?, ?, 'ACTIVE', now(), 0, now())
+                on conflict (subject) do nothing
+                """, UUID.randomUUID(), ADMIN_SUBJECT, ADMIN_EMAIL);
     }
 
     @Test
@@ -153,6 +178,69 @@ class NotificationDeliveryTest {
         } finally {
             server.stop(0);
         }
+    }
+
+    @Test
+    void permanent4xxIsDeadLetteredWithoutBurningRetries() throws Exception {
+        String subject = "Gone-" + UUID.randomUUID();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        AtomicInteger hits = new AtomicInteger();
+        server.createContext("/gone", exchange -> {
+            hits.incrementAndGet();
+            exchange.sendResponseHeaders(410, -1); // receiver says: permanently gone
+            exchange.close();
+        });
+        server.start();
+        try {
+            notifications.dispatch(new NotificationRequest(subject, "bye",
+                    List.of(Recipient.webhook("http://127.0.0.1:" + server.getAddress().getPort() + "/gone")),
+                    Map.of()));
+            drainFully();
+
+            // One attempt, then FAILED — a contract rejection is not retried on a schedule.
+            assertThat(hits.get()).isEqualTo(1);
+            assertThat(statusFor(subject)).isEqualTo("FAILED");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void transient5xxIsRetriedWithBackoffUntilDeadLettered() throws Exception {
+        String subject = "Flaky-" + UUID.randomUUID();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        AtomicInteger hits = new AtomicInteger();
+        server.createContext("/flaky", exchange -> {
+            hits.incrementAndGet();
+            exchange.sendResponseHeaders(503, -1); // transient — retry with backoff
+            exchange.close();
+        });
+        server.start();
+        try {
+            notifications.dispatch(new NotificationRequest(subject, "retry me",
+                    List.of(Recipient.webhook("http://127.0.0.1:" + server.getAddress().getPort() + "/flaky")),
+                    Map.of()));
+            drainFully();
+            assertThat(statusFor(subject)).isEqualTo("PENDING"); // rescheduled, not dead yet
+            assertThat(hits.get()).isEqualTo(1);
+
+            // Fast-forward the backoff instead of sleeping through it, drain, repeat to exhaustion.
+            int maxAttempts = 5; // app.notification.delivery.max-attempts default
+            for (int attempt = 2; attempt <= maxAttempts; attempt++) {
+                jdbc.update("update notification_delivery set next_attempt_at = now() where subject = ?", subject);
+                drainFully();
+            }
+
+            assertThat(hits.get()).isEqualTo(maxAttempts);
+            assertThat(statusFor(subject)).isEqualTo("FAILED");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    private String statusFor(String subject) {
+        return jdbc.queryForObject(
+                "select status from notification_delivery where subject = ?", String.class, subject);
     }
 
     // ---- helpers ----

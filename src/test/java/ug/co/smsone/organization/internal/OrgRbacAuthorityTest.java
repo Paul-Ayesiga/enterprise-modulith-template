@@ -8,6 +8,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import ug.co.smsone.organization.Permission;
 import ug.co.smsone.shared.security.OrgAuthorization;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
@@ -29,7 +30,13 @@ class OrgRbacAuthorityTest extends AbstractIntegrationTest {
     private MembershipRepository memberships;
 
     @Autowired
+    private OrganizationRepository organizations;
+
+    @Autowired
     private OrgAuthorization authorization; // shared port, backed by OrgAuthorizationImpl + PermissionResolver
+
+    @Autowired
+    private JdbcTemplate jdbc;
 
     private UUID orgId;
     private String owner;
@@ -39,6 +46,8 @@ class OrgRbacAuthorityTest extends AbstractIntegrationTest {
     @BeforeEach
     void seed() {
         orgId = UUID.randomUUID();
+        // The resolver grants nothing without an ACTIVE org projection — seed it like production does.
+        organizations.save(Organization.register(orgId, "auth-" + orgId, "Auth Org"));
         roleSeeder.seedSystemRoles(orgId);
 
         owner = attach("owner-" + UUID.randomUUID(), "OWNER");
@@ -92,6 +101,39 @@ class OrgRbacAuthorityTest extends AbstractIntegrationTest {
         // The owner of `orgId` is a stranger in an unrelated org — no leakage across the tenant boundary.
         assertThat(authorization.permissions(owner, otherOrg)).isEmpty();
         assertThat(authorization.hasPermission(owner, otherOrg, Permission.ORG_READ.code())).isFalse();
+    }
+
+    @Test
+    void suspendedOrganizationGrantsNothingUntilReactivated() {
+        assertThat(authorization.hasPermission(owner, orgId, Permission.ORG_READ.code())).isTrue();
+
+        Organization organization = organizations.findByKcOrgId(orgId).orElseThrow();
+        organization.suspend(); // publishes OrganizationStatusChanged -> async cache eviction
+        organizations.save(organization);
+
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
+                assertThat(authorization.permissions(owner, orgId)).isEmpty());
+
+        Organization suspended = organizations.findByKcOrgId(orgId).orElseThrow();
+        suspended.reactivate();
+        organizations.save(suspended);
+
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
+                assertThat(authorization.hasPermission(owner, orgId, Permission.ORG_READ.code())).isTrue());
+    }
+
+    @Test
+    void seederReconcilesADriftedSystemRoleBackToTheCatalog() {
+        // Simulate catalog drift (e.g. an enum value shipped after this org was seeded) by removing a
+        // permission row out-of-band — the entity API forbids editing system roles on purpose.
+        Role ownerRole = roles.findByOrgIdAndCode(orgId, "OWNER").orElseThrow();
+        jdbc.update("delete from role_permission where role_id = ? and permission = ?",
+                ownerRole.getId(), Permission.ORG_DELETE.name());
+
+        roleSeeder.seedSystemRoles(orgId); // reconciling upsert, not presence-gated
+
+        assertThat(roles.findByOrgIdAndCode(orgId, "OWNER").orElseThrow().getPermissions())
+                .contains(Permission.ORG_DELETE);
     }
 
     @Test

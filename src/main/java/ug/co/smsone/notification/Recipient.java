@@ -21,8 +21,9 @@ public record Recipient(NotificationChannel channel, String address) {
         return new Recipient(NotificationChannel.SMS, phoneNumber);
     }
 
-    public static Recipient inApp(String userId) {
-        return new Recipient(NotificationChannel.IN_APP, userId);
+    /** In-app target: the user's immutable Keycloak subject ({@code sub}), NOT a username/email. */
+    public static Recipient inApp(String subject) {
+        return new Recipient(NotificationChannel.IN_APP, subject);
     }
 
     public static Recipient slack(String webhookUrl) {

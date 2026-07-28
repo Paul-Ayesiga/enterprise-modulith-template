@@ -2,17 +2,19 @@ package ug.co.smsone.identity.internal;
 
 import java.time.Clock;
 import java.util.Optional;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import ug.co.smsone.identity.ProvisionRequest;
 import ug.co.smsone.identity.ProvisionedUser;
 import ug.co.smsone.identity.UserProvisioning;
 import ug.co.smsone.identity.internal.KeycloakUserAdminGateway.KeycloakUser;
 
 /**
- * Provisions a user: create-or-reuse the Keycloak account (with temporary credentials for new users),
+ * Provisions a user: create-or-reuse the Keycloak account, invite it if it has no credentials yet,
  * then record the local {@code app_user} row as {@code INVITED}. Keycloak calls run OUTSIDE the local
- * transaction; a mid-flight failure leaves at most an INVITED row and no access.
+ * transaction; every step is idempotent, so a retry after a mid-flight failure finishes the job —
+ * including re-sending the invite when the account was created but the credential e-mail failed
+ * (an account must never be stranded credential-less with the retry reporting success).
  */
 @Service
 class UserProvisioningService implements UserProvisioning {
@@ -30,24 +32,29 @@ class UserProvisioningService implements UserProvisioning {
     @Override
     public ProvisionedUser provision(ProvisionRequest request) {
         Optional<KeycloakUser> existing = keycloak.findByEmail(request.email());
-        KeycloakUser kcUser;
-        boolean created;
-        if (existing.isPresent()) {
-            kcUser = existing.get();
-            created = false;
-        } else {
-            kcUser = keycloak.createUser(request.email(), request.firstName(), request.lastName());
-            keycloak.issueTemporaryCredentials(kcUser.id()); // only newly-created users get an invite
-            created = true;
+        KeycloakUser kcUser = existing.orElseGet(
+                () -> keycloak.createUser(request.email(), request.firstName(), request.lastName()));
+        boolean alreadyProvisioned = users.findBySubject(kcUser.id()).isPresent();
+        if (!alreadyProvisioned) {
+            // Invite exactly when the account has no credentials yet: a fresh create, or a retry
+            // after the first invite attempt failed. A genuinely pre-existing account (has a
+            // password) is never sent a forced credential-reset invite.
+            if (!keycloak.hasCredentials(kcUser.id())) {
+                keycloak.issueTemporaryCredentials(kcUser.id());
+            }
+            saveLocalUser(kcUser.id(), request.email());
         }
-        upsertLocalUser(kcUser.id(), request.email());
-        return new ProvisionedUser(kcUser.id(), request.email(), !created);
+        return new ProvisionedUser(kcUser.id(), request.email(), alreadyProvisioned);
     }
 
-    @Transactional
-    void upsertLocalUser(String subject, String email) {
-        if (users.findBySubject(subject).isEmpty()) {
+    private void saveLocalUser(String subject, String email) {
+        try {
             users.save(User.invited(subject, email, clock.instant())); // publishes UserProvisioned
+        } catch (DataIntegrityViolationException ex) {
+            // Concurrent provision of the same person: the winner's row IS the idempotent outcome.
+            if (users.findBySubject(subject).isEmpty()) {
+                throw ex; // not the duplicate-subject race after all
+            }
         }
     }
 }

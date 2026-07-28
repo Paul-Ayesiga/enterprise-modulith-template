@@ -46,15 +46,14 @@ public class ApiPermissionEvaluator implements PermissionEvaluator {
         if (user == null || user.activeOrgId() == null) {
             return false; // token not scoped to a single org -> deny
         }
-        if (!matchesActiveOrg(user, targetId)) {
+        // Strict id equality: the org the endpoint acts on must BE the org permissions are resolved
+        // against. No alias matching — an alias branch would let a token scoped to org A (whose alias
+        // string happens to equal org B's id) satisfy the scope check for org B while permissions are
+        // resolved against org A: a tenant-isolation break. Alias-addressed URLs must resolve the
+        // alias to its org id before the check.
+        if (!String.valueOf(targetId).equals(String.valueOf(user.activeOrgId()))) {
             return false; // acting on an org the token isn't scoped to -> deny
         }
         return authz.hasPermission(user.subject(), user.activeOrgId(), String.valueOf(permission));
-    }
-
-    private static boolean matchesActiveOrg(CurrentUser user, Serializable targetId) {
-        String target = String.valueOf(targetId);
-        return target.equals(String.valueOf(user.activeOrgId()))
-                || target.equalsIgnoreCase(user.activeOrgAlias());
     }
 }

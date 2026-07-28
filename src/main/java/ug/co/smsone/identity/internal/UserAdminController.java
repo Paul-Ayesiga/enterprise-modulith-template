@@ -31,7 +31,7 @@ class UserAdminController {
     WindowedResult<ResourceObject> list(CursorPageRequest page) {
         Window<User> window = users.findBy(
                 (root, query, cb) -> cb.conjunction(),
-                query -> query.limit(page.size()).sortBy(LIST_SORT).scroll(page.scrollPosition()));
+                query -> query.limit(page.size()).sortBy(LIST_SORT).scroll(page.scrollPosition(LIST_SORT)));
         return WindowedResult.of(window, page, UserAdminController::toResource);
     }
 

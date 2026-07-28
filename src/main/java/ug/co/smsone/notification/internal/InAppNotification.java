@@ -6,7 +6,7 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 import ug.co.smsone.shared.persistence.BaseEntity;
 
-/** An in-app notification addressed to a user (by username/subject), readable via the REST API. */
+/** An in-app notification addressed to a user (by immutable Keycloak subject), readable via the REST API. */
 @Entity
 @Table(name = "in_app_notification")
 class InAppNotification extends BaseEntity {
@@ -33,12 +33,6 @@ class InAppNotification extends BaseEntity {
         notification.subject = subject;
         notification.body = body;
         return notification;
-    }
-
-    void markRead(Instant when) {
-        if (this.readAt == null) {
-            this.readAt = when;
-        }
     }
 
     boolean isRead() {

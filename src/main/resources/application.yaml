@@ -9,8 +9,12 @@ spring:
   security:
     oauth2:
       resourceserver:
+        # Tokens must be minted FOR this API (smsone-web carries the smsone-api-audience scope);
+        # without this, any token from the realm — e.g. the smsone-admin service account, whose
+        # realm-management roles must never reach this API — would authenticate here.
         jwt:
           issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8081/realms/smsone}
+          audiences: ${KEYCLOAK_EXPECTED_AUDIENCE:smsone-api}
   datasource:
     url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:modulith}
     username: ${POSTGRES_USER:modulith}
@@ -72,7 +76,6 @@ app:
     client-secret: ${KEYCLOAK_ADMIN_SECRET:smsone-admin-secret}
   provisioning:
     gate-enabled: ${PROVISIONING_GATE_ENABLED:true}          # no-JIT: a valid JWT is not access
-    temp-credential-mode: ${PROVISIONING_TEMP_MODE:EMAIL}    # EMAIL (execute-actions-email) | TEMP_PASSWORD
     invite-lifespan: ${PROVISIONING_INVITE_LIFESPAN:PT12H}
     redirect-uri: ${PROVISIONING_REDIRECT_URI:}
     app-client-id: ${PROVISIONING_APP_CLIENT:smsone-web}
@@ -133,8 +136,9 @@ app:
       #   EMAIL: {capacity: 200, period: PT1S}
       #   SMS:   {capacity: 10,  period: PT1S}
     admins:
-      - username: ${NOTIFICATION_ADMIN_USER:david}
-        email: ${NOTIFICATION_ADMIN_EMAIL:admin@smsone.co.ug}
+      # In-app targeting resolves the admin's Keycloak subject from this email (identity module) —
+      # the default matches the shipped dev realm's admin user so in-app delivery works out of the box.
+      - email: ${NOTIFICATION_ADMIN_EMAIL:david@smsone.co.ug}
   analytics:
     database-path: ${ANALYTICS_DB_PATH:data/analytics.duckdb}
     snapshot-dir: ${ANALYTICS_SNAPSHOT_DIR:data/snapshots}

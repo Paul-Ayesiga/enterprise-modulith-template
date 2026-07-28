@@ -8,6 +8,7 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.UUID;
 import ug.co.smsone.organization.OrganizationRegistered;
+import ug.co.smsone.organization.OrganizationStatusChanged;
 import ug.co.smsone.shared.persistence.AggregateRoot;
 
 /** Local projection of a Keycloak organization. {@code kcOrgId} is the tenant key used everywhere. */
@@ -44,6 +45,22 @@ class Organization extends AggregateRoot {
 
     void rename(String name) {
         this.name = name;
+    }
+
+    void suspend() {
+        if (status == OrganizationStatus.SUSPENDED) {
+            return; // idempotent — no spurious event/cache flush
+        }
+        this.status = OrganizationStatus.SUSPENDED;
+        registerEvent(new OrganizationStatusChanged(kcOrgId, status.name(), Instant.now()));
+    }
+
+    void reactivate() {
+        if (status == OrganizationStatus.ACTIVE) {
+            return;
+        }
+        this.status = OrganizationStatus.ACTIVE;
+        registerEvent(new OrganizationStatusChanged(kcOrgId, status.name(), Instant.now()));
     }
 
     UUID getKcOrgId() {

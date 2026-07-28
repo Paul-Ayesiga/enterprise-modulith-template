@@ -5,16 +5,14 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ug.co.smsone.organization.Permission;
 import ug.co.smsone.shared.error.ConflictException;
 import ug.co.smsone.shared.error.ForbiddenException;
 import ug.co.smsone.shared.error.NotFoundException;
-import ug.co.smsone.shared.error.UnauthorizedException;
 import ug.co.smsone.shared.error.ValidationException;
-import ug.co.smsone.shared.security.CurrentUser;
-import ug.co.smsone.shared.security.CurrentUserProvider;
 import ug.co.smsone.shared.web.ApiSource;
 
 /** CRUD for org-scoped custom roles (bundles of permissions). System roles are read-only. */
@@ -25,15 +23,13 @@ class RoleService {
 
     private final RoleRepository roles;
     private final MembershipRepository memberships;
-    private final PermissionResolver permissions;
-    private final CurrentUserProvider currentUser;
+    private final PermissionEscalationGuard escalationGuard;
 
-    RoleService(RoleRepository roles, MembershipRepository memberships, PermissionResolver permissions,
-            CurrentUserProvider currentUser) {
+    RoleService(RoleRepository roles, MembershipRepository memberships,
+            PermissionEscalationGuard escalationGuard) {
         this.roles = roles;
         this.memberships = memberships;
-        this.permissions = permissions;
-        this.currentUser = currentUser;
+        this.escalationGuard = escalationGuard;
     }
 
     List<Role> list(UUID orgId) {
@@ -56,15 +52,21 @@ class RoleService {
             throw new ConflictException("A role with code '" + code + "' already exists.");
         }
         Set<Permission> granted = toPermissions(permissionCodes);
-        requireCallerHolds(orgId, granted);
-        return roles.save(Role.create(orgId, code, name, false, description, granted));
+        escalationGuard.requireCallerHolds(orgId, granted);
+        try {
+            // Flush now so a concurrent same-code create surfaces here as the documented 409
+            // (uq_org_role_org_code), not as a 500 at commit.
+            return roles.saveAndFlush(Role.create(orgId, code, name, false, description, granted));
+        } catch (DataIntegrityViolationException ex) {
+            throw new ConflictException("A role with code '" + code + "' already exists.");
+        }
     }
 
     @Transactional
     Role update(UUID orgId, UUID roleId, String name, String description, Set<String> permissionCodes) {
         Role role = require(orgId, roleId);
         Set<Permission> granted = toPermissions(permissionCodes);
-        requireCallerHolds(orgId, granted);
+        escalationGuard.requireCallerHolds(orgId, granted);
         // requireEditable() inside replacePermissions/rename rejects system roles with a 403.
         role.replacePermissions(granted); // publishes RolePermissionsChanged
         role.rename(name, description);
@@ -80,27 +82,11 @@ class RoleService {
         if (memberships.existsByRoleId(roleId)) {
             throw new ConflictException("Role is still assigned to members; reassign them first.");
         }
-        roles.delete(role);
-    }
-
-    /**
-     * Privilege-escalation guard: a role editor may only grant permissions they themselves currently
-     * hold in this org. Without it, anyone with {@code role:create}/{@code role:update} could mint a
-     * role carrying permissions above their own (e.g. ADMIN — which lacks {@code org:delete} — granting
-     * itself {@code org:delete}). OWNER holds everything, so it is unconstrained.
-     */
-    private void requireCallerHolds(UUID orgId, Set<Permission> granted) {
-        CurrentUser caller = currentUser.currentUser()
-                .orElseThrow(() -> new UnauthorizedException("Authentication required."));
-        Set<String> held = permissions.resolve(caller.subject(), orgId);
-        List<String> escalated = granted.stream()
-                .map(Permission::code)
-                .filter(code -> !held.contains(code))
-                .sorted()
-                .toList();
-        if (!escalated.isEmpty()) {
-            throw new ForbiddenException("You cannot grant permissions you do not hold: "
-                    + String.join(", ", escalated));
+        try {
+            roles.delete(role);
+            roles.flush(); // surface a racing assignment's FK violation as the documented 409
+        } catch (DataIntegrityViolationException ex) {
+            throw new ConflictException("Role is still assigned to members; reassign them first.");
         }
     }
 

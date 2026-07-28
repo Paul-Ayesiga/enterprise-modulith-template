@@ -1,8 +1,9 @@
 package ug.co.smsone.identity.internal;
 
 import java.time.Clock;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import ug.co.smsone.identity.ProvisioningStatus;
 
 /** Access decision for an authenticated subject, with lazy INVITED → ACTIVE activation. */
 @Service
@@ -22,7 +23,8 @@ class UserAccessService {
         this.clock = clock;
     }
 
-    @Transactional
+    // Not @Transactional: save() runs in its own transaction so a concurrent-activation optimistic
+    // lock failure surfaces HERE (catchable), not at an outer commit the catch could never reach.
     Decision authorize(String subject) {
         User user = users.findBySubject(subject).orElse(null);
         if (user == null) {
@@ -31,11 +33,25 @@ class UserAccessService {
         return switch (user.getStatus()) {
             case DISABLED -> Decision.DISABLED;
             case INVITED -> {
-                user.activate(clock.instant()); // publishes UserActivated
-                users.save(user);
+                try {
+                    user.activate(clock.instant()); // publishes UserActivated
+                    users.save(user);
+                } catch (OptimisticLockingFailureException ex) {
+                    // A parallel first request (typical SPA page load) won the activation race —
+                    // the row is ACTIVE either way, so this request is allowed, not a 500.
+                }
                 yield Decision.ALLOWED;
             }
             case ACTIVE -> Decision.ALLOWED;
         };
+    }
+
+    /** Status peek WITHOUT lazy activation — for endpoints exempt from the gate (onboarding /me). */
+    Decision peek(String subject) {
+        User user = users.findBySubject(subject).orElse(null);
+        if (user == null) {
+            return Decision.NOT_PROVISIONED;
+        }
+        return user.getStatus() == ProvisioningStatus.DISABLED ? Decision.DISABLED : Decision.ALLOWED;
     }
 }

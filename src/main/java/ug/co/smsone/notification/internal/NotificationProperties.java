@@ -17,6 +17,7 @@ public record NotificationProperties(
         List<Admin> admins,
         String slackWebhookUrl,
         int webhookTimeoutSeconds,
+        Boolean webhookAllowPrivateHosts,
         Delivery delivery) {
 
     public NotificationProperties {
@@ -27,11 +28,17 @@ public record NotificationProperties(
         if (webhookTimeoutSeconds <= 0) {
             webhookTimeoutSeconds = 5;
         }
+        if (webhookAllowPrivateHosts == null) {
+            webhookAllowPrivateHosts = Boolean.FALSE; // SSRF guard on by default; tests/dev opt out
+        }
         delivery = delivery == null ? Delivery.defaults() : delivery;
     }
 
-    /** An administrator: a Keycloak username (in-app target) and an email address. */
-    public record Admin(String username, String email) {
+    /**
+     * An administrator, identified by email. The in-app target (the immutable Keycloak subject) is
+     * resolved from this email at dispatch time — config never carries mutable usernames.
+     */
+    public record Admin(String email) {
     }
 
     /** Fan-out worker tuning. */

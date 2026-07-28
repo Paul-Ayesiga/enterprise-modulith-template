@@ -31,6 +31,10 @@ class SlackChannelSender implements NotificationChannelSender {
         if (url == null || url.isBlank()) {
             throw new NotificationDeliveryException("No Slack webhook URL (recipient address or app.notification.slack-webhook-url)");
         }
+        // Same SSRF guard as the webhook channel — the recipient address here is equally
+        // caller-supplied; only the configured fallback URL is operator-trusted, and guarding it
+        // too is harmless (Slack's endpoints are public).
+        SafeHttpTargets.requireSafe(url, properties.webhookAllowPrivateHosts());
         String text = message.subject()
                 + (message.body() == null || message.body().isBlank() ? "" : "\n" + message.body());
         String json = "{\"text\":" + HttpChannels.jsonString(text) + "}";

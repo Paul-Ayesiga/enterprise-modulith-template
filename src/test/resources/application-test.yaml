@@ -33,6 +33,8 @@ app:
       enabled: false
   # Delivery worker is driven explicitly by tests (deterministic, no cross-context background polling).
   notification:
+    # Test webhook receivers run on localhost — the SSRF guard must not block them here.
+    webhook-allow-private-hosts: true
     delivery:
       worker-auto-start: false
       retry-base-backoff: PT0.1S

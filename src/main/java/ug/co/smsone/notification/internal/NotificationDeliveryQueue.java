@@ -5,8 +5,11 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.BatchPreparedStatementSetter;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
@@ -16,11 +19,14 @@ import ug.co.smsone.notification.NotificationChannel;
  * The delivery queue, backed by {@code notification_delivery} and driven with plain JDBC (a job
  * queue is a poor fit for JPA/optimistic-locking). Enqueue is a single batch insert; {@link #claim}
  * atomically grabs a batch with {@code FOR UPDATE SKIP LOCKED} so multiple workers/instances never
- * double-claim. Status updates are short, single-statement, and never wrap network I/O.
+ * double-claim. Status updates are short, single-statement, never wrap network I/O, and are FENCED:
+ * each requires the row to still be PROCESSING at the claimant's attempts count, so a slow worker
+ * whose claim went stale and was re-claimed can no longer corrupt the new owner's state.
  */
 @Component
 class NotificationDeliveryQueue {
 
+    private static final Logger log = LoggerFactory.getLogger(NotificationDeliveryQueue.class);
     private static final int MAX_ERROR = 1000;
 
     private final JdbcTemplate jdbc;
@@ -56,10 +62,11 @@ class NotificationDeliveryQueue {
     /**
      * Atomically claim up to {@code batchSize} eligible rows (PENDING and due, or PROCESSING whose
      * lock has gone stale), mark them PROCESSING, bump attempts, and return them. Concurrent workers
-     * skip each other's locked rows.
+     * skip each other's locked rows. A row whose stored channel no longer maps to the enum is
+     * dead-lettered here instead of poisoning every batch it lands in.
      */
     List<ClaimedDelivery> claim(int batchSize, Duration staleLock) {
-        return jdbc.query("""
+        List<ClaimedDelivery> claimed = jdbc.query("""
                 update notification_delivery d
                 set status = 'PROCESSING', locked_at = now(), attempts = attempts + 1
                 from (
@@ -71,44 +78,83 @@ class NotificationDeliveryQueue {
                     for update skip locked
                 ) c
                 where d.id = c.id
-                returning d.id, d.channel, d.recipient, d.subject, d.body, d.attempts, d.max_attempts, d.created_at
+                returning d.id, d.channel, d.recipient, d.subject, d.body, d.attempts, d.max_attempts,
+                          d.created_at, d.throttled_since
                 """,
-                (rs, rowNum) -> new ClaimedDelivery(
-                        rs.getObject("id", UUID.class),
-                        NotificationChannel.valueOf(rs.getString("channel")),
-                        rs.getString("recipient"),
-                        rs.getString("subject"),
-                        rs.getString("body"),
-                        rs.getInt("attempts"),
-                        rs.getInt("max_attempts"),
-                        rs.getTimestamp("created_at").toInstant()),
+                (rs, rowNum) -> {
+                    Timestamp throttledSince = rs.getTimestamp("throttled_since");
+                    return new ClaimedDelivery(
+                            rs.getObject("id", UUID.class),
+                            channelOrNull(rs.getString("channel")),
+                            rs.getString("recipient"),
+                            rs.getString("subject"),
+                            rs.getString("body"),
+                            rs.getInt("attempts"),
+                            rs.getInt("max_attempts"),
+                            rs.getTimestamp("created_at").toInstant(),
+                            throttledSince == null ? null : throttledSince.toInstant());
+                },
                 staleLock.toMillis(), batchSize); // millis, not seconds — a sub-second staleLock must not floor to 0
+        List<ClaimedDelivery> deliverable = new ArrayList<>(claimed.size());
+        for (ClaimedDelivery delivery : claimed) {
+            if (delivery.channel() == null) {
+                log.warn("Delivery {} has an unrecognized channel value — dead-lettering", delivery.id());
+                deadLetter(delivery.id(), "Unrecognized channel value", delivery.attempts());
+            } else {
+                deliverable.add(delivery);
+            }
+        }
+        return deliverable;
     }
 
-    void markSent(UUID id) {
-        jdbc.update("update notification_delivery set status = 'SENT', locked_at = null, last_error = null where id = ?", id);
+    void markSent(UUID id, int expectedAttempts) {
+        fenced("markSent", id, jdbc.update(
+                "update notification_delivery set status = 'SENT', locked_at = null, last_error = null, "
+                        + "throttled_since = null where id = ? and status = 'PROCESSING' and attempts = ?",
+                id, expectedAttempts));
     }
 
-    void reschedule(UUID id, Instant nextAttemptAt, String error) {
-        jdbc.update("update notification_delivery set status = 'PENDING', next_attempt_at = ?, locked_at = null, last_error = ? where id = ?",
-                Timestamp.from(nextAttemptAt), truncate(error, MAX_ERROR), id);
+    void reschedule(UUID id, Instant nextAttemptAt, String error, int expectedAttempts) {
+        fenced("reschedule", id, jdbc.update(
+                "update notification_delivery set status = 'PENDING', next_attempt_at = ?, locked_at = null, "
+                        + "last_error = ?, throttled_since = null where id = ? and status = 'PROCESSING' and attempts = ?",
+                Timestamp.from(nextAttemptAt), truncate(error, MAX_ERROR), id, expectedAttempts));
     }
 
-    void rescheduleThrottled(UUID id, Instant nextAttemptAt) {
+    void rescheduleThrottled(UUID id, Instant nextAttemptAt, int expectedAttempts) {
         // Throttling is not a failed attempt — undo the claim's increment so a rate-limited delivery
-        // is never dead-lettered for lack of trying.
-        jdbc.update("update notification_delivery set status = 'PENDING', next_attempt_at = ?, "
-                + "locked_at = null, attempts = greatest(attempts - 1, 0) where id = ?",
-                Timestamp.from(nextAttemptAt), id);
+        // is never dead-lettered for lack of trying; remember when the throttled stretch began.
+        fenced("rescheduleThrottled", id, jdbc.update(
+                "update notification_delivery set status = 'PENDING', next_attempt_at = ?, locked_at = null, "
+                        + "attempts = greatest(attempts - 1, 0), throttled_since = coalesce(throttled_since, now()) "
+                        + "where id = ? and status = 'PROCESSING' and attempts = ?",
+                Timestamp.from(nextAttemptAt), id, expectedAttempts));
     }
 
-    void deadLetter(UUID id, String error) {
-        jdbc.update("update notification_delivery set status = 'FAILED', locked_at = null, last_error = ? where id = ?",
-                truncate(error, MAX_ERROR), id);
+    void deadLetter(UUID id, String error, int expectedAttempts) {
+        fenced("deadLetter", id, jdbc.update(
+                "update notification_delivery set status = 'FAILED', locked_at = null, last_error = ? "
+                        + "where id = ? and status = 'PROCESSING' and attempts = ?",
+                truncate(error, MAX_ERROR), id, expectedAttempts));
     }
 
     int purgeSentBefore(Instant cutoff) {
         return jdbc.update("delete from notification_delivery where status = 'SENT' and created_at < ?", Timestamp.from(cutoff));
+    }
+
+    private static void fenced(String operation, UUID id, int updated) {
+        if (updated == 0) {
+            // Our claim went stale and another worker re-claimed the row; its state is authoritative.
+            log.warn("Stale {} for delivery {} ignored (row was re-claimed)", operation, id);
+        }
+    }
+
+    private static NotificationChannel channelOrNull(String raw) {
+        try {
+            return NotificationChannel.valueOf(raw);
+        } catch (IllegalArgumentException ex) {
+            return null;
+        }
     }
 
     private static String truncate(String value, int max) {

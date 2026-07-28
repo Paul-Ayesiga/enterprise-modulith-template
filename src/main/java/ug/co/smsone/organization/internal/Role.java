@@ -67,6 +67,20 @@ class Role extends AggregateRoot {
         registerEvent(new RolePermissionsChanged(orgId, getId(), Instant.now()));
     }
 
+    /**
+     * Catalog reconciliation for SYSTEM roles only (the {@link RoleSeeder}): when the Permission enum
+     * gains a value, existing orgs' OWNER/ADMIN must pick it up — otherwise "OWNER holds everything"
+     * silently stops being true and no one can ever grant the new permission (the escalation guard
+     * blocks granting what you don't hold). Not reachable from any user-facing path.
+     */
+    void reconcileSystemPermissions(Set<Permission> next) {
+        if (!systemRole) {
+            throw new IllegalStateException("Catalog reconciliation only applies to system roles.");
+        }
+        this.permissions = next.isEmpty() ? EnumSet.noneOf(Permission.class) : EnumSet.copyOf(next);
+        registerEvent(new RolePermissionsChanged(orgId, getId(), Instant.now()));
+    }
+
     void rename(String name, String description) {
         requireEditable();
         this.name = name;

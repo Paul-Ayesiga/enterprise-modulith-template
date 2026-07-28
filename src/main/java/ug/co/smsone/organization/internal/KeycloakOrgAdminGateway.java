@@ -5,10 +5,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
+import ug.co.smsone.shared.error.ConflictException;
 
 /**
  * Keycloak Admin REST calls for the Organizations API (create org, add a member). Rooted at
@@ -45,6 +47,12 @@ class KeycloakOrgAdminGateway {
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(body)
                 .retrieve()
+                // Keycloak enforces alias/name uniqueness — its 409 closes the concurrent-create race
+                // and must surface as the API's documented 409, not a 500.
+                .onStatus(status -> status == HttpStatus.CONFLICT, (request, res) -> {
+                    throw new ConflictException(
+                            "An organization with alias '" + alias + "' (or this name) already exists.");
+                })
                 .toBodilessEntity();
         URI location = response.getHeaders().getLocation();
         if (location == null) {

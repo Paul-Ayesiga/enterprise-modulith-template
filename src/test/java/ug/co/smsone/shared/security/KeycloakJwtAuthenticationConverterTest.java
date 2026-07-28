@@ -15,7 +15,7 @@ class KeycloakJwtAuthenticationConverterTest {
     private final KeycloakJwtAuthenticationConverter converter = new KeycloakJwtAuthenticationConverter();
 
     @Test
-    void mapsRealmAndClientRolesToRoleAuthorities() {
+    void mapsRealmRolesDirectlyAndNamespacesClientRoles() {
         Jwt jwt = Jwt.withTokenValue("token")
                 .header("alg", "RS256")
                 .subject("3f0f7a5e-0000-0000-0000-000000000001")
@@ -29,8 +29,27 @@ class KeycloakJwtAuthenticationConverterTest {
         AbstractAuthenticationToken authentication = converter.convert(jwt);
 
         assertThat(authentication.getName()).isEqualTo("david");
+        // Client roles are namespaced by client id — a client role named ADMIN must never satisfy
+        // hasRole('ADMIN'), which is reserved for the realm role.
         assertThat(authentication.getAuthorities()).extracting(GrantedAuthority::getAuthority)
-                .containsExactlyInAnyOrder("ROLE_ADMIN", "ROLE_USER", "ROLE_dashboard-viewer");
+                .containsExactlyInAnyOrder("ROLE_ADMIN", "ROLE_USER", "ROLE_smsone-web_dashboard-viewer");
+    }
+
+    @Test
+    void clientRoleNamedAdminDoesNotBecomeRealmAdmin() {
+        Jwt jwt = Jwt.withTokenValue("token")
+                .header("alg", "RS256")
+                .subject("attacker")
+                .claim("resource_access", Map.of("other-client", Map.of("roles", List.of("ADMIN"))))
+                .issuedAt(Instant.now())
+                .expiresAt(Instant.now().plusSeconds(60))
+                .build();
+
+        AbstractAuthenticationToken authentication = converter.convert(jwt);
+
+        assertThat(authentication.getAuthorities()).extracting(GrantedAuthority::getAuthority)
+                .containsExactly("ROLE_other-client_ADMIN")
+                .doesNotContain("ROLE_ADMIN");
     }
 
     @Test

@@ -40,9 +40,9 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
     private final ChannelRateLimiter channelRateLimiter;
     private final NotificationProperties.Delivery config;
 
-    private final ExecutorService sendExecutor = Executors.newVirtualThreadPerTaskExecutor();
     private final Semaphore permits;
 
+    private volatile ExecutorService sendExecutor = Executors.newVirtualThreadPerTaskExecutor();
     private volatile boolean running;
     private volatile Thread poller;
     private volatile Instant lastPurge = Instant.EPOCH;
@@ -61,6 +61,9 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
     @Override
     public void start() {
         running = true;
+        if (sendExecutor.isShutdown()) {
+            sendExecutor = Executors.newVirtualThreadPerTaskExecutor(); // survive a stop/start cycle
+        }
         if (config.workerAutoStart()) {
             poller = Thread.ofVirtual().name("notif-delivery-poller").start(this::runLoop);
             log.info("Notification delivery worker started (concurrency={}, batchSize={}, poll={})",
@@ -139,9 +142,10 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
 
     private void processBatch(List<ClaimedDelivery> batch) throws InterruptedException {
         CountDownLatch done = new CountDownLatch(batch.size());
+        ExecutorService executor = this.sendExecutor;
         for (ClaimedDelivery delivery : batch) {
             try {
-                sendExecutor.submit(() -> {
+                executor.submit(() -> {
                     try {
                         // Acquire INSIDE the task (not on the poller) so a hung channel can never
                         // pin the poller and stall claiming for every other channel/recipient.
@@ -162,7 +166,12 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
                 done.countDown();
             }
         }
-        done.await();
+        // Bounded: a send that somehow outlives every timeout must not stall claiming forever. After
+        // staleLock the unfinished rows are reclaimable anyway, so waiting longer buys nothing.
+        if (!done.await(config.staleLock().toMillis(), TimeUnit.MILLISECONDS)) {
+            log.warn("{} of {} deliveries in the batch did not finish within {}; moving on (rows will be reclaimed)",
+                    done.getCount(), batch.size(), config.staleLock());
+        }
     }
 
     private void deliver(ClaimedDelivery delivery) {
@@ -170,19 +179,25 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
         if (sender == null) {
             log.warn("No sender registered for channel {} — dead-lettering delivery {} to {}",
                     delivery.channel(), delivery.id(), delivery.recipient());
-            queue.deadLetter(delivery.id(), "No sender registered for channel " + delivery.channel());
+            queue.deadLetter(delivery.id(), "No sender registered for channel " + delivery.channel(),
+                    delivery.attempts());
             return;
         }
         Optional<Duration> defer = channelRateLimiter.check(delivery.channel());
         if (defer.isPresent()) {
-            // Channel provider quota exhausted. Defer without burning an attempt — but dead-letter if
-            // it has been throttled longer than throttleMaxAge, so a mis-set rate can't spin forever.
-            if (Duration.between(delivery.createdAt(), Instant.now()).compareTo(config.throttleMaxAge()) > 0) {
-                log.warn("Delivery {} to {} via {} dead-lettered: throttled beyond {}",
+            // Channel provider quota exhausted. Defer without burning an attempt — but dead-letter
+            // once it has spent throttleMaxAge CONTINUOUSLY throttled (a mis-set rate can't spin
+            // forever). Measured from the first deferral of this stretch, never from enqueue time —
+            // an old message from a legitimate burst is just waiting its turn.
+            Instant throttledSince = delivery.throttledSince();
+            if (throttledSince != null
+                    && Duration.between(throttledSince, Instant.now()).compareTo(config.throttleMaxAge()) > 0) {
+                log.warn("Delivery {} to {} via {} dead-lettered: throttled continuously beyond {}",
                         delivery.id(), delivery.recipient(), delivery.channel(), config.throttleMaxAge());
-                queue.deadLetter(delivery.id(), "Throttled beyond max age " + config.throttleMaxAge());
+                queue.deadLetter(delivery.id(), "Throttled continuously beyond " + config.throttleMaxAge(),
+                        delivery.attempts());
             } else {
-                queue.rescheduleThrottled(delivery.id(), Instant.now().plus(defer.get()));
+                queue.rescheduleThrottled(delivery.id(), Instant.now().plus(defer.get()), delivery.attempts());
             }
             return;
         }
@@ -192,19 +207,22 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
             // The send may never have reached the provider — refund the channel token so a retry
             // storm doesn't burn provider quota and starve healthy messages.
             channelRateLimiter.refund(delivery.channel());
-            if (delivery.attempts() >= delivery.maxAttempts()) {
-                queue.deadLetter(delivery.id(), ex.getMessage());
-                log.warn("Delivery {} to {} via {} dead-lettered after {} attempts: {}",
-                        delivery.id(), delivery.recipient(), delivery.channel(), delivery.attempts(), ex.toString());
+            boolean permanent = ex instanceof NotificationDeliveryException nde && nde.permanent();
+            if (permanent || delivery.attempts() >= delivery.maxAttempts()) {
+                queue.deadLetter(delivery.id(), ex.getMessage(), delivery.attempts());
+                log.warn("Delivery {} to {} via {} dead-lettered after {} attempts ({}): {}",
+                        delivery.id(), delivery.recipient(), delivery.channel(), delivery.attempts(),
+                        permanent ? "permanent failure" : "attempts exhausted", ex.toString());
             } else {
-                queue.reschedule(delivery.id(), Instant.now().plus(backoff(delivery.attempts())), ex.getMessage());
+                queue.reschedule(delivery.id(), Instant.now().plus(backoff(delivery.attempts())),
+                        ex.getMessage(), delivery.attempts());
             }
             return;
         }
         // Send succeeded. Record it separately: if this fails, leave the row PROCESSING for the
         // stale-lock reclaim — do NOT reschedule/dead-letter, or we'd re-send an already-sent message.
         try {
-            queue.markSent(delivery.id());
+            queue.markSent(delivery.id(), delivery.attempts());
         } catch (RuntimeException ex) {
             log.error("Delivery {} to {} via {} was SENT but markSent failed; leaving PROCESSING for reclaim: {}",
                     delivery.id(), delivery.recipient(), delivery.channel(), ex.toString());

@@ -13,8 +13,13 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtAut
 import org.springframework.stereotype.Component;
 
 /**
- * Maps Keycloak's {@code realm_access.roles} and {@code resource_access.<client>.roles} claims to
- * {@code ROLE_*} authorities; principal name comes from {@code preferred_username}.
+ * Maps Keycloak's {@code realm_access.roles} to {@code ROLE_<role>} and
+ * {@code resource_access.<client>.roles} to {@code ROLE_<client>_<role>}; principal name comes from
+ * {@code preferred_username}.
+ *
+ * <p>Client roles are NAMESPACED by their client id, never flattened into the realm namespace: a
+ * role named {@code ADMIN} on any client (present or future) must not satisfy
+ * {@code hasRole('ADMIN')}, which this codebase documents as the platform-admin REALM role.
  */
 @Component
 public class KeycloakJwtAuthenticationConverter implements Converter<Jwt, AbstractAuthenticationToken> {
@@ -27,12 +32,12 @@ public class KeycloakJwtAuthenticationConverter implements Converter<Jwt, Abstra
     @Override
     public AbstractAuthenticationToken convert(Jwt jwt) {
         Set<GrantedAuthority> authorities = new HashSet<>();
-        addRoles(authorities, jwt.getClaimAsMap(REALM_ACCESS));
+        addRoles(authorities, jwt.getClaimAsMap(REALM_ACCESS), "");
         Map<String, Object> resourceAccess = jwt.getClaimAsMap(RESOURCE_ACCESS);
         if (resourceAccess != null) {
-            for (Object clientAccess : resourceAccess.values()) {
-                if (clientAccess instanceof Map<?, ?> clientMap) {
-                    addRoles(authorities, clientMap);
+            for (Map.Entry<String, Object> clientAccess : resourceAccess.entrySet()) {
+                if (clientAccess.getValue() instanceof Map<?, ?> clientMap) {
+                    addRoles(authorities, clientMap, clientAccess.getKey() + "_");
                 }
             }
         }
@@ -42,13 +47,13 @@ public class KeycloakJwtAuthenticationConverter implements Converter<Jwt, Abstra
         return new JwtAuthenticationToken(jwt, authorities, principalName);
     }
 
-    private void addRoles(Set<GrantedAuthority> authorities, Map<?, ?> accessClaim) {
+    private void addRoles(Set<GrantedAuthority> authorities, Map<?, ?> accessClaim, String namespace) {
         if (accessClaim == null) {
             return;
         }
         if (accessClaim.get(ROLES) instanceof Collection<?> roles) {
             for (Object role : roles) {
-                authorities.add(new SimpleGrantedAuthority("ROLE_" + role));
+                authorities.add(new SimpleGrantedAuthority("ROLE_" + namespace + role));
             }
         }
     }

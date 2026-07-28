@@ -5,7 +5,9 @@ import org.springframework.cache.CacheManager;
 import org.springframework.modulith.events.ApplicationModuleListener;
 import org.springframework.stereotype.Component;
 import ug.co.smsone.organization.MemberRemoved;
+import ug.co.smsone.organization.MembershipCreated;
 import ug.co.smsone.organization.MembershipRoleChanged;
+import ug.co.smsone.organization.OrganizationStatusChanged;
 import ug.co.smsone.organization.RolePermissionsChanged;
 
 /**
@@ -13,10 +15,10 @@ import ug.co.smsone.organization.RolePermissionsChanged;
  * eviction is coarse but correct and simple; the two-level cache broadcasts the invalidation to
  * other instances' L1.
  *
- * <p>Deliberately does NOT listen to {@code MembershipCreated}: a subject's permissions are only ever
- * resolved (and cached) for an authenticated, org-scoped request, which requires a token already
- * carrying that org — impossible before the membership exists — so no stale empty entry can precede an
- * invite. Every event handled here can only REDUCE a live member's permissions, which must take effect.
+ * <p>{@code MembershipCreated} must evict too: a stale EMPTY entry can precede the membership — e.g.
+ * a removed member's still-valid JWT (org claim lives until expiry) drives a request that re-caches
+ * {@code Set.of()} after the removal's eviction; without eviction here, a re-invite would leave them
+ * locked out until the entry ages out of L2.
  */
 @Component
 class OrgPermissionCacheEvictor {
@@ -33,6 +35,11 @@ class OrgPermissionCacheEvictor {
     }
 
     @ApplicationModuleListener
+    void onMembershipCreated(MembershipCreated event) {
+        evict();
+    }
+
+    @ApplicationModuleListener
     void onMembershipRoleChanged(MembershipRoleChanged event) {
         evict();
     }
@@ -40,6 +47,11 @@ class OrgPermissionCacheEvictor {
     @ApplicationModuleListener
     void onMemberRemoved(MemberRemoved event) {
         evict();
+    }
+
+    @ApplicationModuleListener
+    void onOrganizationStatusChanged(OrganizationStatusChanged event) {
+        evict(); // suspension must cut cached access immediately
     }
 
     private void evict() {
