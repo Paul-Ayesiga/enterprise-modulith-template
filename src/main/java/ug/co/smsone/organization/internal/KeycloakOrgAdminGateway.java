@@ -63,10 +63,13 @@ class KeycloakOrgAdminGateway {
     }
 
     /** Looks up an existing Keycloak organization id by alias — lets the dev bootstrap re-adopt an org
-     * that survived a local-DB reset instead of failing to re-create it. */
+     * that survived a local-DB reset instead of failing to re-create it. Keycloak's {@code search}
+     * matches an org's name/domain (not its alias), and {@code exact=true} requires an exact name/domain
+     * hit — so it is a substring search here (our domain embeds the alias), pinned exact by the
+     * {@code alias.equals} filter below. Verified against a live realm by the Keycloak org Admin-API IT. */
     Optional<UUID> findOrganizationIdByAlias(String alias) {
         List<?> results = keycloakAdminRestClient.get()
-                .uri(uri -> uri.path("/organizations").queryParam("search", alias).queryParam("exact", true).build())
+                .uri(uri -> uri.path("/organizations").queryParam("search", alias).build())
                 .retrieve()
                 .body(List.class);
         if (results == null) {
@@ -80,7 +83,12 @@ class KeycloakOrgAdminGateway {
                 .findFirst();
     }
 
-    /** Adds an existing Keycloak user to the organization. Idempotent server-side (re-add is a no-op 2xx). */
+    /**
+     * Adds an existing Keycloak user to the organization. Made idempotent here: Keycloak returns
+     * {@code 409 Conflict} ("User is already a member") on a re-add rather than a no-op 2xx (verified
+     * against a live realm by the IT), so a re-invite / re-adopt must not fail — we treat that 409 as
+     * success.
+     */
     void addMember(UUID kcOrgId, String userId) {
         keycloakAdminRestClient.post()
                 .uri("/organizations/{orgId}/members", kcOrgId)
@@ -88,6 +96,9 @@ class KeycloakOrgAdminGateway {
                 // Bare JSON string body — the endpoint consumes String, not a representation.
                 .body("\"" + userId + "\"")
                 .retrieve()
+                .onStatus(status -> status.value() == 409, (request, response) -> {
+                    // Already a member — idempotent no-op.
+                })
                 .toBodilessEntity();
     }
 

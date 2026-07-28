@@ -59,9 +59,13 @@ EVENTS.md row updated.
   cached + evicted on change. Org/member/role REST with last-owner protection and a
   grant-only-what-you-hold guard. Active org from the JWT `organization` claim.
 **Verified:** Modulith `verify()` green with 8 modules; HTTP RBAC matrix + cross-org/no-active-org
-denial + invite orchestration + async cache eviction; identity provisioning + gate ITs.
-**Follow-up (optional):** a Testcontainers Keycloak IT that pins the exact Organizations Admin-API
-wire contract (create-org body, add-member format) end-to-end against a live realm.
+denial + invite orchestration + async cache eviction; identity provisioning + gate ITs; **and a live
+Testcontainers Keycloak IT** (`KeycloakOrgAdminIntegrationTest`) pinning the Organizations Admin-API
+wire contract — which caught two real gateway bugs now fixed: `findOrganizationIdByAlias` used
+`exact=true` (Keycloak `search` matches name/domain, not alias → always empty), and `addMember` was
+not idempotent (Keycloak returns 409 on re-add, breaking re-invite/re-adopt — now swallowed).
+**Follow-up (optional):** the identity `execute-actions-email` provisioning wire is still only
+covered with the gateway mocked — a live IT would need realm SMTP (point it at a Mailpit container).
 
 ## 4. Kubernetes migration (config, not code — plan §5.2 has the full table)
 
