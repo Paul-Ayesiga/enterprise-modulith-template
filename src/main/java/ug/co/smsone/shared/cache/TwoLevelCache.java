@@ -1,5 +1,11 @@
 package ug.co.smsone.shared.cache;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,6 +19,7 @@ import org.springframework.cache.Cache;
 class TwoLevelCache implements Cache {
 
     private static final Logger log = LoggerFactory.getLogger(TwoLevelCache.class);
+    private static final String JDK_IMMUTABLE_COLLECTION = "java.util.ImmutableCollections$";
 
     private final String name;
     private final Cache l1;
@@ -81,10 +88,10 @@ class TwoLevelCache implements Cache {
 
     @Override
     public void put(Object key, Object value) {
-        l1.put(key, value);
+        l1.put(key, value); // L1 keeps the caller's instance — only the L2 copy needs normalizing
         if (l2 != null) {
             try {
-                l2.put(key, value);
+                l2.put(key, l2Value(value));
             } catch (RuntimeException e) {
                 log.warn("L2 cache '{}' put failed, entry is L1-only: {}", name, e.getMessage());
             }
@@ -141,6 +148,29 @@ class TwoLevelCache implements Cache {
         } else {
             l1.evict(key);
         }
+    }
+
+    /**
+     * Jackson writes a root-level JDK immutable collection ({@code Set.of}, {@code List.of},
+     * {@code Map.of}, {@code Collectors.toUnmodifiable*}) with NO type id, so it reads back as a raw
+     * ArrayList/LinkedHashMap and the {@code @Cacheable} cast fails — only once L1 has expired, which
+     * makes it look intermittent. Nested immutables and every other collection type keep their id, so
+     * the copy is confined to the root. Costs one shallow copy per L2 write of such a value.
+     */
+    private static Object l2Value(Object value) {
+        if (value == null || !value.getClass().getName().startsWith(JDK_IMMUTABLE_COLLECTION)) {
+            return value;
+        }
+        if (value instanceof Set<?> set) {
+            return new LinkedHashSet<>(set);
+        }
+        if (value instanceof List<?> list) {
+            return new ArrayList<>(list);
+        }
+        if (value instanceof Map<?, ?> map) {
+            return new LinkedHashMap<>(map);
+        }
+        return value;
     }
 
     private void broadcast(Object key) {

@@ -2,9 +2,14 @@ package ug.co.smsone.shared.cache;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.cache.Cache;
 import org.springframework.cache.caffeine.CaffeineCacheManager;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -40,6 +45,9 @@ class ValkeyCacheIntegrationTest extends AbstractIntegrationTest {
     private CaffeineCacheManager caffeineCacheManager;
 
     @Autowired
+    private TwoLevelCacheManager cacheManager;
+
+    @Autowired
     private StringRedisTemplate redisTemplate;
 
     @Test
@@ -66,6 +74,38 @@ class ValkeyCacheIntegrationTest extends AbstractIntegrationTest {
 
         // still the cached value: served from Valkey, not the database
         assertThat(settingService.valueOf("cache.l2probe")).isEqualTo("shared-value");
+    }
+
+    /**
+     * Regression: L2 stores JSON, so without type information every collection came back as an
+     * {@code ArrayList} and every object as a {@code LinkedHashMap} — a {@code @Cacheable} method
+     * returning {@code Set<String>} then blew up with a ClassCastException inside the CGLIB proxy,
+     * but only once L1 had expired (L1 holds the real object, which is why it looked intermittent).
+     */
+    @Test
+    void nonScalarValuesKeepTheirTypeAcrossAnL2OnlyRead() {
+        // Set.of/List.of/Map.of are the shapes that failed: Jackson gives a root-level JDK immutable
+        // collection no type id at all. PermissionResolver.resolve returns exactly the first one.
+        assertSurvivesL2RoundTrip("set", Set.of("org:read", "member:read"), Set.class);
+        assertSurvivesL2RoundTrip("list", List.of("a", "b"), List.class);
+        assertSurvivesL2RoundTrip("map", Map.of("k", "v"), Map.class);
+        assertSurvivesL2RoundTrip("mutable-set", new LinkedHashSet<>(Set.of("x")), Set.class);
+        assertSurvivesL2RoundTrip("record", new CachedShape(Set.of("org:read"), 2), CachedShape.class);
+    }
+
+    /** A record with a collection field — the other shape modules cache. */
+    record CachedShape(Set<String> codes, int count) {
+    }
+
+    private void assertSurvivesL2RoundTrip(String key, Object value, Class<?> expectedType) {
+        Cache cache = cacheManager.getCache("cache.typeprobe");
+        cache.put(key, value);
+
+        caffeineCacheManager.getCache("cache.typeprobe").clear(); // wipe L1 — force the L2 round-trip
+
+        Cache.ValueWrapper wrapper = cache.get(key);
+        assertThat(wrapper).as("%s served from L2", key).isNotNull();
+        assertThat(wrapper.get()).as("%s keeps its type", key).isInstanceOf(expectedType).isEqualTo(value);
     }
 
     @Test
