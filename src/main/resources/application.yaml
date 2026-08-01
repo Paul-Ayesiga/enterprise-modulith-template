@@ -209,6 +209,10 @@ app:
       # In-app targeting resolves the admin's Keycloak subject from this email (identity module) —
       # the default matches the shipped dev realm's admin user so in-app delivery works out of the box.
       - email: ${NOTIFICATION_ADMIN_EMAIL:ayesigapo@gmail.com}
+  localization:
+    # The fallback chain's floor: exact tag -> language -> THIS -> the key itself. An unparseable
+    # tag fails at startup, not at first resolve.
+    default-locale: ${LOCALIZATION_DEFAULT_LOCALE:en}
   analytics:
     database-path: ${ANALYTICS_DB_PATH:data/analytics.duckdb}
     snapshot-dir: ${ANALYTICS_SNAPSHOT_DIR:data/snapshots}

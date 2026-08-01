@@ -81,12 +81,138 @@ tags:
     catalogue that Organization · Roles is composed from. A new shared read lands
     here until it earns a group of its own.
 paths:
+  /api/v1/translations/{locale}/{key}:
+    get:
+      tags:
+      - Shared · Reference data
+      summary: Get one translation
+      operationId: get
+      parameters:
+      - name: locale
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+    put:
+      tags:
+      - Platform · Ops
+      summary: Create or replace a translation
+      description: "Upsert — a (locale, key) that does not exist yet is created. Locales\
+        \ are BCP-47 tags, stored lowercased; an unparseable tag is a 422. The locale's\
+        \ cached bundle is evicted cluster-wide, so resolution reflects the change\
+        \ promptly."
+      operationId: put
+      parameters:
+      - name: locale
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertTranslationRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+    delete:
+      tags:
+      - Platform · Ops
+      summary: Delete a translation
+      description: Resolution falls back down the chain (language → default → the
+        key itself).
+      operationId: delete
+      parameters:
+      - name: locale
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "204":
+          description: No Content
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
   /api/v1/settings/{key}:
     get:
       tags:
       - Shared · Settings & flags
       summary: Get one platform setting by key
-      operationId: get
+      operationId: get_1
       parameters:
       - name: key
         in: path
@@ -122,7 +248,7 @@ paths:
       summary: Create or replace a platform setting
       description: "Upsert: a key that does not exist yet is created rather than rejected,\
         \ so there is no separate create call. Settings are global, not per-organization."
-      operationId: put
+      operationId: put_1
       parameters:
       - name: key
         in: path
@@ -165,7 +291,7 @@ paths:
       summary: Get one webhook subscription
       description: The `secret` attribute is masked here — it is shown in full only
         at create.
-      operationId: get_1
+      operationId: get_2
       parameters:
       - name: orgId
         in: path
@@ -261,7 +387,7 @@ paths:
         \ for the endpoint, so a revoked URL is not retried for hours. The delivery\
         \ log survives and stays readable — \"what did we send that endpoint?\" is\
         \ exactly the question asked after a delete."
-      operationId: delete
+      operationId: delete_1
       parameters:
       - name: orgId
         in: path
@@ -299,7 +425,7 @@ paths:
       tags:
       - Organization · Roles
       summary: Get one organization role
-      operationId: get_2
+      operationId: get_3
       parameters:
       - name: orgId
         in: path
@@ -393,7 +519,7 @@ paths:
       summary: Delete a custom organization role
       description: A role still assigned to any member is a 409 — reassign them first.
         The built-in `OWNER` role cannot be deleted at all (403).
-      operationId: delete_1
+      operationId: delete_2
       parameters:
       - name: orgId
         in: path
@@ -483,7 +609,7 @@ paths:
       tags:
       - Shared · Settings & flags
       summary: Get one feature flag by key
-      operationId: get_3
+      operationId: get_4
       parameters:
       - name: key
         in: path
@@ -1187,7 +1313,7 @@ paths:
       tags:
       - Organization · Profile
       summary: Get an organization
-      operationId: get_4
+      operationId: get_5
       parameters:
       - name: orgId
         in: path
@@ -1260,12 +1386,64 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/translations:
+    get:
+      tags:
+      - Shared · Reference data
+      summary: "List translations, optionally for one locale"
+      operationId: list_4
+      parameters:
+      - name: locale
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: "page[size]"
+        in: query
+        description: "Items per page, 1–100. Defaults to 20."
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 20
+          maximum: 100
+          minimum: 1
+      - name: "page[after]"
+        in: query
+        description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
+          Omit for the first page.
+        required: false
+        schema:
+          type: string
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/WindowedResultResourceObject"
   /api/v1/settings:
     get:
       tags:
       - Shared · Settings & flags
       summary: List platform settings
-      operationId: list_4
+      operationId: list_5
       parameters:
       - name: "page[size]"
         in: query
@@ -1316,7 +1494,7 @@ paths:
         \ held) its lock and until when — the evidence that a job fires once cluster-wide.\
         \ Read-only: there is no endpoint to trigger a job, they are time-driven by\
         \ design."
-      operationId: list_5
+      operationId: list_6
       parameters:
       - name: X-Impersonate
         in: header
@@ -1351,7 +1529,7 @@ paths:
       description: The fixed vocabulary for composing custom roles — the `code` values
         are what the role endpoints accept. The catalog is global and identical for
         every organization.
-      operationId: list_6
+      operationId: list_7
       parameters:
       - name: X-Impersonate
         in: header
@@ -1517,7 +1695,7 @@ paths:
       tags:
       - Shared · Me & notifications
       summary: List your in-app notifications
-      operationId: list_7
+      operationId: list_8
       parameters:
       - name: "page[size]"
         in: query
@@ -1636,7 +1814,7 @@ paths:
       tags:
       - Shared · Files
       summary: Delete a file by key
-      operationId: delete_2
+      operationId: delete_3
       parameters:
       - name: key
         in: path
@@ -1672,7 +1850,7 @@ paths:
       tags:
       - Shared · Settings & flags
       summary: List feature flags
-      operationId: list_8
+      operationId: list_9
       parameters:
       - name: "page[size]"
         in: query
@@ -1861,7 +2039,7 @@ paths:
       tags:
       - Platform · Users & impersonation
       summary: List provisioned users across the platform
-      operationId: list_9
+      operationId: list_10
       parameters:
       - name: "page[size]"
         in: query
@@ -1962,14 +2140,12 @@ paths:
                 type: string
 components:
   schemas:
-    UpsertSettingRequest:
+    UpsertTranslationRequest:
       type: object
       properties:
         value:
           type: string
           minLength: 1
-        description:
-          type: string
       required:
       - value
     ResourceObject:
@@ -1980,6 +2156,16 @@ components:
         type:
           type: string
         attributes: {}
+    UpsertSettingRequest:
+      type: object
+      properties:
+        value:
+          type: string
+          minLength: 1
+        description:
+          type: string
+      required:
+      - value
     UpdateWebhookRequest:
       type: object
       properties:

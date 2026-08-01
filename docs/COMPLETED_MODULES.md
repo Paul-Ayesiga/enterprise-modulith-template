@@ -11,6 +11,7 @@ _Last updated: 2026-07-31._
 |---|---|---|---|---|
 | **shared** (kernel) | Cross-cutting foundation reused by every module | envelope/error/probes | — | ✅ |
 | **settings** | System settings + feature flags | `/api/v1/settings`, `/api/v1/feature-flags` | `SettingChanged`, `FeatureFlagChanged` | ✅ |
+| **localization** | Translation catalog + `Messages` resolution port | `/api/v1/translations/**` | `TranslationChanged` | ✅ |
 | **files** | S3-compatible object storage | `/api/v1/files` | — | ✅ |
 | **scheduler** | Clustered scheduled jobs | `/api/v1/scheduler/locks` | — | ✅ |
 | **analytics** | Embedded OLAP / reporting | `/api/v1/analytics/reports` | — | ✅ |
@@ -38,6 +39,19 @@ System-wide configuration and feature flags (feature flags replaced Togglz — n
 - **Endpoints**: `GET/PUT /api/v1/settings[/{key}]`, `GET/PUT /api/v1/feature-flags[/{key}]` (writes require `platform-admin`; lists are cursor-paginated).
 - **Events**: `SettingChanged(key, value)`, `FeatureFlagChanged(key, enabled)` — published via the DB-backed registry.
 - Hot-path `isEnabled(key)` is cached; unknown flags are OFF, never an error.
+
+## localization
+Message localization behind the `Messages` port.
+- **Resolution contract**: exact BCP-47 tag → language → `app.localization.default-locale` → the key
+  itself — a missing translation renders its key, it never throws. Arguments via `MessageFormat` in
+  the resolved locale.
+- **Caching**: one bundle per locale in the two-level cache (separate `TranslationBundles` bean so
+  the fallback walk stays on the proxy); every write/delete evicts + broadcasts cluster-wide.
+- **Endpoints**: `GET /api/v1/translations[?locale=]` (cursor-paginated), `GET/PUT/DELETE
+  /api/v1/translations/{locale}/{key}` — writes `platform-admin`, all changes audited with from→to.
+  Locales stored lowercased (tags are case-insensitive); unparseable tags 422.
+- Soft-deletable (`V21`), purged last in `PURGE_ORDER`; deletes publish `TranslationChanged`
+  explicitly.
 
 ## files
 Object storage behind a single S3 abstraction (AWS SDK v2).

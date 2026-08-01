@@ -15,6 +15,7 @@ flowchart TB
     subgraph app["ug.co.smsone (single deployable)"]
         shared["shared (OPEN kernel)\nweb envelope · errors · security · impersonation filter\npersistence · cache · idempotency · rate limiting · events"]
         settings["settings\nkey/value config + feature flags"]
+        localization["localization\ntranslation catalog · Messages port"]
         files["files\nFileStorageProvider → S3"]
         scheduler["scheduler\nShedLock cron jobs\n(+ soft-delete retention purge)"]
         analytics["analytics\nAnalyticsEngine → DuckDB"]
@@ -26,6 +27,7 @@ flowchart TB
     end
 
     settings --> shared
+    localization --> shared
     files --> shared
     scheduler --> shared
     analytics --> shared

@@ -277,6 +277,26 @@ From [reviews/2026-08-01-code-audit.md](reviews/2026-08-01-code-audit.md); phase
       once, UTF-8 invalidation decode, secret-default comments
 - [x] **Gate:** full `./gradlew test` green over the final tree
 
+## Localization module ✅ (2026-08-01)
+
+Slice 1 of [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md).
+
+- [x] **V21** `translation` — soft-deletable (partial unique `(locale, msg_key)`), added to
+      `PURGE_ORDER` (the metamodel-derivation test enforces the pairing)
+- [x] `Messages` port with the contract fallback chain: exact tag → language → default locale →
+      **the key itself** (a catalog gap renders, never throws)
+- [x] Per-locale bundles cached L1+L2 via a separate `TranslationBundles` bean (the
+      `PermissionResolver` self-invocation rule); every write/delete evicts + broadcasts
+- [x] Locales normalized to lowercased BCP-47; unparseable tags are a 422 naming the parameter
+- [x] REST: cursor-paginated listing + get/put/delete, writes `platform-admin`, audited with
+      from→to (`localization.translation_changed` / `_deleted`); deletes publish
+      `TranslationChanged` explicitly
+- [x] **Gate:** fallback chain asserted step by step —
+      `MessageResolutionTest.fallsBackExactThenLanguageThenDefaultThenKey`
+- [x] **Gate:** write and delete both evict the cached bundle — `.writesAndDeletesEvictTheCachedBundle`
+- [x] **Gate:** full `./gradlew test` green (`verify()` with 11 modules); OpenAPI + Modulith docs
+      regenerated; DATA_MODEL §4.9 / SRS §3.15 + catalogue + traceability + config reference updated
+
 ## Audit remediation — phases 3 & 4 ✅ (2026-08-01)
 
 - [x] **M15** controllers are thin again: `AuditQueryService` (readOnly) behind `AuditController`;

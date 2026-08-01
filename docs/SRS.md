@@ -139,7 +139,7 @@ step — *which is exactly why the logical boundaries are enforced now*.
 
 ### 2.2 Module map
 
-Ten modules. Verified from the ten `package-info.java` files and `docs/modulith/components.puml`.
+Eleven modules. Verified from the `package-info.java` files and `docs/modulith/components.puml`.
 
 | Module | Display name | Owns (tables) | Public API package contains |
 |---|---|---|---|
@@ -147,6 +147,7 @@ Ten modules. Verified from the ten `package-info.java` files and `docs/modulith/
 | `identity` | Identity | `app_user`, `impersonation_session` | `UserProvisioning`, `UserDirectory`, `ProvisioningStatus` |
 | `organization` | Organization | `organization`, `org_role`, `role_permission`, `membership` | `Permission`, `OrganizationRegistered`, `OrganizationStatusChanged`, `MembershipCreated`, `MembershipRoleChanged`, `MemberRemoved`, `RolePermissionsChanged` |
 | `settings` | Settings | `setting`, `feature_flag` | `SettingChanged`, `FeatureFlagChanged` |
+| `localization` | Localization | `translation` | `Messages` port, `TranslationChanged` |
 | `audit` | Audit | `audit_log` | (none — consumed through the `shared.audit.AuditLog` port) |
 | `notification` | Notification | `in_app_notification`, `notification_delivery` | `Notifications`, `NotificationChannelSender` (SPI), `NotificationChannel`, `NotificationMessage`, `NotificationRequest`, `Recipient` |
 | `webhooks` | Webhooks | `webhook_subscription`, `webhook_delivery` | (none — the module is a pure consumer + REST surface) |
@@ -154,7 +155,7 @@ Ten modules. Verified from the ten `package-info.java` files and `docs/modulith/
 | `analytics` | Analytics | none in Postgres (DuckDB marts + Parquet) | `AnalyticsEngine`, `AnalyticsException` |
 | `scheduler` | Scheduler | none (consumes `shedlock`) | (none) |
 
-Fifteen of the schema's eighteen tables appear above. The remaining three are **framework-owned and
+Sixteen of the schema's nineteen tables appear above. The remaining three are **framework-owned and
 belong to no module**: `event_publication` (Spring Modulith's JDBC registry, `V2`), `shedlock`
 (ShedLock, `V4`) and `flyway_schema_history` (created by Flyway itself, in no migration). They are
 read and written by libraries, not by application code, and `V17` deliberately leaves all three out of
@@ -765,6 +766,19 @@ rate-limit buckets, idempotency keys and `created_by` all describe the identity 
 
 ---
 
+### 3.15 Localization (FR-LOC)
+
+The system SHALL:
+
+| ID | Requirement | Where | Verified by |
+|---|---|---|---|
+| FR-LOC-1 | resolve a message key for a locale through the `Messages` port with the fallback chain exact tag → language → `app.localization.default-locale` → **the key itself** — a catalog gap renders, it never throws | `main:localization/internal/MessagesImpl.java` behind `main:localization/Messages.java` | `test:localization/internal/MessageResolutionTest.fallsBackExactThenLanguageThenDefaultThenKey` |
+| FR-LOC-2 | store locales as lowercased BCP-47 tags and answer an unparseable tag with 422 (`source.parameter: locale`), never a 500 | `main:localization/internal/TranslationService.normalizeLocale` | `test:localization/internal/LocalizationApiTest.anUnparseableLocaleIsA422NotA500` |
+| FR-LOC-3 | cache one bundle per locale (L1+L2) and evict + broadcast on every write and delete, so resolution reflects a change promptly cluster-wide | `main:localization/internal/TranslationBundles.java` (the separate bean §4.3 of AGENTS demands), `TranslationService` `@CacheEvict`s | `test:localization/internal/MessageResolutionTest.writesAndDeletesEvictTheCachedBundle` |
+| FR-LOC-4 | gate writes on `platform-admin`, leave reads authenticated, and audit every change and delete with from→to state (`localization.translation_changed` / `_deleted`) | `main:localization/internal/{TranslationController,TranslationService}.java` | `test:localization/internal/LocalizationApiTest.aNonAdminCannotWrite`, `.deleteRemovesAndAuditsWithBeforeAndAfterState` |
+| FR-LOC-5 | publish `TranslationChanged` on create/replace via the aggregate and **explicitly** on delete (a delete fires no `@DomainEvents`); an unchanged value is an idempotent no-op — no event, no audit row | `main:localization/internal/Translation.change`, `TranslationService.delete` | `test:localization/internal/LocalizationApiTest` (audit sequence) |
+| FR-LOC-6 | apply `MessageFormat` arguments in the resolved locale | `main:localization/internal/MessagesImpl.resolve` | `test:localization/internal/MessageResolutionTest.argumentsAreFormattedIntoTheResolvedText` |
+
 ## 4. External interface requirements
 
 ### 4.1 The response envelope
@@ -966,6 +980,10 @@ no `@PreAuthorize`. Every endpoint can additionally return 401, 403 `ACCOUNT_NOT
 | GET | `/api/v1/feature-flags` | authenticated | 200 (paged) | — |
 | GET | `/api/v1/feature-flags/{key}` | authenticated | 200 | 404 |
 | PUT | `/api/v1/feature-flags/{key}` | `platform-admin` | 200 (upsert) | 422 missing `enabled` |
+| GET | `/api/v1/translations` | authenticated | 200 (paged) | 422 bad `locale` filter |
+| GET | `/api/v1/translations/{locale}/{key}` | authenticated | 200 | 404, 422 bad locale |
+| PUT | `/api/v1/translations/{locale}/{key}` | `platform-admin` | 200 (upsert) | 422 bad locale / blank `value` |
+| DELETE | `/api/v1/translations/{locale}/{key}` | `platform-admin` | **204** | 404, 422 bad locale |
 | GET | `/api/v1/notifications` | authenticated (scoped to caller's subject) | 200 (paged) | — |
 | POST | `/api/v1/notifications/{id}/read` | authenticated (scoped) | 200 | 404 (also when it is another user's) |
 | POST | `/api/v1/files` (multipart `file`) | authenticated | **201** | 422 empty / unreadable |
@@ -1517,6 +1535,7 @@ do not appear there. **✗** marks a requirement with no automated verification 
 | FR-IMP-3, 12 | `main:identity/internal/{ProvisioningGateFilter,UserAccessService}.java` | `test:identity/internal/ImpersonationProvisioningGateTest` (4 tests) — the only context in the suite with `app.provisioning.gate-enabled=true`, which is also the only HTTP-level coverage the gate has at all (cf. FR-IDN-1..3) |
 | FR-IMP-22, 24 | `main:audit/internal/{AuditLogImpl,AuditEntry,AuditController}.java`, **`V19__audit_log_impersonation.sql`** | `test:identity/internal/ImpersonationReachTest.anAuditRowFromInsideASessionNamesTheOperatorAndTheIdentityTheyWore`, `.aWebhookCreatedInsideASessionNamesTheOperatorAndTheSession` |
 | FR-IMP-25 | `@Value("${app.impersonation.enabled:true}")` on `main:identity/internal/ImpersonationController.java:55` (enforced per handler by `requireEnabled()`) and `main:shared/security/ImpersonationFilter.java:72`; `application.yaml:119-128` | `test:identity/internal/ImpersonationDisabledTest` (3 tests) |
+| FR-LOC-1..6 | `main:localization/{Messages,TranslationChanged}.java`, `main:localization/internal/{Translation,TranslationRepository,TranslationBundles,MessagesImpl,TranslationService,TranslationController,LocalizationProperties}.java`, **`V21__localization.sql`** | `test:localization/internal/MessageResolutionTest` (3 tests), `test:localization/internal/LocalizationApiTest` (4 tests) |
 | FR-SET-1..11 | `main:settings/internal/{SettingController,SettingService,Setting,SettingRepository,FeatureFlagController,FeatureFlagService,FeatureFlag,FeatureFlagRepository}.java`, `main:settings/{SettingChanged,FeatureFlagChanged}.java`, `V3`, `V6` | `test:settings/SettingsApiIntegrationTest` (6), `test:settings/FeatureFlagIntegrationTest` (4), `test:settings/SettingsModuleTest` (2) |
 | FR-FIL-1..8, 9 ✗, 10..12, 13 ✗ | `main:files/internal/{FileController,S3StorageProvider,S3ClientConfig,StorageProperties,BucketBootstrap}.java`, `main:files/{FileStorageProvider,FileStorageException,FileNotFoundException}.java` | `test:files/internal/FileApiTest` (10), `test:files/FileStorageIntegrationTest` (3), `test:files/ResilienceSmokeTest` |
 | FR-NOT-2..9, 11, 15, 17..18 | `main:notification/internal/{NotificationService,NotificationDeliveryQueue,NotificationDeliveryWorker,ChannelRegistry,ChannelRateLimiter,EmailChannelSender,InAppChannelSender,SlackChannelSender,WebhookChannelSender,SmsChannelSender,HttpChannels,NotificationProperties,FeatureFlagChangeNotifier}.java`, `V8`, `V9`, `V12` | `test:notification/NotificationDeliveryTest` (5), `test:notification/internal/NotificationDeliveryQueueTest` (3), `test:shared/ratelimit/RateLimitIntegrationTest.egressChannelLimitDefersExcessDeliveries`, `test:shared/http/SafeOutboundUrlTest` |
@@ -1528,7 +1547,7 @@ do not appear there. **✗** marks a requirement with no automated verification 
 | FR-SCH-1..2, 4..5 | `main:scheduler/internal/{SchedulingConfig,EventPublicationPurgeJob,SoftDeletePurgeJob,SchedulerController}.java`, `V4__shedlock.sql` | `test:scheduler/SchedulerLockIntegrationTest` (2), `test:scheduler/EventPurgeJobIntegrationTest`, `test:scheduler/internal/SchedulerApiTest` (2), `test:scheduler/internal/SoftDeletePurgeJobIntegrationTest` (5) |
 | FR-SCH-3 ✗ | `main:scheduler/internal/IdempotencyPurgeJob.java` | — |
 | FR-EVT-1..7 | `main:shared/persistence/AggregateRoot.java`, `main:shared/events/EventInbox.java`, `main:shared/config/AsyncConfig.java`, the ten event records, `main:organization/internal/OrgPermissionCacheEvictor.java`, `main:notification/internal/FeatureFlagChangeNotifier.java`, `main:webhooks/internal/{WebhookEventListener,WebhookDispatcher}.java`, `V2`, `V7` | `test:shared/events/EventInboxIntegrationTest` (2), `test:settings/SettingsModuleTest.upsertPublishesSettingChangedThroughTheRegistry`, `test:webhooks/internal/WebhookEventTest`, `test:organization/internal/RoleSoftDeleteTest` |
-| FR-DLC-1..5, 10..13 | `main:shared/persistence/{SoftDeletableEntity,AggregateRoot,BaseEntity,SoftDeleteRecovery,SoftDeleteProperties,JpaAuditingConfig}.java`, the seven soft-deletable entities, **`V17__soft_delete.sql`** | `test:shared/persistence/SoftDeleteTest` (12), `test:organization/internal/RoleSoftDeleteTest` (2), `test:ArchitectureTests.softDeletableEntitiesDeclareTheirOwnHibernateAnnotations`, `test:shared/persistence/FlywayBaselineTest` |
+| FR-DLC-1..5, 10..13 | `main:shared/persistence/{SoftDeletableEntity,AggregateRoot,BaseEntity,SoftDeleteRecovery,SoftDeleteProperties,JpaAuditingConfig}.java`, the eight soft-deletable entities, **`V17__soft_delete.sql`** + `V21` | `test:shared/persistence/SoftDeleteTest` (12), `test:organization/internal/RoleSoftDeleteTest` (2), `test:ArchitectureTests.softDeletableEntitiesDeclareTheirOwnHibernateAnnotations`, `test:shared/persistence/FlywayBaselineTest` |
 | FR-DLC-6..8 | `main:scheduler/internal/SoftDeletePurgeJob.java` | `test:scheduler/internal/SoftDeletePurgeJobIntegrationTest` (5) |
 | FR-DLC-9 ✗ | `main:shared/persistence/SoftDeleteProperties.java` | — |
 | NFR-SEC-1..17 | see §5.1 | see §5.1; NFR-SEC-2 (audience) and NFR-SEC-11 unverified. NFR-SEC-15..17 are the impersonation invariants — `test:identity/internal/ImpersonationReachTest`, `test:shared/security/ImpersonationFilterTest` |
@@ -1709,6 +1728,12 @@ and the Keycloak state this runner creates are tabulated under FR-ORG-31 in §3.
 | `delivery.worker-auto-start` | `true` | Code default TRUE; `false` in tests |
 | `delivery.rate.<CHANNEL>.{capacity, period}` | unset = unlimited | Cluster-wide egress limit per channel; commented example at `application.yaml:193-196` |
 | `app.notification.sms.stub` | `true` **by `matchIfMissing`** | Registers the logging-stub SMS sender (§3.7); not bound by any record |
+
+**`app.localization`** — `main:localization/internal/LocalizationProperties.java`
+
+| Key | Default | Note |
+|---|---|---|
+| `default-locale` | `en` (`LOCALIZATION_DEFAULT_LOCALE`) | The fallback chain's floor, lowercased; an unparseable tag fails at startup |
 
 **`app.analytics`** — `main:analytics/internal/AnalyticsProperties.java`
 

@@ -30,8 +30,8 @@ Three consequences worth stating plainly, because each has bitten:
 - **DuckDB marts are copies, not views.** `AnalyticsReport.sourceSql` runs as raw JDBC against
   Postgres, so `@SQLRestriction` does not apply. A report over a soft-deletable table must filter
   `deleted_at is null` itself — `USERS_BY_STATUS` does exactly that
-  (`analytics/internal/AnalyticsReport.java:22`) and the enum's javadoc (lines 11-16) enumerates the
-  seven soft-deletable tables so the next report author does the same.
+  (`analytics/internal/AnalyticsReport.java:22`) and the enum's javadoc enumerates the
+  eight soft-deletable tables so the next report author does the same.
 - **Valkey holds an authorization decision.** `org-permissions` caches the resolved permission set per
   `(orgId, subject)`. Organization status is evaluated *inside* the cached value
   (`organization/internal/PermissionResolver.java:34-41`) so a suspension plus its eviction takes
@@ -87,6 +87,7 @@ events on `repository.save(..)`.
 |---|---|---|---|
 | `settings.internal.Setting` | `setting` | `SoftDeletableEntity` | yes |
 | `settings.internal.FeatureFlag` | `feature_flag` | `SoftDeletableEntity` | yes |
+| `localization.internal.Translation` | `translation` | `SoftDeletableEntity` | yes |
 | `identity.internal.User` | `app_user` | `SoftDeletableEntity` | yes |
 | `organization.internal.Organization` | `organization` | `SoftDeletableEntity` | yes |
 | `organization.internal.Role` | `org_role` | `SoftDeletableEntity` | yes |
@@ -106,7 +107,7 @@ events on `repository.save(..)`.
 
 ### 2.2 Soft delete contract (mechanism detail in §5)
 
-Hibernate resolves neither `@SQLDelete` nor `@SQLRestriction` from a mapped superclass, so **all seven
+Hibernate resolves neither `@SQLDelete` nor `@SQLRestriction` from a mapped superclass, so **all eight
 concrete soft-deletable entities declare both themselves**, each naming its own table:
 
 | Annotation | Contract it declares |
@@ -1335,9 +1336,10 @@ serves `findByOrgId` (the list endpoint) and `findByOrgIdAndStatus` (the fan-out
 org domain event). Retention index `idx_webhook_subscription_deleted` (`V17:73`).
 
 > **This is the only soft-deletable table with no unique constraint of any kind.** `V15` declares none,
-> so `V17` adds no partial unique index for it. There are seven `deleted_at` columns and seven retention
-> indexes, but only six tables needed unique-constraint conversion — and `organization` needed two, which
-> is how the count still comes to seven partial unique indexes.
+> so `V17` adds no partial unique index for it. There are now eight `deleted_at` columns and eight
+> retention indexes (seven from `V17`, `translation`'s shipped with its own table in `V21`), and eight
+> partial unique indexes: `V17` converted six tables' constraints — `organization` needing two — and
+> `V21` declares `translation`'s directly.
 
 **Invariants.** `subscribesTo(code)` requires `status == ACTIVE` **and** membership in the parsed code
 set, so a `DISABLED` subscription silently stops matching without losing its configuration. The valid
@@ -1418,9 +1420,36 @@ endpoint?" is still answerable afterwards.
 |---|---|
 | **files** | SeaweedFS objects only. No table, no row describing an object; the key `u/<subject>/<uuid>/<name>` carries ownership, and `requireOwnerOr` is a string-prefix check plus a platform-role tier |
 | **analytics** | DuckDB marts (`mart_users_by_status`, `mart_delivery_outcomes`) created inside the DuckDB file by `DuckDbAnalyticsEngine.materializeFromPostgres`. Marts are dropped and rebuilt via a `<mart>__staging` table swapped in atomically, so a failed refresh leaves the previous mart intact. **No Parquet file is written**: `AnalyticsEngine.exportParquet` (`AnalyticsEngine.java:29`, implemented `DuckDbAnalyticsEngine.java:147`) has **no caller in `src/main`** — the only report driver, `AnalyticsReportService.run` (`:22-25`), calls `materializeFromPostgres` + `query` — so `app.analytics.snapshot-dir` stays empty at runtime and the seam is exercised only by `AnalyticsIntegrationTest:62,133,135` (§1) |
-| **scheduler** | Owns nothing; consumes `shedlock`, purges `event_publication`, `idempotency_key` and the soft-deleted rows of the seven aggregate tables |
+| **scheduler** | Owns nothing; consumes `shedlock`, purges `event_publication`, `event_inbox`, `idempotency_key` and the soft-deleted rows of the eight aggregate tables |
 
 ---
+
+### 4.9 Localization module
+
+#### 4.9.1 `translation`
+
+`V21__localization.sql`. Entity `localization.internal.Translation` (package-private, soft-deletable).
+
+| Column | Type | Null | Notes |
+|---|---|---|---|
+| `locale` | `varchar(35)` | not null | **Lowercased** BCP-47 tag. Tags are case-insensitive (RFC 5646); one canonical casing keeps `(locale, msg_key)` unique in the table AND as the bundle-cache key |
+| `msg_key` | `varchar(200)` | not null | Caller-owned message key — the module never decides which keys exist |
+| `msg_value` | `text` | not null | The translated text; `{n}` `MessageFormat` placeholders |
+| + base/soft-delete columns | | | `version`, audit stamps, `deleted_at` — the standard `SoftDeletableEntity` set |
+
+**Keys and indexes.** Partial unique `(locale, msg_key) where deleted_at is null` (a soft-deleted
+pair frees its slot); `idx_translation_locale` serves the whole-locale bundle load behind each cache
+miss; `idx_translation_recent` the cursor listing; `idx_translation_deleted` the retention scan.
+
+**Invariants.** Request-time resolution never touches this table: `TranslationBundles` caches one
+map per locale (L1+L2, ADR 0004) and every write/delete evicts + broadcasts. The `Messages` port's
+fallback chain is exact tag → language → `app.localization.default-locale` → the key itself — a
+catalog gap renders, it never throws.
+
+**Lifecycle.** Written by `TranslationService` under `platform-admin`, audited
+(`localization.translation_changed` / `_deleted`, both with from→to). `TranslationChanged` publishes
+via the aggregate on change and explicitly on delete. Purged last in `PURGE_ORDER` — nothing
+references it.
 
 ## 5. Soft delete
 
@@ -1429,10 +1458,11 @@ Migration `V17__soft_delete.sql`. Deletion is **recorded, not executed**: the ro
 
 ### 5.1 Which tables
 
-**In scope (7).** Every `SoftDeletableEntity` table: `setting`, `feature_flag`, `app_user`,
-`organization`, `org_role`, `membership`, `webhook_subscription`. Each gets
-`deleted_at timestamptz` (`V17:23-29`), a partial retention index (`V17:67-73`), a place in
-`SoftDeletePurgeJob.PURGE_ORDER`, and its own `@SQLDelete` + `@SQLRestriction` pair on the entity.
+**In scope (8).** Every `SoftDeletableEntity` table: `setting`, `feature_flag`, `app_user`,
+`organization`, `org_role`, `membership`, `webhook_subscription` (all wired by `V17:23-29,67-73`)
+and `translation` (born soft-deletable in `V21`). Each gets `deleted_at timestamptz`, a partial
+retention index, a place in `SoftDeletePurgeJob.PURGE_ORDER`, and its own `@SQLDelete` +
+`@SQLRestriction` pair on the entity.
 
 **Out of scope, and why each:**
 
@@ -1531,7 +1561,7 @@ Native SQL is not a shortcut here, it is the only option: `@SQLRestriction` make
 to every HQL/criteria query, so JPA cannot see the very rows this job exists to remove.
 
 **`PURGE_ORDER` — children before parents, and load-bearing:** `membership` → `org_role` →
-`organization` → `app_user` → `webhook_subscription` → `setting` → `feature_flag`.
+`organization` → `app_user` → `webhook_subscription` → `setting` → `feature_flag` → `translation`.
 
 - The only FK between soft-deletable tables is `membership.role_id → org_role(id)` (`V11`), and it has
   **no cascade**. That FK is blind to `deleted_at`: a soft-deleted membership still pins its role.
@@ -1636,6 +1666,7 @@ The schema alone reads as if these cascades are live behaviour. They are not, ex
 | `V18__impersonation_session.sql` | `impersonation_session` + `idx_impersonation_active` (partial, `where ended_at is null`) and `idx_impersonation_actor`. **No `deleted_at`, deliberately** — the header states why: an oversight tool able to erase its own oversight is not one. See §8 |
 | `V19__audit_log_impersonation.sql` | Adds `audit_log.on_behalf_of varchar(64)` and `impersonation_id uuid` + an index on `on_behalf_of`. `actor` keeps holding the accountable human, which under impersonation is the operator |
 | `V20__audit_fix_indexes.sql` | 2026-08-01 audit remediation: indexes for queries nothing served — the member/role/subscription keyset listings, the case-insensitive `app_user` email lookup (drops the unusable `idx_app_user_email` for an `upper(email)` expression index), the `audit_log.occurred_at` range filter, and the two terminal-row retention scans |
+| `V21__localization.sql` | `translation` — soft-deletable, partial unique `(locale, msg_key)`, bundle-load/listing/retention indexes. Locales stored as lowercased BCP-47 tags; the header states why |
 
 **The next free migration number is V21.**
 
@@ -1652,7 +1683,7 @@ so each fires once across the cluster.
 |---|---|---|---|---|
 | `EventPublicationPurgeJob` | `app.scheduler.event-purge-cron`, `0 0 3 * * *` | `event-publication-purge` / PT30M | Completed rows from `event_publication` | `app.scheduler.event-retention`, `P7D` |
 | `IdempotencyPurgeJob` | `app.scheduler.idempotency-purge-cron`, `0 30 3 * * *` | `idempotency-key-purge` / PT30M | All of `idempotency_key` older than the window | `app.idempotency.retention`, `P1D` |
-| `SoftDeletePurgeJob` | `app.scheduler.soft-delete-purge-cron`, `0 0 4 * * *` | `soft-delete-purge` / PT30M | Soft-deleted rows from the seven aggregate tables, in `PURGE_ORDER` | `app.persistence.soft-delete.retention`, `P30D` |
+| `SoftDeletePurgeJob` | `app.scheduler.soft-delete-purge-cron`, `0 0 4 * * *` | `soft-delete-purge` / PT30M | Soft-deleted rows from the eight aggregate tables, in `PURGE_ORDER` | `app.persistence.soft-delete.retention`, `P30D` |
 | `EventInboxPurgeJob` | `app.scheduler.event-inbox-purge-cron`, `0 45 3 * * *` | `event-inbox-purge` / PT30M | `event_inbox` rows past the window, batched | `app.scheduler.event-inbox-retention`, `P14D` |
 | `WebhookRetentionJob` (lives in `webhooks` — needs its module-internal queue, the §7.1.1 exception) | `app.scheduler.webhook-retention-cron`, `0 15 4 * * *` | `webhook-delivery-retention` / PT30M | Terminal (`DELIVERED`/`FAILED`) `webhook_delivery` rows, batched | `app.webhooks.retention`, `P30D` |
 | `NotificationRetentionJob` (lives in `notification`, same exception) | `app.scheduler.notification-retention-cron`, `0 25 4 * * *` | `notification-delivery-retention` / PT30M | Terminal (`SENT`/`FAILED`) `notification_delivery` rows, batched | `app.notification.delivery.retention`, `P7D` |

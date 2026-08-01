@@ -12,8 +12,9 @@ import java.util.Optional;
  * over a soft-deletable table must filter {@code deleted_at is null} itself, or it silently disagrees
  * with the admin API reading the same table — and the report is the one used for headcounts and
  * licence reconciliation. The soft-deletable tables are {@code setting}, {@code feature_flag},
- * {@code app_user}, {@code organization}, {@code org_role}, {@code membership} and
- * {@code webhook_subscription}; {@code notification_delivery} is not one of them.
+ * {@code app_user}, {@code organization}, {@code org_role}, {@code membership},
+ * {@code webhook_subscription} and {@code translation}; {@code notification_delivery} is not one
+ * of them.
  */
 enum AnalyticsReport {
 

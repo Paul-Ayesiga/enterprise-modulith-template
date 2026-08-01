@@ -17,6 +17,7 @@ message id from business identity — the two live ones are
 |---|---|---|---|
 | `ug.co.smsone.settings.SettingChanged` | settings | `key, value` | a setting is created or updated |
 | `ug.co.smsone.settings.FeatureFlagChanged` | settings | `key, enabled, occurredAt` | a feature flag is created or toggled |
+| `ug.co.smsone.localization.TranslationChanged` | localization | `locale, key, occurredAt` | a translation is created, replaced or deleted (deletes publish explicitly) |
 | `ug.co.smsone.identity.UserProvisioned` | identity | `subject, email, occurredAt` | an admin provisions a new local user (`INVITED`) |
 | `ug.co.smsone.identity.UserActivated` | identity | `subject, occurredAt` | an `INVITED` user is lazily activated on first access |
 | `ug.co.smsone.organization.OrganizationRegistered` | organization | `orgId, alias, occurredAt` | an organization projection is created |
@@ -45,9 +46,10 @@ The webhooks consumer maps each organization event to its outbound wire code
 `RolePermissionsChanged` → `org.role.permissions_changed`, `OrganizationStatusChanged` →
 `org.status_changed`.
 
-Four events currently have **no consumer**: `SettingChanged`, `UserProvisioned`, `UserActivated`
-and `OrganizationRegistered`. They are still published through the registry (and appear in the
-generated module canvases); a first consumer must follow the `EventInbox` idempotency rule above.
+Five events currently have **no consumer**: `SettingChanged`, `UserProvisioned`, `UserActivated`,
+`OrganizationRegistered` and `TranslationChanged`. They are still published through the registry
+(and appear in the generated module canvases); a first consumer must follow the `EventInbox`
+idempotency rule above.
 
 _(The **audit** module does not consume events — it records synchronously via the shared `AuditLog` port at each mutation, so it captures the actor and before/after state the events don't carry.)_
 

@@ -62,7 +62,8 @@ class SoftDeletePurgeJob {
             "app_user",
             "webhook_subscription",
             "setting",
-            "feature_flag");
+            "feature_flag",
+            "translation");
 
     /**
      * Bounded batch: the inner select is what the {@code idx_<table>_deleted} partial indexes (V17) were

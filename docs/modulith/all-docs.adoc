@@ -21,6 +21,10 @@ include::module-files.adoc[]
 plantuml::module-identity.puml[,,format=svg]
 include::module-identity.adoc[]
 
+== Localization
+plantuml::module-localization.puml[,,format=svg]
+include::module-localization.adoc[]
+
 == Scheduler
 plantuml::module-scheduler.puml[,,format=svg]
 include::module-scheduler.adoc[]

@@ -123,6 +123,10 @@ Keycloak admin: `admin` / `admin`. SeaweedFS creds live in `docker/seaweedfs/s3-
 | `GET` | `/api/v1/feature-flags` | USER | Cursor-paginated list |
 | `GET` | `/api/v1/feature-flags/{key}` | USER | Single flag |
 | `PUT` | `/api/v1/feature-flags/{key}` | **platform-admin** | Body `{"enabled":bool,"description?"}` |
+| `GET` | `/api/v1/translations` | USER | Cursor-paginated; `?locale=` filters one locale |
+| `GET` | `/api/v1/translations/{locale}/{key}` | USER | Single translation (locale is a BCP-47 tag, any casing) |
+| `PUT` | `/api/v1/translations/{locale}/{key}` | **platform-admin** | Upsert. Body `{"value"}`; evicts the locale's cached bundle cluster-wide |
+| `DELETE` | `/api/v1/translations/{locale}/{key}` | **platform-admin** | Resolution falls back down the chain afterwards |
 | `GET` | `/api/v1/notifications` | USER | Current user's in-app notifications (cursor-paginated) |
 | `POST` | `/api/v1/notifications/{id}/read` | USER | Mark an in-app notification read |
 | `GET` | `/api/v1/me` | USER | Self + roles + active org + provisioning status (allowed while `INVITED`) |
