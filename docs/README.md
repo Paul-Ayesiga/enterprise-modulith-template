@@ -34,6 +34,7 @@ document is.
 | [0004](adr/0004-two-level-cache.md) | Two-level cache: Caffeine L1 + Valkey L2 with pub/sub invalidation |
 | [0005](adr/0005-idempotency-keys.md) | Per-principal HTTP idempotency keys, claim-first with lease |
 | [0006](adr/0006-embedded-duckdb.md) | Embedded DuckDB for analytics, UTC marts, exact decimals |
+| [0007](adr/0007-api-gateway.md) | API gateway: a reactive Spring Cloud Gateway as a hexagonal platform product |
 
 ## Project management — where work stands
 
@@ -41,6 +42,8 @@ document is.
 |---|---|
 | [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) | The living plan: pinned versions, contracts, phases — and the Boot-4/Testcontainers-2 gotchas (§10) |
 | [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md) | The active build-out plan: localization → search → document → exchange → observability, plus the carried backlog |
+| [GATEWAY_ARCHITECTURE.md](GATEWAY_ARCHITECTURE.md) | The gateway north star: a stateless reactive Spring Cloud Gateway, hexagonal ports & adapters, the request pipeline, coarse-vs-fine authZ |
+| [GATEWAY_PLAN.md](GATEWAY_PLAN.md) | The phased gateway build (Core → Security → Traffic → Observability → Extensibility → Admin → Enterprise), each with its gate |
 | [reusable-data-exchange-platform-guidelines.md](reusable-data-exchange-platform-guidelines.md) | Principles for the exchange (import/export) platform — the spec the `exchange` module implements |
 | [CHECKLIST.md](CHECKLIST.md) | Gate ledger — a box is ticked only when the deliverable's acceptance gate passed |
 | [COMPLETED_MODULES.md](COMPLETED_MODULES.md) | Per-module inventory of what is built, tested and gated |
