@@ -18,6 +18,10 @@ gateway:
       - name: limited
         token: internal-secret-2
         scopes: [reports]
+  traffic:
+    rate-limit:
+      replenish-rate: 1     # deliberately tiny so a rapid burst trips 429 deterministically
+      burst-capacity: 2
   services:
     - id: backend
       uri: "${backend.uri:http://localhost:1}"
@@ -85,3 +89,27 @@ gateway:
       auth:
         authenticated: true
         tenant-path-template: /tenant/orgs/{tenant}/**
+    - id: rl-route
+      order: 20
+      service-id: backend
+      predicates:
+        - kind: PATH
+          args: [/rl/**]
+      traffic:
+        rate-limited: true
+    - id: slow-route
+      order: 21
+      service-id: backend
+      predicates:
+        - kind: PATH
+          args: [/slow/**]
+      traffic:
+        response-timeout-ms: 300
+    - id: size-route
+      order: 22
+      service-id: backend
+      predicates:
+        - kind: PATH
+          args: [/size/**]
+      traffic:
+        max-request-bytes: 100

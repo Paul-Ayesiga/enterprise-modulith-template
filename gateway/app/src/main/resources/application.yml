@@ -1,6 +1,10 @@
 spring:
   application:
     name: gateway
+  data:
+    redis:                              # Valkey — the rate limiter's shared token-bucket store
+      host: ${VALKEY_HOST:localhost}
+      port: ${VALKEY_PORT:6379}
 
 server:
   port: ${GATEWAY_PORT:8090}
@@ -25,6 +29,12 @@ gateway:
     introspection:
       uri: ${GATEWAY_INTROSPECTION_URI:http://localhost:8080/internal/gateway/api-key/introspect}
       secret: ${GATEWAY_INTROSPECTION_SECRET:dev-gateway-secret}
+  # Traffic management: the shared token-bucket rate (per caller — principal, else tenant, else IP),
+  # the default for any route with rate-limited:true.
+  traffic:
+    rate-limit:
+      replenish-rate: ${GATEWAY_RATE_REPLENISH:20}    # tokens/sec
+      burst-capacity: ${GATEWAY_RATE_BURST:40}
   services:
     - id: modulith
       uri: ${MODULITH_URI:http://localhost:8080}
@@ -40,6 +50,11 @@ gateway:
       # The API requires a valid token at the edge; the modulith still runs its own fine-grained checks.
       auth:
         authenticated: true
+      # Protect the backend: fail a slow response fast, cap the body, rate-limit per caller.
+      traffic:
+        response-timeout-ms: 15000
+        max-request-bytes: 10485760   # 10 MB
+        rate-limited: true
 
 logging:
   level:

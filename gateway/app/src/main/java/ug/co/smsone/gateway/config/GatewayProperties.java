@@ -22,9 +22,9 @@ public record GatewayProperties(List<ServiceProps> services, List<RouteProps> ro
     public record ServiceProps(String id, URI uri, String healthPath) {
     }
 
-    /** A route: which {@code predicates} match it, which {@code serviceId} it targets, its {@code auth}. */
+    /** A route: {@code predicates}, target {@code serviceId}, coarse {@code auth}, {@code traffic} policy. */
     public record RouteProps(String id, int order, String serviceId, List<PredicateProps> predicates,
-            AuthProps auth) {
+            AuthProps auth, TrafficProps traffic) {
         public RouteProps {
             predicates = predicates == null ? List.of() : predicates;
         }
@@ -35,6 +35,11 @@ public record GatewayProperties(List<ServiceProps> services, List<RouteProps> ro
         public AuthProps {
             scopes = scopes == null ? List.of() : scopes;
         }
+    }
+
+    /** A route's traffic policy: timeout (ms), max request bytes, rate-limit + circuit-breaker toggles. */
+    public record TrafficProps(Long responseTimeoutMs, Long maxRequestBytes, boolean rateLimited,
+            boolean circuitBreaker) {
     }
 
     /** A predicate: its {@code kind} (PATH/HOST/HEADER/METHOD/QUERY) and the factory {@code args}. */

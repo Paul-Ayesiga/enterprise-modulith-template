@@ -107,6 +107,14 @@ introspection; CORS preflight is answered at the edge. Keycloak Testcontainer + 
 
 ## Phase 3 — Traffic management
 
+**Status: 3a shipped 2026-08-02 (rate limiting + timeout + request-size); 3b next (circuit breaker +
+retries).** A route opts into a `TrafficPolicy` (in `gateway:core`): `rateLimited` applies a shared
+token bucket on **Valkey** (SCG `RedisRateLimiter`, keyed by principal → tenant → IP) → 429;
+`responseTimeoutMs` fails a slow backend fast → 504 (in the gateway envelope); `maxRequestBytes`
+rejects an oversized body → 413. `TrafficTest` (4, real Valkey Testcontainer + a slow/echo backend
+stub) proves each. Note: SCG-filter-generated errors (413/429) keep SCG's response shape; only
+routing/auth/timeout failures pass through the gateway envelope — a documented refinement.
+
 **Focus.** Protect backends and shape load.
 
 **Deliverables** — rate limiting on **reactive Valkey** (fixed/sliding window, token bucket) keyed by

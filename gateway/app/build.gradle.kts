@@ -30,8 +30,12 @@ dependencies {
     implementation(libs.gateway.webflux)
     // Health + metrics for the gateway itself.
     implementation(libs.boot.actuator)
+    // Traffic management (Phase 3): reactive Valkey for the rate limiter, Resilience4j for circuit breaking.
+    implementation("org.springframework.boot:spring-boot-starter-data-redis-reactive")
+    implementation("org.springframework.cloud:spring-cloud-starter-circuitbreaker-reactor-resilience4j")
 
     testImplementation(libs.boot.test)
+    testImplementation(libs.testcontainers.junit)
     testImplementation("io.projectreactor:reactor-test")
     testImplementation("org.springframework.security:spring-security-oauth2-jose") // brings Nimbus JOSE — mint JWTs + JWKS in SecurityTest
     testRuntimeOnly("org.junit.platform:junit-platform-launcher") // Gradle 9 + JUnit 5 needs it explicit
@@ -40,4 +44,9 @@ dependencies {
 tasks.withType<Test> {
     useJUnitPlatform()
     maxHeapSize = "1g"
+    // Testcontainers 2.x + VM-based Docker (Colima, Docker Desktop): Ryuk must mount the VM-internal
+    // socket, not the host-side proxy path. Mirrors the modulith build.
+    if (System.getenv("TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE") == null) {
+        environment("TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE", "/var/run/docker.sock")
+    }
 }

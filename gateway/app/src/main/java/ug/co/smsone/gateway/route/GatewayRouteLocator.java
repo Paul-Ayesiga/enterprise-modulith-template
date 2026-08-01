@@ -3,18 +3,24 @@ package ug.co.smsone.gateway.route;
 import java.util.Iterator;
 import java.util.List;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.cloud.gateway.filter.ratelimit.KeyResolver;
+import org.springframework.cloud.gateway.filter.ratelimit.RedisRateLimiter;
 import org.springframework.cloud.gateway.route.RouteLocator;
 import org.springframework.cloud.gateway.route.builder.BooleanSpec;
+import org.springframework.cloud.gateway.route.builder.GatewayFilterSpec;
 import org.springframework.cloud.gateway.route.builder.PredicateSpec;
 import org.springframework.cloud.gateway.route.builder.RouteLocatorBuilder;
+import org.springframework.cloud.gateway.route.builder.UriSpec;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.util.unit.DataSize;
 import ug.co.smsone.gateway.config.GatewayProperties;
 import ug.co.smsone.gateway.core.route.RouteDefinition;
 import ug.co.smsone.gateway.core.route.RoutePredicate;
 import ug.co.smsone.gateway.core.route.RouteSource;
 import ug.co.smsone.gateway.core.route.ServiceDefinition;
 import ug.co.smsone.gateway.core.route.ServiceRegistry;
+import ug.co.smsone.gateway.core.traffic.TrafficPolicy;
 
 /**
  * The adapter from the core's route MODEL to the Spring Cloud Gateway RUNTIME: it translates each
@@ -26,7 +32,8 @@ import ug.co.smsone.gateway.core.route.ServiceRegistry;
 class GatewayRouteLocator {
 
     @Bean
-    RouteLocator gatewayRoutes(RouteLocatorBuilder builder, RouteSource routeSource, ServiceRegistry services) {
+    RouteLocator gatewayRoutes(RouteLocatorBuilder builder, RouteSource routeSource, ServiceRegistry services,
+            RedisRateLimiter rateLimiter, KeyResolver keyResolver) {
         RouteLocatorBuilder.Builder routes = builder.routes();
         for (RouteDefinition route : routeSource.routes()) {
             if (route.predicates().isEmpty()) {
@@ -35,9 +42,30 @@ class GatewayRouteLocator {
             ServiceDefinition service = services.find(route.serviceId())
                     .orElseThrow(() -> new IllegalStateException(
                             "Route '" + route.id() + "' targets unknown service '" + route.serviceId() + "'"));
-            routes.route(route.id(), spec -> match(spec, route.predicates()).uri(service.uri()));
+            TrafficPolicy traffic = route.traffic();
+            routes.route(route.id(), spec -> {
+                UriSpec withFilters = match(spec, route.predicates())
+                        .filters(filters -> applyTraffic(filters, traffic, rateLimiter, keyResolver));
+                if (traffic.hasTimeout()) {
+                    // Per-route response timeout — a slow backend fails fast (504) rather than hanging.
+                    withFilters = withFilters.metadata("response-timeout", traffic.responseTimeoutMs());
+                }
+                return withFilters.uri(service.uri());
+            });
         }
         return routes.build();
+    }
+
+    private static UriSpec applyTraffic(GatewayFilterSpec filters, TrafficPolicy traffic,
+            RedisRateLimiter rateLimiter, KeyResolver keyResolver) {
+        GatewayFilterSpec spec = filters;
+        if (traffic.hasMaxRequestBytes()) {
+            spec = spec.setRequestSize(DataSize.ofBytes(traffic.maxRequestBytes()));
+        }
+        if (traffic.rateLimited()) {
+            spec = spec.requestRateLimiter(config -> config.setRateLimiter(rateLimiter).setKeyResolver(keyResolver));
+        }
+        return spec;
     }
 
     /** Fold our predicate list onto SCG's fluent spec, AND-combining each. */
