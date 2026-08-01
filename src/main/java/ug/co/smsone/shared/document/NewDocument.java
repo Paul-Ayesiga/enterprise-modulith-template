@@ -1,4 +1,4 @@
-package ug.co.smsone.document;
+package ug.co.smsone.shared.document;
 
 import java.util.UUID;
 

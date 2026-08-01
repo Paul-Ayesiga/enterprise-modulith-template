@@ -139,17 +139,18 @@ step — *which is exactly why the logical boundaries are enforced now*.
 
 ### 2.2 Module map
 
-Thirteen modules. Verified from the `package-info.java` files and `docs/modulith/components.puml`.
+Fourteen modules. Verified from the `package-info.java` files and `docs/modulith/components.puml`.
 
 | Module | Display name | Owns (tables) | Public API package contains |
 |---|---|---|---|
-| `shared` | Shared Kernel — **the only `ApplicationModule.Type.OPEN` module** | `idempotency_key`, `event_inbox` | envelope + error types, security (`CurrentUser`, `PlatformRole`, the `OrgAuthorization` and `ImpersonationLookup` ports, `ImpersonatedPrincipal`), persistence bases, `AuditLog` port, `EventInbox`, cache, rate limiting, `SafeOutboundUrl` |
+| `shared` | Shared Kernel — **the only `ApplicationModule.Type.OPEN` module** | `idempotency_key`, `event_inbox` | envelope + error types, security (`CurrentUser`, `PlatformRole`, the `OrgAuthorization` and `ImpersonationLookup` ports, `ImpersonatedPrincipal`), persistence bases, `AuditLog` port, `Documents` port (+ `NewDocument`), `EventInbox`, cache, rate limiting, `SafeOutboundUrl` |
 | `identity` | Identity | `app_user`, `impersonation_session` | `UserProvisioning`, `UserDirectory`, `ProvisioningStatus` |
 | `organization` | Organization | `organization`, `org_role`, `role_permission`, `membership` | `Permission`, `OrganizationRegistered`, `OrganizationStatusChanged`, `MembershipCreated`, `MembershipRoleChanged`, `MemberRemoved`, `RolePermissionsChanged` |
 | `settings` | Settings | `setting`, `feature_flag` | `SettingChanged`, `FeatureFlagChanged` |
 | `localization` | Localization | `translation` | `Messages` port, `TranslationChanged` |
 | `search` | Search | `search_document` | `SearchIndex` port, `SearchDoc` |
-| `document` | Document | `document` | `Documents` port, `NewDocument`, `DocumentRegistered` |
+| `document` | Document | `document` | `DocumentRegistered` (the `Documents` port + `NewDocument` live in `shared.document` — the `AuditLog` pattern, implemented here, so producers like `exchange` need no compile edge into this module) |
+| `exchange` | Exchange | `exchange_job`, `exchange_job_error` | `ExchangeHandler` (SPI), `ExchangeContext`, `ImportOutcome`, `InvalidRecordException`, `RecordWriter` |
 | `audit` | Audit | `audit_log` | (none — consumed through the `shared.audit.AuditLog` port) |
 | `notification` | Notification | `in_app_notification`, `notification_delivery` | `Notifications`, `NotificationChannelSender` (SPI), `NotificationChannel`, `NotificationMessage`, `NotificationRequest`, `Recipient` |
 | `webhooks` | Webhooks | `webhook_subscription`, `webhook_delivery` | (none — the module is a pure consumer + REST surface) |
@@ -157,7 +158,7 @@ Thirteen modules. Verified from the `package-info.java` files and `docs/modulith
 | `analytics` | Analytics | none in Postgres (DuckDB marts + Parquet) | `AnalyticsEngine`, `AnalyticsException` |
 | `scheduler` | Scheduler | none (consumes `shedlock`) | (none) |
 
-Eighteen of the schema's twenty-one tables appear above. The remaining three are **framework-owned and
+Twenty of the schema's twenty-three tables appear above. The remaining three are **framework-owned and
 belong to no module**: `event_publication` (Spring Modulith's JDBC registry, `V2`), `shedlock`
 (ShedLock, `V4`) and `flyway_schema_history` (created by Flyway itself, in no migration). They are
 read and written by libraries, not by application code, and `V17` deliberately leaves all three out of
@@ -238,7 +239,7 @@ as they start.
 | Constraint | Source | Consequence |
 |---|---|---|
 | Flyway owns the schema; `spring.jpa.hibernate.ddl-auto: validate` | `application.yaml:27-29` | No DDL outside `db/migration`. There is no `schema.sql` and no test-only DDL anywhere. |
-| Migrations are forward-only and numbered; **V1–V19 exist, next free is V20** | `db/migration/`, `AGENTS.md` §4.5 | V17 is soft delete, V18 `impersonation_session`, V19 the `audit_log` impersonation columns. Any plan citing V17 or V18 for new work is stale — `archive/PLATFORM_RBAC_IMPERSONATION_PLAN.md` §4 is the one that was. |
+| Migrations are forward-only and numbered; **V1–V24 exist, next free is V25** | `db/migration/`, `AGENTS.md` §4.5 | V17 is soft delete, V18–V19 impersonation, V20 the audit's index remediation, V21–V24 localization/search/document/exchange. Any plan citing an old "next free" number is stale — `AGENTS.md` §4.5 is kept current. |
 | No cross-module foreign keys | `AGENTS.md` §1 | Referential integrity across modules is an application concern; `SoftDeletePurgeJob` states the consequence for purge ordering (`SoftDeletePurgeJob.java:49-53`). |
 | `spring.jpa.open-in-view: false` | `application.yaml:30` | No lazy loading past the service boundary. |
 | No Lombok; records + constructor injection | ADR 0001, `ArchitectureTests.noFieldInjection` | Enforced by ArchUnit. |
@@ -596,18 +597,17 @@ a tenant may subscribe — and the worker will POST to — loopback, RFC-1918, l
 cloud-metadata addresses. It is a single flag that disables the guard for the whole module; the test
 profile sets it to `true` (`test/resources/application-test.yaml:37`).
 
-**Gaps.** Webhook subscription mutations — including secret creation and rotation — write **no
-`audit_log` row**: `WebhookSubscriptionService` has no `AuditLog` dependency. The signing secret is
-stored as plaintext `varchar(200)`. `WebhookDeliveryQueue.purgeDeliveredBefore` exists but has **no
-caller anywhere** and there is no `app.webhooks.retention` property, so `webhook_delivery` grows
-without bound despite `V17`'s header and the service javadoc describing it as retention-trimmed. The
-subscribable event vocabulary is published nowhere on the wire — no catalog endpoint, and the
-OpenAPI spec types `events` as a bare string array with no enum.
+**Gaps.** The signing secret is stored as plaintext `varchar(200)`. The subscribable event
+vocabulary is published nowhere on the wire — no catalog endpoint, and the OpenAPI spec types
+`events` as a bare string array with no enum. (Two former gaps closed by the 2026-08-01
+remediation: subscription mutations now audit through the `AuditLog` port, and
+`WebhookRetentionJob` purges terminal deliveries past `app.webhooks.retention`.)
 
 ### 3.9 Audit (FR-AUD)
 
 **Auditing is synchronous through a shared port, not event-driven.** `audit/internal` contains no
-`@ApplicationModuleListener` at all; `audit/package-info.java` still claims otherwise and is stale.
+`@ApplicationModuleListener` at all, and `audit/package-info.java` states why: an async consumer
+would let a change commit while the row explaining it was still in flight.
 
 | ID | The system SHALL … | Implementation | Verification |
 |---|---|---|---|
@@ -805,7 +805,23 @@ The system SHALL:
 | FR-DOC-3 | tier personal documents by blast radius, mirroring files: owner always; `platform-support` may read across users; destroying takes `platform-admin` | `main:document/internal/PersonalDocumentController.java` | `test:document/internal/DocumentApiTest.personalDocumentsTierByBlastRadius` |
 | FR-DOC-4 | delete asymmetrically: bytes immediately (remote, outside the transaction), the row soft-deleted with its `document.deleted` audit row in one transaction — a restore recovers the record, never the content | `main:document/internal/DocumentService.delete`, `V23`'s header | `DocumentApiTest.orgUploadListDownloadDeleteRoundTrip` (deleted_at + storage.delete + audit sequence) |
 | FR-DOC-5 | register titles into the search projection on register and un-index on delete — the reference `SearchIndex` producer | `main:document/internal/DocumentService.register/delete` | same test (searchRows assertions) |
-| FR-DOC-6 | accept registrations from other modules through the `Documents` port with `source` recording provenance (`EXCHANGE` artifacts file here) | `main:document/{Documents,NewDocument}.java` | exercised end-to-end by the exchange module's gate |
+| FR-DOC-6 | accept registrations from other modules through the `Documents` port with `source` recording provenance (`EXCHANGE` artifacts file here); the port lives in `shared.document` so producers carry no compile edge into this module (breaking the `document → search → organization → exchange` cycle) | `main:shared/document/{Documents,NewDocument}.java`, `main:document/internal/DocumentService.java` | exercised end-to-end by the exchange module's gate |
+
+### 3.18 Data exchange — import/export (FR-EXC)
+
+The reference spec is `docs/reusable-data-exchange-platform-guidelines.md`; the module is its
+implementation. The system SHALL:
+
+| ID | Requirement | Where | Verified by |
+|---|---|---|---|
+| FR-EXC-1 | treat import/export as durable background JOBS, never long-running requests: submit answers **202** with a pollable job resource; the worker claims one job at a time via `SKIP LOCKED` (fan-out is instances sharing the queue) | `main:exchange/internal/{ExchangeController,ExchangeWorker,ExchangeJobStore}.java`, `V24` | `test:exchange/internal/ExchangeApiTest.importLifecycleReportsInvalidRowsByNumberAndFilesItsArtifacts` |
+| FR-EXC-2 | stay domain-agnostic: business modules plug in through the `ExchangeHandler` SPI and imports drive the SAME domain services as REST (the members handler invokes `MemberService`); the platform never learns a business concept | `main:exchange/ExchangeHandler.java`, `main:organization/internal/MembersExchangeHandler.java` | `test:organization/internal/MembersExchangeHandlerTest` |
+| FR-EXC-3 | stream everything: sources and results pass through codec readers/writers record by record; no file is ever held in memory; formats (CSV RFC-4180, JSONL) are additive via `FormatCodec` — a new format touches no business logic | `main:exchange/internal/{FormatCodec,CsvCodec,JsonlCodec}.java` | the 100k gate below runs on a streamed source |
+| FR-EXC-4 | process in batches with a committed resume point: counters, `next_offset` and the batch's error rows commit atomically; a crashed or reclaimed job RESUMES from the last committed batch, replaying at most one batch into idempotent handlers — at-least-once delivery, exactly-once effect | `main:exchange/internal/{ImportRunner,ExchangeJobStore}.java` | `test:exchange/internal/ExchangeResumeTest.aCrashedImportResumesFromItsCommittedOffsetWithExactlyOnceEffects` (100k rows, mid-run crash, 2 attempts, zero duplicate effects) |
+| FR-EXC-5 | keep the two failure species apart: `InvalidRecordException` is DATA — reported row-addressed, never retried, job completes `COMPLETED_WITH_ERRORS`; anything else is INFRASTRUCTURE — the batch is abandoned and the job retries up to `max-attempts`, then `FAILED` with a curated `last_error` (real causes go to the log only) | `main:exchange/{InvalidRecordException}.java`, `ImportRunner.failOrRetry` | same two tests |
+| FR-EXC-6 | persist row errors durably (`exchange_job_error`, idempotent PK) and serve the COMPLETE `row_number,error` report behind a **302** presigned URL | `ImportRunner.uploadErrorReport`, `V24` | `ExchangeApiTest.importLifecycleReportsInvalidRowsByNumberAndFilesItsArtifacts` |
+| FR-EXC-7 | authorize twice: the submitter must hold the handler's import/export permission at submit (programmatic — the code is runtime-chosen), and grant-shaped records re-check the REQUESTER'S permissions at processing time, so revocation between submit and run takes effect; artifacts download only to the requester or holders of that same permission | `main:exchange/internal/ExchangeService.java`, `main:organization/internal/PermissionEscalationGuard.requireSubjectHolds` | `ExchangeApiTest.submittingWithoutTheHandlersPermissionIsRefused`, `.exportRoundTrips…`, `MembersExchangeHandlerTest.importInvitesThroughTheEscalationGuardOfTheRequester` |
+| FR-EXC-8 | honor cancellation at batch boundaries (committed work stays; a PENDING job never starts), reclaim stale claims after `stale-lock` (the per-batch progress write is the heartbeat), and register every artifact — source, error report, export result — as an `EXCHANGE` document | `ExchangeJobStore.{progress,claimOne}`, `ArtifactStore` | `ExchangeResumeTest.{cancel*,aDeadClaimantsJob*}`, `ExchangeApiTest` (document count) |
 
 ## 4. External interface requirements
 
@@ -1020,6 +1036,14 @@ no `@PreAuthorize`. Every endpoint can additionally return 401, 403 `ACCOUNT_NOT
 | DELETE | `/api/v1/orgs/{orgId}/documents/{id}` | `document:manage` | **204** | 404 |
 | POST / GET | `/api/v1/documents` | authenticated | 201 / 200 (paged, own) | 422 |
 | GET / DELETE | `/api/v1/documents/{id}` | owner; `platform-support` reads / `platform-admin` deletes across users | 302 / 204 | 403, 404 |
+| GET | `/api/v1/exchange/handlers` | authenticated | 200 (list, un-paged — the handler catalogue with header templates) | — |
+| POST | `/api/v1/orgs/{orgId}/exchange/imports` (multipart `file` + `handler`, `format`) | `org:read` **plus the handler's import permission** (checked programmatically) | **202** | 403 missing handler permission, 404 unknown handler, 422 empty file / bad format |
+| POST | `/api/v1/orgs/{orgId}/exchange/exports` | `org:read` **plus the handler's export permission** | **202** | 403, 404, 422 |
+| GET | `/api/v1/orgs/{orgId}/exchange/jobs` | `org:read` | 200 (paged) | — |
+| GET | `/api/v1/orgs/{orgId}/exchange/jobs/{id}` | `org:read` | 200 (progress counters) | 404 (incl. foreign org) |
+| POST | `/api/v1/orgs/{orgId}/exchange/jobs/{id}/cancel` | requester, or the handler permission | 200 (best-effort; batch-boundary) | 403, 404, 409 already finished |
+| GET | `/api/v1/orgs/{orgId}/exchange/jobs/{id}/report` | requester, or the handler permission | **302** presigned (`row_number,error` CSV) | 403, 404 no report |
+| GET | `/api/v1/orgs/{orgId}/exchange/jobs/{id}/result` | requester, or the handler permission | **302** presigned | 403, 404 no result |
 | GET | `/api/v1/notifications` | authenticated (scoped to caller's subject) | 200 (paged) | — |
 | POST | `/api/v1/notifications/{id}/read` | authenticated (scoped) | 200 | 404 (also when it is another user's) |
 | POST | `/api/v1/files` (multipart `file`) | authenticated | **201** | 422 empty / unreadable |

@@ -63,6 +63,9 @@ dependencies {
     implementation(libs.bucket4j)
     implementation(libs.bucket4j.lettuce)
 
+    // exchange bundle (import/export platform — streaming CSV)
+    implementation(libs.commons.csv)
+
     // storage bundle (files module — SeaweedFS/S3 via AWS SDK v2)
     implementation(platform(libs.awssdk.bom))
     implementation(libs.awssdk.s3)

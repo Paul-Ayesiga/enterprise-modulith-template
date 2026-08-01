@@ -6,7 +6,7 @@ import jakarta.persistence.Table;
 import java.util.UUID;
 import org.hibernate.annotations.SQLDelete;
 import org.hibernate.annotations.SQLRestriction;
-import ug.co.smsone.document.NewDocument;
+import ug.co.smsone.shared.document.NewDocument;
 import ug.co.smsone.shared.persistence.SoftDeletableEntity;
 
 /** The record of a stored file. Immutable after registration except through deletion. */

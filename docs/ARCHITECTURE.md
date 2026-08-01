@@ -18,6 +18,7 @@ flowchart TB
         localization["localization\ntranslation catalog · Messages port"]
         search["search\nPostgres FTS projection · SearchIndex port"]
         document["document\nmanaged-file catalog · Documents port"]
+        exchange["exchange\nimport/export job platform · ExchangeHandler SPI"]
         files["files\nFileStorageProvider → S3"]
         scheduler["scheduler\nShedLock cron jobs\n(+ soft-delete retention purge)"]
         analytics["analytics\nAnalyticsEngine → DuckDB"]
@@ -47,6 +48,10 @@ flowchart TB
     document --> shared
     document --> files
     document --> search
+    exchange --> shared
+    exchange --> files
+    organization --> exchange
+    exchange -. "artifacts via shared\nDocuments port" .-> document
 
     settings -. "FeatureFlagChanged\n(DB-backed event registry)" .-> notification
     organization -. "member / role / status events" .-> webhooks

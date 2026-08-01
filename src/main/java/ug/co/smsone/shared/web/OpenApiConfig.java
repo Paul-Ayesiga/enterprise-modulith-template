@@ -66,6 +66,7 @@ public class OpenApiConfig {
     private static final String TAG_ORG_ROLES = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Roles";
     private static final String TAG_ORG_WEBHOOKS = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Webhooks";
     private static final String TAG_ORG_AUDIT = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Audit";
+    private static final String TAG_ORG_EXCHANGE = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Exchange";
     private static final String TAG_SHARED_ME = AXIS_SHARED + AXIS_SEPARATOR + "Me & notifications";
     private static final String TAG_SHARED_FILES = AXIS_SHARED + AXIS_SEPARATOR + "Files";
     private static final String TAG_SHARED_SETTINGS = AXIS_SHARED + AXIS_SEPARATOR + "Settings & flags";
@@ -95,6 +96,7 @@ public class OpenApiConfig {
             Map.entry("MemberController", "Members"),
             Map.entry("RoleController", "Roles"),
             Map.entry("WebhookController", "Webhooks"),
+            Map.entry("ExchangeController", "Exchange"),
             Map.entry("MeController", "Me & notifications"),
             Map.entry("NotificationController", "Me & notifications"),
             Map.entry("FileController", "Files"),
@@ -224,6 +226,14 @@ public class OpenApiConfig {
                                 "The audit trail scoped to one tenant, on audit:read — an org's own admins can "
                                 + "review their trail without any platform access. Rows written during an "
                                 + "impersonation session name the operator, not the account they wore."),
+                        new Tag().name(TAG_ORG_EXCHANGE).description(
+                                "Import and export as background jobs inside one tenant: submit answers 202 "
+                                + "and the work is polled, never awaited. Submitting is additionally refused "
+                                + "without the chosen handler's own permission — the handler is picked at "
+                                + "runtime, so no annotation can name that gate. Job metadata reads on "
+                                + "org:read; the artifacts (source, error report, result) answer only to the "
+                                + "requester or a holder of that same handler permission. The handler "
+                                + "catalogue itself is " + TAG_SHARED_REFERENCE + "."),
                         new Tag().name(TAG_SHARED_ME).description(
                                 "The caller's own identity and in-app notifications; no axis owns them because "
                                 + "a tenant member and a platform operator both legitimately arrive here. "

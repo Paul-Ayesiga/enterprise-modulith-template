@@ -12,6 +12,7 @@ logstashEncoder = "9.0"
 awssdk = "2.49.3"            # S3 v2 SDK BOM — drives SeaweedFS + managed S3
 duckdb = "1.5.5.0"           # embedded OLAP
 ulid = "5.2.3"               # sortable request IDs
+commonsCsv = "1.14.1"        # exchange module CSV reader/writer — small, boring, RFC-4180-correct
 bucket4j = "8.14.0"          # note the _jdk17 artifact suffix
 resilience4j = "2.4.0"       # -spring-boot4 artifact (verified on repo1; search.maven index lags)
 
@@ -62,6 +63,7 @@ shedlock-spring     = { module = "net.javacrumbs.shedlock:shedlock-spring", vers
 shedlock-jdbc       = { module = "net.javacrumbs.shedlock:shedlock-provider-jdbc-template", version.ref = "shedlock" }
 logstash-encoder    = { module = "net.logstash.logback:logstash-logback-encoder", version.ref = "logstashEncoder" }
 ulid-creator        = { module = "com.github.f4b6a3:ulid-creator", version.ref = "ulid" }
+commons-csv         = { module = "org.apache.commons:commons-csv", version.ref = "commonsCsv" }
 
 # Storage (Files module) — AWS S3 v2 via BOM
 awssdk-s3            = { module = "software.amazon.awssdk:s3" }

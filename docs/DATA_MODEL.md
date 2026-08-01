@@ -9,8 +9,8 @@ Schema ownership: Flyway owns every table (`spring.jpa.hibernate.ddl-auto: valid
 `src/main/resources/application.yaml:29`). No `spring.flyway.*` property is set anywhere in
 `src/main/resources` or `src/test/resources`, so Boot's defaults apply — enabled, scanning
 `classpath:db/migration`. There is no `schema.sql`, no test-only DDL, and no Hibernate-generated
-schema in any profile. **V1..V19 exist; V18 is `impersonation_session` and V19 the `audit_log`
-impersonation columns; V20 the 2026-08-01 audit's index remediation; the next free number is V21.**
+schema in any profile. **V1..V24 exist; V20 is the 2026-08-01 audit's index remediation, V21
+localization, V22 search, V23 document, V24 the exchange job queue; the next free number is V25.**
 
 ---
 
@@ -20,7 +20,7 @@ Four stores, each with a distinct job. Only one of them is a system of record.
 
 | Store | Role | What lives there | Why not Postgres |
 |---|---|---|---|
-| **PostgreSQL 18** | System of record | All 18 tables below: aggregates, work queues, the audit and impersonation trails, and the framework tables (Flyway history, the Modulith event registry, ShedLock) | — |
+| **PostgreSQL 18** | System of record | All 23 tables below: aggregates, work queues, the audit and impersonation trails, and the framework tables (Flyway history, the Modulith event registry, ShedLock) | — |
 | **Valkey 8** | Cache L2 + rate-limit buckets + invalidation bus | Three named caches (`setting-values`, `feature-flags`, `org-permissions`) under key prefix `smsone:cache:`, Bucket4j token buckets under `<app.rate-limit.key-prefix>:<tier-id>:<tenant\|sub\|ip>:<value>`, and the `smsone:cache:invalidations` pub/sub topic | Derived, expendable data. Every value is recomputable from Postgres; an outage degrades to L1-only or fail-open, never to data loss (ADR 0004) |
 | **SeaweedFS (S3 API)** | Object storage | Uploaded file bytes, keyed `u/<subject>/<uuid>/<sanitized-filename>` (`files/internal/FileController.newKey:132-136`) | **No database row describes an uploaded object.** The `files` module owns no table: the key encodes the owner, the object store is the index, and authorization is a namespace prefix check |
 | **DuckDB (embedded)** | OLAP marts | `mart_users_by_status`, `mart_delivery_outcomes` in the DuckDB file at `app.analytics.database-path` (`data/analytics.duckdb`). Parquet export exists as an unwired seam only — see below | Postgres stays OLTP-only. Marts are point-in-time copies rebuilt from Postgres on each report run; the `AnalyticsEngine` seam keeps ClickHouse/Trino a pure implementation swap (ADR 0006) |
@@ -299,6 +299,10 @@ flowchart TB
         W1[webhook_subscription]
         W2[webhook_delivery]
     end
+    subgraph exch["exchange"]
+        X1[exchange_job]
+        X2[exchange_job_error]
+    end
     subgraph shared["shared kernel (OPEN)"]
         K1[idempotency_key]
         K2[event_inbox]
@@ -312,12 +316,14 @@ flowchart TB
     O2 --> O3
     O2 --> O4
     W1 --> W2
+    X1 --> X2
 
     I1 -. "sub" .-> O4
     O1 -. "kc_org_id" .-> O2
     O1 -. "kc_org_id" .-> O4
     O1 -. "kc_org_id" .-> W1
     O1 -. "kc_org_id" .-> A1
+    O1 -. "kc_org_id" .-> X1
     I1 -. "sub" .-> N1
     I1 -. "sub" .-> A1
     I1 -. "sub (actor + target)" .-> I2
@@ -1513,6 +1519,44 @@ persist-assigned, so an aggregate-registered event could not carry it.
 **Lifecycle.** Registered via upload (`/documents` surfaces) or the `Documents` port (`EXCHANGE`
 artifacts); audited `document.registered` / `document.deleted`. Purged last in `PURGE_ORDER`.
 
+### 4.12 Exchange module
+
+#### 4.12.1 `exchange_job`
+
+`V24__exchange.sql`. **No entity — plain `JdbcTemplate`** (`exchange.internal.ExchangeJobStore`),
+the §4.4 queue rule: this is the webhook/notification queue species, not an aggregate. NOT
+soft-deletable — a job row is a work record, like `webhook_delivery`.
+
+| Column | Type | Null | Notes |
+|---|---|---|---|
+| `org_id` | `uuid` | not null | Soft ref (no FK — module boundary) |
+| `requester` | `varchar(64)` | not null | Token subject captured at submit; per-record authorization re-resolves THIS subject's permissions at processing time |
+| `job_type` / `handler` / `format` | | not null | `IMPORT`/`EXPORT`; `ExchangeHandler.id()`; `CSV`/`JSONL` |
+| `status` | `varchar(30)` | not null | `PENDING → VALIDATING → PROCESSING → COMPLETED / COMPLETED_WITH_ERRORS / FAILED / CANCELLED` (the guidelines' lifecycle) |
+| `source_key` / `result_key` / `error_report_key` | `varchar(300)` | null | Files-port keys (`exch/o/<org>/…`); every one is also registered as an `EXCHANGE` document |
+| `processed` / `failed` | `bigint` | not null | Progress counters, committed per batch |
+| `next_offset` | `bigint` | not null | **The resume point**: data-record ordinal the next attempt starts from — a reclaimed job continues, never restarts |
+| `attempts` | `int` | not null | Claim generations (incremented per claim); EVERY later write is fenced on it |
+| `cancel_requested` | `boolean` | not null | Read back by the per-batch progress write — cancellation lands at batch boundaries |
+| `locked_at` | `timestamptz` | null | Claim lock AND heartbeat: re-stamped by every progress write, so only a crashed claimant goes stale |
+| `last_error` | `text` | null | Tenant-visible, curated — real exceptions go to the log only |
+
+**Keys and indexes.** Partial claim index over non-terminal statuses ordered `created_at`; org
+listing keyset index; partial terminal index for a future retention job.
+
+**Invariants.** Claim is `FOR UPDATE SKIP LOCKED`, one job per claim (jobs are internally batched
+marathons; fan-out is instances sharing the queue, not threads inside one). Progress commits
+counters + offset + the batch's error rows in ONE transaction. Handlers see at-least-once delivery
+of the uncommitted batch and are idempotent by contract (`ExchangeHandler` javadoc).
+
+#### 4.12.2 `exchange_job_error`
+
+`V24__exchange.sql`, cascade FK to `exchange_job` — same-module FK, allowed. Row errors are
+DURABLE, not worker memory: they commit with the batch that found them, so the finalize step
+streams the COMPLETE row-addressed report even across crashes, and the `(job_id, row_num)` PK plus
+`on conflict do nothing` makes replayed batches rewrite nothing. `row_num` is the 1-based data
+record ordinal (header excluded). `error` is the curated `InvalidRecordException` message.
+
 ## 5. Soft delete
 
 Migration `V17__soft_delete.sql`. Deletion is **recorded, not executed**: the row survives with
@@ -1534,6 +1578,7 @@ retention index, a place in `SoftDeletePurgeJob.PURGE_ORDER`, and its own `@SQLD
 | `impersonation_session` (`V18`) | The same reason, sharper. The operator who opened a session is exactly the person a delete would serve, so an oversight tool able to erase its own oversight is not one. Sessions **end** (`ended_at`); the row stays. Added after `V17`, hence its absence from `V17`'s own header |
 | `in_app_notification` | `BaseEntity`, not an aggregate root; genuinely disposable. Nobody restores a notification, and hiding one is what `read_at` is for |
 | `webhook_delivery` | A log, not an aggregate. Trimmed by retention, not by users |
+| `exchange_job`, `exchange_job_error` (`V24`) | The same queue/log species as `webhook_delivery`: work records, not aggregates. Terminal rows are a future retention job's business (the partial index for it ships in `V24`) |
 | `role_permission` | An `@ElementCollection` of `org_role`, whose lifecycle it follows. Its FK cascades, so it goes with its parent |
 | `event_publication`, `shedlock`, `idempotency_key`, `flyway_schema_history` | Framework-owned |
 
@@ -1732,8 +1777,9 @@ The schema alone reads as if these cascades are live behaviour. They are not, ex
 | `V21__localization.sql` | `translation` — soft-deletable, partial unique `(locale, msg_key)`, bundle-load/listing/retention indexes. Locales stored as lowercased BCP-47 tags; the header states why |
 | `V22__search.sql` | `pg_trgm` extension + `search_document` — a rebuildable projection (NOT soft-deletable, the header argues it), generated `tsv` column, GIN on `tsv`, trigram GIN on `title`, org filter index |
 | `V23__document.sql` | `document` — soft-deletable catalog over files-held keys; partial unique on `storage_key`; org/personal listing indexes. The header states delete's bytes-now/row-soft asymmetry |
+| `V24__exchange.sql` | `exchange_job` (the §7-discipline job queue: fenced `attempts`, `next_offset` resume point, heartbeat `locked_at`, partial claim/terminal indexes) + `exchange_job_error` (durable row errors, PK `(job_id, row_num)`, cascade FK). Neither soft-deletable — queue species |
 
-**The next free migration number is V21.**
+**The next free migration number is V25.**
 
 ---
 
@@ -1798,6 +1844,7 @@ removed only `SENT`, never the dead-lettered rows.
 | ~~`event_inbox`~~ | **Fixed 2026-08-01.** `EventInboxPurgeJob` purges rows past `app.scheduler.event-inbox-retention` (P14D — validated ≥ event retention, since dedup must outlive redelivery) | |
 | ~~`notification_delivery`~~ | **Fixed 2026-08-01.** Retention moved out of the worker loop into `NotificationRetentionJob` (nightly, batched, locked) and now covers `SENT` **and** `FAILED` | Dead-lettered rows carried `recipient` + `body` forever — retained message content, not just metadata |
 | `event_publication` — **the incomplete half** | **Unintended.** `EventPublicationPurgeJob` calls `completedPublications.deletePublicationsOlderThan(retention)` (`EventPublicationPurgeJob.java:33`) — `CompletedEventPublications`, so **completed rows only**. A publication whose listener never succeeds keeps `completion_date is null` and has no retention path | `spring.modulith.events.republish-outstanding-events-on-restart: true` (`application.yaml:53-55`) re-publishes those rows on **every** boot but never removes them, so a permanently failing listener accumulates rows *and* replays them forever. No `spring.modulith.events.completion-mode` is configured anywhere, so the framework default applies. Contrast the completed rows, which §7.1 trims at `app.scheduler.event-retention` |
+| `exchange_job` + `exchange_job_error` | No retention job yet (`V24` ships the partial terminal index for one) | Terminal jobs and their error rows accumulate; error rows cascade with their job. Same gap `webhook_delivery` had before 2026-08-01 — the index is waiting for the job |
 | `shedlock` | Bounded — one row per job name, reused | Not a growth concern |
 | `flyway_schema_history` | Bounded — one row per migration | |
 

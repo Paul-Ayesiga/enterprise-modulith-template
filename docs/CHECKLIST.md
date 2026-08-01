@@ -342,6 +342,50 @@ Slice 3 of [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md).
 - [x] **Gate:** full `./gradlew test` green (13 modules); docs regenerated; DATA_MODEL §4.11 /
       SRS §3.17 + catalogue + traceability updated
 
+## Exchange module ✅ (2026-08-01)
+
+Slice 4 of [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md) — the scale-first centerpiece. As-shipped
+deltas from the plan sketch: submit answers **202** (not 201 — the work is a background job), the
+surface is org-scoped (`/api/v1/orgs/{orgId}/exchange/**`), the SPI settled as
+`importRecord`/`export` with per-direction permissions, no `total` column (it would cost a full
+extra pass over the file; `processed`/`failed` + terminal status carry progress), and row errors
+live in `exchange_job_error` rather than worker memory so reports survive crashes. One structural
+consequence: the `Documents` port moved to `shared.document` (the `AuditLog` pattern) — with
+`organization` implementing the exchange SPI, a compile edge from exchange into `document` would
+have closed the cycle `document → search → organization → exchange`, and `ModularityTests` said so.
+
+- [x] **V24** `exchange_job` (fenced `attempts`, `next_offset` resume point, heartbeat `locked_at`,
+      partial claim/terminal indexes) + `exchange_job_error` (durable row errors, PK
+      `(job_id, row_num)`, cascade FK) — queue species, deliberately not soft-deletable
+- [x] `ExchangeHandler` SPI + `ExchangeContext`/`ImportOutcome`/`InvalidRecordException`/
+      `RecordWriter`; streaming `FormatCodec` internals (commons-csv RFC-4180, JSONL)
+- [x] §7 queue discipline end to end: `SKIP LOCKED` claim (one job per claim), every write fenced,
+      progress = counters + offset + error rows in ONE transaction + heartbeat, stale reclaim,
+      curated `last_error` (real causes to logs only)
+- [x] Data vs infrastructure failures kept apart: invalid records → durable row errors →
+      `COMPLETED_WITH_ERRORS` + `row_number,error` report; anything else → batch abandoned, retry
+      up to `max-attempts`, then `FAILED`
+- [x] Two-layer authorization: programmatic submit gate on the handler's per-direction permission
+      (mirrors `ApiPermissionEvaluator`'s active-org strictness); per-record escalation resolves the
+      REQUESTER at processing time (`PermissionEscalationGuard.requireSubjectHolds`,
+      `MemberService.inviteAs`); artifacts download to the requester or permission holders only
+- [x] Reference `org-members` handler in `organization.internal` driving the same `MemberService`
+      as REST; export re-importable (emails via `UserDirectory.emailsBySubjects` batch lookup)
+- [x] All artifacts (source, report, result) registered as `EXCHANGE` documents via the port
+- [x] **Gate — the scale contract:** 100k-row CSV import crashed mid-run at record 30,050 resumes
+      from the committed offset 30,000 — 2 attempts, `processed=100000`, 100,050 handler calls
+      (at-least-once delivery), 100,000 distinct effects (exactly-once) —
+      `ExchangeResumeTest.aCrashedImportResumesFromItsCommittedOffsetWithExactlyOnceEffects`; plus
+      stale-claim reclaim and both cancellation edges (same class)
+- [x] **Gate:** REST lifecycle — 403 without the handler permission, 202 → drain →
+      `COMPLETED_WITH_ERRORS` with row-addressed report behind a 302, export round-trip with
+      permission-gated result, foreign org 404, discoverable handler catalog — `ExchangeApiTest`
+      (5 tests); requester-escalation + idempotent replay + roster export —
+      `MembersExchangeHandlerTest` (2 tests)
+- [x] **Gate:** full `./gradlew test` green (14 modules); docs regenerated; DATA_MODEL §4.12 /
+      SRS §3.18 + catalogue + endpoint table updated; stale "next free migration" pointers fixed
+      across AGENTS/DATA_MODEL/SRS
+
 ## Audit remediation — phases 3 & 4 ✅ (2026-08-01)
 
 - [x] **M15** controllers are thin again: `AuditQueryService` (readOnly) behind `AuditController`;

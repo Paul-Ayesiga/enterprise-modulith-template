@@ -62,6 +62,14 @@ tags:
   description: "The audit trail scoped to one tenant, on audit:read — an org's own\
     \ admins can review their trail without any platform access. Rows written during\
     \ an impersonation session name the operator, not the account they wore."
+- name: Organization · Exchange
+  description: "Import and export as background jobs inside one tenant: submit answers\
+    \ 202 and the work is polled, never awaited. Submitting is additionally refused\
+    \ without the chosen handler's own permission — the handler is picked at runtime,\
+    \ so no annotation can name that gate. Job metadata reads on org:read; the artifacts\
+    \ (source, error report, result) answer only to the requester or a holder of that\
+    \ same handler permission. The handler catalogue itself is Shared · Reference\
+    \ data."
 - name: Shared · Me & notifications
   description: "The caller's own identity and in-app notifications; no axis owns them\
     \ because a tenant member and a platform operator both legitimately arrive here.\
@@ -1097,6 +1105,172 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}/exchange/jobs/{id}/cancel:
+    post:
+      tags:
+      - Organization · Exchange
+      summary: Request cancellation of a job
+      description: "Best-effort: a PENDING job never starts; a running import stops\
+        \ at its next batch boundary (already-committed records stay applied); an\
+        \ export already in flight completes."
+      operationId: cancel
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}/exchange/imports:
+    post:
+      tags:
+      - Organization · Exchange
+      summary: Submit an import job
+      description: "Sent as `multipart/form-data`: the source under `file`, plus `handler`\
+        \ and `format` (CSV or JSONL) parameters. Answers 202 immediately — processing\
+        \ is a durable background job; poll the returned resource for progress. The\
+        \ submitter must hold the handler's import permission."
+      operationId: submitImport
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: handler
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: format
+        in: query
+        required: false
+        schema:
+          type: string
+          default: CSV
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+              required:
+              - file
+      responses:
+        "202":
+          description: Accepted
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}/exchange/exports:
+    post:
+      tags:
+      - Organization · Exchange
+      summary: Submit an export job
+      description: "Answers 202; when the job completes, its result downloads via\
+        \ `GET /jobs/{id}/result`. The submitter must hold the handler's export permission."
+      operationId: submitExport
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExportRequest"
+        required: true
+      responses:
+        "202":
+          description: Accepted
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/orgs/{orgId}/documents:
     get:
       tags:
@@ -1890,6 +2064,191 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/WindowedResultResourceObject"
+  /api/v1/orgs/{orgId}/exchange/jobs:
+    get:
+      tags:
+      - Organization · Exchange
+      summary: List the organization's exchange jobs
+      operationId: list_10
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: "page[size]"
+        in: query
+        description: "Items per page, 1–100. Defaults to 20."
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 20
+          maximum: 100
+          minimum: 1
+      - name: "page[after]"
+        in: query
+        description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
+          Omit for the first page.
+        required: false
+        schema:
+          type: string
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/WindowedResultResourceObject"
+  /api/v1/orgs/{orgId}/exchange/jobs/{id}:
+    get:
+      tags:
+      - Organization · Exchange
+      summary: Get one exchange job with its progress
+      operationId: get_6
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}/exchange/jobs/{id}/result:
+    get:
+      tags:
+      - Organization · Exchange
+      summary: Download a completed export's result file
+      description: 302 to a short-lived presigned URL; follow the redirect for the
+        bytes.
+      operationId: result
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+  /api/v1/orgs/{orgId}/exchange/jobs/{id}/report:
+    get:
+      tags:
+      - Organization · Exchange
+      summary: Download a job's row-addressed error report
+      description: "302 to a short-lived presigned URL. CSV with `row_number,error`\
+        \ columns."
+      operationId: report
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
   /api/v1/orgs/{orgId}/documents/{id}:
     get:
       tags:
@@ -2045,7 +2404,7 @@ paths:
       tags:
       - Shared · Me & notifications
       summary: List your in-app notifications
-      operationId: list_10
+      operationId: list_11
       parameters:
       - name: "page[size]"
         in: query
@@ -2200,7 +2559,7 @@ paths:
       tags:
       - Shared · Settings & flags
       summary: List feature flags
-      operationId: list_11
+      operationId: list_12
       parameters:
       - name: "page[size]"
         in: query
@@ -2242,6 +2601,41 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/WindowedResultResourceObject"
+  /api/v1/exchange/handlers:
+    get:
+      tags:
+      - Shared · Reference data
+      summary: List the available exchange handlers
+      description: "Each handler names the dataset it moves, the permissions its imports\
+        \ and exports require, and `header` — the exact CSV column order (or JSONL\
+        \ key set) its files use. `header` doubles as the import template."
+      operationId: list_13
+      parameters:
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceObject"
   /api/v1/documents/{id}:
     get:
       tags:
@@ -2465,7 +2859,7 @@ paths:
       tags:
       - Platform · Users & impersonation
       summary: List provisioned users across the platform
-      operationId: list_12
+      operationId: list_14
       parameters:
       - name: "page[size]"
         in: query
@@ -2809,6 +3203,13 @@ components:
           type: string
           format: uuid
         actorSubject:
+          type: string
+    ExportRequest:
+      type: object
+      properties:
+        handler:
+          type: string
+        format:
           type: string
     PresignRequest:
       type: object

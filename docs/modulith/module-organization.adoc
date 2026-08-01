@@ -5,6 +5,7 @@
 |Bean references
 |* `u.c.s.i.UserProvisioning` (in Identity)
 * `u.c.s.s.audit.AuditLog` (in Shared Kernel)
+* `u.c.s.i.UserDirectory` (in Identity)
 * `u.c.s.s.security.CurrentUserProvider` (in Shared Kernel)
 |Events listened to
 |* `u.c.s.o.MemberRemoved` (async) 

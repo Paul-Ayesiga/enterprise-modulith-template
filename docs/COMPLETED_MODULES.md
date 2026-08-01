@@ -3,7 +3,7 @@
 What is **built, tested, and gated** today; this file lists only finished modules. Every module owns its data,
 talks to others through events, and is boundary-verified by Spring Modulith (`./gradlew test`).
 
-_Last updated: 2026-07-31._
+_Last updated: 2026-08-01._
 
 ## Summary
 
@@ -14,6 +14,7 @@ _Last updated: 2026-07-31._
 | **localization** | Translation catalog + `Messages` resolution port | `/api/v1/translations/**` | `TranslationChanged` | ✅ |
 | **search** | Postgres FTS projection + `SearchIndex` port | `/api/v1/orgs/{orgId}/search`, `/api/v1/admin/search` | — (consumes `OrganizationRegistered`, `UserProvisioned`) | ✅ |
 | **document** | Managed-file catalog over the files port + `Documents` port | `/api/v1/orgs/{orgId}/documents/**`, `/api/v1/documents/**` | `DocumentRegistered` | ✅ |
+| **exchange** | Data Exchange Platform — durable, resumable import/export jobs behind the `ExchangeHandler` SPI | `/api/v1/orgs/{orgId}/exchange/**`, `/api/v1/exchange/handlers` | — (drives domain services through the SPI) | ✅ |
 | **files** | S3-compatible object storage | `/api/v1/files` | — | ✅ |
 | **scheduler** | Clustered scheduled jobs | `/api/v1/scheduler/locks` | — | ✅ |
 | **analytics** | Embedded OLAP / reporting | `/api/v1/analytics/reports` | — | ✅ |
@@ -67,8 +68,9 @@ Lightning-fast full-text search on Postgres — no new engine, and the speed is 
   (float4's shortest text form parses into a different double — keyset page 2 would repeat page 1).
 - **Endpoints**: `GET /api/v1/orgs/{orgId}/search` (`org:read`, tenant cut inside the SQL) and
   `GET /api/v1/admin/search` (`platform-support`, reaches null-org rows).
-- **Verified at scale**: 100k documents, 50 warm org-scoped queries — **p50 16ms, p95 20ms**
-  (budget 50ms), printed by the gate test on every run.
+- **Verified at scale**: 100k documents, 50 warm org-scoped queries — **p50 20ms / p95 35ms
+  standalone** on the reference container; the asserted tripwires (p50<50, p95<150) carry headroom
+  for full-suite neighbor load, and the gate test prints the measured figures every run.
 
 ## document
 The business record OF a stored file, over keys the `files` module holds.
@@ -84,6 +86,30 @@ The business record OF a stored file, over keys the `files` module holds.
   reference producer.
 - **Endpoints**: org `POST/GET` list, `GET /{id}` (302 presigned), `DELETE /{id}`; personal
   equivalents under `/api/v1/documents`.
+
+## exchange
+The Data Exchange Platform ([the guidelines doc](reusable-data-exchange-platform-guidelines.md) is
+its spec): import/export as durable, resumable background jobs — built for scale first.
+- **Queue discipline**: `exchange_job` is a §7-style claim queue (`SKIP LOCKED`, every write fenced
+  on the claim's `attempts`, stale-lock reclaim); one job per claim — fan-out is instances sharing
+  the queue. Progress commits counters + `next_offset` + the batch's error rows in ONE transaction
+  and doubles as the heartbeat, so a crashed job **resumes from its last committed batch, never
+  restarts** — proven by a 100k-row import killed mid-run (2 attempts, zero duplicate effects).
+- **Two failure species, never confused**: `InvalidRecordException` is DATA — row-addressed into a
+  durable `exchange_job_error` table (idempotent PK, so replays rewrite nothing), streamed into a
+  `row_number,error` CSV report, never retried. Anything else is INFRASTRUCTURE — the batch is
+  abandoned and the job retries up to `max-attempts`; `last_error` stays curated, causes go to logs.
+- **The domain seam**: business modules implement `ExchangeHandler` (id, per-direction permissions,
+  header template, idempotent `importRecord`, streaming `export`). The reference `org-members`
+  handler drives the SAME `MemberService` as REST, and each record's escalation guard resolves the
+  REQUESTER'S permissions at processing time — revocation between submit and run bites.
+- **Formats are additive**: streaming `FormatCodec` SPI; CSV (commons-csv, RFC-4180) and JSON Lines
+  ship; a new format touches no business logic.
+- **Artifacts are documents**: source, error report and export result all register through the
+  `Documents` port as `EXCHANGE` provenance — tenants browse their exchange history as documents.
+- **Endpoints**: `POST …/exchange/imports|exports` (202 + pollable job), `GET …/jobs[/{id}]`
+  (progress), `POST …/{id}/cancel` (batch-boundary, best-effort), `GET …/{id}/report|result`
+  (302 presigned), `GET /api/v1/exchange/handlers` (the catalog with header templates).
 
 ## files
 Object storage behind a single S3 abstraction (AWS SDK v2).

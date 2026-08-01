@@ -61,6 +61,11 @@ package: nothing outside `identity` reacts to a session opening, so `Impersonati
 `BaseEntity` rather than an `AggregateRoot` and produces no `event_publication` rows. There is no
 `_expired` action either — expiry is evaluated on read. See `AGENTS.md` §5.5.)_
 
+_(**Exchange publishes no events yet, deliberately.** Job state lives in `exchange_job` and clients
+poll the job resource; nothing consumes a completion today. A `JobCompleted` event is the natural
+trigger for a "your import finished" notification — when that consumer is wanted, the event joins
+this catalog and follows the `EventInbox` rule like every other.)_
+
 The generated per-module canvases in [modulith/](modulith/) list published/listened events per
 module and are refreshed on every build — treat this file as the narrative companion, and add a row
 whenever a new event type lands.

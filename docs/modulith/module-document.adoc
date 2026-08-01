@@ -2,10 +2,6 @@
 |===
 |Base package
 |`ug.co.smsone.document`
-|Spring components
-|_Services_
-
-* `u.c.s.d.Documents` (via `u.c.s.d.internal.DocumentService`)
 |Bean references
 |* `u.c.s.f.FileStorageProvider` (in Files)
 * `u.c.s.s.SearchIndex` (in Search)

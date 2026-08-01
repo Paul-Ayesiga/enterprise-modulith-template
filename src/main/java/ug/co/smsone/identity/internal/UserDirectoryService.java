@@ -1,6 +1,9 @@
 package ug.co.smsone.identity.internal;
 
+import java.util.Collection;
+import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import ug.co.smsone.identity.UserDirectory;
 
@@ -21,5 +24,14 @@ class UserDirectoryService implements UserDirectory {
         }
         return users.findFirstByEmailIgnoreCaseOrderByProvisionedAtAsc(email.trim())
                 .map(User::getSubject);
+    }
+
+    @Override
+    public Map<String, String> emailsBySubjects(Collection<String> subjects) {
+        if (subjects == null || subjects.isEmpty()) {
+            return Map.of();
+        }
+        return users.findBySubjectIn(subjects).stream()
+                .collect(Collectors.toUnmodifiableMap(User::getSubject, User::getEmail));
     }
 }

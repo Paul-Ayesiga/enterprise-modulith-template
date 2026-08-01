@@ -213,6 +213,18 @@ app:
     # Presigned-download lifetime: long enough to follow the 302, short enough not to be a durable
     # capability. Bytes never pass through the API.
     presign-ttl: ${DOCUMENT_PRESIGN_TTL:PT10M}
+  exchange:
+    worker-auto-start: ${EXCHANGE_WORKER_AUTOSTART:true}
+    # One progress commit — counters, resume offset, the batch's error rows, the cancel check —
+    # per this many records. Larger = fewer round trips; smaller = finer resume granularity.
+    batch-size: ${EXCHANGE_BATCH_SIZE:500}
+    poll-interval: ${EXCHANGE_POLL_INTERVAL:PT2S}
+    # Reclaim deadline for a crashed claimant. The per-batch progress write doubles as the
+    # heartbeat, so a healthy job of any length never goes stale.
+    stale-lock: ${EXCHANGE_STALE_LOCK:PT5M}
+    # Claim generations per job, not record retries — data errors never retry at all.
+    max-attempts: ${EXCHANGE_MAX_ATTEMPTS:3}
+    presign-ttl: ${EXCHANGE_PRESIGN_TTL:PT10M}
   localization:
     # The fallback chain's floor: exact tag -> language -> THIS -> the key itself. An unparseable
     # tag fails at startup, not at first resolve.

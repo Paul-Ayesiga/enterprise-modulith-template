@@ -295,12 +295,12 @@ step by step; copy that reasoning, not just the shape.
 - Catch `DataIntegrityViolationException` only where losing a race has a well-defined idempotent
   outcome, and resolve to the winner's row (`MemberService.saveMembership`).
 - Hot, high-fan-out queue work uses plain `JdbcTemplate`, not JPA: `WebhookDeliveryQueue`,
-  `NotificationDeliveryQueue`, `EventInbox`.
+  `NotificationDeliveryQueue`, `EventInbox`, `ExchangeJobStore`.
 
 ### 4.5 Migrations
 
-- `src/main/resources/db/migration/V<n>__<snake_name>.sql`. **V20 is taken; the next free number is
-  V20.** Never edit an applied migration; never renumber.
+- `src/main/resources/db/migration/V<n>__<snake_name>.sql`. **V24 is taken; the next free number is
+  V25.** Never edit an applied migration; never renumber.
 - `ddl-auto: validate`. The schema is the migration's job, always.
 - Head the file with a comment explaining the *decision*, not the statements — `V17__soft_delete.sql`
   and `V11__organization_rbac.sql` are the reference voice.

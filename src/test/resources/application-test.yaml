@@ -31,6 +31,9 @@ app:
   organization:
     dev-bootstrap:
       enabled: false
+  # Exchange worker is driven explicitly by tests via drainOnce() — no background claims racing asserts.
+  exchange:
+    worker-auto-start: false
   # Webhook worker is driven explicitly by tests; receivers run on localhost so private hosts are allowed.
   webhooks:
     worker-auto-start: false

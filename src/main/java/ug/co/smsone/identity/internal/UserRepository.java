@@ -1,6 +1,7 @@
 package ug.co.smsone.identity.internal;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -15,6 +16,8 @@ interface UserRepository extends JpaRepository<User, UUID>, JpaSpecificationExec
     Optional<User> findBySubject(String subject);
 
     Optional<User> findFirstByEmailIgnoreCaseOrderByProvisionedAtAsc(String email);
+
+    List<User> findBySubjectIn(Collection<String> subjects);
 
     /**
      * Native, because {@code @SQLRestriction} hides the very rows this asks about: to every HQL query

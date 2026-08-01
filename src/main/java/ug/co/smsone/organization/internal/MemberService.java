@@ -73,10 +73,26 @@ class MemberService {
 
     Membership invite(UUID orgId, String email, String firstName, String lastName, String roleCode) {
         // Resolved twice on purpose. Here for the escalation guard, which must run BEFORE anything is
-        // provisioned; again inside saveMembership, because the two Keycloak calls below are network
-        // round-trips and the role can be deleted while they are in flight.
+        // provisioned; again inside saveMembership, because the two Keycloak calls in doInvite are
+        // network round-trips and the role can be deleted while they are in flight.
         Role role = requireRole(orgId, roleCode);
         escalationGuard.requireCallerHolds(orgId, role.getPermissions());
+        return doInvite(orgId, email, firstName, lastName, role);
+    }
+
+    /**
+     * Invite on BEHALF of a subject resolved outside a request — the exchange worker has no
+     * authenticated caller, so the escalation guard runs against the REQUESTER'S current
+     * permissions instead (revocation between submit and processing takes effect).
+     */
+    Membership inviteAs(String requesterSubject, UUID orgId, String email, String firstName,
+            String lastName, String roleCode) {
+        Role role = requireRole(orgId, roleCode);
+        escalationGuard.requireSubjectHolds(orgId, requesterSubject, role.getPermissions());
+        return doInvite(orgId, email, firstName, lastName, role);
+    }
+
+    private Membership doInvite(UUID orgId, String email, String firstName, String lastName, Role role) {
         ProvisionedUser provisioned = userProvisioning.provision(new ProvisionRequest(email, firstName, lastName));
         keycloakOrg.addMember(orgId, provisioned.subject());
         // Explicit template, not @Transactional: this is a self-invocation, which never reaches the

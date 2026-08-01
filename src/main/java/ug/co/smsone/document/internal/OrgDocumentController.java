@@ -17,7 +17,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
-import ug.co.smsone.document.NewDocument;
+import ug.co.smsone.shared.document.NewDocument;
 import ug.co.smsone.files.FileStorageProvider;
 import ug.co.smsone.shared.error.ValidationException;
 import ug.co.smsone.shared.security.CurrentUser;

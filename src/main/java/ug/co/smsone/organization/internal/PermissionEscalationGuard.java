@@ -29,15 +29,28 @@ class PermissionEscalationGuard {
 
     void requireCallerHolds(UUID orgId, Set<Permission> granted) {
         CurrentUser caller = currentUser.requireCurrentUser();
-        Set<String> held = permissions.resolve(caller.subject(), orgId);
+        require(orgId, caller.subject(), granted, "You cannot grant permissions you do not hold: ");
+    }
+
+    /**
+     * The same rule for DEFERRED grants — work submitted by a subject but executed later with no
+     * authenticated caller (exchange imports). Checked against that subject's permissions AS OF
+     * NOW, so a revocation between submit and processing takes effect.
+     */
+    void requireSubjectHolds(UUID orgId, String subject, Set<Permission> granted) {
+        require(orgId, subject, granted,
+                "The requester cannot grant permissions they do not hold: ");
+    }
+
+    private void require(UUID orgId, String subject, Set<Permission> granted, String message) {
+        Set<String> held = permissions.resolve(subject, orgId);
         List<String> escalated = granted.stream()
                 .map(Permission::code)
                 .filter(code -> !held.contains(code))
                 .sorted()
                 .toList();
         if (!escalated.isEmpty()) {
-            throw new ForbiddenException("You cannot grant permissions you do not hold: "
-                    + String.join(", ", escalated));
+            throw new ForbiddenException(message + String.join(", ", escalated));
         }
     }
 }
