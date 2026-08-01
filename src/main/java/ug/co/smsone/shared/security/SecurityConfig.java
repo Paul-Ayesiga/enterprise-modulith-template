@@ -33,8 +33,13 @@ public class SecurityConfig {
     SecurityFilterChain apiSecurityFilterChain(HttpSecurity http,
             KeycloakJwtAuthenticationConverter jwtAuthenticationConverter,
             ApiAuthenticationEntryPoint authenticationEntryPoint,
-            ApiAccessDeniedHandler accessDeniedHandler) throws Exception {
+            ApiAccessDeniedHandler accessDeniedHandler,
+            ApiKeyAuthenticationFilter apiKeyAuthenticationFilter) throws Exception {
         http
+                // Machine keys authenticate before the bearer path; an absent/invalid key changes
+                // nothing (the request stays anonymous and authorization answers).
+                .addFilterBefore(apiKeyAuthenticationFilter,
+                        org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter.class)
                 .csrf(CsrfConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth

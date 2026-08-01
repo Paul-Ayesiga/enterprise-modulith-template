@@ -38,6 +38,14 @@ public class ApiPermissionEvaluator implements PermissionEvaluator {
         if (!ORG_TARGET.equals(targetType)) {
             return false;
         }
+        if (authentication instanceof ApiKeyAuthenticationToken apiKey) {
+            // Machine branch: the key's minted SUBSET is the whole authority — no membership
+            // resolution, no role bypass, and the same strict org-id equality humans get.
+            ApiKeyPrincipal principal = apiKey.getPrincipal();
+            return principal.orgId() != null
+                    && String.valueOf(targetId).equals(principal.orgId().toString())
+                    && principal.permissions().contains(String.valueOf(permission));
+        }
         OrgAuthorization authz = orgAuthorization.getIfAvailable();
         if (authz == null) {
             return false; // no policy wired -> default deny

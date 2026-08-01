@@ -38,6 +38,9 @@ tags:
     \ state, platform-admin. The same keys are readable by any authenticated caller\
     \ under Shared · Settings & flags — same paths, different method, different authority,\
     \ which is why one controller lands in two groups."
+- name: Platform · API keys
+  description: Platform machine credentials — support-tier keys minted by platform-admin.
+    They read platform surfaces; they never satisfy a higher tier or carry org permissions.
 - name: Platform · Billing & plans
   description: "The commercial axis of a tenant: the seeded plan catalogue and each\
     \ org's subscription. Reading is platform-support; assigning a plan is platform-admin,\
@@ -74,6 +77,10 @@ tags:
     \ so no annotation can name that gate. Job metadata reads on org:read; the artifacts\
     \ (source, error report, result) answer only to the requester or a holder of that\
     \ same handler permission. The handler catalogue itself is Shared · Exchange catalog."
+- name: Organization · API keys
+  description: "An organization's machine credentials (apikey:manage). A key carries\
+    \ a SUBSET of its creator's permissions — it can never out-rank them — and authenticates\
+    \ as X-Api-Key. The secret shows once, at mint."
 - name: Organization · Billing
   description: "The tenant's own money view — invoices, proxied from Kill Bill on\
     \ org:read. Plans, balances and billing actions are the platform's surface: Platform\
@@ -1728,6 +1735,103 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}/api-keys:
+    get:
+      tags:
+      - Organization · API keys
+      summary: List the organization's API keys (secrets never shown)
+      operationId: list_5
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: "page[size]"
+        in: query
+        description: "Items per page, 1–100. Defaults to 20."
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 20
+          maximum: 100
+          minimum: 1
+      - name: "page[after]"
+        in: query
+        description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
+          Omit for the first page.
+        required: false
+        schema:
+          type: string
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/WindowedResultResourceObject"
+    post:
+      tags:
+      - Organization · API keys
+      summary: Mint an organization API key
+      description: "The `secret` is returned in full exactly ONCE, here. `permissions`\
+        \ must be a subset of what you hold — a key can never out-rank its creator.\
+        \ Send it as `X-Api-Key: <prefix>.<secret>`."
+      operationId: create_4
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/notifications/{id}/read:
     post:
       tags:
@@ -1976,7 +2080,7 @@ paths:
       tags:
       - Shared · Reference data
       summary: List your personal documents
-      operationId: list_5
+      operationId: list_6
       parameters:
       - name: user
         in: query
@@ -2142,7 +2246,7 @@ paths:
         \ `actor=<subject>` names another operator's instead and requires platform-admin.\
         \ `active` is computed when the row is read, so a lapsed session reports inactive\
         \ with no sweep job involved."
-      operationId: list_6
+      operationId: list_7
       parameters:
       - name: actor
         in: query
@@ -2195,6 +2299,69 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/OpenImpersonationRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/api-keys:
+    get:
+      tags:
+      - Platform · API keys
+      summary: List platform API keys
+      operationId: list_8
+      parameters:
+      - name: "page[size]"
+        in: query
+        description: "Items per page, 1–100. Defaults to 20."
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 20
+          maximum: 100
+          minimum: 1
+      - name: "page[after]"
+        in: query
+        description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
+          Omit for the first page.
+        required: false
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/WindowedResultResourceObject"
+    post:
+      tags:
+      - Platform · API keys
+      summary: Mint a platform API key (support tier)
+      description: The `secret` is returned in full exactly ONCE. Reads platform surfaces
+        only.
+      operationId: create_5
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRequest"
         required: true
       responses:
         "201":
@@ -2295,7 +2462,7 @@ paths:
       description: "The fixed vocabulary the subscription endpoints' `events` array\
         \ accepts. Payloads always carry `event`, `orgId` and `occurredAt`, signed\
         \ HMAC-SHA256 in `X-Webhook-Signature`."
-      operationId: list_7
+      operationId: list_9
       parameters:
       - name: X-Impersonate
         in: header
@@ -2327,7 +2494,7 @@ paths:
       tags:
       - Shared · Reference data
       summary: "List translations, optionally for one locale"
-      operationId: list_8
+      operationId: list_10
       parameters:
       - name: locale
         in: query
@@ -2379,7 +2546,7 @@ paths:
       tags:
       - Shared · Settings & flags
       summary: List platform settings
-      operationId: list_9
+      operationId: list_11
       parameters:
       - name: "page[size]"
         in: query
@@ -2430,7 +2597,7 @@ paths:
         \ held) its lock and until when — the evidence that a job fires once cluster-wide.\
         \ Read-only: there is no endpoint to trigger a job, they are time-driven by\
         \ design."
-      operationId: list_10
+      operationId: list_12
       parameters:
       - name: X-Impersonate
         in: header
@@ -2465,7 +2632,7 @@ paths:
       description: The fixed vocabulary for composing custom roles — the `code` values
         are what the role endpoints accept. The catalog is global and identical for
         every organization.
-      operationId: list_11
+      operationId: list_13
       parameters:
       - name: X-Impersonate
         in: header
@@ -2665,7 +2832,7 @@ paths:
       tags:
       - Organization · Exchange
       summary: List the organization's exchange jobs
-      operationId: list_12
+      operationId: list_14
       parameters:
       - name: orgId
         in: path
@@ -3040,7 +3207,7 @@ paths:
       tags:
       - Shared · Me & notifications
       summary: List your in-app notifications
-      operationId: list_13
+      operationId: list_15
       parameters:
       - name: "page[size]"
         in: query
@@ -3274,7 +3441,7 @@ paths:
       tags:
       - Shared · Settings & flags
       summary: List feature flags
-      operationId: list_14
+      operationId: list_16
       parameters:
       - name: "page[size]"
         in: query
@@ -3324,7 +3491,7 @@ paths:
       description: "Each handler names the dataset it moves, the permissions its imports\
         \ and exports require, `header` — the exact column order its files use — and\
         \ the current `templateVersion`. Download a ready-to-fill file from `/handlers/{id}/template`."
-      operationId: list_15
+      operationId: list_17
       parameters:
       - name: X-Impersonate
         in: header
@@ -3619,7 +3786,7 @@ paths:
       tags:
       - Platform · Users & impersonation
       summary: List provisioned users across the platform
-      operationId: list_16
+      operationId: list_18
       parameters:
       - name: "page[size]"
         in: query
@@ -3760,7 +3927,7 @@ paths:
       - Platform · Organizations
       summary: List every organization on the platform
       description: Newest first; narrow with `status` (ACTIVE or SUSPENDED).
-      operationId: list_17
+      operationId: list_19
       parameters:
       - name: status
         in: query
@@ -4037,6 +4204,45 @@ paths:
                 \ ULID)."
               schema:
                 type: string
+  /api/v1/orgs/{orgId}/api-keys/{id}:
+    delete:
+      tags:
+      - Organization · API keys
+      summary: Revoke an API key
+      description: Immediate — the next call with it 401s.
+      operationId: revoke
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "204":
+          description: No Content
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
   /api/v1/admin/impersonations/{id}:
     delete:
       tags:
@@ -4047,6 +4253,28 @@ paths:
         \ only the next open. Open to the operator who holds it and to any platform\
         \ admin."
       operationId: end
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "204":
+          description: No Content
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+  /api/v1/admin/api-keys/{id}:
+    delete:
+      tags:
+      - Platform · API keys
+      summary: Revoke a platform API key
+      operationId: revoke_1
       parameters:
       - name: id
         in: path

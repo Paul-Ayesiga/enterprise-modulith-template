@@ -57,6 +57,10 @@ include::module-notification.adoc[]
 plantuml::module-organization.puml[,,format=svg]
 include::module-organization.adoc[]
 
+== API Keys
+plantuml::module-apikeys.puml[,,format=svg]
+include::module-apikeys.adoc[]
+
 == Search
 plantuml::module-search.puml[,,format=svg]
 include::module-search.adoc[]

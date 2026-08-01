@@ -29,7 +29,8 @@ public enum Permission {
     AUDIT_READ("audit:read"),
     WEBHOOK_MANAGE("webhook:manage"),
     DOCUMENT_READ("document:read"),
-    DOCUMENT_MANAGE("document:manage");
+    DOCUMENT_MANAGE("document:manage"),
+    APIKEY_MANAGE("apikey:manage");
 
     private static final Map<String, Permission> BY_CODE =
             Arrays.stream(values()).collect(Collectors.toUnmodifiableMap(Permission::code, permission -> permission));

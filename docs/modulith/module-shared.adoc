@@ -30,6 +30,7 @@ _Others_
 * `u.c.s.s.ratelimit.RateLimitFilter`
 * `u.c.s.s.security.ApiAccessDeniedHandler`
 * `u.c.s.s.security.ApiAuthenticationEntryPoint`
+* `u.c.s.s.security.ApiKeyAuthenticationFilter`
 * `u.c.s.s.security.ApiPermissionEvaluator`
 * `u.c.s.s.security.CurrentUserArgumentResolver`
 * `u.c.s.s.security.CurrentUserProvider`

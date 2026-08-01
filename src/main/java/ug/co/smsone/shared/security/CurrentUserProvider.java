@@ -41,6 +41,16 @@ public class CurrentUserProvider {
         if (authentication instanceof JwtAuthenticationToken jwtAuthentication) {
             return Optional.of(fromToken(jwtAuthentication));
         }
+        if (authentication instanceof ApiKeyAuthenticationToken apiKey) {
+            ApiKeyPrincipal principal = apiKey.getPrincipal();
+            // Roles ride the token's authorities (already tier-shaped); activeOrgId is the KEY'S
+            // org, which is what makes the evaluator's strict-id rule hold for machines too.
+            Set<String> roles = apiKey.getAuthorities().stream()
+                    .map(authority -> authority.getAuthority().substring(ROLE_PREFIX.length()))
+                    .collect(Collectors.toUnmodifiableSet());
+            return Optional.of(new CurrentUser(principal.subject(), principal.name(), null,
+                    roles, null, principal.orgId(), null));
+        }
         return Optional.empty();
     }
 

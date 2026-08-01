@@ -50,7 +50,7 @@
   <a href="#ratelimit">Rate limits</a><a href="#idempotency">Idempotency</a><a href="#orgs">Tenant lifecycle</a>
   <a href="#members">Members &amp; roles</a><a href="#subscription">Plans &amp; entitlements</a><a href="#billing">Billing</a>
   <a href="#documents">Documents</a><a href="#search">Search</a><a href="#exchange">Exchange</a>
-  <a href="#webhooks">Webhooks</a><a href="#settings">Settings &amp; i18n</a><a href="#audit">Audit</a>
+  <a href="#webhooks">Webhooks</a><a href="#apikeys">API keys</a><a href="#settings">Settings &amp; i18n</a><a href="#audit">Audit</a>
   <a href="#impersonation">Impersonation</a><a href="#errors">Error codes</a><a href="#tips">Tips</a>
 </nav>
 <main>
@@ -262,6 +262,20 @@ X-Webhook-Signature: sha256=88e2c4…
 echo -n "$RAW_BODY" | openssl dgst -sha256 -hmac "$WHSEC" -hex   # must equal the header after "sha256="</code></pre>
 <p class="mut">Delivery is at-least-once with backoff → dead-letter after 5 attempts; secrets are AES-GCM
 encrypted at rest; per-subscription delivery log at <code>…/webhooks/{id}/deliveries</code>.</p>
+
+<h2 id="apikeys">13b · API keys (machine access)</h2>
+<p>Call the API without a human token. An org key carries a <strong>subset</strong> of your permissions
+(never more); a platform key is support-tier and read-only.</p>
+<pre><code># mint (apikey:manage) — secret shown ONCE
+POST /api/v1/orgs/{orgId}/api-keys   {"name":"ci-bot","permissions":["org:read","member:read"]}
+# → 201 {"attributes":{"prefix":"sk_9f3c1a2b","secret":"sk_9f3c1a2b.6d4e…full…","permissions":["org:read","member:read"]}}
+
+# use it — instead of the bearer token
+curl :8080/api/v1/orgs/{orgId}/members -H "X-Api-Key: sk_9f3c1a2b.6d4e…full…"
+
+DELETE /api/v1/orgs/{orgId}/api-keys/{id}     # revoke — the next call 401s immediately</code></pre>
+<p class="mut">A bad key authenticates nothing (you get a plain 401, never confirmation that a prefix exists).
+Secrets are stored SHA-256-hashed. Platform keys live under <code>/api/v1/admin/api-keys</code>.</p>
 
 <h2 id="settings">14 · Settings, flags, translations</h2>
 <pre><code>GET /api/v1/settings?page[size]=20            # any authenticated caller reads

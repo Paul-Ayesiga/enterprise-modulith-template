@@ -342,6 +342,24 @@ Slice 3 of [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md).
 - [x] **Gate:** full `./gradlew test` green (13 modules); docs regenerated; DATA_MODEL §4.11 /
       SRS §3.17 + catalogue + traceability updated
 
+## P2 — API keys ✅ (2026-08-01)
+
+Slice 2 of [PLATFORM_EXPANSION_PLAN.md](PLATFORM_EXPANSION_PLAN.md).
+
+- [x] **V29** `api_key` (soft-deletable, FOURTEENTH — revocation IS the soft delete); `secret_hash`
+      SHA-256 (hashed not encrypted: we only verify, never need the plaintext back); org keys carry
+      a permission subset, platform keys a support tier; partial unique on live prefix
+- [x] `ApiKeyAuthenticationFilter` (shared, before the bearer filter) + `ApiKeyAuthenticator` port
+      (the `OrgAuthorization` seam) + `ApiPermissionEvaluator` machine branch (subset ∩ strict
+      org-id, never roles); `CurrentUserProvider` resolves the key principal
+- [x] Subset cap at mint (reuses `OrgAuthorization.permissions` — a key never out-ranks its
+      creator); constant-time hash compare; expiry; throttled usage stamp off the auth path
+- [x] Org surface (`apikey:manage`, added to `Permission` — OWNER auto-inherits) + platform surface
+      (support-tier, platform-admin-minted); secret shown once; revocation immediate; audited
+- [x] **Gate:** subset reached / beyond-subset 403 / foreign-org 403 / revoke→401 / bad-secret→401
+      (no prefix oracle) / escalation refused / platform key reads support not admin —
+      `ApiKeyAuthTest` (3 tests). OpenApiConfig: two `API keys` tags + map entries (flagged)
+
 ## Odds-and-ends + API guide + expansion plan + P1 profile ✅ (2026-08-01)
 
 - [x] `SettingChanged` gained `occurredAt` (the last event without it — EVENTS.md rule now uniform)

@@ -139,7 +139,7 @@ step — *which is exactly why the logical boundaries are enforced now*.
 
 ### 2.2 Module map
 
-Seventeen modules. Verified from the `package-info.java` files and `docs/modulith/components.puml`.
+Eighteen modules. Verified from the `package-info.java` files and `docs/modulith/components.puml`.
 
 | Module | Display name | Owns (tables) | Public API package contains |
 |---|---|---|---|
@@ -153,6 +153,7 @@ Seventeen modules. Verified from the `package-info.java` files and `docs/modulit
 | `subscription` | Subscription | `plan`, `plan_entitlement`, `org_subscription` | `Entitlements` + `Subscriptions` ports, `EntitlementKeys`, `SubscriptionChanged` |
 | `billing` | Billing | `billing_account` | (none — Kill Bill integration; drives the `Subscriptions` port) |
 | `profile` | Profile | `user_profile`, `user_contact`, `user_preference` | (none — self-service surface) |
+| `apikeys` | API Keys | `api_key` | `ApiKeyAuthenticator` port impl; drives no events |
 | `exchange` | Exchange | `exchange_job`, `exchange_job_error`, `exchange_schedule` | `ExchangeHandler` (SPI), `ExchangeContext`, `ImportOutcome`, `InvalidRecordException`, `RecordWriter` |
 | `audit` | Audit | `audit_log` | (none — consumed through the `shared.audit.AuditLog` port) |
 | `notification` | Notification | `in_app_notification`, `notification_delivery` | `Notifications`, `NotificationChannelSender` (SPI), `NotificationChannel`, `NotificationMessage`, `NotificationRequest`, `Recipient` |
@@ -161,7 +162,7 @@ Seventeen modules. Verified from the `package-info.java` files and `docs/modulit
 | `analytics` | Analytics | none in Postgres (DuckDB marts + Parquet) | `AnalyticsEngine`, `AnalyticsException` |
 | `scheduler` | Scheduler | none (consumes `shedlock`) | (none) |
 
-Twenty-eight of the schema's thirty-one tables appear above. The remaining three are **framework-owned and
+Twenty-nine of the schema's thirty-two tables appear above. The remaining three are **framework-owned and
 belong to no module**: `event_publication` (Spring Modulith's JDBC registry, `V2`), `shedlock`
 (ShedLock, `V4`) and `flyway_schema_history` (created by Flyway itself, in no migration). They are
 read and written by libraries, not by application code, and `V17` deliberately leaves all three out of
@@ -242,7 +243,7 @@ as they start.
 | Constraint | Source | Consequence |
 |---|---|---|
 | Flyway owns the schema; `spring.jpa.hibernate.ddl-auto: validate` | `application.yaml:27-29` | No DDL outside `db/migration`. There is no `schema.sql` and no test-only DDL anywhere. |
-| Migrations are forward-only and numbered; **V1–V28 exist, next free is V29** | `db/migration/`, `AGENTS.md` §4.5 | V21–V24 are localization/search/document/exchange; V25 completes the exchange guidelines (templates, schedules, org_id tightened NOT NULL); V26 is subscriptions; V27 the Kill Bill billing linkage; V28 user profiles. Any plan citing an old "next free" number is stale — `AGENTS.md` §4.5 is kept current. |
+| Migrations are forward-only and numbered; **V1–V29 exist, next free is V30** | `db/migration/`, `AGENTS.md` §4.5 | V21–V24 are localization/search/document/exchange; V25 completes the exchange guidelines (templates, schedules, org_id tightened NOT NULL); V26 is subscriptions; V27 the Kill Bill billing linkage; V28 user profiles; V29 API keys. Any plan citing an old "next free" number is stale — `AGENTS.md` §4.5 is kept current. |
 | No cross-module foreign keys | `AGENTS.md` §1 | Referential integrity across modules is an application concern; `SoftDeletePurgeJob` states the consequence for purge ordering (`SoftDeletePurgeJob.java:49-53`). |
 | `spring.jpa.open-in-view: false` | `application.yaml:30` | No lazy loading past the service boundary. |
 | No Lombok; records + constructor injection | ADR 0001, `ArchitectureTests.noFieldInjection` | Enforced by ArchUnit. |
@@ -871,6 +872,17 @@ The system SHALL:
 | FR-PRF-4 | list the caller's linked identity providers read-only (Keycloak federated identities) — linking is the IdP console's act, never this API's | `identity/UserDirectory.linkedAccounts`, `MeProfileController` | same |
 | FR-PRF-5 | list every organization the caller belongs to with their role in each (`GET /api/v1/me/organizations`) — the dual-member switch list; the SWITCH itself is a token re-request scoped via the Keycloak `organization` claim, never a client-asserted value | `organization/internal/OrgMembershipsController` | `ProfileApiTest.aDualMemberSeesBothOrganizationsWithTheirRoleInEach` |
 
+### 3.22 API keys — machine credentials (FR-KEY)
+
+The system SHALL:
+
+| ID | Requirement | Where | Verified by |
+|---|---|---|---|
+| FR-KEY-1 | authenticate `X-Api-Key: sk_<prefix>.<secret>` inside the security chain BEFORE the bearer filter; an invalid/absent key authenticates nothing (request proceeds anonymous → 401, never a prefix-existence oracle) | `main:shared/security/{ApiKeyAuthenticationFilter,ApiKeyAuthenticatorImpl}` | `test:apikeys/internal/ApiKeyAuthTest.aKeyCannotOutrankItsCreator` |
+| FR-KEY-2 | cap an org key at mint to a SUBSET of the creator's org permissions (a key can never out-rank its creator) and enforce that subset — plus strict org-id equality — through `ApiPermissionEvaluator`'s machine branch, never through roles | `main:apikeys/internal/ApiKeyService.createOrgKey`, `main:shared/security/ApiPermissionEvaluator` | `ApiKeyAuthTest.{anOrgKeyCarriesASubset…,aKeyCannotOutrankItsCreator}` |
+| FR-KEY-3 | hash secrets (SHA-256, constant-time compare), show the plaintext exactly once at mint, honor expiry, and stamp usage throttled off the auth path | `ApiKeyHashing`, `ApiKeyAuthenticatorImpl` | `ApiKeyAuthTest` |
+| FR-KEY-4 | offer platform (support-tier, platform-admin-minted, read-only) and org (`apikey:manage`) key surfaces; revocation is immediate soft-delete; all audited | `{AdminApiKeyController,OrgApiKeyController}` | `ApiKeyAuthTest.aPlatformKeyReadsSupportSurfacesButNotAdminOnes` |
+
 ## 4. External interface requirements
 
 ### 4.1 The response envelope
@@ -1107,6 +1119,8 @@ no `@PreAuthorize`. Every endpoint can additionally return 401, 403 `ACCOUNT_NOT
 | GET | `/api/v1/me/linked-accounts` | authenticated | 200 (read-only IdP links) | — |
 | GET | `/api/v1/me/organizations` | authenticated | 200 (memberships + role codes — the org-switch list) | — |
 | GET | `/api/v1/admin/users/{subject}/profile` | `platform-support` | 200 | — |
+| POST / GET / DELETE | `/api/v1/orgs/{orgId}/api-keys` | `apikey:manage` | **201** (secret once) / 200 (paged) / **204** | 403 escalation, 404, 422 |
+| POST / GET / DELETE | `/api/v1/admin/api-keys` | `platform-admin` mint/revoke, `platform-support` list | **201** / 200 / **204** | 404, 422 |
 | POST | `/api/v1/orgs/{orgId}/exchange/imports` (multipart `file` + `handler`, `format`) | `org:read` **plus the handler's import permission** (checked programmatically) | **202** | 403 missing handler permission, 404 unknown handler, 422 empty file / bad format |
 | POST | `/api/v1/orgs/{orgId}/exchange/exports` | `org:read` **plus the handler's export permission** | **202** | 403, 404, 422 |
 | GET | `/api/v1/orgs/{orgId}/exchange/jobs` | `org:read` | 200 (paged) | — |

@@ -70,6 +70,8 @@ public class OpenApiConfig {
     private static final String TAG_ORG_EXCHANGE_SCHEDULES =
             AXIS_ORGANIZATION + AXIS_SEPARATOR + "Exchange schedules";
     private static final String TAG_ORG_BILLING = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Billing";
+    private static final String TAG_ORG_API_KEYS = AXIS_ORGANIZATION + AXIS_SEPARATOR + "API keys";
+    private static final String TAG_PLATFORM_API_KEYS = AXIS_PLATFORM + AXIS_SEPARATOR + "API keys";
     private static final String TAG_PLATFORM_BILLING = AXIS_PLATFORM + AXIS_SEPARATOR + "Billing & plans";
     private static final String TAG_SHARED_EXCHANGE = AXIS_SHARED + AXIS_SEPARATOR + "Exchange catalog";
     private static final String TAG_SHARED_WEBHOOK_EVENTS = AXIS_SHARED + AXIS_SEPARATOR + "Webhook events";
@@ -110,6 +112,8 @@ public class OpenApiConfig {
             Map.entry("AdminSubscriptionController", "Billing & plans"),
             Map.entry("AdminBillingController", "Billing & plans"),
             Map.entry("OrgBillingController", "Billing"),
+            Map.entry("OrgApiKeyController", "API keys"),
+            Map.entry("AdminApiKeyController", "API keys"),
             Map.entry("WebhookEventTypesController", "Webhook events"),
             Map.entry("MeProfileController", "My profile"),
             Map.entry("OrgMembershipsController", "Me & notifications"),
@@ -217,6 +221,10 @@ public class OpenApiConfig {
                                 + "platform-admin. The same keys are readable by any authenticated caller "
                                 + "under " + TAG_SHARED_SETTINGS + " — same paths, different method, "
                                 + "different authority, which is why one controller lands in two groups."),
+                        new Tag().name(TAG_PLATFORM_API_KEYS).description(
+                                "Platform machine credentials — support-tier keys minted by platform-admin. "
+                                + "They read platform surfaces; they never satisfy a higher tier or carry "
+                                + "org permissions."),
                         new Tag().name(TAG_PLATFORM_BILLING).description(
                                 "The commercial axis of a tenant: the seeded plan catalogue and each "
                                 + "org's subscription. Reading is platform-support; assigning a plan is "
@@ -256,6 +264,10 @@ public class OpenApiConfig {
                                 + "org:read; the artifacts (source, error report, result) answer only to the "
                                 + "requester or a holder of that same handler permission. The handler "
                                 + "catalogue itself is " + TAG_SHARED_EXCHANGE + "."),
+                        new Tag().name(TAG_ORG_API_KEYS).description(
+                                "An organization's machine credentials (apikey:manage). A key carries a "
+                                + "SUBSET of its creator's permissions — it can never out-rank them — and "
+                                + "authenticates as X-Api-Key. The secret shows once, at mint."),
                         new Tag().name(TAG_ORG_BILLING).description(
                                 "The tenant's own money view — invoices, proxied from Kill Bill on "
                                 + "org:read. Plans, balances and billing actions are the platform's "

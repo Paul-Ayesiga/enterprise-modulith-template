@@ -68,7 +68,8 @@ class SoftDeletePurgeJob {
             "exchange_schedule",
             "org_subscription",
             "billing_account",
-            "user_profile");
+            "user_profile",
+            "api_key");
 
     /**
      * Bounded batch: the inner select is what the {@code idx_<table>_deleted} partial indexes (V17) were
