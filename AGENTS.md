@@ -300,8 +300,8 @@ step by step; copy that reasoning, not just the shape.
 
 ### 4.5 Migrations
 
-- `src/main/resources/db/migration/V<n>__<snake_name>.sql`. **V37 is taken; the next free number is
-  V38.** Never edit an applied migration; never renumber.
+- `src/main/resources/db/migration/V<n>__<snake_name>.sql`. **V38 is taken; the next free number is
+  V39.** Never edit an applied migration; never renumber.
 - `ddl-auto: validate`. The schema is the migration's job, always.
 - Head the file with a comment explaining the *decision*, not the statements — `V17__soft_delete.sql`
   and `V11__organization_rbac.sql` are the reference voice.

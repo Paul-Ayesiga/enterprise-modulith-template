@@ -377,6 +377,22 @@ Post-expansion: paid-plan trials, and a lapsed trial pauses the subscription int
 - [x] **Gate:** SubscriptionTrialTest — trial grants access → expiry pauses → writes 402 / reads 200
       → assign resumes; FREE refused. New `ErrorCode.SUBSCRIPTION_PAUSED` (additive). Next free **V38**
 
+## Deferred "open items" closed ✅ (2026-08-01)
+
+The three items left open by choice, now worked:
+
+- [x] **@Cacheable(sync=true)** — `TwoLevelCache.get(key,loader)` now serializes concurrent cold
+      loads on a 256-way striped lock (double-checked on L1); turned on for `EntitlementResolver` +
+      `PermissionResolver`. `TwoLevelCacheSyncLoadTest` (16 threads → loader runs once).
+- [x] **Payment-method entry** — `OrgBillingController` payment-methods surface (list `org:read`;
+      add / set-default / remove `org:update`) via the Kill Bill payment-method API; raw card data
+      never touches us (`pluginProperties` = a hosted-page token). Doubles as the pay-to-recover
+      hatch out of a pause. `BillingApiTest` (mocked) + `KillBillIntegrationTest` (real KB).
+- [x] **Per-org SLA overrides (V38)** — `org_sla_override` + `AdminSlaController`
+      (`/api/v1/admin/orgs/{id}/sla/{priority}`, platform-admin writes / platform-support reads),
+      consulted at ticket open; clearing falls back to the seeded `sla_policy`. `SlaOverrideTest`.
+- [ ] **Per-org retention overrides** — the remaining half of the last item (in progress).
+
 ## P7 — Maintenance windows ✅ (2026-08-01)
 
 Slice 7 of [PLATFORM_EXPANSION_PLAN.md](PLATFORM_EXPANSION_PLAN.md); gates on nothing.

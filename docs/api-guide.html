@@ -385,10 +385,15 @@ GET  /api/v1/admin/tickets?status=OPEN
 POST /api/v1/admin/tickets/{id}/assignment   {"assignee":"support-1"}
 POST /api/v1/admin/tickets/{id}/messages     {"body":"Fixed — try now","internal":false}   # public reply → opener notified
 POST /api/v1/admin/tickets/{id}/messages     {"body":"checked their perms","internal":true} # internal note (tenant never sees)
-PUT  /api/v1/admin/tickets/{id}/status       {"status":"RESOLVED"}</code></pre>
-<p class="mut">SLAs are per-priority (P1 tightest). A breach escalates automatically — a minute job bumps the
-priority, notifies support, and fires the <code>org.ticket.escalated</code> webhook. A public reply pings
-the opener in-app.</p>
+PUT  /api/v1/admin/tickets/{id}/status       {"status":"RESOLVED"}
+
+# per-org SLA overrides — tighter/looser targets than the seeded default (platform-admin writes)
+GET    /api/v1/admin/orgs/{orgId}/sla                 # the org's overrides (platform-support)
+PUT    /api/v1/admin/orgs/{orgId}/sla/P1              {"firstResponseMinutes":15,"resolutionMinutes":120}
+DELETE /api/v1/admin/orgs/{orgId}/sla/P1              # clear → falls back to the seeded P1 default</code></pre>
+<p class="mut">SLAs are per-priority (P1 tightest); an org can carry its own override, consulted at open. A breach
+escalates automatically — a minute job bumps the priority, notifies support, and fires the
+<code>org.ticket.escalated</code> webhook. A public reply pings the opener in-app.</p>
 
 <h2 id="settings">14 · Settings, flags, translations</h2>
 <pre><code>GET /api/v1/settings?page[size]=20            # any authenticated caller reads

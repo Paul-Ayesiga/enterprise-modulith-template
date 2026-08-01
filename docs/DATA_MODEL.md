@@ -11,8 +11,8 @@ Schema ownership: Flyway owns every table (`spring.jpa.hibernate.ddl-auto: valid
 `classpath:db/migration`. There is no `schema.sql`, no test-only DDL, and no Hibernate-generated
 schema in any profile. **V1..V26 exist; V20 is the 2026-08-01 audit's index remediation, V21
 localization, V22 search, V23 document, V24 the exchange job queue, V25 the exchange
-guideline completion (templates/schedules), V26 subscriptions, V27 billing, V28 profile, V29 api-keys, V30 groups, V31 devices, V32 security policies, V33 integration hub, V34 compliance, V35 maintenance, V36 support; the next free
-number is V37.**
+guideline completion (templates/schedules), V26 subscriptions, V27 billing, V28 profile, V29 api-keys, V30 groups, V31 devices, V32 security policies, V33 integration hub, V34 compliance, V35 maintenance, V36 support, V37 subscription trial + pause, V38 per-org SLA overrides; the next free
+number is V39.**
 
 ---
 
@@ -1725,9 +1725,13 @@ delete, §8 / TENANT_LIFECYCLE.md): those are permanent state changes, these are
 
 `V36__support.sql`. **`ticket`** (soft-deletable, TWENTIETH): a tenant's support ticket — priority
 (P1–P4) and status drive the SLA clock and the platform queue; SLA due dates are stamped at open
-from the seeded per-priority `sla_policy`. **`ticket_message`** is an append-only child (cascade
-FK, ninth intra-module FK); `internal`-flagged messages are platform-only notes NEVER returned to
-the tenant. **`sla_policy`** is seeded reference data (`SlaPolicySeeder`, not soft-deletable).
+from the org's `org_sla_override` for that priority when set, else the seeded per-priority
+`sla_policy`. **`ticket_message`** is an append-only child (cascade FK, ninth intra-module FK);
+`internal`-flagged messages are platform-only notes NEVER returned to the tenant. **`sla_policy`**
+is seeded reference data (`SlaPolicySeeder`, not soft-deletable). **`org_sla_override`** (V38, not
+soft-deletable — clearing it is a real delete) lets the platform set an org's first-response /
+resolution targets tighter or looser than that default, one row per `(org_id, priority)`
+(`AdminSlaController`, platform-admin writes / platform-support reads).
 `SlaEscalationJob` (minute cron, ShedLock, SKIP-LOCKED rows so a re-run never double-escalates)
 bumps a breached ticket's priority, counts it (`smsone.support.breached`), notifies the queue, and
 publishes `TicketEscalated` → the webhooks fan-out (`org.ticket.escalated`). A public platform
@@ -1967,8 +1971,10 @@ The schema alone reads as if these cascades are live behaviour. They are not, ex
 | `V34__compliance.sql` | `consent_record` (append-only), `legal_hold` (active-until-released — blocks the purge and erasure), `erasure_request`. None soft-deletable — compliance records, like `audit_log` |
 | `V35__maintenance.sql` | `maintenance_window` — soft-deletable; platform-wide or org-scoped; ANNOUNCE (banner) or RESTRICT (org writes → 503) for its time bounds |
 | `V36__support.sql` | `ticket` (soft-deletable; org/status/SLA indexes) + `ticket_message` (append-only child, cascade FK — the ninth intra-module FK) + `sla_policy` (seeded per-priority reference data) |
+| `V37__subscription_trial.sql` | `org_subscription` gains `trial_ends_at` + a `PAUSED` status (no new table); a partial index over live TRIALING rows backs the hourly expiry scan |
+| `V38__org_sla_override.sql` | `org_sla_override` (not soft-deletable; unique `(org_id, priority)`) — per-org SLA targets overriding the seeded `sla_policy`, consulted at ticket open |
 
-**The next free migration number is V37.**
+**The next free migration number is V39.**
 
 ---
 

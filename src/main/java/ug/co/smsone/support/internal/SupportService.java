@@ -17,7 +17,7 @@ import ug.co.smsone.shared.web.CursorPageRequest;
  * Ticket lifecycle. A tenant opens and converses on its own org's tickets; platform-support works
  * the queue — assign, public reply (which stamps the first-response clock and notifies the opener),
  * internal note (never shown to the tenant), status transitions. SLA due dates are stamped at open
- * from the seeded per-priority policy.
+ * from the org's per-priority SLA override when one is set, else the seeded per-priority policy.
  */
 @Service
 class SupportService {
@@ -29,15 +29,18 @@ class SupportService {
     private final TicketRepository tickets;
     private final TicketMessageRepository messages;
     private final SlaPolicyRepository slaPolicies;
+    private final OrgSlaOverrideRepository slaOverrides;
     private final SupportNotifier notifier;
     private final AuditLog auditLog;
     private final Clock clock;
 
     SupportService(TicketRepository tickets, TicketMessageRepository messages,
-            SlaPolicyRepository slaPolicies, SupportNotifier notifier, AuditLog auditLog, Clock clock) {
+            SlaPolicyRepository slaPolicies, OrgSlaOverrideRepository slaOverrides,
+            SupportNotifier notifier, AuditLog auditLog, Clock clock) {
         this.tickets = tickets;
         this.messages = messages;
         this.slaPolicies = slaPolicies;
+        this.slaOverrides = slaOverrides;
         this.notifier = notifier;
         this.auditLog = auditLog;
         this.clock = clock;
@@ -54,16 +57,60 @@ class SupportService {
             throw new ValidationException("subject is required (max 200 characters).",
                     ApiSource.pointer("/data/attributes/subject"));
         }
-        SlaPolicy sla = slaPolicies.findByPriority(normalizedPriority)
-                .orElseThrow(() -> new NotFoundException("No SLA policy seeded for " + normalizedPriority));
+        int[] sla = resolveSlaMinutes(orgId, normalizedPriority);
         Instant now = clock.instant();
         Ticket ticket = tickets.save(Ticket.open(orgId, opener, subject.trim(), category, normalizedPriority,
-                now.plusSeconds(sla.getFirstResponseMinutes() * 60L),
-                now.plusSeconds(sla.getResolutionMinutes() * 60L)));
+                now.plusSeconds(sla[0] * 60L),
+                now.plusSeconds(sla[1] * 60L)));
         auditLog.record("support.ticket_opened", orgId, ticket.getId().toString(), null,
                 "priority=" + normalizedPriority);
         notifier.ticketOpened(ticket); // support queue awareness
         return ticket;
+    }
+
+    /** The SLA minutes for an org+priority: the org's override if set, else the seeded default. */
+    private int[] resolveSlaMinutes(UUID orgId, String priority) {
+        return slaOverrides.findByOrgIdAndPriority(orgId, priority)
+                .map(override -> new int[]{override.getFirstResponseMinutes(), override.getResolutionMinutes()})
+                .orElseGet(() -> {
+                    SlaPolicy sla = slaPolicies.findByPriority(priority)
+                            .orElseThrow(() -> new NotFoundException("No SLA policy seeded for " + priority));
+                    return new int[]{sla.getFirstResponseMinutes(), sla.getResolutionMinutes()};
+                });
+    }
+
+    @Transactional
+    OrgSlaOverride setSlaOverride(UUID orgId, String priority, int firstResponseMinutes, int resolutionMinutes) {
+        String normalized = priority == null ? "" : priority.trim().toUpperCase();
+        if (!PRIORITIES.contains(normalized)) {
+            throw new ValidationException("priority must be P1, P2, P3 or P4.",
+                    ApiSource.pointer("/data/attributes/priority"));
+        }
+        if (firstResponseMinutes <= 0 || resolutionMinutes <= 0) {
+            throw new ValidationException("firstResponseMinutes and resolutionMinutes must be positive.");
+        }
+        OrgSlaOverride override = slaOverrides.findByOrgIdAndPriority(orgId, normalized)
+                .map(existing -> {
+                    existing.retarget(firstResponseMinutes, resolutionMinutes);
+                    return existing;
+                })
+                .orElseGet(() -> OrgSlaOverride.of(orgId, normalized, firstResponseMinutes, resolutionMinutes));
+        slaOverrides.save(override);
+        auditLog.record("support.sla_override_set", orgId, orgId + ":" + normalized, null,
+                "first=" + firstResponseMinutes + "m resolution=" + resolutionMinutes + "m");
+        return override;
+    }
+
+    @Transactional
+    void clearSlaOverride(UUID orgId, String priority) {
+        String normalized = priority == null ? "" : priority.trim().toUpperCase();
+        slaOverrides.deleteByOrgIdAndPriority(orgId, normalized);
+        auditLog.record("support.sla_override_cleared", orgId, orgId + ":" + normalized, null, null);
+    }
+
+    @Transactional(readOnly = true)
+    List<OrgSlaOverride> listSlaOverrides(UUID orgId) {
+        return slaOverrides.findByOrgIdOrderByPriorityAsc(orgId);
     }
 
     @Transactional(readOnly = true)

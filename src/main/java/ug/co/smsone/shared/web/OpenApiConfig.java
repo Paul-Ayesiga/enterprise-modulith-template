@@ -85,6 +85,7 @@ public class OpenApiConfig {
     private static final String TAG_ORG_MAINTENANCE = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Maintenance";
     private static final String TAG_ORG_SUPPORT = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Support";
     private static final String TAG_PLATFORM_SUPPORT_QUEUE = AXIS_PLATFORM + AXIS_SEPARATOR + "Support queue";
+    private static final String TAG_PLATFORM_SLA = AXIS_PLATFORM + AXIS_SEPARATOR + "SLA policies";
     private static final String TAG_PLATFORM_MAINTENANCE = AXIS_PLATFORM + AXIS_SEPARATOR + "Maintenance";
     private static final String TAG_PLATFORM_INTEGRATIONS = AXIS_PLATFORM + AXIS_SEPARATOR + "Integrations";
     private static final String TAG_SHARED_ME = AXIS_SHARED + AXIS_SEPARATOR + "Me & notifications";
@@ -132,6 +133,7 @@ public class OpenApiConfig {
             Map.entry("AdminMaintenanceController", "Maintenance"),
             Map.entry("OrgTicketController", "Support"),
             Map.entry("AdminTicketController", "Support queue"),
+            Map.entry("AdminSlaController", "SLA policies"),
             Map.entry("WebhookEventTypesController", "Webhook events"),
             Map.entry("MeProfileController", "My profile"),
             Map.entry("MeDeviceController", "My devices"),
@@ -249,6 +251,10 @@ public class OpenApiConfig {
                                 + "reply (public or an internal note the tenant never sees), transition "
                                 + "status. SLA breaches escalate automatically — a minute job bumps "
                                 + "priority, counts the breach, and fires org.ticket.escalated."),
+                        new Tag().name(TAG_PLATFORM_SLA).description(
+                                "Per-org SLA overrides (platform-admin writes, platform-support reads): set an "
+                                + "org's first-response/resolution targets tighter or looser than the seeded "
+                                + "per-priority defaults. Consulted at ticket open."),
                         new Tag().name(TAG_PLATFORM_MAINTENANCE).description(
                                 "Scheduling maintenance windows (platform-admin), platform-wide or "
                                 + "targeted at one org. RESTRICT pauses org writes for the window; ANNOUNCE "
