@@ -37,9 +37,9 @@ public record GatewayProperties(List<ServiceProps> services, List<RouteProps> ro
         }
     }
 
-    /** A route's traffic policy: timeout (ms), max request bytes, rate-limit + circuit-breaker toggles. */
+    /** A route's traffic policy: timeout (ms), max request bytes, rate-limit / circuit-breaker / retries. */
     public record TrafficProps(Long responseTimeoutMs, Long maxRequestBytes, boolean rateLimited,
-            boolean circuitBreaker) {
+            boolean circuitBreaker, int retries) {
     }
 
     /** A predicate: its {@code kind} (PATH/HOST/HEADER/METHOD/QUERY) and the factory {@code args}. */

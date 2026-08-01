@@ -13,6 +13,8 @@ import org.springframework.cloud.gateway.route.builder.RouteLocatorBuilder;
 import org.springframework.cloud.gateway.route.builder.UriSpec;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.util.unit.DataSize;
 import ug.co.smsone.gateway.config.GatewayProperties;
 import ug.co.smsone.gateway.core.route.RouteDefinition;
@@ -45,7 +47,7 @@ class GatewayRouteLocator {
             TrafficPolicy traffic = route.traffic();
             routes.route(route.id(), spec -> {
                 UriSpec withFilters = match(spec, route.predicates())
-                        .filters(filters -> applyTraffic(filters, traffic, rateLimiter, keyResolver));
+                        .filters(filters -> applyTraffic(filters, traffic, route.id(), rateLimiter, keyResolver));
                 if (traffic.hasTimeout()) {
                     // Per-route response timeout — a slow backend fails fast (504) rather than hanging.
                     withFilters = withFilters.metadata("response-timeout", traffic.responseTimeoutMs());
@@ -56,7 +58,7 @@ class GatewayRouteLocator {
         return routes.build();
     }
 
-    private static UriSpec applyTraffic(GatewayFilterSpec filters, TrafficPolicy traffic,
+    private static UriSpec applyTraffic(GatewayFilterSpec filters, TrafficPolicy traffic, String routeId,
             RedisRateLimiter rateLimiter, KeyResolver keyResolver) {
         GatewayFilterSpec spec = filters;
         if (traffic.hasMaxRequestBytes()) {
@@ -64,6 +66,18 @@ class GatewayRouteLocator {
         }
         if (traffic.rateLimited()) {
             spec = spec.requestRateLimiter(config -> config.setRateLimiter(rateLimiter).setKeyResolver(keyResolver));
+        }
+        if (traffic.retries() > 0) {
+            // Retry only idempotent GETs on a server error (ADR 0005's spirit — never replay a write).
+            spec = spec.retry(config -> config.setRetries(traffic.retries())
+                    .setMethods(HttpMethod.GET)
+                    .setSeries(HttpStatus.Series.SERVER_ERROR));
+        }
+        if (traffic.circuitBreaker()) {
+            // A backend 5xx counts as a failure (not just an exception/timeout), tripping the circuit.
+            spec = spec.circuitBreaker(config -> config.setName("cb-" + routeId)
+                    .setFallbackUri("forward:/__fallback")
+                    .setStatusCodes(java.util.Set.of("500", "502", "503", "504")));
         }
         return spec;
     }

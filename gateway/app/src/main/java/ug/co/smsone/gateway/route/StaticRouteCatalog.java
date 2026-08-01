@@ -50,7 +50,7 @@ class StaticRouteCatalog implements RouteSource, ServiceRegistry {
     private static TrafficPolicy toTrafficPolicy(GatewayProperties.TrafficProps traffic) {
         return traffic == null ? TrafficPolicy.NONE
                 : new TrafficPolicy(traffic.responseTimeoutMs(), traffic.maxRequestBytes(),
-                        traffic.rateLimited(), traffic.circuitBreaker());
+                        traffic.rateLimited(), traffic.circuitBreaker(), traffic.retries());
     }
 
     @Override

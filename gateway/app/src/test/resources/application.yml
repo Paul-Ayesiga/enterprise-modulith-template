@@ -113,3 +113,19 @@ gateway:
           args: [/size/**]
       traffic:
         max-request-bytes: 100
+    - id: cb-route
+      order: 23
+      service-id: backend
+      predicates:
+        - kind: PATH
+          args: [/cb/**]
+      traffic:
+        circuit-breaker: true
+    - id: retry-route
+      order: 24
+      service-id: backend
+      predicates:
+        - kind: PATH
+          args: [/retry/**]
+      traffic:
+        retries: 2
