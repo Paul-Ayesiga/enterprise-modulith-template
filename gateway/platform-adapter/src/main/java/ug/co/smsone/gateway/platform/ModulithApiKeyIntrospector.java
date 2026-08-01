@@ -33,7 +33,7 @@ class ModulithApiKeyIntrospector implements ApiKeyIntrospector {
                 .bodyToMono(IntrospectionResult.class)
                 .filter(IntrospectionResult::active)
                 .map(result -> new EdgePrincipal(result.subject(), result.tenant(),
-                        result.scopes() == null ? Set.of() : result.scopes()));
+                        result.scopes() == null ? Set.of() : result.scopes(), false));
     }
 
     record IntrospectionResult(boolean active, String subject, String tenant, Set<String> scopes) {

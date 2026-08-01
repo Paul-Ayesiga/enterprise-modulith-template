@@ -82,6 +82,18 @@ gateway:
 
 Unset the `uri` to turn API-key auth off — the adapter is not created and the bearer path is unaffected.
 
+Trusted service-to-service callers present an `X-Internal-Token` (constant-time matched) and resolve to
+a service principal with configured scopes that bypasses tenant enforcement:
+
+```yaml
+gateway:
+  security:
+    internal-tokens:
+      - name: reporting
+        token: ${REPORTING_TOKEN}      # a strong shared secret
+        scopes: [reports]
+```
+
 ## Phase 1 (shipped)
 
 Config-driven routing to a backend by any predicate kind; a `NO_ROUTE` 404 envelope for no match;

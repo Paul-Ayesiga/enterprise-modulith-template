@@ -84,9 +84,11 @@ checks — ADR 0007 §8). CORS + security headers are centralized. **2b** added 
 `gateway:platform-adapter`: `ModulithApiKeyIntrospector` (WebClient, conditional on the introspection
 URI) calls a NEW `@Hidden` modulith endpoint `/internal/gateway/api-key/introspect` — gateway-secret
 authed (constant-time), permit-listed, envelope-bypassed — backed by the existing `ApiKeyAuthenticator`.
-Tests: `SecurityTest` (11, controlled JWKS), `ApiKeyAuthTest` (6, stubbed introspection),
-`GatewayIntrospectionTest` (3, real modulith + DB). The internal-service-token provider is the one
-remaining Phase 2 item, deferrable.
+Also delivered: **internal-service-token auth** — a trusted `X-Internal-Token` (constant-time matched
+against `gateway.security.internal-tokens`) resolves to a service principal with configured scopes
+that bypasses tenant enforcement (a trusted caller is not tenant-scoped). Tests: `SecurityTest` (16,
+controlled JWKS + internal tokens), `ApiKeyAuthTest` (6, stubbed introspection),
+`GatewayIntrospectionTest` (3, real modulith + DB). **Phase 2 is complete — no deferred items.**
 
 **Focus.** The gateway becomes the platform's edge security layer.
 

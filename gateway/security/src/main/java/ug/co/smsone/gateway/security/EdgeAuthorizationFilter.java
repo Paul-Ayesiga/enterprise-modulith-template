@@ -1,5 +1,7 @@
 package ug.co.smsone.gateway.security;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -42,15 +44,18 @@ import ug.co.smsone.gateway.core.web.GatewayAttributes;
 public class EdgeAuthorizationFilter implements GlobalFilter, Ordered {
 
     private static final String API_KEY_HEADER = "X-Api-Key";
+    private static final String INTERNAL_TOKEN_HEADER = "X-Internal-Token";
 
     private final Map<String, CompiledPolicy> policies;
     private final String tenantClaim;
     private final ApiKeyIntrospector introspector;
+    private final List<SecurityProperties.InternalToken> internalTokens;
 
     public EdgeAuthorizationFilter(RouteSource routeSource, SecurityProperties properties,
             ObjectProvider<ApiKeyIntrospector> introspector) {
         this.tenantClaim = properties.tenantClaim();
         this.introspector = introspector.getIfAvailable();
+        this.internalTokens = properties.internalTokens();
         this.policies = routeSource.routes().stream()
                 .collect(Collectors.toUnmodifiableMap(RouteDefinition::id, route -> compile(route.auth())));
     }
@@ -70,8 +75,12 @@ public class EdgeAuthorizationFilter implements GlobalFilter, Ordered {
                         new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required")));
     }
 
-    /** A presented API key (when an introspector is available) takes precedence; otherwise the JWT. */
+    /** Precedence: a trusted internal-service token, then an API key (if an introspector exists), then the JWT. */
     private Mono<EdgePrincipal> resolvePrincipal(ServerWebExchange exchange) {
+        String internalToken = exchange.getRequest().getHeaders().getFirst(INTERNAL_TOKEN_HEADER);
+        if (internalToken != null && !internalToken.isBlank()) {
+            return matchInternalToken(internalToken); // empty when it matches nothing → 401
+        }
         String apiKey = exchange.getRequest().getHeaders().getFirst(API_KEY_HEADER);
         if (apiKey != null && !apiKey.isBlank() && introspector != null) {
             return introspector.introspect(apiKey);
@@ -82,6 +91,21 @@ public class EdgeAuthorizationFilter implements GlobalFilter, Ordered {
                 .map(token -> fromJwt(token.getToken()));
     }
 
+    /** A trusted service token → a service principal (constant-time match); empty if none matches. */
+    private Mono<EdgePrincipal> matchInternalToken(String presented) {
+        for (SecurityProperties.InternalToken candidate : internalTokens) {
+            if (constantTimeEquals(presented, candidate.token())) {
+                return Mono.just(new EdgePrincipal("service:" + candidate.name(), null, candidate.scopes(), true));
+            }
+        }
+        return Mono.empty();
+    }
+
+    private static boolean constantTimeEquals(String presented, String expected) {
+        return expected != null && !expected.isBlank() && MessageDigest.isEqual(
+                presented.getBytes(StandardCharsets.UTF_8), expected.getBytes(StandardCharsets.UTF_8));
+    }
+
     private Mono<Void> authorize(ServerWebExchange exchange, GatewayFilterChain chain,
             CompiledPolicy compiled, EdgePrincipal principal) {
         for (String required : compiled.policy().requiredScopes()) {
@@ -89,7 +113,7 @@ public class EdgeAuthorizationFilter implements GlobalFilter, Ordered {
                 return Mono.error(new ResponseStatusException(HttpStatus.FORBIDDEN, "Missing scope: " + required));
             }
         }
-        if (compiled.tenantPattern() != null) {
+        if (compiled.tenantPattern() != null && !principal.internal()) {
             String pathTenant = extractTenant(compiled.tenantPattern(), exchange);
             if (pathTenant != null && !pathTenant.equals(principal.tenant())) {
                 return Mono.error(new ResponseStatusException(HttpStatus.FORBIDDEN, "Tenant mismatch"));
@@ -100,7 +124,7 @@ public class EdgeAuthorizationFilter implements GlobalFilter, Ordered {
     }
 
     private EdgePrincipal fromJwt(Jwt jwt) {
-        return new EdgePrincipal(jwt.getSubject(), jwt.getClaimAsString(tenantClaim), scopesOf(jwt));
+        return new EdgePrincipal(jwt.getSubject(), jwt.getClaimAsString(tenantClaim), scopesOf(jwt), false);
     }
 
     private CompiledPolicy policyFor(ServerWebExchange exchange) {

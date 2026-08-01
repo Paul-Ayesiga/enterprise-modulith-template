@@ -167,6 +167,38 @@ class SecurityTest {
                 .expectHeader().valueEquals("X-Content-Type-Options", "nosniff");
     }
 
+    @Test
+    void validInternalTokenRoutesAsAService() {
+        client().get().uri("/secured/x").header("X-Internal-Token", "internal-secret-1").exchange()
+                .expectStatus().isOk()
+                .expectHeader().valueEquals("X-Backend-Saw-Subject", "service:reporting");
+    }
+
+    @Test
+    void invalidInternalTokenIs401() {
+        client().get().uri("/secured/x").header("X-Internal-Token", "not-a-token").exchange()
+                .expectStatus().isUnauthorized();
+    }
+
+    @Test
+    void internalTokenWithRequiredScopePasses() {
+        client().get().uri("/scoped/x").header("X-Internal-Token", "internal-secret-1").exchange()
+                .expectStatus().isOk();
+    }
+
+    @Test
+    void internalTokenMissingRequiredScopeIs403() {
+        client().get().uri("/scoped/x").header("X-Internal-Token", "internal-secret-2").exchange()
+                .expectStatus().isForbidden();
+    }
+
+    @Test
+    void internalTokenBypassesTenantEnforcement() {
+        // A trusted service is not tenant-scoped, so a tenant-in-path route does not 403 it.
+        client().get().uri("/tenant/orgs/globex/data").header("X-Internal-Token", "internal-secret-1").exchange()
+                .expectStatus().isOk();
+    }
+
     private static Instant plus(long seconds) {
         return Instant.now().plusSeconds(seconds);
     }

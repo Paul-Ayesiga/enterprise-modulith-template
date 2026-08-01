@@ -11,6 +11,13 @@ gateway:
     cors:
       allowed-origins:
         - http://example.com
+    internal-tokens:
+      - name: reporting
+        token: internal-secret-1
+        scopes: [api, reports]
+      - name: limited
+        token: internal-secret-2
+        scopes: [reports]
   services:
     - id: backend
       uri: "${backend.uri:http://localhost:1}"
