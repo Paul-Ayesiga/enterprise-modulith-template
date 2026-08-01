@@ -9,4 +9,5 @@ rootProject.name = "enterprise-modulith-template"
 // gateway/; the modulith stays the root project and its build is untouched.
 include("gateway:core")
 include("gateway:security")
+include("gateway:platform-adapter")
 include("gateway:app")

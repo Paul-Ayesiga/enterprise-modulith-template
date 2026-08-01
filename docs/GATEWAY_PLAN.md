@@ -73,16 +73,20 @@ gateway in front of the real modulith and a smoke script drives `/api/v1/**` end
 
 ## Phase 2 — Security
 
-**Status: 2a shipped 2026-08-02 (JWT/OIDC + coarse authZ + CORS + headers); 2b next (API-key
-introspection).** Delivered the `gateway:security` subproject — a reactive OAuth2 resource server that
-validates a bearer JWT against the IdP's JWKS (no platform call; invalid/expired/tampered → 401 in the
-gateway envelope), and an `EdgeAuthorizationFilter` that applies each route's coarse `AuthPolicy`
-(authenticated required, every required scope present, tenant-in-path == token tenant), stamps
-`X-Auth-Subject`/`X-Tenant-Id` downstream, and forwards the bearer (services keep their fine-grained
-checks — ADR 0007 §8). CORS is centralized at the edge and security headers are added. `SecurityTest`
-(11 tests, controlled in-test JWKS) covers valid/invalid/expired/tampered tokens, missing-scope and
-wrong-tenant 403s, CORS preflight, and headers. **2b** (the remaining deliverables below): API-key +
-internal-token `AuthNProvider`s via the modulith key-introspection endpoint — the first platform adapter.
+**Status: SHIPPED 2026-08-02 (2a JWT/OIDC + coarse authZ + CORS + headers; 2b API-key introspection).**
+`gateway:security` is a reactive OAuth2 resource server that validates a bearer JWT against the IdP's
+JWKS (no platform call; invalid/expired/tampered → 401 in the gateway envelope), and an
+`EdgeAuthorizationFilter` that resolves the caller to an `EdgePrincipal` — from the JWT, or from an
+`X-Api-Key` via the platform introspector — then applies each route's coarse `AuthPolicy` (authenticated
+required, every required scope present, tenant-in-path == principal tenant), stamps
+`X-Auth-Subject`/`X-Tenant-Id` downstream, and forwards the credential (services keep their fine-grained
+checks — ADR 0007 §8). CORS + security headers are centralized. **2b** added the first
+`gateway:platform-adapter`: `ModulithApiKeyIntrospector` (WebClient, conditional on the introspection
+URI) calls a NEW `@Hidden` modulith endpoint `/internal/gateway/api-key/introspect` — gateway-secret
+authed (constant-time), permit-listed, envelope-bypassed — backed by the existing `ApiKeyAuthenticator`.
+Tests: `SecurityTest` (11, controlled JWKS), `ApiKeyAuthTest` (6, stubbed introspection),
+`GatewayIntrospectionTest` (3, real modulith + DB). The internal-service-token provider is the one
+remaining Phase 2 item, deferrable.
 
 **Focus.** The gateway becomes the platform's edge security layer.
 

@@ -19,6 +19,12 @@ gateway:
   security:
     jwk-set-uri: ${KEYCLOAK_JWKS:http://localhost:8081/realms/smsone/protocol/openid-connect/certs}
     tenant-claim: ${GATEWAY_TENANT_CLAIM:tenant}
+  # The platform seam: resolve an X-Api-Key by calling the modulith's introspection endpoint with the
+  # shared secret. Unset the uri to turn API-key auth off (the bearer path still works).
+  platform:
+    introspection:
+      uri: ${GATEWAY_INTROSPECTION_URI:http://localhost:8080/internal/gateway/api-key/introspect}
+      secret: ${GATEWAY_INTROSPECTION_SECRET:dev-gateway-secret}
   services:
     - id: modulith
       uri: ${MODULITH_URI:http://localhost:8080}

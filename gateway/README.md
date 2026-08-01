@@ -11,7 +11,8 @@ The platform's reactive edge — a separate Spring Cloud Gateway deployable, bui
 | `gateway:core` | Runtime- and platform-agnostic: route/service model, ports (`RouteSource`, `ServiceRegistry`), `GatewayAttributes`, error codes. No Spring Cloud Gateway, no platform imports (enforced by `GatewayCoreArchitectureTest`). | Phase 1 |
 | `gateway:app` | The bootable Spring Cloud Gateway runtime: binds `gateway.*` config → the core model → SCG routes; request-id + access-log filters; the error envelope. | Phase 1 |
 | `gateway:security` | Reactive OAuth2 resource server (JWT/JWKS), the coarse-authZ `EdgeAuthorizationFilter`, CORS, security headers. Component-scanned into the app. | Phase 2a |
-| `gateway:platform-adapter` · `admin` · `starter` | Land with their phases (2b, Admin, …) — see the plan. | later |
+| `gateway:platform-adapter` | This template's platform adapters — `ModulithApiKeyIntrospector` (resolves `X-Api-Key` via the modulith's introspection endpoint). Active only when configured. | Phase 2b |
+| `gateway:admin` · `starter` | Land with their phases (Admin, …) — see the plan. | later |
 
 ## Run it (dev)
 
@@ -66,6 +67,20 @@ gateway:
 ```
 
 On success the gateway stamps `X-Auth-Subject` and `X-Tenant-Id` downstream and forwards the bearer.
+
+An `X-Api-Key` is authenticated the same way, via the platform adapter — the gateway calls the
+modulith's introspection endpoint (the modulith verifies the key with its own store) and drives the
+same route policy. Configure the seam (both secrets must match):
+
+```yaml
+gateway:
+  platform:
+    introspection:
+      uri: http://localhost:8080/internal/gateway/api-key/introspect
+      secret: dev-gateway-secret        # == the modulith's app.gateway.introspection-secret
+```
+
+Unset the `uri` to turn API-key auth off — the adapter is not created and the bearer path is unaffected.
 
 ## Phase 1 (shipped)
 

@@ -49,6 +49,9 @@ public class SecurityConfig {
                         // Kill Bill's push notifications cannot do OAuth; the endpoint authenticates
                         // by the shared token in the registered callback URL (constant-time compare).
                         .requestMatchers("/api/v1/billing/killbill/notifications").permitAll()
+                        // The API gateway's key-introspection seam authenticates by the shared gateway
+                        // secret (constant-time compare) inside the controller, not OAuth.
+                        .requestMatchers("/internal/gateway/**").permitAll()
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(resourceServer -> resourceServer
                         .authenticationEntryPoint(authenticationEntryPoint)

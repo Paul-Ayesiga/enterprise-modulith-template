@@ -39,6 +39,11 @@ public class EnvelopeResponseBodyAdvice implements ResponseBodyAdvice<Object> {
             return body;
         }
         String selfPath = request.getURI().getPath();
+        if (selfPath.startsWith("/internal/")) {
+            // Machine-to-machine endpoints (e.g. the gateway key-introspection seam) speak their own
+            // contract, not the tenant-facing JSON:API envelope.
+            return body;
+        }
         if (body instanceof WindowedResult<?> windowed) {
             PageMeta page = windowed.page();
             String next = page.nextCursor() == null ? null

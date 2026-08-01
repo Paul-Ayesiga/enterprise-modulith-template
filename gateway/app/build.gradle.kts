@@ -24,6 +24,8 @@ dependencies {
     implementation(project(":gateway:core"))
     // Edge security (JWT/OIDC, coarse authZ, CORS) — component-scanned into the app context.
     implementation(project(":gateway:security"))
+    // Platform adapters (API-key introspection) — the seam to this template's modulith.
+    implementation(project(":gateway:platform-adapter"))
     // Reactive Spring Cloud Gateway (WebFlux) — the edge runtime.
     implementation(libs.gateway.webflux)
     // Health + metrics for the gateway itself.

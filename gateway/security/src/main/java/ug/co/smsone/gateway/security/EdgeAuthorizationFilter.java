@@ -3,8 +3,8 @@ package ug.co.smsone.gateway.security;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.cloud.gateway.route.Route;
@@ -23,26 +23,34 @@ import org.springframework.web.util.pattern.PathPatternParser;
 import reactor.core.publisher.Mono;
 import ug.co.smsone.gateway.core.route.RouteDefinition;
 import ug.co.smsone.gateway.core.route.RouteSource;
+import ug.co.smsone.gateway.core.security.ApiKeyIntrospector;
 import ug.co.smsone.gateway.core.security.AuthPolicy;
 import ug.co.smsone.gateway.core.security.EdgePrincipal;
 import ug.co.smsone.gateway.core.web.GatewayAttributes;
 
 /**
- * Coarse edge authorization (ADR 0007 §8): after the route is matched and the token validated, apply
- * that route's {@link AuthPolicy}. Open routes pass. Otherwise a token is required (else 401); every
- * required scope must be present (else 403); and, when the route is tenant-scoped, the tenant in the
- * path must equal the token's tenant (else 403). On success the principal + tenant are stamped for
- * downstream (`X-Auth-Subject`, `X-Tenant-Id`) and the bearer is forwarded — services keep their own
- * fine-grained checks. Runs early, before the routing/proxy filter, so a denial never reaches a backend.
+ * Coarse edge authorization (ADR 0007 §8): after the route is matched, resolve the caller to an
+ * {@link EdgePrincipal} — from a validated bearer JWT, or from an {@code X-Api-Key} via the platform
+ * {@link ApiKeyIntrospector} when one is present — and apply that route's {@link AuthPolicy}. Open
+ * routes pass. Otherwise a principal is required (else 401); every required scope must be present
+ * (else 403); and a tenant-scoped route's path tenant must equal the principal's (else 403). On
+ * success the subject + tenant are stamped downstream ({@code X-Auth-Subject}, {@code X-Tenant-Id})
+ * and the credential is forwarded — services keep their own fine-grained checks. Runs before the
+ * routing/proxy filter, so a denial never reaches a backend.
  */
 @Component
 public class EdgeAuthorizationFilter implements GlobalFilter, Ordered {
 
+    private static final String API_KEY_HEADER = "X-Api-Key";
+
     private final Map<String, CompiledPolicy> policies;
     private final String tenantClaim;
+    private final ApiKeyIntrospector introspector;
 
-    public EdgeAuthorizationFilter(RouteSource routeSource, SecurityProperties properties) {
+    public EdgeAuthorizationFilter(RouteSource routeSource, SecurityProperties properties,
+            ObjectProvider<ApiKeyIntrospector> introspector) {
         this.tenantClaim = properties.tenantClaim();
+        this.introspector = introspector.getIfAvailable();
         this.policies = routeSource.routes().stream()
                 .collect(Collectors.toUnmodifiableMap(RouteDefinition::id, route -> compile(route.auth())));
     }
@@ -56,32 +64,43 @@ public class EdgeAuthorizationFilter implements GlobalFilter, Ordered {
         if (compiled == null || !compiled.policy().requiresToken()) {
             return chain.filter(exchange);
         }
-        return exchange.getPrincipal()
-                .filter(JwtAuthenticationToken.class::isInstance)
-                .cast(JwtAuthenticationToken.class)
-                .flatMap(token -> authorize(exchange, chain, compiled, token.getToken()))
+        return resolvePrincipal(exchange)
+                .flatMap(principal -> authorize(exchange, chain, compiled, principal))
                 .switchIfEmpty(Mono.error(
                         new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required")));
     }
 
+    /** A presented API key (when an introspector is available) takes precedence; otherwise the JWT. */
+    private Mono<EdgePrincipal> resolvePrincipal(ServerWebExchange exchange) {
+        String apiKey = exchange.getRequest().getHeaders().getFirst(API_KEY_HEADER);
+        if (apiKey != null && !apiKey.isBlank() && introspector != null) {
+            return introspector.introspect(apiKey);
+        }
+        return exchange.getPrincipal()
+                .filter(JwtAuthenticationToken.class::isInstance)
+                .cast(JwtAuthenticationToken.class)
+                .map(token -> fromJwt(token.getToken()));
+    }
+
     private Mono<Void> authorize(ServerWebExchange exchange, GatewayFilterChain chain,
-            CompiledPolicy compiled, Jwt jwt) {
-        Set<String> scopes = scopesOf(jwt);
+            CompiledPolicy compiled, EdgePrincipal principal) {
         for (String required : compiled.policy().requiredScopes()) {
-            if (!scopes.contains(required)) {
+            if (!principal.hasScope(required)) {
                 return Mono.error(new ResponseStatusException(HttpStatus.FORBIDDEN, "Missing scope: " + required));
             }
         }
-        String tenant = jwt.getClaimAsString(tenantClaim);
         if (compiled.tenantPattern() != null) {
             String pathTenant = extractTenant(compiled.tenantPattern(), exchange);
-            if (pathTenant != null && !pathTenant.equals(tenant)) {
+            if (pathTenant != null && !pathTenant.equals(principal.tenant())) {
                 return Mono.error(new ResponseStatusException(HttpStatus.FORBIDDEN, "Tenant mismatch"));
             }
         }
-        EdgePrincipal principal = new EdgePrincipal(jwt.getSubject(), tenant, scopes);
         GatewayAttributes.putPrincipal(exchange, principal);
         return chain.filter(stamp(exchange, principal));
+    }
+
+    private EdgePrincipal fromJwt(Jwt jwt) {
+        return new EdgePrincipal(jwt.getSubject(), jwt.getClaimAsString(tenantClaim), scopesOf(jwt));
     }
 
     private CompiledPolicy policyFor(ServerWebExchange exchange) {
@@ -92,7 +111,9 @@ public class EdgeAuthorizationFilter implements GlobalFilter, Ordered {
     private static ServerWebExchange stamp(ServerWebExchange exchange, EdgePrincipal principal) {
         return exchange.mutate()
                 .request(request -> request.headers(headers -> {
-                    headers.set("X-Auth-Subject", principal.subject());
+                    if (principal.subject() != null) {
+                        headers.set("X-Auth-Subject", principal.subject());
+                    }
                     if (principal.tenant() != null) {
                         headers.set("X-Tenant-Id", principal.tenant());
                     }

@@ -7,11 +7,13 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import reactor.core.publisher.Mono;
 import reactor.netty.DisposableServer;
+import reactor.netty.http.client.HttpClient;
 import reactor.netty.http.server.HttpServer;
 
 /**
@@ -54,7 +56,8 @@ class RoutingTest {
 
     private WebTestClient client() {
         if (client == null) {
-            client = WebTestClient.bindToServer().baseUrl("http://localhost:" + gatewayPort).build();
+            client = WebTestClient.bindToServer(new ReactorClientHttpConnector(HttpClient.newConnection()))
+                    .baseUrl("http://localhost:" + gatewayPort).build();
         }
         return client;
     }
