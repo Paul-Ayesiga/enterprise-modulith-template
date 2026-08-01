@@ -14,7 +14,7 @@ import java.util.Optional;
  * licence reconciliation. The soft-deletable tables are {@code setting}, {@code feature_flag},
  * {@code app_user}, {@code organization}, {@code org_role}, {@code membership},
  * {@code webhook_subscription}, {@code translation}, {@code document}, {@code exchange_schedule},
- * {@code org_subscription}, {@code billing_account}, {@code user_profile}, {@code api_key}, {@code org_group}, {@code user_device}, {@code org_security_policy}, {@code integration} and {@code maintenance_window}; {@code notification_delivery} is not one of them.
+ * {@code org_subscription}, {@code billing_account}, {@code user_profile}, {@code api_key}, {@code org_group}, {@code user_device}, {@code org_security_policy}, {@code integration}, {@code maintenance_window} and {@code ticket}; {@code notification_delivery} is not one of them.
  */
 enum AnalyticsReport {
 

@@ -139,7 +139,7 @@ step — *which is exactly why the logical boundaries are enforced now*.
 
 ### 2.2 Module map
 
-Twenty-two modules. Verified from the `package-info.java` files and `docs/modulith/components.puml`.
+Twenty-three modules. Verified from the `package-info.java` files and `docs/modulith/components.puml`.
 
 | Module | Display name | Owns (tables) | Public API package contains |
 |---|---|---|---|
@@ -158,6 +158,7 @@ Twenty-two modules. Verified from the `package-info.java` files and `docs/moduli
 | `integration` | Integration Hub | `integration`, `integration_setting` | `Integrations` resolution port; drives no events |
 | `compliance` | Compliance | `consent_record`, `legal_hold`, `erasure_request` | `LegalHolds` port impl; drives no events |
 | `maintenance` | Maintenance | `maintenance_window` | (none — announced/restrict windows via a filter) |
+| `support` | Support | `ticket`, `ticket_message`, `sla_policy` | `TicketEscalated` |
 | `exchange` | Exchange | `exchange_job`, `exchange_job_error`, `exchange_schedule` | `ExchangeHandler` (SPI), `ExchangeContext`, `ImportOutcome`, `InvalidRecordException`, `RecordWriter` |
 | `audit` | Audit | `audit_log` | (none — consumed through the `shared.audit.AuditLog` port) |
 | `notification` | Notification | `in_app_notification`, `notification_delivery` | `Notifications`, `NotificationChannelSender` (SPI), `NotificationChannel`, `NotificationMessage`, `NotificationRequest`, `Recipient` |
@@ -166,7 +167,7 @@ Twenty-two modules. Verified from the `package-info.java` files and `docs/moduli
 | `analytics` | Analytics | none in Postgres (DuckDB marts + Parquet) | `AnalyticsEngine`, `AnalyticsException` |
 | `scheduler` | Scheduler | none (consumes `shedlock`) | (none) |
 
-Thirty-nine of the schema's forty-two tables appear above. The remaining three are **framework-owned and
+Forty-two of the schema's forty-five tables appear above. The remaining three are **framework-owned and
 belong to no module**: `event_publication` (Spring Modulith's JDBC registry, `V2`), `shedlock`
 (ShedLock, `V4`) and `flyway_schema_history` (created by Flyway itself, in no migration). They are
 read and written by libraries, not by application code, and `V17` deliberately leaves all three out of
@@ -247,7 +248,7 @@ as they start.
 | Constraint | Source | Consequence |
 |---|---|---|
 | Flyway owns the schema; `spring.jpa.hibernate.ddl-auto: validate` | `application.yaml:27-29` | No DDL outside `db/migration`. There is no `schema.sql` and no test-only DDL anywhere. |
-| Migrations are forward-only and numbered; **V1–V35 exist, next free is V36** | `db/migration/`, `AGENTS.md` §4.5 | V21–V24 are localization/search/document/exchange; V25 completes the exchange guidelines (templates, schedules, org_id tightened NOT NULL); V26 is subscriptions; V27 the Kill Bill billing linkage; V28 user profiles; V29 API keys; V30 org user groups; V31 devices; V32 org security policies; V33 the integration hub; V34 compliance; V35 maintenance windows. Any plan citing an old "next free" number is stale — `AGENTS.md` §4.5 is kept current. |
+| Migrations are forward-only and numbered; **V1–V36 exist, next free is V37** | `db/migration/`, `AGENTS.md` §4.5 | V21–V24 are localization/search/document/exchange; V25 completes the exchange guidelines (templates, schedules, org_id tightened NOT NULL); V26 is subscriptions; V27 the Kill Bill billing linkage; V28 user profiles; V29 API keys; V30 org user groups; V31 devices; V32 org security policies; V33 the integration hub; V34 compliance; V35 maintenance windows; V36 customer support. Any plan citing an old "next free" number is stale — `AGENTS.md` §4.5 is kept current. |
 | No cross-module foreign keys | `AGENTS.md` §1 | Referential integrity across modules is an application concern; `SoftDeletePurgeJob` states the consequence for purge ordering (`SoftDeletePurgeJob.java:49-53`). |
 | `spring.jpa.open-in-view: false` | `application.yaml:30` | No lazy loading past the service boundary. |
 | No Lombok; records + constructor injection | ADR 0001, `ArchitectureTests.noFieldInjection` | Enforced by ArchUnit. |
@@ -928,6 +929,16 @@ The system SHALL:
 | FR-MNT-1 | let platform-admin schedule maintenance windows, platform-wide or org-scoped, in ANNOUNCE (banner) or RESTRICT mode; a RESTRICT window in effect answers org-scoped WRITES to the covered scope with 503 + Retry-After while reads pass; ANNOUNCE never blocks | `main:maintenance/internal/{MaintenanceWindow,MaintenanceFilter,MaintenanceService}` | `test:maintenance/internal/MaintenanceTest.{aRestrictWindowPausesWritesButNotReads,anAnnounceWindowNeverBlocks,aPlatformWideRestrictWindowCoversEveryOrg}` |
 | FR-MNT-2 | never lock scheduling out of itself (the window's own management endpoints are exempt) and let a tenant read the windows in effect for it (for a banner) | `MaintenanceFilter` (exempt path), `OrgMaintenanceController` | `MaintenanceTest` (the tenant reads the active window) |
 
+### 3.27 Customer support — tickets, SLAs, escalations (FR-SUP)
+
+The system SHALL:
+
+| ID | Requirement | Where | Verified by |
+|---|---|---|---|
+| FR-SUP-1 | let a tenant open, read and reply to its own org's tickets (org:read); SLA due dates stamped at open from the seeded per-priority policy | `main:support/internal/{Ticket,SupportService.open,OrgTicketController}`, `SlaPolicySeeder`, `V36` | `test:support/internal/SupportFlowTest.openAssignReplyWithInternalNoteAndTenantSeesOnlyPublic` |
+| FR-SUP-2 | give platform-support a cross-tenant queue with assignment, public replies (which stamp the first-response SLA and notify the opener in-app) and INTERNAL notes never shown to the tenant, and status transitions | `AdminTicketController`, `SupportService.{platformReply,assign,changeStatus}`, `SupportNotifier` | same test (tenant sees only the public message; opener notified) |
+| FR-SUP-3 | escalate SLA breaches automatically — a ShedLock minute job bumps a breached ticket's priority, counts it (`smsone.support.breached`), notifies the queue, and publishes `TicketEscalated` (fanned out as `org.ticket.escalated`); SKIP-LOCKED rows so a re-run never double-escalates | `SlaEscalationJob`, `support/TicketEscalated.java`, `webhooks/internal/WebhookEventListener` | `SupportFlowTest.anSlaBreachEscalatesTheTicket` |
+
 ## 4. External interface requirements
 
 ### 4.1 The response envelope
@@ -1183,6 +1194,10 @@ no `@PreAuthorize`. Every endpoint can additionally return 401, 403 `ACCOUNT_NOT
 | POST / GET / DELETE | `/api/v1/admin/maintenance` | `platform-admin` schedule/cancel, `platform-support` list | **201** / 200 / **204** | 422 |
 | GET | `/api/v1/orgs/{orgId}/maintenance` | `org:read` | 200 (`?active=true` narrows to in-effect) | — |
 | — | (enforcement) org writes during a RESTRICT window | | **503** + Retry-After | — |
+| POST / GET | `/api/v1/orgs/{orgId}/tickets[/{id}]` + `/messages` | `org:read` | **201** open/reply / 200 (paged; public messages only) | 404, 422 |
+| GET | `/api/v1/admin/tickets` | `platform-support` | 200 (queue; `?status=`) | — |
+| POST | `/api/v1/admin/tickets/{id}/messages` | `platform-support` | **201** (public or internal note) | 404 |
+| POST / PUT | `/api/v1/admin/tickets/{id}/assignment\|status` | `platform-support` | 200 | 404, 422 |
 | POST / GET / DELETE | `/api/v1/orgs/{orgId}/api-keys` | `apikey:manage` | **201** (secret once) / 200 (paged) / **204** | 403 escalation, 404, 422 |
 | POST / GET / DELETE | `/api/v1/admin/api-keys` | `platform-admin` mint/revoke, `platform-support` list | **201** / 200 / **204** | 404, 422 |
 | PUT / GET / DELETE | `/api/v1/orgs/{orgId}/integrations` | `org:update` write / `org:read` list | 200 (secrets masked) / **204** | 409 duplicate, 422 |

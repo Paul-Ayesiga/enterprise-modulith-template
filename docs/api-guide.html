@@ -50,7 +50,7 @@
   <a href="#ratelimit">Rate limits</a><a href="#idempotency">Idempotency</a><a href="#orgs">Tenant lifecycle</a>
   <a href="#members">Members &amp; roles</a><a href="#subscription">Plans &amp; entitlements</a><a href="#billing">Billing</a>
   <a href="#documents">Documents</a><a href="#search">Search</a><a href="#exchange">Exchange</a>
-  <a href="#webhooks">Webhooks</a><a href="#apikeys">API keys</a><a href="#access">Devices &amp; policy</a><a href="#integrations">Integrations</a><a href="#compliance">Compliance</a><a href="#maintenance">Maintenance</a><a href="#settings">Settings &amp; i18n</a><a href="#audit">Audit</a>
+  <a href="#webhooks">Webhooks</a><a href="#apikeys">API keys</a><a href="#access">Devices &amp; policy</a><a href="#integrations">Integrations</a><a href="#compliance">Compliance</a><a href="#maintenance">Maintenance</a><a href="#support">Support</a><a href="#settings">Settings &amp; i18n</a><a href="#audit">Audit</a>
   <a href="#impersonation">Impersonation</a><a href="#errors">Error codes</a><a href="#tips">Tips</a>
 </nav>
 <main>
@@ -348,6 +348,22 @@ GET /api/v1/orgs/{orgId}/maintenance?active=true</code></pre>
 {"errors":[{"code":"SERVICE_UNAVAILABLE","detail":"Undergoing maintenance until 2026-08-02T03:00:00Z: Database upgrade."}]}</code></pre>
 <p class="mut"><code>ANNOUNCE</code> windows are banner-only — they never block. This is distinct from suspending a
 tenant (that's the permanent lifecycle; §6).</p>
+
+<h2 id="support">13g · Customer support</h2>
+<pre><code># a tenant opens and converses on its tickets (org:read)
+POST /api/v1/orgs/{orgId}/tickets        {"subject":"Cannot see documents","priority":"P2"}
+GET  /api/v1/orgs/{orgId}/tickets/{id}/messages    # public messages only — internal notes hidden
+POST /api/v1/orgs/{orgId}/tickets/{id}/messages    {"body":"still not working"}
+
+# platform support works the cross-tenant queue (platform-support)
+GET  /api/v1/admin/tickets?status=OPEN
+POST /api/v1/admin/tickets/{id}/assignment   {"assignee":"support-1"}
+POST /api/v1/admin/tickets/{id}/messages     {"body":"Fixed — try now","internal":false}   # public reply → opener notified
+POST /api/v1/admin/tickets/{id}/messages     {"body":"checked their perms","internal":true} # internal note (tenant never sees)
+PUT  /api/v1/admin/tickets/{id}/status       {"status":"RESOLVED"}</code></pre>
+<p class="mut">SLAs are per-priority (P1 tightest). A breach escalates automatically — a minute job bumps the
+priority, notifies support, and fires the <code>org.ticket.escalated</code> webhook. A public reply pings
+the opener in-app.</p>
 
 <h2 id="settings">14 · Settings, flags, translations</h2>
 <pre><code>GET /api/v1/settings?page[size]=20            # any authenticated caller reads

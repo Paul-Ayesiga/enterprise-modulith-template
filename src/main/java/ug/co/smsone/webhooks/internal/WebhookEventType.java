@@ -20,7 +20,9 @@ enum WebhookEventType {
     ORG_DELETED("org.deleted", "The platform deleted the organization — its last outbound event"),
     ORG_SUBSCRIPTION_CHANGED("org.subscription_changed", "The organization's plan or standing changed"),
     EXCHANGE_JOB_COMPLETED("org.exchange.job_completed",
-            "An import/export job reached a terminal state (payload carries outcome and counters)");
+            "An import/export job reached a terminal state (payload carries outcome and counters)"),
+    TICKET_ESCALATED("org.ticket.escalated",
+            "A support ticket breached its SLA and was escalated (payload carries the new priority)");
 
     private static final Map<String, WebhookEventType> BY_CODE =
             Arrays.stream(values()).collect(Collectors.toUnmodifiableMap(WebhookEventType::code, e -> e));

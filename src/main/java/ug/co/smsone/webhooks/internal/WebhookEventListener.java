@@ -89,6 +89,17 @@ class WebhookEventListener {
     }
 
     @ApplicationModuleListener
+    void on(ug.co.smsone.support.TicketEscalated event) {
+        String code = WebhookEventType.TICKET_ESCALATED.code();
+        dispatcher.dispatch(
+                code + ":" + event.ticketId() + ":" + event.priority() + "@" + event.occurredAt(),
+                event.orgId(), code,
+                WebhookPayload.of(code, event.orgId(), event.occurredAt())
+                        .with("ticketId", event.ticketId().toString())
+                        .with("priority", event.priority()));
+    }
+
+    @ApplicationModuleListener
     void on(ug.co.smsone.subscription.SubscriptionChanged event) {
         String code = WebhookEventType.ORG_SUBSCRIPTION_CHANGED.code();
         dispatcher.dispatch(

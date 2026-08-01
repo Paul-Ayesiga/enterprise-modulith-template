@@ -38,6 +38,11 @@ tags:
     \ state, platform-admin. The same keys are readable by any authenticated caller\
     \ under Shared · Settings & flags — same paths, different method, different authority,\
     \ which is why one controller lands in two groups."
+- name: Platform · Support queue
+  description: "The cross-tenant support queue (platform-support): work tickets, assign,\
+    \ reply (public or an internal note the tenant never sees), transition status.\
+    \ SLA breaches escalate automatically — a minute job bumps priority, counts the\
+    \ breach, and fires org.ticket.escalated."
 - name: Platform · Maintenance
   description: "Scheduling maintenance windows (platform-admin), platform-wide or\
     \ targeted at one org. RESTRICT pauses org writes for the window; ANNOUNCE is\
@@ -101,6 +106,10 @@ tags:
   description: "An organization's machine credentials (apikey:manage). A key carries\
     \ a SUBSET of its creator's permissions — it can never out-rank them — and authenticates\
     \ as X-Api-Key. The secret shows once, at mint."
+- name: Organization · Support
+  description: "The tenant's support tickets — open, read, reply (org:read). Internal\
+    \ platform notes are never shown here; escalation and assignment are the platform's\
+    \ job (Platform · Support queue). A public reply notifies the opener in-app."
 - name: Organization · Maintenance
   description: "The maintenance windows in effect for this tenant (platform-wide plus\
     \ its own), read on org:read for a client banner. During a RESTRICT window this\
@@ -1139,6 +1148,38 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/tickets/{id}/status:
+    put:
+      tags:
+      - Platform · Support queue
+      summary: Transition the ticket's status
+      operationId: status
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StatusRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/admin/orgs/{orgId}/subscription:
     get:
       tags:
@@ -1384,6 +1425,202 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}/tickets:
+    get:
+      tags:
+      - Organization · Support
+      summary: List the organization's tickets
+      operationId: list_3
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: "page[size]"
+        in: query
+        description: "Items per page, 1–100. Defaults to 20."
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 20
+          maximum: 100
+          minimum: 1
+      - name: "page[after]"
+        in: query
+        description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
+          Omit for the first page.
+        required: false
+        schema:
+          type: string
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/WindowedResultResourceObject"
+    post:
+      tags:
+      - Organization · Support
+      summary: Open a support ticket
+      operationId: open
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OpenRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}/tickets/{id}/messages:
+    get:
+      tags:
+      - Organization · Support
+      summary: The ticket's public messages
+      description: Internal platform notes are never shown to the tenant.
+      operationId: messages
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceObject"
+    post:
+      tags:
+      - Organization · Support
+      summary: Reply to your ticket
+      operationId: reply
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReplyRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/orgs/{orgId}/suspend:
     post:
       tags:
@@ -1473,7 +1710,7 @@ paths:
       tags:
       - Organization · Roles
       summary: List the organization's roles
-      operationId: list_3
+      operationId: list_4
       parameters:
       - name: orgId
         in: path
@@ -1608,7 +1845,7 @@ paths:
       tags:
       - Organization · Members
       summary: List organization members
-      operationId: list_4
+      operationId: list_5
       parameters:
       - name: orgId
         in: path
@@ -1753,7 +1990,7 @@ paths:
       tags:
       - Organization · Groups
       summary: List the organization's groups
-      operationId: list_5
+      operationId: list_6
       parameters:
       - name: orgId
         in: path
@@ -1898,7 +2135,7 @@ paths:
       tags:
       - Organization · Exchange schedules
       summary: List the organization's recurring exports
-      operationId: list_6
+      operationId: list_7
       parameters:
       - name: orgId
         in: path
@@ -2167,7 +2404,7 @@ paths:
       tags:
       - Organization · Profile
       summary: List the organization's documents
-      operationId: list_7
+      operationId: list_8
       parameters:
       - name: orgId
         in: path
@@ -2274,7 +2511,7 @@ paths:
       tags:
       - Organization · API keys
       summary: List the organization's API keys (secrets never shown)
-      operationId: list_8
+      operationId: list_9
       parameters:
       - name: orgId
         in: path
@@ -2446,7 +2683,7 @@ paths:
       tags:
       - Shared · My devices
       summary: List your devices
-      operationId: list_9
+      operationId: list_10
       parameters:
       - name: user
         in: query
@@ -2823,7 +3060,7 @@ paths:
       tags:
       - Shared · Reference data
       summary: List your personal documents
-      operationId: list_10
+      operationId: list_11
       parameters:
       - name: user
         in: query
@@ -2915,6 +3152,104 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/tickets/{id}/messages:
+    get:
+      tags:
+      - Platform · Support queue
+      summary: "All the ticket's messages, including internal notes"
+      operationId: messages_1
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceObject"
+    post:
+      tags:
+      - Platform · Support queue
+      summary: Reply (public) or add an internal note
+      description: A public reply stamps the first-response SLA and notifies the opener;
+        `internal:true` is a platform-only note.
+      operationId: reply_1
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReplyRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/tickets/{id}/assignment:
+    post:
+      tags:
+      - Platform · Support queue
+      summary: Assign the ticket
+      operationId: assign_1
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssignRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/admin/orgs/{orgId}/billing/subscription:
     post:
       tags:
@@ -2985,7 +3320,7 @@ paths:
       tags:
       - Platform · Maintenance
       summary: List platform-wide maintenance windows
-      operationId: list_11
+      operationId: list_12
       responses:
         "200":
           description: OK
@@ -3064,7 +3399,7 @@ paths:
         \ `actor=<subject>` names another operator's instead and requires platform-admin.\
         \ `active` is computed when the row is read, so a lapsed session reports inactive\
         \ with no sweep job involved."
-      operationId: list_12
+      operationId: list_13
       parameters:
       - name: actor
         in: query
@@ -3111,7 +3446,7 @@ paths:
         \ is rejected, never silently clamped — and `reason` must be at least 8 characters.\
         \ Pass the returned id as the `X-Impersonate` header on the requests that\
         \ should run as the target."
-      operationId: open
+      operationId: open_1
       requestBody:
         content:
           application/json:
@@ -3231,7 +3566,7 @@ paths:
       tags:
       - Platform · API keys
       summary: List platform API keys
-      operationId: list_13
+      operationId: list_14
       parameters:
       - name: "page[size]"
         in: query
@@ -3375,7 +3710,7 @@ paths:
       description: "The fixed vocabulary the subscription endpoints' `events` array\
         \ accepts. Payloads always carry `event`, `orgId` and `occurredAt`, signed\
         \ HMAC-SHA256 in `X-Webhook-Signature`."
-      operationId: list_14
+      operationId: list_15
       parameters:
       - name: X-Impersonate
         in: header
@@ -3407,7 +3742,7 @@ paths:
       tags:
       - Shared · Reference data
       summary: "List translations, optionally for one locale"
-      operationId: list_15
+      operationId: list_16
       parameters:
       - name: locale
         in: query
@@ -3459,7 +3794,7 @@ paths:
       tags:
       - Shared · Settings & flags
       summary: List platform settings
-      operationId: list_16
+      operationId: list_17
       parameters:
       - name: "page[size]"
         in: query
@@ -3510,7 +3845,7 @@ paths:
         \ held) its lock and until when — the evidence that a job fires once cluster-wide.\
         \ Read-only: there is no endpoint to trigger a job, they are time-driven by\
         \ design."
-      operationId: list_17
+      operationId: list_18
       parameters:
       - name: X-Impersonate
         in: header
@@ -3545,7 +3880,7 @@ paths:
       description: The fixed vocabulary for composing custom roles — the `code` values
         are what the role endpoints accept. The catalog is global and identical for
         every organization.
-      operationId: list_18
+      operationId: list_19
       parameters:
       - name: X-Impersonate
         in: header
@@ -3635,6 +3970,48 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/WindowedResultResourceObject"
+  /api/v1/orgs/{orgId}/tickets/{id}:
+    get:
+      tags:
+      - Organization · Support
+      summary: Get one ticket
+      operationId: get_8
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/orgs/{orgId}/subscription:
     get:
       tags:
@@ -3642,7 +4019,7 @@ paths:
       summary: Read the organization's subscription and entitlements
       description: "No subscription row means the seeded FREE plan. `entitlements`:\
         \ null value = feature on, number = cap, absent key = off/unlimited."
-      operationId: get_8
+      operationId: get_9
       parameters:
       - name: orgId
         in: path
@@ -3746,7 +4123,7 @@ paths:
       - Organization · Maintenance
       summary: List maintenance windows affecting the organization
       description: '`?active=true` narrows to windows in effect right now (for a banner).'
-      operationId: list_19
+      operationId: list_20
       parameters:
       - name: orgId
         in: path
@@ -3790,7 +4167,7 @@ paths:
       tags:
       - Organization · Groups
       summary: Get one group with its members
-      operationId: get_9
+      operationId: get_10
       parameters:
       - name: orgId
         in: path
@@ -3869,7 +4246,7 @@ paths:
       tags:
       - Organization · Exchange
       summary: List the organization's exchange jobs
-      operationId: list_20
+      operationId: list_21
       parameters:
       - name: orgId
         in: path
@@ -3922,7 +4299,7 @@ paths:
       tags:
       - Organization · Exchange
       summary: Get one exchange job with its progress
-      operationId: get_10
+      operationId: get_11
       parameters:
       - name: orgId
         in: path
@@ -4244,7 +4621,7 @@ paths:
       tags:
       - Shared · Me & notifications
       summary: List your in-app notifications
-      operationId: list_21
+      operationId: list_22
       parameters:
       - name: "page[size]"
         in: query
@@ -4515,7 +4892,7 @@ paths:
       tags:
       - Shared · Settings & flags
       summary: List feature flags
-      operationId: list_22
+      operationId: list_23
       parameters:
       - name: "page[size]"
         in: query
@@ -4565,7 +4942,7 @@ paths:
       description: "Each handler names the dataset it moves, the permissions its imports\
         \ and exports require, `header` — the exact column order its files use — and\
         \ the current `templateVersion`. Download a ready-to-fill file from `/handlers/{id}/template`."
-      operationId: list_23
+      operationId: list_24
       parameters:
       - name: X-Impersonate
         in: header
@@ -4860,7 +5237,7 @@ paths:
       tags:
       - Platform · Users & impersonation
       summary: List provisioned users across the platform
-      operationId: list_24
+      operationId: list_25
       parameters:
       - name: "page[size]"
         in: query
@@ -4922,7 +5299,7 @@ paths:
       tags:
       - Platform · Users & impersonation
       summary: List a user's devices as the platform
-      operationId: list_25
+      operationId: list_26
       parameters:
       - name: subject
         in: path
@@ -4959,6 +5336,75 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/WindowedResultResourceObject"
+  /api/v1/admin/tickets:
+    get:
+      tags:
+      - Platform · Support queue
+      summary: The support queue
+      description: Cross-tenant; `?status=` narrows (OPEN / IN_PROGRESS / …).
+      operationId: queue
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: "page[size]"
+        in: query
+        description: "Items per page, 1–100. Defaults to 20."
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 20
+          maximum: 100
+          minimum: 1
+      - name: "page[after]"
+        in: query
+        description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
+          Omit for the first page.
+        required: false
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/WindowedResultResourceObject"
+  /api/v1/admin/tickets/{id}:
+    get:
+      tags:
+      - Platform · Support queue
+      summary: Get one ticket (any org)
+      operationId: get_12
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/admin/search:
     get:
       tags:
@@ -5043,7 +5489,7 @@ paths:
       - Platform · Organizations
       summary: List every organization on the platform
       description: Newest first; narrow with `status` (ACTIVE or SUSPENDED).
-      operationId: list_26
+      operationId: list_27
       parameters:
       - name: status
         in: query
@@ -5085,7 +5531,7 @@ paths:
       tags:
       - Platform · Organizations
       summary: Inspect one organization as the platform
-      operationId: get_11
+      operationId: get_13
       parameters:
       - name: orgId
         in: path
@@ -5669,6 +6115,7 @@ components:
             - org.deleted
             - org.subscription_changed
             - org.exchange.job_completed
+            - org.ticket.escalated
           minItems: 1
           uniqueItems: true
         status:
@@ -5796,6 +6243,11 @@ components:
           type: string
       required:
       - enabled
+    StatusRequest:
+      type: object
+      properties:
+        status:
+          type: string
     AssignRequest:
       type: object
       properties:
@@ -5845,11 +6297,26 @@ components:
             - org.deleted
             - org.subscription_changed
             - org.exchange.job_completed
+            - org.ticket.escalated
           minItems: 1
           uniqueItems: true
       required:
       - events
       - url
+    OpenRequest:
+      type: object
+      properties:
+        subject:
+          type: string
+        category:
+          type: string
+        priority:
+          type: string
+    ReplyRequest:
+      type: object
+      properties:
+        body:
+          type: string
     TrustRequest:
       type: object
       properties:

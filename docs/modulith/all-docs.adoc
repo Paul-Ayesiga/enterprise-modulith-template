@@ -81,11 +81,15 @@ include::module-apikeys.adoc[]
 plantuml::module-search.puml[,,format=svg]
 include::module-search.adoc[]
 
-== Webhooks
-plantuml::module-webhooks.puml[,,format=svg]
-include::module-webhooks.adoc[]
+== Support
+plantuml::module-support.puml[,,format=svg]
+include::module-support.adoc[]
 
 == Document
 plantuml::module-document.puml[,,format=svg]
 include::module-document.adoc[]
+
+== Webhooks
+plantuml::module-webhooks.puml[,,format=svg]
+include::module-webhooks.adoc[]
 

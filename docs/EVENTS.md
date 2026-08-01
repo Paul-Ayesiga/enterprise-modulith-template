@@ -30,6 +30,7 @@ message id from business identity — among the live ones:
 | `ug.co.smsone.organization.OrganizationDeleted` | organization | `orgId, occurredAt` | the platform deletes a tenant (soft; published explicitly — a delete fires no `@DomainEvents`) |
 | `ug.co.smsone.subscription.SubscriptionChanged` | subscription | `orgId, planCode, status, occurredAt` | a tenant's plan is assigned or changed |
 | `ug.co.smsone.exchange.JobCompleted` | exchange | `jobId, orgId, requester, handler, jobType, outcome, processed, failed, occurredAt` | an exchange job reaches a terminal state — published explicitly from the worker's terminal read (the job row stays authoritative; a crash between the write and the publish loses only the event) |
+| `ug.co.smsone.support.TicketEscalated` | support | `ticketId, orgId, priority, occurredAt` | a support ticket breached its SLA and was escalated (published by the minute escalation job) |
 
 Every event carries `occurredAt` — uniformly, since `SettingChanged` (the one late joiner) gained
 it ahead of its first consumer. It lets an idempotent consumer dedupe redelivery of the *same*
@@ -47,13 +48,15 @@ change while still reacting to a genuine later re-toggle to the same state.
 | `OrganizationDeleted` | organization (evictor), webhooks | Clears the permission cache; fans out `org.deleted` — the tenant's last outbound event |
 | `SubscriptionChanged` | subscription (evictor), webhooks | Evicts the `org-entitlements` cache so a plan change bites the next gate; fans out `org.subscription_changed` |
 | `JobCompleted` | notification, webhooks | Tells the REQUESTER in-app that their job finished (idempotent, `exchange-job:<id>@<occurredAt>`); fans out `org.exchange.job_completed` with outcome + counters |
+| `TicketEscalated` | webhooks | Fans out `org.ticket.escalated` with the new priority |
 
 The webhooks consumer maps each organization event to its outbound wire code
 (`webhooks.internal.WebhookEventType`): `MembershipCreated` → `org.member.added`, `MemberRemoved` →
 `org.member.removed`, `MembershipRoleChanged` → `org.member.role_changed`,
 `RolePermissionsChanged` → `org.role.permissions_changed`, `OrganizationStatusChanged` →
 `org.status_changed`, `OrganizationDeleted` → `org.deleted`, `SubscriptionChanged` →
-`org.subscription_changed`, `JobCompleted` → `org.exchange.job_completed`. The full subscribable
+`org.subscription_changed`, `JobCompleted` → `org.exchange.job_completed`, `TicketEscalated` →
+`org.ticket.escalated`. The full subscribable
 vocabulary is on the wire at `GET /api/v1/webhooks/event-types`.
 
 Four events currently have **no consumer**: `SettingChanged`, `UserActivated`,

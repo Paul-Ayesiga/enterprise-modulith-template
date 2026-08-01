@@ -342,6 +342,25 @@ Slice 3 of [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md).
 - [x] **Gate:** full `./gradlew test` green (13 modules); docs regenerated; DATA_MODEL §4.11 /
       SRS §3.17 + catalogue + traceability updated
 
+## P8 — Customer support: tickets, SLAs, escalations ✅ (2026-08-01)
+
+Slice 8 (final) of [PLATFORM_EXPANSION_PLAN.md](PLATFORM_EXPANSION_PLAN.md) — the largest, landing
+on finished ground (it consumes notifications, webhooks, the SLA seeder).
+
+- [x] **V36** ticket (soft-deletable, 20th) + ticket_message (append-only child, 9th intra-module
+      FK; internal notes never shown to the tenant) + sla_policy (seeded per-priority)
+- [x] Tenant surface: open/read/reply own org tickets (org:read), public messages only. Platform
+      queue: cross-tenant list (?status=), assign, public reply (stamps first-response SLA +
+      notifies opener in-app) or internal note, status transitions
+- [x] SlaEscalationJob (minute cron, ShedLock, SKIP-LOCKED so a re-run never double-escalates):
+      bumps a breached ticket's priority, counts smsone.support.breached, notifies the queue,
+      publishes TicketEscalated → webhooks org.ticket.escalated
+- [x] **Gate:** full lifecycle (open→assign→internal-note→public-reply), tenant sees only public +
+      opener notified, SLA breach escalates (P3→P2, counter +1, no double-escalate) — SupportFlowTest
+      (2 tests). Two Support tags + map entries (flagged)
+
+**All 8 expansion slices shipped.** 45 tables, 23 modules, 20 soft-deletables, next free V37.
+
 ## P7 — Maintenance windows ✅ (2026-08-01)
 
 Slice 7 of [PLATFORM_EXPANSION_PLAN.md](PLATFORM_EXPANSION_PLAN.md); gates on nothing.

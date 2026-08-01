@@ -1,0 +1,33 @@
+@startuml
+title <size:24>Support</size>
+
+set separator none
+top to bottom direction
+
+<style>
+  root {
+    BackgroundColor: #ffffff
+    FontColor: #444444
+  }
+</style>
+
+!include <C4/C4>
+!include <C4/C4_Context>
+!include <C4/C4_Component>
+
+System_Boundary("Application_boundary", "Application", $tags="") {
+  Container_Boundary("Application.Application_boundary", "Application", $tags="") {
+    Component(Application.Application.Notification, "Notification", $techn="Module", $descr="", $tags="", $link="")
+    Component(Application.Application.Support, "Support", $techn="Module", $descr="", $tags="", $link="")
+    Component(Application.Application.SharedKernel, "Shared Kernel", $techn="Module", $descr="", $tags="", $link="")
+  }
+
+}
+
+Rel(Application.Application.Notification, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Support, Application.Application.Notification, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Support, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+
+SHOW_LEGEND(true)
+hide stereotypes
+@enduml

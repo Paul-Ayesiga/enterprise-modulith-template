@@ -7,6 +7,6 @@
 |Bean references
 |* `u.c.s.s.events.EventInbox` (in Shared Kernel)
 |Events listened to
-|* `u.c.s.o.OrganizationRegistered` (async) 
-* `u.c.s.i.UserProvisioned` (async) 
+|* `u.c.s.i.UserProvisioned` (async) 
+* `u.c.s.o.OrganizationRegistered` (async) 
 |===
