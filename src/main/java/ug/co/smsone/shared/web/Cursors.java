@@ -61,6 +61,7 @@ public final class Cursors {
             case Instant instant -> "t:" + instant;
             case UUID uuid -> "u:" + uuid;
             case Long number -> "l:" + number;
+            case Double number -> "d:" + number; // search relevance ranks — Double.toString round-trips exactly
             case String string -> "s:" + escape(string);
             default -> throw new IllegalArgumentException(
                     "Unsupported cursor key type: " + value.getClass().getName());
@@ -73,6 +74,7 @@ public final class Cursors {
             case 't' -> Instant.parse(value);
             case 'u' -> UUID.fromString(value);
             case 'l' -> Long.parseLong(value);
+            case 'd' -> Double.parseDouble(value);
             case 's' -> unescape(value);
             default -> throw new IllegalArgumentException("Unknown cursor type tag");
         };

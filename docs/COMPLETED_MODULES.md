@@ -12,6 +12,7 @@ _Last updated: 2026-07-31._
 | **shared** (kernel) | Cross-cutting foundation reused by every module | envelope/error/probes | — | ✅ |
 | **settings** | System settings + feature flags | `/api/v1/settings`, `/api/v1/feature-flags` | `SettingChanged`, `FeatureFlagChanged` | ✅ |
 | **localization** | Translation catalog + `Messages` resolution port | `/api/v1/translations/**` | `TranslationChanged` | ✅ |
+| **search** | Postgres FTS projection + `SearchIndex` port | `/api/v1/orgs/{orgId}/search`, `/api/v1/admin/search` | — (consumes `OrganizationRegistered`, `UserProvisioned`) | ✅ |
 | **files** | S3-compatible object storage | `/api/v1/files` | — | ✅ |
 | **scheduler** | Clustered scheduled jobs | `/api/v1/scheduler/locks` | — | ✅ |
 | **analytics** | Embedded OLAP / reporting | `/api/v1/analytics/reports` | — | ✅ |
@@ -52,6 +53,21 @@ Message localization behind the `Messages` port.
   Locales stored lowercased (tags are case-insensitive); unparseable tags 422.
 - Soft-deletable (`V21`), purged last in `PURGE_ORDER`; deletes publish `TranslationChanged`
   explicitly.
+
+## search
+Lightning-fast full-text search on Postgres — no new engine, and the speed is a measured gate.
+- **Projection**: `search_document` with a GENERATED `tsvector` (GIN) + trigram GIN over titles;
+  rebuildable by design, so it is not soft-deletable and has no purge job — producers own removal.
+- **Feeding**: the `SearchIndex` port (idempotent upsert per `(entity_type, entity_id)`) plus
+  inbox-guarded listeners on `OrganizationRegistered` (org-scoped) and `UserProvisioned`
+  (platform-wide, admin search only).
+- **Query**: `websearch_to_tsquery('simple')` ranked by `ts_rank_cd`, trigram `word_similarity`
+  fallback for prefixes/typos; the cursor carries the chosen mode; ranks cross the wire as float8
+  (float4's shortest text form parses into a different double — keyset page 2 would repeat page 1).
+- **Endpoints**: `GET /api/v1/orgs/{orgId}/search` (`org:read`, tenant cut inside the SQL) and
+  `GET /api/v1/admin/search` (`platform-support`, reaches null-org rows).
+- **Verified at scale**: 100k documents, 50 warm org-scoped queries — **p50 16ms, p95 20ms**
+  (budget 50ms), printed by the gate test on every run.
 
 ## files
 Object storage behind a single S3 abstraction (AWS SDK v2).

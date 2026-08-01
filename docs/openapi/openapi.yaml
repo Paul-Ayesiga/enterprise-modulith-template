@@ -1619,6 +1619,73 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/WindowedResultResourceObject"
+  /api/v1/orgs/{orgId}/search:
+    get:
+      tags:
+      - Organization · Profile
+      summary: Search within one organization
+      description: "Full-text first (`websearch_to_tsquery` syntax: quoted phrases,\
+        \ `-exclusions`, `or`); when nothing token-matches, a trigram pass over titles\
+        \ catches prefixes and typos. Ranked, cursor-paginated; `type` narrows to\
+        \ one entity type."
+      operationId: search
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: q
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: type
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: "page[size]"
+        in: query
+        description: "Items per page, 1–100. Defaults to 20."
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 20
+          maximum: 100
+          minimum: 1
+      - name: "page[after]"
+        in: query
+        description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
+          Omit for the first page.
+        required: false
+        schema:
+          type: string
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/WindowedResultResourceObject"
   /api/v1/orgs/{orgId}/audit:
     get:
       tags:
@@ -2041,6 +2108,61 @@ paths:
       summary: List provisioned users across the platform
       operationId: list_10
       parameters:
+      - name: "page[size]"
+        in: query
+        description: "Items per page, 1–100. Defaults to 20."
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 20
+          maximum: 100
+          minimum: 1
+      - name: "page[after]"
+        in: query
+        description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
+          Omit for the first page.
+        required: false
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/WindowedResultResourceObject"
+  /api/v1/admin/search:
+    get:
+      tags:
+      - Platform · Ops
+      summary: Search across the platform
+      description: Everything tenant search sees plus platform-wide entries (e.g.
+        users); `org` narrows to one organization.
+      operationId: search_1
+      parameters:
+      - name: q
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: type
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: org
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
       - name: "page[size]"
         in: query
         description: "Items per page, 1–100. Defaults to 20."

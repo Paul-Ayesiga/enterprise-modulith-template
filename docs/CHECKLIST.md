@@ -297,6 +297,27 @@ Slice 1 of [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md).
 - [x] **Gate:** full `./gradlew test` green (`verify()` with 11 modules); OpenAPI + Modulith docs
       regenerated; DATA_MODEL §4.9 / SRS §3.15 + catalogue + traceability + config reference updated
 
+## Search module ✅ (2026-08-01)
+
+Slice 2 of [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md).
+
+- [x] **V22** `pg_trgm` + `search_document` — a rebuildable projection (deliberately NOT
+      soft-deletable, the header argues it), GENERATED `tsv`, GIN on `tsv`, trigram GIN on titles
+- [x] `SearchIndex` port (idempotent `(entity_type, entity_id)` upsert) + inbox-guarded listeners on
+      `OrganizationRegistered` and `UserProvisioned`
+- [x] FTS-then-trigram strategy (`websearch_to_tsquery` → `word_similarity` fallback); the cursor
+      carries the mode so later pages never re-decide; ranks travel as float8 (the float4 text
+      round-trip parses into a DIFFERENT double and would repeat page 1 — pinned in a why-comment)
+- [x] Tenant search cut inside the SQL; platform-wide (null-org) rows admin-only; two controllers so
+      the class-level mapping keeps `/admin/search` out of the `X-Impersonate` docs
+- [x] **Gate:** isolation, fallback+cursor, redelivery-dedup, 422s —
+      `SearchApiTest` (5 tests)
+- [x] **Gate — measured, not adjectival:** 100k documents, 50 warm org-scoped queries,
+      **p50 16ms / p95 20ms** against the 50ms budget —
+      `SearchPerformanceTest.p95StaysUnderBudgetAcross100kDocuments` (prints the numbers)
+- [x] **Gate:** full `./gradlew test` green (12 modules); docs regenerated; DATA_MODEL §4.10 /
+      SRS §3.16 + catalogue + traceability updated
+
 ## Audit remediation — phases 3 & 4 ✅ (2026-08-01)
 
 - [x] **M15** controllers are thin again: `AuditQueryService` (readOnly) behind `AuditController`;

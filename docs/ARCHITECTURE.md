@@ -16,6 +16,7 @@ flowchart TB
         shared["shared (OPEN kernel)\nweb envelope · errors · security · impersonation filter\npersistence · cache · idempotency · rate limiting · events"]
         settings["settings\nkey/value config + feature flags"]
         localization["localization\ntranslation catalog · Messages port"]
+        search["search\nPostgres FTS projection · SearchIndex port"]
         files["files\nFileStorageProvider → S3"]
         scheduler["scheduler\nShedLock cron jobs\n(+ soft-delete retention purge)"]
         analytics["analytics\nAnalyticsEngine → DuckDB"]
@@ -39,9 +40,14 @@ flowchart TB
 
     organization --> identity
     notification --> identity
+    search --> shared
+    search --> identity
+    search --> organization
 
     settings -. "FeatureFlagChanged\n(DB-backed event registry)" .-> notification
     organization -. "member / role / status events" .-> webhooks
+    organization -. "OrganizationRegistered" .-> search
+    identity -. "UserProvisioned" .-> search
 
     postgres[("PostgreSQL 18\nsystem of record")]
     valkey[("Valkey 8\nL2 cache + pub/sub")]

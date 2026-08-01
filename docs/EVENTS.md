@@ -39,6 +39,8 @@ before giving `SettingChanged` its first listener.
 | `ug.co.smsone.settings.FeatureFlagChanged` | notification | Notifies administrators (email + in-app) that a flag was toggled |
 | `RolePermissionsChanged` / `MembershipRoleChanged` / `MembershipCreated` / `MemberRemoved` / `OrganizationStatusChanged` | organization | Evicts the `org-permissions` cache so a role/membership/org-status change takes effect promptly (coarse clear-all) |
 | `MembershipCreated` / `MemberRemoved` / `MembershipRoleChanged` / `RolePermissionsChanged` / `OrganizationStatusChanged` | webhooks | Fans the org event out to matching active subscriptions and enqueues a signed delivery each (idempotent via `EventInbox`) |
+| `OrganizationRegistered` | search | Indexes the organization (alias) into the org-scoped search projection |
+| `UserProvisioned` | search | Indexes the user (email) platform-wide — visible to admin search only |
 
 The webhooks consumer maps each organization event to its outbound wire code
 (`webhooks.internal.WebhookEventType`): `MembershipCreated` → `org.member.added`, `MemberRemoved` →
@@ -46,10 +48,9 @@ The webhooks consumer maps each organization event to its outbound wire code
 `RolePermissionsChanged` → `org.role.permissions_changed`, `OrganizationStatusChanged` →
 `org.status_changed`.
 
-Five events currently have **no consumer**: `SettingChanged`, `UserProvisioned`, `UserActivated`,
-`OrganizationRegistered` and `TranslationChanged`. They are still published through the registry
-(and appear in the generated module canvases); a first consumer must follow the `EventInbox`
-idempotency rule above.
+Three events currently have **no consumer**: `SettingChanged`, `UserActivated` and
+`TranslationChanged`. They are still published through the registry (and appear in the generated
+module canvases); a first consumer must follow the `EventInbox` idempotency rule above.
 
 _(The **audit** module does not consume events — it records synchronously via the shared `AuditLog` port at each mutation, so it captures the actor and before/after state the events don't carry.)_
 

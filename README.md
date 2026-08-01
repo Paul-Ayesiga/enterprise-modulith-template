@@ -52,6 +52,7 @@ ug.co.smsone
 ├── shared/               # OPEN kernel: envelope, errors, security, persistence, cache, idempotency, rate limiting, events
 ├── settings/             # key/value configuration + feature flags (SettingChanged, FeatureFlagChanged)
 ├── localization/         # translation catalog + Messages port (exact → language → default → key fallback)
+├── search/               # Postgres FTS projection (tsvector GIN + trigram fallback) + SearchIndex port
 ├── files/                # FileStorageProvider → SeaweedFS/S3 (presign, multipart, circuit breaker)
 ├── scheduler/            # ShedLock-guarded cron (event-registry, idempotency + soft-delete retention purges)
 ├── analytics/            # AnalyticsEngine → embedded DuckDB (marts, KPIs, Parquet snapshots)

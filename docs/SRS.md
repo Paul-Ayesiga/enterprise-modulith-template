@@ -139,7 +139,7 @@ step — *which is exactly why the logical boundaries are enforced now*.
 
 ### 2.2 Module map
 
-Eleven modules. Verified from the `package-info.java` files and `docs/modulith/components.puml`.
+Twelve modules. Verified from the `package-info.java` files and `docs/modulith/components.puml`.
 
 | Module | Display name | Owns (tables) | Public API package contains |
 |---|---|---|---|
@@ -148,6 +148,7 @@ Eleven modules. Verified from the `package-info.java` files and `docs/modulith/c
 | `organization` | Organization | `organization`, `org_role`, `role_permission`, `membership` | `Permission`, `OrganizationRegistered`, `OrganizationStatusChanged`, `MembershipCreated`, `MembershipRoleChanged`, `MemberRemoved`, `RolePermissionsChanged` |
 | `settings` | Settings | `setting`, `feature_flag` | `SettingChanged`, `FeatureFlagChanged` |
 | `localization` | Localization | `translation` | `Messages` port, `TranslationChanged` |
+| `search` | Search | `search_document` | `SearchIndex` port, `SearchDoc` |
 | `audit` | Audit | `audit_log` | (none — consumed through the `shared.audit.AuditLog` port) |
 | `notification` | Notification | `in_app_notification`, `notification_delivery` | `Notifications`, `NotificationChannelSender` (SPI), `NotificationChannel`, `NotificationMessage`, `NotificationRequest`, `Recipient` |
 | `webhooks` | Webhooks | `webhook_subscription`, `webhook_delivery` | (none — the module is a pure consumer + REST surface) |
@@ -155,7 +156,7 @@ Eleven modules. Verified from the `package-info.java` files and `docs/modulith/c
 | `analytics` | Analytics | none in Postgres (DuckDB marts + Parquet) | `AnalyticsEngine`, `AnalyticsException` |
 | `scheduler` | Scheduler | none (consumes `shedlock`) | (none) |
 
-Sixteen of the schema's nineteen tables appear above. The remaining three are **framework-owned and
+Seventeen of the schema's twenty tables appear above. The remaining three are **framework-owned and
 belong to no module**: `event_publication` (Spring Modulith's JDBC registry, `V2`), `shedlock`
 (ShedLock, `V4`) and `flyway_schema_history` (created by Flyway itself, in no migration). They are
 read and written by libraries, not by application code, and `V17` deliberately leaves all three out of
@@ -779,6 +780,19 @@ The system SHALL:
 | FR-LOC-5 | publish `TranslationChanged` on create/replace via the aggregate and **explicitly** on delete (a delete fires no `@DomainEvents`); an unchanged value is an idempotent no-op — no event, no audit row | `main:localization/internal/Translation.change`, `TranslationService.delete` | `test:localization/internal/LocalizationApiTest` (audit sequence) |
 | FR-LOC-6 | apply `MessageFormat` arguments in the resolved locale | `main:localization/internal/MessagesImpl.resolve` | `test:localization/internal/MessageResolutionTest.argumentsAreFormattedIntoTheResolvedText` |
 
+### 3.16 Search (FR-SRCH)
+
+The system SHALL:
+
+| ID | Requirement | Where | Verified by |
+|---|---|---|---|
+| FR-SRCH-1 | serve org-scoped full-text search at `GET /api/v1/orgs/{orgId}/search` gated on `org:read`, with the tenant cut applied **inside** the SQL, never after; platform-wide (null-org) rows are invisible to it | `main:search/internal/{SearchController,SearchQueryService}.java` | `test:search/internal/SearchApiTest.tenantSearchFindsOwnDocumentsAndNeverAnotherOrgs`, `.platformWideRowsAreInvisibleToTenantSearchButFoundByAdminSearch` |
+| FR-SRCH-2 | serve platform search at `GET /api/v1/admin/search` (`platform-support`), reaching org and platform-wide rows, optionally narrowed by `org` | same | same |
+| FR-SRCH-3 | rank with `ts_rank_cd` over `websearch_to_tsquery('simple', q)`, falling back to trigram `word_similarity` over titles when nothing token-matches; the cursor carries the mode so later pages never re-decide, and ranks travel as `float8` (the float4 text round-trip would repeat page 1) | `main:search/internal/SearchQueryService.java` (the cast's why-comment) | `test:search/internal/SearchApiTest.aPrefixThatMatchesNoTokenFallsBackToTrigramAndTheCursorKeepsTheMode` |
+| FR-SRCH-4 | index idempotently: the `(entity_type, entity_id)` upsert plus the `EventInbox` guard make at-least-once redelivery produce exactly one document | `main:search/internal/{SearchIndexStore,SearchEventListeners}.java` | `test:search/internal/SearchApiTest.anEventRedeliveryDoesNotDuplicateTheDocument` |
+| FR-SRCH-5 | answer 50 warm org-scoped queries over 100,000 documents with **p95 under 50 ms** on the reference container — measured, not asserted by adjective | `V22`'s GIN indexes + `main:search/internal/SearchQueryService.java` | `test:search/internal/SearchPerformanceTest.p95StaysUnderBudgetAcross100kDocuments` (prints the measured p50/p95) |
+| FR-SRCH-6 | reject a blank or over-long `q` with 422 naming the parameter | `main:search/internal/SearchQueryService.requireQuery` | `test:search/internal/SearchApiTest.aBlankQueryIsA422NamingTheParameter` |
+
 ## 4. External interface requirements
 
 ### 4.1 The response envelope
@@ -984,6 +998,8 @@ no `@PreAuthorize`. Every endpoint can additionally return 401, 403 `ACCOUNT_NOT
 | GET | `/api/v1/translations/{locale}/{key}` | authenticated | 200 | 404, 422 bad locale |
 | PUT | `/api/v1/translations/{locale}/{key}` | `platform-admin` | 200 (upsert) | 422 bad locale / blank `value` |
 | DELETE | `/api/v1/translations/{locale}/{key}` | `platform-admin` | **204** | 404, 422 bad locale |
+| GET | `/api/v1/orgs/{orgId}/search` | `org:read` | 200 (paged, ranked) | 422 blank/over-long `q` or foreign cursor |
+| GET | `/api/v1/admin/search` | `platform-support` | 200 (paged, ranked) | 422 |
 | GET | `/api/v1/notifications` | authenticated (scoped to caller's subject) | 200 (paged) | — |
 | POST | `/api/v1/notifications/{id}/read` | authenticated (scoped) | 200 | 404 (also when it is another user's) |
 | POST | `/api/v1/files` (multipart `file`) | authenticated | **201** | 422 empty / unreadable |
@@ -1536,6 +1552,7 @@ do not appear there. **✗** marks a requirement with no automated verification 
 | FR-IMP-22, 24 | `main:audit/internal/{AuditLogImpl,AuditEntry,AuditController}.java`, **`V19__audit_log_impersonation.sql`** | `test:identity/internal/ImpersonationReachTest.anAuditRowFromInsideASessionNamesTheOperatorAndTheIdentityTheyWore`, `.aWebhookCreatedInsideASessionNamesTheOperatorAndTheSession` |
 | FR-IMP-25 | `@Value("${app.impersonation.enabled:true}")` on `main:identity/internal/ImpersonationController.java:55` (enforced per handler by `requireEnabled()`) and `main:shared/security/ImpersonationFilter.java:72`; `application.yaml:119-128` | `test:identity/internal/ImpersonationDisabledTest` (3 tests) |
 | FR-LOC-1..6 | `main:localization/{Messages,TranslationChanged}.java`, `main:localization/internal/{Translation,TranslationRepository,TranslationBundles,MessagesImpl,TranslationService,TranslationController,LocalizationProperties}.java`, **`V21__localization.sql`** | `test:localization/internal/MessageResolutionTest` (3 tests), `test:localization/internal/LocalizationApiTest` (4 tests) |
+| FR-SRCH-1..6 | `main:search/{SearchIndex,SearchDoc}.java`, `main:search/internal/{SearchIndexStore,SearchIndexImpl,SearchEventListeners,SearchQueryService,SearchController}.java`, **`V22__search.sql`**, `main:shared/web/Cursors.java` (the `d:` tag) | `test:search/internal/SearchApiTest` (5 tests), `test:search/internal/SearchPerformanceTest` (measured p95), `test:shared/web/CursorsEscapingTest` |
 | FR-SET-1..11 | `main:settings/internal/{SettingController,SettingService,Setting,SettingRepository,FeatureFlagController,FeatureFlagService,FeatureFlag,FeatureFlagRepository}.java`, `main:settings/{SettingChanged,FeatureFlagChanged}.java`, `V3`, `V6` | `test:settings/SettingsApiIntegrationTest` (6), `test:settings/FeatureFlagIntegrationTest` (4), `test:settings/SettingsModuleTest` (2) |
 | FR-FIL-1..8, 9 ✗, 10..12, 13 ✗ | `main:files/internal/{FileController,S3StorageProvider,S3ClientConfig,StorageProperties,BucketBootstrap}.java`, `main:files/{FileStorageProvider,FileStorageException,FileNotFoundException}.java` | `test:files/internal/FileApiTest` (10), `test:files/FileStorageIntegrationTest` (3), `test:files/ResilienceSmokeTest` |
 | FR-NOT-2..9, 11, 15, 17..18 | `main:notification/internal/{NotificationService,NotificationDeliveryQueue,NotificationDeliveryWorker,ChannelRegistry,ChannelRateLimiter,EmailChannelSender,InAppChannelSender,SlackChannelSender,WebhookChannelSender,SmsChannelSender,HttpChannels,NotificationProperties,FeatureFlagChangeNotifier}.java`, `V8`, `V9`, `V12` | `test:notification/NotificationDeliveryTest` (5), `test:notification/internal/NotificationDeliveryQueueTest` (3), `test:shared/ratelimit/RateLimitIntegrationTest.egressChannelLimitDefersExcessDeliveries`, `test:shared/http/SafeOutboundUrlTest` |

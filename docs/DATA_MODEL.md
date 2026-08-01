@@ -98,7 +98,8 @@ events on `repository.save(..)`.
 | `notification.internal.InAppNotification` | `in_app_notification` | `BaseEntity` | **no** — disposable, not an aggregate |
 | `webhooks.internal.WebhookDelivery` | `webhook_delivery` | **none** — bare `@Entity`, own `@Id`, no `@Version` | no — read model over a JDBC-driven queue |
 
-**Three** tables have no entity at all and are written with plain `JdbcTemplate`: `idempotency_key`
+**Four** tables have no entity at all and are written with plain `JdbcTemplate`: `search_document`
+(`search/internal/SearchIndexStore`), `idempotency_key`
 (`shared/idempotency/IdempotencyStore`), `event_inbox` (`shared/events/EventInbox.java:29`) and
 `notification_delivery` (`notification/internal/NotificationDeliveryQueue.java:39`). A fourth,
 `webhook_delivery`, **has** an entity but only as a read model — its write side is plain
@@ -1451,6 +1452,37 @@ catalog gap renders, it never throws.
 via the aggregate on change and explicitly on delete. Purged last in `PURGE_ORDER` — nothing
 references it.
 
+### 4.10 Search module
+
+#### 4.10.1 `search_document`
+
+`V22__search.sql`. **No entity** — written and queried with plain JDBC (`SearchIndexStore`,
+`SearchQueryService`), like the other hot projection paths.
+
+| Column | Type | Null | Notes |
+|---|---|---|---|
+| `org_id` | `uuid` | null | Tenant key (soft ref). **Null = platform-wide**, reachable only via admin search |
+| `entity_type` / `entity_id` | `varchar(40)` / `varchar(64)` | not null | The producer's vocabulary; unique together — the idempotent-upsert conflict target |
+| `title` / `body` | `varchar(300)` / `text` | not null | What gets indexed |
+| `tsv` | `tsvector` | generated | `to_tsvector('simple', title ‖ body)` — GENERATED, so no producer can write a vector that disagrees with the text |
+| `updated_at` | `timestamptz` | not null | From the injected `Clock` |
+
+**Keys and indexes.** `uq_search_entity (entity_type, entity_id)`; `GIN (tsv)` — the match;
+`GIN (title gin_trgm_ops)` — the prefix/typo fallback (`word_similarity`); btree `(org_id)` — the
+tenant cut. **Not soft-deletable, deliberately**: a projection is rebuildable from its producers,
+so deletion here is un-indexing, not the loss of a record.
+
+**Invariants.** Ranks travel through cursors as `float8` — both rank functions return `float4`,
+whose shortest text form parses into a *different* double on the JDBC side, and an uncast rank
+would make keyset page 2 repeat page 1 (`SearchQueryService` casts once and says why). Tenant
+search always filters `org_id` inside the query (§5.6-style); the trigram fallback runs only when
+the tsquery matched nothing, and the cursor carries the chosen mode so later pages never re-decide.
+
+**Lifecycle.** Fed by the `SearchIndex` port and by the module's own idempotent listeners
+(`OrganizationRegistered`, `UserProvisioned` — inbox-guarded, upsert-deduped). Removed by producers
+via the port. Grows with the entities its producers index — rebuildable, so retention is the
+producers' concern, not a purge job's.
+
 ## 5. Soft delete
 
 Migration `V17__soft_delete.sql`. Deletion is **recorded, not executed**: the row survives with
@@ -1667,6 +1699,7 @@ The schema alone reads as if these cascades are live behaviour. They are not, ex
 | `V19__audit_log_impersonation.sql` | Adds `audit_log.on_behalf_of varchar(64)` and `impersonation_id uuid` + an index on `on_behalf_of`. `actor` keeps holding the accountable human, which under impersonation is the operator |
 | `V20__audit_fix_indexes.sql` | 2026-08-01 audit remediation: indexes for queries nothing served — the member/role/subscription keyset listings, the case-insensitive `app_user` email lookup (drops the unusable `idx_app_user_email` for an `upper(email)` expression index), the `audit_log.occurred_at` range filter, and the two terminal-row retention scans |
 | `V21__localization.sql` | `translation` — soft-deletable, partial unique `(locale, msg_key)`, bundle-load/listing/retention indexes. Locales stored as lowercased BCP-47 tags; the header states why |
+| `V22__search.sql` | `pg_trgm` extension + `search_document` — a rebuildable projection (NOT soft-deletable, the header argues it), generated `tsv` column, GIN on `tsv`, trigram GIN on `title`, org filter index |
 
 **The next free migration number is V21.**
 

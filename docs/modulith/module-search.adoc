@@ -1,0 +1,12 @@
+[%autowidth.stretch, cols="h,a"]
+|===
+|Base package
+|`ug.co.smsone.search`
+|Spring components
+|* `u.c.s.s.SearchIndex` (via `u.c.s.s.internal.SearchIndexImpl`)
+|Bean references
+|* `u.c.s.s.events.EventInbox` (in Shared Kernel)
+|Events listened to
+|* `u.c.s.i.UserProvisioned` (async) 
+* `u.c.s.o.OrganizationRegistered` (async) 
+|===
