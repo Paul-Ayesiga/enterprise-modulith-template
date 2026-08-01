@@ -13,6 +13,7 @@ public enum ErrorCode {
     FORBIDDEN(HttpStatus.FORBIDDEN, "Access denied"),
     ACCOUNT_NOT_PROVISIONED(HttpStatus.FORBIDDEN, "Account not provisioned"),
     ACCOUNT_DISABLED(HttpStatus.FORBIDDEN, "Account disabled"),
+    SUBSCRIPTION_PAUSED(HttpStatus.PAYMENT_REQUIRED, "Subscription paused"),
     RESOURCE_NOT_FOUND(HttpStatus.NOT_FOUND, "Resource not found"),
     METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "Method not allowed"),
     CONFLICT(HttpStatus.CONFLICT, "Conflict"),

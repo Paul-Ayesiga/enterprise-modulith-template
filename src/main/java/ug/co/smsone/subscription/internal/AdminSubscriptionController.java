@@ -4,11 +4,14 @@ import io.swagger.v3.oas.annotations.Operation;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import ug.co.smsone.shared.web.ResourceObject;
@@ -31,6 +34,9 @@ class AdminSubscriptionController {
     record AssignRequest(String plan) {
     }
 
+    record TrialRequest(String plan, Integer days) {
+    }
+
     record PlanAttributes(String code, String name, int rank, Map<String, Long> entitlements) {
     }
 
@@ -51,6 +57,21 @@ class AdminSubscriptionController {
     @PreAuthorize("hasRole('platform-admin')")
     ResourceObject assign(@PathVariable UUID orgId, @RequestBody AssignRequest request) {
         return SubscriptionResources.toResource(subscriptions.assign(orgId, request.plan()));
+    }
+
+    @PostMapping("/orgs/{orgId}/subscription/trial")
+    @Operation(summary = "Start a paid-plan trial",
+            description = """
+                    Runs the org on the named PAID plan (`PRO`/`ENTERPRISE`) as a `TRIALING` trial \
+                    for `days` (default 14) — full access throughout. When the trial lapses unpaid \
+                    the expiry job flips it to `PAUSED` and the org goes READ-ONLY (org-scoped \
+                    writes answer 402) until a plan is assigned or a payment lands. `FREE` cannot \
+                    be trialed. Audited; fans out `org.subscription_changed`.""")
+    @PreAuthorize("hasRole('platform-admin')")
+    @ResponseStatus(HttpStatus.CREATED)
+    ResourceObject startTrial(@PathVariable UUID orgId, @RequestBody TrialRequest request) {
+        int days = request.days() == null ? 0 : request.days();
+        return SubscriptionResources.toResource(subscriptions.beginTrial(orgId, request.plan(), days));
     }
 
     @GetMapping("/plans")

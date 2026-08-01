@@ -361,6 +361,22 @@ on finished ground (it consumes notifications, webhooks, the SLA seeder).
 
 **All 8 expansion slices shipped.** 45 tables, 23 modules, 20 soft-deletables, next free V37.
 
+## Trial mode + pause-to-read-only ✅ (2026-08-01)
+
+Post-expansion: paid-plan trials, and a lapsed trial pauses the subscription into read-only.
+
+- [x] **V37** `org_subscription.trial_ends_at` + `PAUSED` status (no new table); partial index over
+      live TRIALING rows for the expiry scan
+- [x] Start a `PRO`/`ENTERPRISE` trial (`POST /admin/orgs/{id}/subscription/trial`, platform-admin,
+      audited; also the `Subscriptions.startTrial` port) — full access during; FREE → 422
+- [x] `TrialExpiryJob` (hourly, ShedLock, idempotent) PAUSES a lapsed trial, counts
+      `smsone.subscription.trial_expired`, publishes `SubscriptionChanged(PAUSED)` → webhook
+- [x] `SubscriptionAccessFilter` (**order 5**): a PAUSED org is READ-ONLY — org-scoped writes → **402
+      `SUBSCRIPTION_PAUSED`**, reads pass, `/billing/**` is the pay-to-recover hatch; assign/payment
+      lifts the pause and clears the trial
+- [x] **Gate:** SubscriptionTrialTest — trial grants access → expiry pauses → writes 402 / reads 200
+      → assign resumes; FREE refused. New `ErrorCode.SUBSCRIPTION_PAUSED` (additive). Next free **V38**
+
 ## P7 — Maintenance windows ✅ (2026-08-01)
 
 Slice 7 of [PLATFORM_EXPANSION_PLAN.md](PLATFORM_EXPANSION_PLAN.md); gates on nothing.

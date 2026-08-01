@@ -172,6 +172,23 @@ GET /api/v1/orgs/{orgId}/subscription        # the tenant's own view (org:read)
   "detail":"Your organization's plan allows 25 for 'members.max' and that limit is reached. Upgrade the plan to add more."}]}</code></pre>
 <p>A plan change bites the <em>next</em> request (cache evicted through <code>SubscriptionChanged</code>) and fans out
 the <code>org.subscription_changed</code> webhook.</p>
+<h3>Trials &amp; pause-to-read-only</h3>
+<pre><code>POST /api/v1/admin/orgs/{orgId}/subscription/trial   # platform-admin
+{"plan":"PRO","days":14}          # → 201 status:TRIALING, trialEndsAt set; FREE → 422
+
+# During the trial the org has FULL access. When it lapses unpaid, the hourly job PAUSES it:
+GET /api/v1/orgs/{orgId}/subscription    # → status:"PAUSED"
+
+# A PAUSED org is READ-ONLY — org-scoped writes are refused, reads still pass:
+POST /api/v1/orgs/{orgId}/anything       # → 402 {"errors":[{"code":"SUBSCRIPTION_PAUSED", ...}]}
+GET  /api/v1/orgs/{orgId}/anything       # → 200
+
+# Recover: the org's own /billing surface stays open (add a payment method), or the platform
+# (re)assigns a plan — either lifts the pause and clears the trial.
+PUT /api/v1/admin/orgs/{orgId}/subscription   {"plan":"PRO"}   # → status:"ACTIVE", writes flow again</code></pre>
+<p class="mut">Only <code>PAUSED</code> is read-only. <code>TRIALING</code> and <code>ACTIVE</code> have full
+access; <code>PAST_DUE</code> (a payment slipped) keeps entitlements as a grace — it is a billing standing,
+not a lockout.</p>
 
 <h2 id="billing">9 · Billing (Kill Bill)</h2>
 <p>Kill Bill (<code>:8082</code>, Kaui UI <code>:9095</code>) is the billing system of record; entitlements above stay

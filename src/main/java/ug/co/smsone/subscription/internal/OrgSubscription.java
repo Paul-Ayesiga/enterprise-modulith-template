@@ -18,7 +18,7 @@ import ug.co.smsone.shared.persistence.SoftDeletableEntity;
 @SQLRestriction("deleted_at is null")
 class OrgSubscription extends SoftDeletableEntity {
 
-    enum Status { ACTIVE, TRIALING, PAST_DUE, CANCELLED }
+    enum Status { ACTIVE, TRIALING, PAST_DUE, CANCELLED, PAUSED }
 
     @Column(name = "org_id", nullable = false, updatable = false)
     private UUID orgId;
@@ -33,6 +33,10 @@ class OrgSubscription extends SoftDeletableEntity {
     @Column(name = "current_period_end")
     private Instant currentPeriodEnd;
 
+    /** When a TRIALING trial lapses; the expiry job pauses the subscription past this instant. */
+    @Column(name = "trial_ends_at")
+    private Instant trialEndsAt;
+
     protected OrgSubscription() {
         // JPA
     }
@@ -45,13 +49,39 @@ class OrgSubscription extends SoftDeletableEntity {
         return subscription;
     }
 
+    /** A fresh subscription that starts life as a paid-plan trial ending at {@code trialEndsAt}. */
+    static OrgSubscription trial(UUID orgId, UUID planId, Instant trialEndsAt) {
+        OrgSubscription subscription = new OrgSubscription();
+        subscription.orgId = orgId;
+        subscription.planId = planId;
+        subscription.status = Status.TRIALING;
+        subscription.trialEndsAt = trialEndsAt;
+        return subscription;
+    }
+
     void changePlan(UUID newPlanId) {
         this.planId = newPlanId;
         this.status = Status.ACTIVE; // a fresh assignment always restores good standing
+        this.trialEndsAt = null;     // ...and ends any trial: this is now a real, paid plan
+    }
+
+    /** Put an existing subscription onto a paid-plan trial (a restart lands here too). */
+    void startTrial(UUID trialPlanId, Instant endsAt) {
+        this.planId = trialPlanId;
+        this.status = Status.TRIALING;
+        this.trialEndsAt = endsAt;
+    }
+
+    /** The trial lapsed unpaid: read-only until a plan is assigned or a payment lands. */
+    void pause() {
+        this.status = Status.PAUSED;
     }
 
     void markStatus(Status newStatus) {
         this.status = newStatus;
+        if (newStatus == Status.ACTIVE) {
+            this.trialEndsAt = null; // a payment/conversion clears the trial and un-pauses
+        }
     }
 
     UUID getOrgId() {
@@ -68,5 +98,9 @@ class OrgSubscription extends SoftDeletableEntity {
 
     Instant getCurrentPeriodEnd() {
         return currentPeriodEnd;
+    }
+
+    Instant getTrialEndsAt() {
+        return trialEndsAt;
     }
 }

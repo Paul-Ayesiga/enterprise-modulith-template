@@ -1604,7 +1604,8 @@ create-if-absent), NOT soft-deletable. `plan_entitlement` is an `@ElementCollect
 numeric cap, absent key = feature-off / unlimited — so ENTERPRISE carries no limit rows.
 
 **`org_subscription`** — one live row per org (partial unique on `org_id`), soft-deletable
-(eleventh in `PURGE_ORDER`); `plan_id` FK intra-module; status `ACTIVE|TRIALING|PAST_DUE|CANCELLED`;
+(eleventh in `PURGE_ORDER`); `plan_id` FK intra-module; status
+`ACTIVE|TRIALING|PAST_DUE|CANCELLED|PAUSED`; `trial_ends_at` (V37) is set while `TRIALING`;
 no row at all = the seeded FREE plan. Assigning a plan is a platform act
 (`PUT /api/v1/admin/orgs/{id}/subscription`), audited, and publishes `SubscriptionChanged`
 explicitly — the `org-entitlements` cache evicts so a DOWNGRADE bites the very next gate check.
@@ -1612,6 +1613,19 @@ Consumers gate through the `subscription.Entitlements` port: `members.max` at in
 `webhooks.max` at subscription create, `exchange.enabled` + `exchange.schedules.max` at exchange
 submit/schedule. Payment processing is out of scope by design — this module is the entitlement
 authority; a billing integration drives the same admin endpoint.
+
+**Trial mode + pause-to-read-only (V37).** A paid plan (PRO/ENTERPRISE) can be started as a
+`TRIALING` trial with `trial_ends_at` — full access throughout — via
+`POST /api/v1/admin/orgs/{id}/subscription/trial` (`platform-admin`, audited) or the
+`Subscriptions.startTrial` port (e.g. a Kill Bill trial phase). FREE has nothing to trial (422).
+The hourly `TrialExpiryJob` (ShedLock `subscription-trial-expiry`, idempotent — a paused row is no
+longer `TRIALING`) flips a lapsed trial to `PAUSED`, counts `smsone.subscription.trial_expired`,
+and publishes `SubscriptionChanged(PAUSED)` (fanned out as `org.subscription_changed`). A `PAUSED`
+org is READ-ONLY: `SubscriptionAccessFilter` (**order 5**, after maintenance's 4) answers
+org-scoped WRITES with **402 Payment Required** (`SUBSCRIPTION_PAUSED`) while reads pass; the org's
+own `/billing/**` surface is the recovery hatch, so a paused tenant can still add a payment method.
+Assigning a plan — or a payment landing (`markStatus(ACTIVE)`) — clears `trial_ends_at` and lifts
+the pause. `PAST_DUE` stays a billing-side standing, not a lockout.
 
 ### 4.14 Billing module
 

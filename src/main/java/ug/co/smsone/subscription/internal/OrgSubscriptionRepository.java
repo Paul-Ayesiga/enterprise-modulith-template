@@ -1,10 +1,21 @@
 package ug.co.smsone.subscription.internal;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 interface OrgSubscriptionRepository extends JpaRepository<OrgSubscription, UUID> {
 
     Optional<OrgSubscription> findByOrgId(UUID orgId);
+
+    /** Live TRIALING subscriptions whose trial has lapsed (index-backed) — the expiry scan. */
+    List<OrgSubscription> findByStatusAndTrialEndsAtBefore(OrgSubscription.Status status, Instant cutoff);
+
+    /** Just the standing for an org, for the read-only gate — no entity hydration on the hot path. */
+    @Query("select s.status from OrgSubscription s where s.orgId = :orgId")
+    Optional<OrgSubscription.Status> statusOf(@Param("orgId") UUID orgId);
 }

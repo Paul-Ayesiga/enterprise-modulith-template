@@ -8,7 +8,9 @@
 * `u.c.s.s.Entitlements` (via `u.c.s.s.internal.EntitlementsImpl`)
 * `u.c.s.s.Subscriptions` (via `u.c.s.s.internal.SubscriptionService`)
 |Bean references
-|* `u.c.s.s.audit.AuditLog` (in Shared Kernel)
+|* `u.c.s.s.security.CurrentUserProvider` (in Shared Kernel)
+* `u.c.s.s.web.EnvelopeErrorWriter` (in Shared Kernel)
+* `u.c.s.s.audit.AuditLog` (in Shared Kernel)
 |Events listened to
 |* `u.c.s.s.SubscriptionChanged` (async) 
 |===

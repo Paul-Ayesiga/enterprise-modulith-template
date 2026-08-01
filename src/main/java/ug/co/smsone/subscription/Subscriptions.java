@@ -14,6 +14,13 @@ public interface Subscriptions {
     void assignPlan(UUID organizationId, String planCode);
 
     /**
+     * Start (or restart) a paid-plan trial of {@code trialDays} (&le; 0 means the default): the org
+     * runs on {@code planCode} with full access until it lapses, then the expiry job PAUSES it
+     * (read-only). Rejects FREE. Lands on the same audited path as the admin trial endpoint.
+     */
+    void startTrial(UUID organizationId, String planCode, int trialDays);
+
+    /**
      * Flip the standing without touching the plan — {@code ACTIVE} | {@code PAST_DUE} |
      * {@code CANCELLED} (payment outcomes). Unknown org: a no-op with a log line, not an error —
      * billing events can race provisioning.

@@ -1,7 +1,11 @@
 package ug.co.smsone.subscription.internal;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.context.ApplicationEventPublisher;
@@ -9,6 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ug.co.smsone.shared.audit.AuditLog;
 import ug.co.smsone.shared.error.NotFoundException;
+import ug.co.smsone.shared.error.ValidationException;
 import ug.co.smsone.subscription.SubscriptionChanged;
 
 /**
@@ -19,23 +24,31 @@ import ug.co.smsone.subscription.SubscriptionChanged;
 @Service
 class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
 
+    /** Default trial length when the caller does not specify one. */
+    static final int DEFAULT_TRIAL_DAYS = 14;
+
     private final OrgSubscriptionRepository subscriptions;
     private final PlanRepository plans;
     private final EntitlementResolver resolver;
     private final ApplicationEventPublisher events;
     private final AuditLog auditLog;
+    private final MeterRegistry meters;
+    private final Clock clock;
 
     SubscriptionService(OrgSubscriptionRepository subscriptions, PlanRepository plans,
-            EntitlementResolver resolver, ApplicationEventPublisher events, AuditLog auditLog) {
+            EntitlementResolver resolver, ApplicationEventPublisher events, AuditLog auditLog,
+            MeterRegistry meters, Clock clock) {
         this.subscriptions = subscriptions;
         this.plans = plans;
         this.resolver = resolver;
         this.events = events;
         this.auditLog = auditLog;
+        this.meters = meters;
+        this.clock = clock;
     }
 
     record SubscriptionView(UUID orgId, String planCode, String planName, String status,
-            Instant currentPeriodEnd, Map<String, Long> entitlements) {
+            Instant currentPeriodEnd, Instant trialEndsAt, Map<String, Long> entitlements) {
     }
 
     @Transactional(readOnly = true)
@@ -51,7 +64,8 @@ class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
         return new SubscriptionView(orgId, plan.getCode(), plan.getName(),
                 subscription == null ? OrgSubscription.Status.ACTIVE.name()
                         : subscription.getStatus().name(),
-                subscription == null ? null : subscription.getCurrentPeriodEnd(), entitlements);
+                subscription == null ? null : subscription.getCurrentPeriodEnd(),
+                subscription == null ? null : subscription.getTrialEndsAt(), entitlements);
     }
 
     /** The port's void form — billing drives the SAME audited path the admin surface returns from. */
@@ -59,6 +73,13 @@ class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
     @Transactional
     public void assignPlan(UUID organizationId, String planCode) {
         assign(organizationId, planCode);
+    }
+
+    /** Port form — billing (e.g. a Kill Bill trial phase) can drive a trial through the audited path. */
+    @Override
+    @Transactional
+    public void startTrial(UUID organizationId, String planCode, int trialDays) {
+        beginTrial(organizationId, planCode, trialDays);
     }
 
     @Transactional
@@ -81,6 +102,60 @@ class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
         auditLog.record("subscription.plan_assigned", orgId, orgId.toString(),
                 previous == null ? null : "plan=" + previous, "plan=" + plan.getCode());
         return view(orgId);
+    }
+
+    /**
+     * Start (or restart) a paid-plan trial: the org runs on {@code planCode} as {@code TRIALING}
+     * for {@code trialDays} (default {@value #DEFAULT_TRIAL_DAYS}) with full access, then the
+     * expiry job pauses it. FREE has nothing to trial and is refused (422).
+     */
+    @Transactional
+    SubscriptionView beginTrial(UUID orgId, String planCode, int trialDays) {
+        String normalized = planCode == null ? "" : planCode.trim().toUpperCase();
+        Plan plan = plans.findByCode(normalized)
+                .orElseThrow(() -> new NotFoundException("No plan named '" + normalized + "'."));
+        if ("FREE".equals(plan.getCode())) {
+            throw new ValidationException("The FREE plan has nothing to trial — trials are for paid plans.");
+        }
+        int days = trialDays <= 0 ? DEFAULT_TRIAL_DAYS : trialDays;
+        Instant endsAt = clock.instant().plus(Duration.ofDays(days));
+        String previous = resolver.planOf(orgId).map(Plan::getCode).orElse(null);
+        OrgSubscription subscription = subscriptions.findByOrgId(orgId)
+                .map(existing -> {
+                    existing.startTrial(plan.getId(), endsAt);
+                    return existing;
+                })
+                .orElseGet(() -> OrgSubscription.trial(orgId, plan.getId(), endsAt));
+        subscriptions.save(subscription);
+        events.publishEvent(new SubscriptionChanged(orgId, plan.getCode(),
+                OrgSubscription.Status.TRIALING.name(), clock.instant()));
+        auditLog.record("subscription.trial_started", orgId, orgId.toString(),
+                previous == null ? null : "plan=" + previous,
+                "plan=" + plan.getCode() + " trialEndsAt=" + endsAt);
+        return view(orgId);
+    }
+
+    /**
+     * Pause every trial that has lapsed — the org goes READ-ONLY (writes answer 402) until a plan
+     * is assigned or a payment lands. Idempotent: a paused row is no longer TRIALING, so a re-run
+     * skips it. Returns how many were paused. Driven by {@link TrialExpiryJob}.
+     */
+    @Transactional
+    public int expireTrials() {
+        List<OrgSubscription> lapsed = subscriptions
+                .findByStatusAndTrialEndsAtBefore(OrgSubscription.Status.TRIALING, clock.instant());
+        for (OrgSubscription subscription : lapsed) {
+            subscription.pause();
+            subscriptions.save(subscription);
+            Plan plan = plans.findById(subscription.getPlanId()).orElse(null);
+            events.publishEvent(new SubscriptionChanged(subscription.getOrgId(),
+                    plan == null ? null : plan.getCode(),
+                    OrgSubscription.Status.PAUSED.name(), clock.instant()));
+            auditLog.record("subscription.trial_expired", subscription.getOrgId(),
+                    subscription.getOrgId().toString(), "status=TRIALING", "status=PAUSED");
+            meters.counter("smsone.subscription.trial_expired").increment();
+        }
+        return lapsed.size();
     }
 
     java.util.List<Plan> catalog() {
