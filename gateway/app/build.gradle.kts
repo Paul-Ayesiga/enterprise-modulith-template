@@ -22,6 +22,8 @@ dependencies {
 
     // The runtime-agnostic gateway core (models + ports); the app is the SCG runtime that executes it.
     implementation(project(":gateway:core"))
+    // Edge security (JWT/OIDC, coarse authZ, CORS) — component-scanned into the app context.
+    implementation(project(":gateway:security"))
     // Reactive Spring Cloud Gateway (WebFlux) — the edge runtime.
     implementation(libs.gateway.webflux)
     // Health + metrics for the gateway itself.
@@ -29,6 +31,7 @@ dependencies {
 
     testImplementation(libs.boot.test)
     testImplementation("io.projectreactor:reactor-test")
+    testImplementation("org.springframework.security:spring-security-oauth2-jose") // brings Nimbus JOSE — mint JWTs + JWKS in SecurityTest
     testRuntimeOnly("org.junit.platform:junit-platform-launcher") // Gradle 9 + JUnit 5 needs it explicit
 }
 

@@ -73,6 +73,17 @@ gateway in front of the real modulith and a smoke script drives `/api/v1/**` end
 
 ## Phase 2 — Security
 
+**Status: 2a shipped 2026-08-02 (JWT/OIDC + coarse authZ + CORS + headers); 2b next (API-key
+introspection).** Delivered the `gateway:security` subproject — a reactive OAuth2 resource server that
+validates a bearer JWT against the IdP's JWKS (no platform call; invalid/expired/tampered → 401 in the
+gateway envelope), and an `EdgeAuthorizationFilter` that applies each route's coarse `AuthPolicy`
+(authenticated required, every required scope present, tenant-in-path == token tenant), stamps
+`X-Auth-Subject`/`X-Tenant-Id` downstream, and forwards the bearer (services keep their fine-grained
+checks — ADR 0007 §8). CORS is centralized at the edge and security headers are added. `SecurityTest`
+(11 tests, controlled in-test JWKS) covers valid/invalid/expired/tampered tokens, missing-scope and
+wrong-tenant 403s, CORS preflight, and headers. **2b** (the remaining deliverables below): API-key +
+internal-token `AuthNProvider`s via the modulith key-introspection endpoint — the first platform adapter.
+
 **Focus.** The gateway becomes the platform's edge security layer.
 
 **Deliverables** — JWT/OIDC validation against **Keycloak JWKS** (cached, no platform call);

@@ -22,10 +22,18 @@ public record GatewayProperties(List<ServiceProps> services, List<RouteProps> ro
     public record ServiceProps(String id, URI uri, String healthPath) {
     }
 
-    /** A route: which {@code predicates} match it and which {@code serviceId} it targets. */
-    public record RouteProps(String id, int order, String serviceId, List<PredicateProps> predicates) {
+    /** A route: which {@code predicates} match it, which {@code serviceId} it targets, its {@code auth}. */
+    public record RouteProps(String id, int order, String serviceId, List<PredicateProps> predicates,
+            AuthProps auth) {
         public RouteProps {
             predicates = predicates == null ? List.of() : predicates;
+        }
+    }
+
+    /** A route's coarse edge auth policy: require a token, require scopes, enforce the path tenant. */
+    public record AuthProps(boolean authenticated, List<String> scopes, String tenantPathTemplate) {
+        public AuthProps {
+            scopes = scopes == null ? List.of() : scopes;
         }
     }
 

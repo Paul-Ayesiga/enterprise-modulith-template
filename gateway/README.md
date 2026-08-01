@@ -10,7 +10,8 @@ The platform's reactive edge — a separate Spring Cloud Gateway deployable, bui
 |---|---|---|
 | `gateway:core` | Runtime- and platform-agnostic: route/service model, ports (`RouteSource`, `ServiceRegistry`), `GatewayAttributes`, error codes. No Spring Cloud Gateway, no platform imports (enforced by `GatewayCoreArchitectureTest`). | Phase 1 |
 | `gateway:app` | The bootable Spring Cloud Gateway runtime: binds `gateway.*` config → the core model → SCG routes; request-id + access-log filters; the error envelope. | Phase 1 |
-| `gateway:security` · `platform-adapter` · `admin` · `starter` | Land with their phases (Security, Admin, …) — see the plan. | later |
+| `gateway:security` | Reactive OAuth2 resource server (JWT/JWKS), the coarse-authZ `EdgeAuthorizationFilter`, CORS, security headers. Component-scanned into the app. | Phase 2a |
+| `gateway:platform-adapter` · `admin` · `starter` | Land with their phases (2b, Admin, …) — see the plan. | later |
 
 ## Run it (dev)
 
@@ -42,9 +43,32 @@ gateway:
           args: [/api/v1/**]
 ```
 
+## Edge security (`gateway.security.*`, Phase 2a)
+
+The gateway validates a bearer JWT against the IdP's JWKS (no platform call) and enforces each route's
+**coarse** policy; services keep their own fine-grained checks (ADR 0007 §8).
+
+```yaml
+gateway:
+  security:
+    jwk-set-uri: http://localhost:8081/realms/smsone/protocol/openid-connect/certs
+    tenant-claim: tenant            # which JWT claim carries the tenant
+    cors:
+      allowed-origins: [https://app.example.com]   # empty = no cross-origin
+  routes:
+    - id: modulith-api
+      service-id: modulith
+      predicates: [{kind: PATH, args: [/api/v1/**]}]
+      auth:
+        authenticated: true                         # a valid token is required (else 401)
+        scopes: [api]                               # every listed scope must be present (else 403)
+        tenant-path-template: /api/v1/orgs/{tenant}/**   # path tenant must equal the token's (else 403)
+```
+
+On success the gateway stamps `X-Auth-Subject` and `X-Tenant-Id` downstream and forwards the bearer.
+
 ## Phase 1 (shipped)
 
 Config-driven routing to a backend by any predicate kind; a `NO_ROUTE` 404 envelope for no match;
 request-id minted / honored / propagated / echoed; the gateway's own `/actuator/health`. Gated by
-`RoutingTest` against a real backend stub. The security / traffic / observability / admin capabilities
-arrive in later phases (see the plan); backend health-gating lands with load-balancing (Phase 3).
+`RoutingTest` against a real backend stub. Backend health-gating lands with load-balancing (Phase 3).

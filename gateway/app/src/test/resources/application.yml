@@ -2,12 +2,18 @@ spring:
   application:
     name: gateway-test
 
-# One backend (its uri is overridden per-test with the stub's random port), and one route per
-# predicate kind so RoutingTest can prove each maps onto the runtime.
+# One backend stub (its uri + the JWKS uri are set per-run to the test server's random port), plus
+# routes for the predicate tests (Phase 1) and the auth-policy tests (Phase 2).
 gateway:
+  security:
+    jwk-set-uri: "${jwks.uri:http://localhost:1/jwks}"   # SecurityTest points this at the stub's JWKS
+    tenant-claim: tenant
+    cors:
+      allowed-origins:
+        - http://example.com
   services:
     - id: backend
-      uri: "${backend.uri:http://localhost:1}"   # backend.uri is set per-run by @DynamicPropertySource
+      uri: "${backend.uri:http://localhost:1}"
       health-path: /health
   routes:
     - id: by-path
@@ -40,3 +46,35 @@ gateway:
       predicates:
         - kind: QUERY
           args: [flag, "on"]
+    - id: sec-open
+      order: 10
+      service-id: backend
+      predicates:
+        - kind: PATH
+          args: [/open/**]
+    - id: sec-authenticated
+      order: 11
+      service-id: backend
+      predicates:
+        - kind: PATH
+          args: [/secured/**]
+      auth:
+        authenticated: true
+    - id: sec-scoped
+      order: 12
+      service-id: backend
+      predicates:
+        - kind: PATH
+          args: [/scoped/**]
+      auth:
+        authenticated: true
+        scopes: [api]
+    - id: sec-tenant
+      order: 13
+      service-id: backend
+      predicates:
+        - kind: PATH
+          args: [/tenant/orgs/**]
+      auth:
+        authenticated: true
+        tenant-path-template: /tenant/orgs/{tenant}/**

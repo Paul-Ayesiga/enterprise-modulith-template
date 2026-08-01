@@ -14,6 +14,11 @@ management:
 # The route/service catalog (config-driven). Today the gateway fronts one backend — the modulith;
 # add services and routes here as the platform splits into more.
 gateway:
+  # Edge security: validate bearer JWTs against the IdP's JWKS (no platform call), and which claim
+  # carries the tenant. CORS is off by default — set gateway.security.cors.allowed-origins per deploy.
+  security:
+    jwk-set-uri: ${KEYCLOAK_JWKS:http://localhost:8081/realms/smsone/protocol/openid-connect/certs}
+    tenant-claim: ${GATEWAY_TENANT_CLAIM:tenant}
   services:
     - id: modulith
       uri: ${MODULITH_URI:http://localhost:8080}
@@ -26,6 +31,9 @@ gateway:
         - kind: PATH
           args:
             - /api/v1/**
+      # The API requires a valid token at the edge; the modulith still runs its own fine-grained checks.
+      auth:
+        authenticated: true
 
 logging:
   level:
