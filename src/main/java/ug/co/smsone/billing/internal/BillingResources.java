@@ -8,7 +8,7 @@ import ug.co.smsone.shared.web.ResourceObject;
 final class BillingResources {
 
     record BillingAttributes(String kbAccountId, BigDecimal balance, String currency,
-            List<SubscriptionLine> subscriptions) {
+            List<SubscriptionLine> subscriptions, List<String> paymentMethods) {
     }
 
     record SubscriptionLine(String planName, String state) {
@@ -26,7 +26,8 @@ final class BillingResources {
                 new BillingAttributes(view.kbAccountId().toString(), view.balance(), view.currency(),
                         view.subscriptions().stream()
                                 .map(sub -> new SubscriptionLine(sub.planName(), sub.state()))
-                                .toList()));
+                                .toList(),
+                        view.paymentMethods()));
     }
 
     static List<ResourceObject> toInvoiceResources(List<KillBillGateway.KbInvoice> invoices) {

@@ -342,6 +342,30 @@ Slice 3 of [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md).
 - [x] **Gate:** full `./gradlew test` green (13 modules); docs regenerated; DATA_MODEL §4.11 /
       SRS §3.17 + catalogue + traceability updated
 
+## Odds-and-ends + API guide + expansion plan + P1 profile ✅ (2026-08-01)
+
+- [x] `SettingChanged` gained `occurredAt` (the last event without it — EVENTS.md rule now uniform)
+- [x] Webhook `events` typed as an ENUM in the OpenAPI spec via a module-local `OpenApiCustomizer`
+      reading `WebhookEventType` itself (can never drift; no hardcoded `allowableValues`)
+- [x] Billing view lists the account's payment METHODS (read-only — adding one stays Kaui's /
+      a KB payment plugin's job)
+- [x] **docs/api-guide.html** — self-contained tester guide: auth + axes + org switching, envelope,
+      localized errors, cursors, rate limits, idempotency, and per-surface walkthroughs with
+      sample data (tenant lifecycle, members + escalation 403, plans/entitlements, billing,
+      documents, search, the full exchange import walkthrough with error report, webhook
+      signature verification, audit, impersonation) + error-code table
+- [x] **docs/PLATFORM_EXPANSION_PLAN.md** — the strategy for the ten remaining workstreams
+      (P1 profile → P2 api-keys → P3 groups → P4 devices+policies → P5 integration hub →
+      P6 compliance → P7 maintenance → P8 support), models + endpoints + gates + V-numbers
+- [x] **P1 shipped — profile module (V28)**: `user_profile` (soft-deletable, THIRTEENTH) +
+      contacts as element rows + `user_preference` composite-PK pairs; get-or-default profile,
+      additive preferences (null deletes), avatar via the files port (image/* 2 MB,
+      old-object-deleted-last), read-only linked accounts (`UserDirectory.linkedAccounts` over
+      Keycloak federated identities), `GET /api/v1/me/organizations` in the ORGANIZATION module
+      (dual-member switch list; the switch is a token act), support profile read.
+      OpenApiConfig: `Shared · My profile` tag + three map entries (flagged) —
+      `ProfileApiTest` (4 tests)
+
 ## Billing & payments — Kill Bill ✅ (2026-08-01)
 
 - [x] **V27** `billing_account` — the org ↔ Kill Bill linkage projection (soft-deletable, TWELFTH;

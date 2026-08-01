@@ -139,7 +139,7 @@ step — *which is exactly why the logical boundaries are enforced now*.
 
 ### 2.2 Module map
 
-Sixteen modules. Verified from the `package-info.java` files and `docs/modulith/components.puml`.
+Seventeen modules. Verified from the `package-info.java` files and `docs/modulith/components.puml`.
 
 | Module | Display name | Owns (tables) | Public API package contains |
 |---|---|---|---|
@@ -152,6 +152,7 @@ Sixteen modules. Verified from the `package-info.java` files and `docs/modulith/
 | `document` | Document | `document` | `DocumentRegistered` (the `Documents` port + `NewDocument` live in `shared.document` — the `AuditLog` pattern, implemented here, so producers like `exchange` need no compile edge into this module) |
 | `subscription` | Subscription | `plan`, `plan_entitlement`, `org_subscription` | `Entitlements` + `Subscriptions` ports, `EntitlementKeys`, `SubscriptionChanged` |
 | `billing` | Billing | `billing_account` | (none — Kill Bill integration; drives the `Subscriptions` port) |
+| `profile` | Profile | `user_profile`, `user_contact`, `user_preference` | (none — self-service surface) |
 | `exchange` | Exchange | `exchange_job`, `exchange_job_error`, `exchange_schedule` | `ExchangeHandler` (SPI), `ExchangeContext`, `ImportOutcome`, `InvalidRecordException`, `RecordWriter` |
 | `audit` | Audit | `audit_log` | (none — consumed through the `shared.audit.AuditLog` port) |
 | `notification` | Notification | `in_app_notification`, `notification_delivery` | `Notifications`, `NotificationChannelSender` (SPI), `NotificationChannel`, `NotificationMessage`, `NotificationRequest`, `Recipient` |
@@ -160,7 +161,7 @@ Sixteen modules. Verified from the `package-info.java` files and `docs/modulith/
 | `analytics` | Analytics | none in Postgres (DuckDB marts + Parquet) | `AnalyticsEngine`, `AnalyticsException` |
 | `scheduler` | Scheduler | none (consumes `shedlock`) | (none) |
 
-Twenty-five of the schema's twenty-eight tables appear above. The remaining three are **framework-owned and
+Twenty-eight of the schema's thirty-one tables appear above. The remaining three are **framework-owned and
 belong to no module**: `event_publication` (Spring Modulith's JDBC registry, `V2`), `shedlock`
 (ShedLock, `V4`) and `flyway_schema_history` (created by Flyway itself, in no migration). They are
 read and written by libraries, not by application code, and `V17` deliberately leaves all three out of
@@ -241,7 +242,7 @@ as they start.
 | Constraint | Source | Consequence |
 |---|---|---|
 | Flyway owns the schema; `spring.jpa.hibernate.ddl-auto: validate` | `application.yaml:27-29` | No DDL outside `db/migration`. There is no `schema.sql` and no test-only DDL anywhere. |
-| Migrations are forward-only and numbered; **V1–V27 exist, next free is V28** | `db/migration/`, `AGENTS.md` §4.5 | V21–V24 are localization/search/document/exchange; V25 completes the exchange guidelines (templates, schedules, org_id tightened NOT NULL); V26 is subscriptions; V27 the Kill Bill billing linkage. Any plan citing an old "next free" number is stale — `AGENTS.md` §4.5 is kept current. |
+| Migrations are forward-only and numbered; **V1–V28 exist, next free is V29** | `db/migration/`, `AGENTS.md` §4.5 | V21–V24 are localization/search/document/exchange; V25 completes the exchange guidelines (templates, schedules, org_id tightened NOT NULL); V26 is subscriptions; V27 the Kill Bill billing linkage; V28 user profiles. Any plan citing an old "next free" number is stale — `AGENTS.md` §4.5 is kept current. |
 | No cross-module foreign keys | `AGENTS.md` §1 | Referential integrity across modules is an application concern; `SoftDeletePurgeJob` states the consequence for purge ordering (`SoftDeletePurgeJob.java:49-53`). |
 | `spring.jpa.open-in-view: false` | `application.yaml:30` | No lazy loading past the service boundary. |
 | No Lombok; records + constructor injection | ADR 0001, `ArchitectureTests.noFieldInjection` | Enforced by ArchUnit. |
@@ -858,6 +859,18 @@ authority. The system SHALL:
 | FR-BIL-5 | expose the money on both axes: platform provisions/inspects/subscribes/lists invoices (`/api/v1/admin/orgs/{id}/billing/**`), the tenant reads its own invoices (`GET /api/v1/orgs/{orgId}/billing/invoices`, `org:read`, 404 until provisioned) — all proxied from Kill Bill, nothing financial stored locally | `{AdminBillingController,OrgBillingController}` | `BillingApiTest.invoicesProxyForBothSurfacesAndUnprovisionedIs404` |
 | FR-BIL-6 | speak to a REAL Kill Bill: tenant + simple-plan dev bootstrap, account/subscription/invoice round trips over the wire | `KillBillGateway`, `BillingBootstrap` | `test:billing/internal/KillBillIntegrationTest` (real killbill + mariadb containers) |
 
+### 3.21 User profiles, preferences, avatars, linked accounts, org switching (FR-PRF)
+
+The system SHALL:
+
+| ID | Requirement | Where | Verified by |
+|---|---|---|---|
+| FR-PRF-1 | serve the caller's own profile get-or-default (a never-saved profile answers empty, not 404), whole-document upsert with validated contacts (EMAIL/PHONE/OTHER), and a support-only cross-user read | `main:profile/internal/{ProfileService,MeProfileController,AdminProfileController}` | `test:profile/internal/ProfileApiTest` |
+| FR-PRF-2 | store per-user preferences as small key/value pairs with ADDITIVE puts — only sent keys change; a null value deletes its key | `ProfileService.putPreferences` | same |
+| FR-PRF-3 | manage avatars behind the files port (image/*, 2 MB cap, 302-presigned download): new object first, row second, OLD object deleted last — any failure leaves a working avatar | `ProfileService.changeAvatar` | same (replace deletes the old object) |
+| FR-PRF-4 | list the caller's linked identity providers read-only (Keycloak federated identities) — linking is the IdP console's act, never this API's | `identity/UserDirectory.linkedAccounts`, `MeProfileController` | same |
+| FR-PRF-5 | list every organization the caller belongs to with their role in each (`GET /api/v1/me/organizations`) — the dual-member switch list; the SWITCH itself is a token re-request scoped via the Keycloak `organization` claim, never a client-asserted value | `organization/internal/OrgMembershipsController` | `ProfileApiTest.aDualMemberSeesBothOrganizationsWithTheirRoleInEach` |
+
 ## 4. External interface requirements
 
 ### 4.1 The response envelope
@@ -1088,6 +1101,12 @@ no `@PreAuthorize`. Every endpoint can additionally return 401, 403 `ACCOUNT_NOT
 | POST | `/api/v1/admin/orgs/{orgId}/billing/subscription` | `platform-admin` | **202** (KB subscription + immediate reconcile) | 404, 422 unbillable plan |
 | GET | `/api/v1/admin/orgs/{orgId}/billing/invoices` | `platform-support` | 200 (list, un-paged, proxied) | 404 |
 | GET | `/api/v1/orgs/{orgId}/billing/invoices` | `org:read` | 200 (list, un-paged, proxied) | 404 not provisioned |
+| GET / PUT | `/api/v1/me/profile` | authenticated | 200 (get-or-default / upsert with contacts) | 422 |
+| GET / PUT | `/api/v1/me/preferences` | authenticated | 200 (additive; null deletes a key) | 422 |
+| POST / GET / DELETE | `/api/v1/me/avatar` | authenticated | **201** / **302** presigned / **204** | 404 none set, 422 not an image or >2 MB |
+| GET | `/api/v1/me/linked-accounts` | authenticated | 200 (read-only IdP links) | — |
+| GET | `/api/v1/me/organizations` | authenticated | 200 (memberships + role codes — the org-switch list) | — |
+| GET | `/api/v1/admin/users/{subject}/profile` | `platform-support` | 200 | — |
 | POST | `/api/v1/orgs/{orgId}/exchange/imports` (multipart `file` + `handler`, `format`) | `org:read` **plus the handler's import permission** (checked programmatically) | **202** | 403 missing handler permission, 404 unknown handler, 422 empty file / bad format |
 | POST | `/api/v1/orgs/{orgId}/exchange/exports` | `org:read` **plus the handler's export permission** | **202** | 403, 404, 422 |
 | GET | `/api/v1/orgs/{orgId}/exchange/jobs` | `org:read` | 200 (paged) | — |
@@ -1452,7 +1471,7 @@ Three structural facts worth stating here:
 - **Every column value is supplied by the application.** The only DB `DEFAULT` in the entire schema
   is `notification_delivery.attempts int not null default 0`. Primary keys are generated in Java
   (`@UuidGenerator`, or `UUID.randomUUID()` in the JDBC queues) — no `gen_random_uuid()` anywhere.
-- **Six foreign keys exist, all intra-module** (§2.2 — the three originals plus `exchange_job_error` (V24), `plan_entitlement` and `org_subscription` (V26)). Two are now largely dormant under soft
+- **Seven foreign keys exist, all intra-module** (§2.2 — the three originals plus `exchange_job_error` (V24), `plan_entitlement` and `org_subscription` (V26), and `user_contact` (V28)). Two are now largely dormant under soft
   delete: `webhook_delivery.subscription_id`'s cascade can only fire during the hard-delete purge,
   never during a user-facing delete, and `role_permission`'s cascade is precisely why role deletion
   bypasses `@SQLDelete` (FR-DLC-11).

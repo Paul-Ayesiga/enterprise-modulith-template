@@ -73,6 +73,7 @@ public class OpenApiConfig {
     private static final String TAG_PLATFORM_BILLING = AXIS_PLATFORM + AXIS_SEPARATOR + "Billing & plans";
     private static final String TAG_SHARED_EXCHANGE = AXIS_SHARED + AXIS_SEPARATOR + "Exchange catalog";
     private static final String TAG_SHARED_WEBHOOK_EVENTS = AXIS_SHARED + AXIS_SEPARATOR + "Webhook events";
+    private static final String TAG_SHARED_PROFILE = AXIS_SHARED + AXIS_SEPARATOR + "My profile";
     private static final String TAG_SHARED_ME = AXIS_SHARED + AXIS_SEPARATOR + "Me & notifications";
     private static final String TAG_SHARED_FILES = AXIS_SHARED + AXIS_SEPARATOR + "Files";
     private static final String TAG_SHARED_SETTINGS = AXIS_SHARED + AXIS_SEPARATOR + "Settings & flags";
@@ -110,6 +111,9 @@ public class OpenApiConfig {
             Map.entry("AdminBillingController", "Billing & plans"),
             Map.entry("OrgBillingController", "Billing"),
             Map.entry("WebhookEventTypesController", "Webhook events"),
+            Map.entry("MeProfileController", "My profile"),
+            Map.entry("OrgMembershipsController", "Me & notifications"),
+            Map.entry("AdminProfileController", "Users & impersonation"),
             Map.entry("MeController", "Me & notifications"),
             Map.entry("NotificationController", "Me & notifications"),
             Map.entry("FileController", "Files"),
@@ -284,6 +288,11 @@ public class OpenApiConfig {
                                 + "datasets can move, what each file must look like, which permissions "
                                 + "gate it. Readable by any authenticated caller; running one is "
                                 + TAG_ORG_EXCHANGE + "."),
+                        new Tag().name(TAG_SHARED_PROFILE).description(
+                                "The caller's own record — profile, contacts, preferences, avatar, "
+                                + "linked identity providers. No axis owns it: every row answers about "
+                                + "YOU, whichever axis you arrived from. Support's read-only view of a "
+                                + "user's profile is " + TAG_PLATFORM_USERS + "."),
                         new Tag().name(TAG_SHARED_WEBHOOK_EVENTS).description(
                                 "The subscribable webhook event vocabulary — the codes the subscription "
                                 + "endpoints' events array accepts, with what each means. Managing "

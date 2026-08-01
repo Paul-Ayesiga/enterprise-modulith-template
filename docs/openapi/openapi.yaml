@@ -105,6 +105,11 @@ tags:
   description: "The exchange handler catalogue and its downloadable templates — which\
     \ datasets can move, what each file must look like, which permissions gate it.\
     \ Readable by any authenticated caller; running one is Organization · Exchange."
+- name: Shared · My profile
+  description: "The caller's own record — profile, contacts, preferences, avatar,\
+    \ linked identity providers. No axis owns it: every row answers about YOU, whichever\
+    \ axis you arrived from. Support's read-only view of a user's profile is Platform\
+    \ · Users & impersonation."
 - name: Shared · Webhook events
   description: "The subscribable webhook event vocabulary — the codes the subscription\
     \ endpoints' events array accepts, with what each means. Managing subscriptions\
@@ -633,6 +638,166 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/me/profile:
+    get:
+      tags:
+      - Shared · My profile
+      summary: Read your profile
+      description: "A user who never saved one still HAS one — empty fields, no 404."
+      operationId: profile
+      parameters:
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+    put:
+      tags:
+      - Shared · My profile
+      summary: Update your profile
+      description: Whole-document upsert; `contacts` replaces the contact list (kind
+        EMAIL | PHONE | OTHER).
+      operationId: update_2
+      parameters:
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfilePayload"
+        required: true
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+  /api/v1/me/preferences:
+    get:
+      tags:
+      - Shared · My profile
+      summary: Read your preferences (small key/value pairs)
+      operationId: preferences
+      parameters:
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
+    put:
+      tags:
+      - Shared · My profile
+      summary: Update preferences additively
+      description: Only the sent keys change; a null value deletes its key.
+      operationId: putPreferences
+      parameters:
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties:
+                type: string
+        required: true
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
   /api/v1/feature-flags/{key}:
     get:
       tags:
@@ -1601,6 +1766,114 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/me/avatar:
+    get:
+      tags:
+      - Shared · My profile
+      summary: Download your avatar
+      description: 302 to a short-lived presigned URL.
+      operationId: avatar
+      parameters:
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+    post:
+      tags:
+      - Shared · My profile
+      summary: Upload your avatar
+      description: "Multipart `file`, image/*, 2 MB cap. Replaces any previous avatar."
+      operationId: avatar_1
+      parameters:
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+              required:
+              - file
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+    delete:
+      tags:
+      - Shared · My profile
+      summary: Remove your avatar
+      operationId: deleteAvatar
+      parameters:
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "204":
+          description: No Content
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
   /api/v1/files:
     post:
       tags:
@@ -1977,7 +2250,7 @@ paths:
       - Organization · Profile
       summary: Rename an organization
       description: '`name` is the only mutable attribute; the alias is fixed at creation.'
-      operationId: update_2
+      operationId: update_3
       parameters:
       - name: orgId
         in: path
@@ -2843,6 +3116,85 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/me/organizations:
+    get:
+      tags:
+      - Shared · Me & notifications
+      summary: List the organizations you belong to
+      description: "One row per ACTIVE membership, with your role there. Switching\
+        \ = requesting a token scoped to the chosen organization (the Keycloak `organization`\
+        \ claim); the current token's active org keeps governing until you do."
+      operationId: myOrganizations
+      parameters:
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceObject"
+  /api/v1/me/linked-accounts:
+    get:
+      tags:
+      - Shared · My profile
+      summary: List your linked identity providers
+      description: "Read-only Keycloak federated identities; linking happens in the\
+        \ IdP's own account console, never through this API."
+      operationId: linkedAccounts
+      parameters:
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceObject"
   /api/v1/files/{key}:
     get:
       tags:
@@ -3299,6 +3651,31 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/WindowedResultResourceObject"
+  /api/v1/admin/users/{subject}/profile:
+    get:
+      tags:
+      - Platform · Users & impersonation
+      summary: Read a user's profile as the platform
+      operationId: profile_1
+      parameters:
+      - name: subject
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/admin/search:
     get:
       tags:
@@ -3724,6 +4101,16 @@ components:
           type: array
           items:
             type: string
+            description: A subscribable event code — the vocabulary at GET /api/v1/webhooks/event-types
+            enum:
+            - org.member.added
+            - org.member.removed
+            - org.member.role_changed
+            - org.role.permissions_changed
+            - org.status_changed
+            - org.deleted
+            - org.subscription_changed
+            - org.exchange.job_completed
           minItems: 1
           uniqueItems: true
         status:
@@ -3757,6 +4144,63 @@ components:
           minLength: 1
       required:
       - roleCode
+    ContactPayload:
+      type: object
+      properties:
+        kind:
+          type: string
+        value:
+          type: string
+        label:
+          type: string
+        primary:
+          type: boolean
+    ProfilePayload:
+      type: object
+      properties:
+        displayName:
+          type: string
+        phone:
+          type: string
+        timezone:
+          type: string
+        locale:
+          type: string
+        contacts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContactPayload"
+    CurrentUser:
+      type: object
+      properties:
+        subject:
+          type: string
+        username:
+          type: string
+        email:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+          uniqueItems: true
+        activeOrgAlias:
+          type: string
+        activeOrgId:
+          type: string
+          format: uuid
+        impersonation:
+          $ref: "#/components/schemas/Impersonation"
+        impersonated:
+          type: boolean
+    Impersonation:
+      type: object
+      properties:
+        sessionId:
+          type: string
+          format: uuid
+        actorSubject:
+          type: string
     ToggleFeatureFlagRequest:
       type: object
       properties:
@@ -3805,6 +4249,16 @@ components:
           type: array
           items:
             type: string
+            description: A subscribable event code — the vocabulary at GET /api/v1/webhooks/event-types
+            enum:
+            - org.member.added
+            - org.member.removed
+            - org.member.role_changed
+            - org.role.permissions_changed
+            - org.status_changed
+            - org.deleted
+            - org.subscription_changed
+            - org.exchange.job_completed
           minItems: 1
           uniqueItems: true
       required:
@@ -3859,37 +4313,6 @@ components:
         format:
           type: string
         cron:
-          type: string
-    CurrentUser:
-      type: object
-      properties:
-        subject:
-          type: string
-        username:
-          type: string
-        email:
-          type: string
-        roles:
-          type: array
-          items:
-            type: string
-          uniqueItems: true
-        activeOrgAlias:
-          type: string
-        activeOrgId:
-          type: string
-          format: uuid
-        impersonation:
-          $ref: "#/components/schemas/Impersonation"
-        impersonated:
-          type: boolean
-    Impersonation:
-      type: object
-      properties:
-        sessionId:
-          type: string
-          format: uuid
-        actorSubject:
           type: string
     ExportRequest:
       type: object

@@ -26,9 +26,9 @@ System_Boundary("Application_boundary", "Application", $tags="") {
 
 }
 
+Rel(Application.Application.Identity, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Settings, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Exchange, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
-Rel(Application.Application.Identity, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Notification, Application.Application.Exchange, "listens to", $techn="", $tags="", $link="")
 Rel(Application.Application.Notification, Application.Application.Settings, "listens to", $techn="", $tags="", $link="")
 Rel(Application.Application.Notification, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")

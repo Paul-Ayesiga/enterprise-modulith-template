@@ -124,6 +124,25 @@ class KillBillGateway {
         return result;
     }
 
+    /** Read-only: which payment methods the account holds. ADDING one is Kaui's / a KB payment plugin's job. */
+    List<String> paymentMethods(UUID kbAccountId) {
+        List<?> methods = killBill.get()
+                .uri("/1.0/kb/accounts/" + kbAccountId + "/paymentMethods")
+                .retrieve()
+                .body(List.class);
+        List<String> result = new ArrayList<>();
+        if (methods == null) {
+            return result;
+        }
+        for (Object method : methods) {
+            if (method instanceof Map<?, ?> m) {
+                result.add(String.valueOf(m.get("pluginName"))
+                        + (Boolean.TRUE.equals(m.get("isDefault")) ? " (default)" : ""));
+            }
+        }
+        return result;
+    }
+
     List<KbInvoice> invoices(UUID kbAccountId) {
         List<?> invoices = killBill.get()
                 .uri("/1.0/kb/accounts/" + kbAccountId + "/invoices")

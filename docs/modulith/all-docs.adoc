@@ -45,6 +45,10 @@ include::module-billing.adoc[]
 plantuml::module-exchange.puml[,,format=svg]
 include::module-exchange.adoc[]
 
+== Profile
+plantuml::module-profile.puml[,,format=svg]
+include::module-profile.adoc[]
+
 == Notification
 plantuml::module-notification.puml[,,format=svg]
 include::module-notification.adoc[]

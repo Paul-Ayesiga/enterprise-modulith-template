@@ -11,8 +11,8 @@ Schema ownership: Flyway owns every table (`spring.jpa.hibernate.ddl-auto: valid
 `classpath:db/migration`. There is no `schema.sql`, no test-only DDL, and no Hibernate-generated
 schema in any profile. **V1..V26 exist; V20 is the 2026-08-01 audit's index remediation, V21
 localization, V22 search, V23 document, V24 the exchange job queue, V25 the exchange
-guideline completion (templates/schedules), V26 subscriptions, V27 billing; the next free
-number is V28.**
+guideline completion (templates/schedules), V26 subscriptions, V27 billing, V28 profile; the next free
+number is V29.**
 
 ---
 
@@ -22,7 +22,7 @@ Four stores, each with a distinct job. Only one of them is a system of record.
 
 | Store | Role | What lives there | Why not Postgres |
 |---|---|---|---|
-| **PostgreSQL 18** | System of record | All 28 tables below: aggregates, work queues, the audit and impersonation trails, and the framework tables (Flyway history, the Modulith event registry, ShedLock) | — |
+| **PostgreSQL 18** | System of record | All 31 tables below: aggregates, work queues, the audit and impersonation trails, and the framework tables (Flyway history, the Modulith event registry, ShedLock) | — |
 | **Valkey 8** | Cache L2 + rate-limit buckets + invalidation bus | Three named caches (`setting-values`, `feature-flags`, `org-permissions`) under key prefix `smsone:cache:`, Bucket4j token buckets under `<app.rate-limit.key-prefix>:<tier-id>:<tenant\|sub\|ip>:<value>`, and the `smsone:cache:invalidations` pub/sub topic | Derived, expendable data. Every value is recomputable from Postgres; an outage degrades to L1-only or fail-open, never to data loss (ADR 0004) |
 | **SeaweedFS (S3 API)** | Object storage | Uploaded file bytes, keyed `u/<subject>/<uuid>/<sanitized-filename>` (`files/internal/FileController.newKey:132-136`) | **No database row describes an uploaded object.** The `files` module owns no table: the key encodes the owner, the object store is the index, and authorization is a namespace prefix check |
 | **DuckDB (embedded)** | OLAP marts | `mart_users_by_status`, `mart_delivery_outcomes` in the DuckDB file at `app.analytics.database-path` (`data/analytics.duckdb`). Parquet export exists as an unwired seam only — see below | Postgres stays OLTP-only. Marts are point-in-time copies rebuilt from Postgres on each report run; the `AnalyticsEngine` seam keeps ClickHouse/Trino a pure implementation swap (ADR 0006) |
@@ -33,7 +33,7 @@ Three consequences worth stating plainly, because each has bitten:
   Postgres, so `@SQLRestriction` does not apply. A report over a soft-deletable table must filter
   `deleted_at is null` itself — `USERS_BY_STATUS` does exactly that
   (`analytics/internal/AnalyticsReport.java:22`) and the enum's javadoc enumerates the
-  twelve soft-deletable tables so the next report author does the same.
+  thirteen soft-deletable tables so the next report author does the same.
 - **Valkey holds an authorization decision.** `org-permissions` caches the resolved permission set per
   `(orgId, subject)`. Organization status is evaluated *inside* the cached value
   (`organization/internal/PermissionResolver.java:34-41`) so a suspension plus its eviction takes
@@ -1614,6 +1614,18 @@ callback endpoint is token-authenticated (Kill Bill cannot do OAuth) and permit-
 `SecurityConfig`; dev bootstrap (`app.billing.bootstrap`) creates the KB tenant + simple catalog
 plans so the compose stack bills out of the box.
 
+### 4.15 Profile module
+
+`V28__profile.sql`. **`user_profile`** (soft-deletable, THIRTEENTH): the caller's own record —
+display name, phone, timezone, locale, `avatar_key` (files-port key `avatar/u/<subject>/…`; the
+avatar lifecycle is new-object-first, row-second, old-object-last, so a failure at any step
+leaves a working avatar). **`user_contact`** rides as an `@ElementCollection` (cascade FK) —
+contacts' lifecycle IS the profile's. **`user_preference`**: composite PK `(subject, pref_key)`,
+plain rows, additive upsert where a null value deletes its key. Linked accounts are NOT a table —
+a read-only projection of Keycloak federated identities via `UserDirectory.linkedAccounts`.
+`/api/v1/me/organizations` (the org-switch list for dual members) lives in the ORGANIZATION
+module, which owns membership data.
+
 ## 5. Soft delete
 
 Migration `V17__soft_delete.sql`. Deletion is **recorded, not executed**: the row survives with
@@ -1621,10 +1633,10 @@ Migration `V17__soft_delete.sql`. Deletion is **recorded, not executed**: the ro
 
 ### 5.1 Which tables
 
-**In scope (12).** Every `SoftDeletableEntity` table: `setting`, `feature_flag`, `app_user`,
+**In scope (13).** Every `SoftDeletableEntity` table: `setting`, `feature_flag`, `app_user`,
 `organization`, `org_role`, `membership`, `webhook_subscription` (all wired by `V17:23-29,67-73`),
 plus `translation` (`V21`), `document` (`V23`), `exchange_schedule` (`V25`), `org_subscription`
-(`V26`) and `billing_account` (`V27`), each born soft-deletable. Each gets `deleted_at timestamptz`, a partial
+(`V26`), `billing_account` (`V27`) and `user_profile` (`V28`), each born soft-deletable. Each gets `deleted_at timestamptz`, a partial
 retention index, a place in `SoftDeletePurgeJob.PURGE_ORDER`, and its own `@SQLDelete` +
 `@SQLRestriction` pair on the entity.
 
@@ -1822,7 +1834,7 @@ The schema alone reads as if these cascades are live behaviour. They are not, ex
 | `V8__notification.sql` | `notification_log` + `idx_notification_log_created_at`; `in_app_notification` + `idx_in_app_notification_recipient` |
 | `V9__notification_delivery.sql` | **Drops `notification_log`.** Creates `notification_delivery` + the partial claim index. Replaces synchronous logging with a claimable durable queue |
 | `V10__identity_user.sql` | `app_user` (unique `subject`) + `idx_app_user_email` |
-| `V11__organization_rbac.sql` | `organization` (unique `kc_org_id`, `alias`), `org_role` (`uq_org_role_org_code`) + `idx_org_role_org`, `role_permission` (cascade FK), `membership` (FK to `org_role`, `uq_membership_org_user`) + `idx_membership_subject`, `idx_membership_role`. **The schema's first three FKs come from here and V15; V24 (`exchange_job_error`) and V26 (`plan_entitlement`, `org_subscription`) bring the total to six, all intra-module** |
+| `V11__organization_rbac.sql` | `organization` (unique `kc_org_id`, `alias`), `org_role` (`uq_org_role_org_code`) + `idx_org_role_org`, `role_permission` (cascade FK), `membership` (FK to `org_role`, `uq_membership_org_user`) + `idx_membership_subject`, `idx_membership_role`. **The schema's first three FKs come from here and V15; V24 (`exchange_job_error`), V26 (`plan_entitlement`, `org_subscription`) and V28 (`user_contact`) bring the total to seven, all intra-module** |
 | `V12__notification_delivery_throttle.sql` | Adds `notification_delivery.throttled_since`, so throttle-max-age measures *continuous* throttled time rather than age-since-enqueue |
 | `V13__audit_log.sql` | `audit_log` (with `detail varchar(500)`) + `idx_audit_created`, `idx_audit_org_created`, `idx_audit_action` |
 | `V14__audit_log_state.sql` | **Drops `audit_log.detail`**; adds `from_state`/`to_state varchar(1000)`. Turns the trail into a full who/when/where/what/from→to record |
@@ -1839,8 +1851,9 @@ The schema alone reads as if these cascades are live behaviour. They are not, ex
 | `V25__exchange_platform_completion.sql` | `exchange_job.handler_version` (template versioning); `org_id` tightened to NOT NULL (the V24 relaxation had no submitter and would NPE the worker); `exchange_schedule` — soft-deletable recurring exports with due/org/retention indexes |
 | `V26__subscription.sql` | `plan` (+ unique `code`) and `plan_entitlement` (cascade FK, `@ElementCollection` map; feature-on stored as -1 — Hibernate drops null map values); `org_subscription` — soft-deletable, partial unique on live `org_id`, `plan_id` FK. Brings the schema's FK total to six, all intra-module |
 | `V27__billing.sql` | `billing_account` — the org ↔ Kill Bill account linkage projection (soft-deletable; partial unique on live `org_id`; `kb_account_id` lookup index for callback resolution). Kill Bill itself is the billing system of record; nothing financial is stored locally |
+| `V28__profile.sql` | `user_profile` (soft-deletable, partial unique on live `subject`) + `user_contact` (element rows, cascade FK — the seventh intra-module FK) + `user_preference` (composite PK, the idempotency-key species) |
 
-**The next free migration number is V28.**
+**The next free migration number is V29.**
 
 ---
 

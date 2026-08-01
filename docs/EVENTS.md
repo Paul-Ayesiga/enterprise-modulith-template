@@ -15,7 +15,7 @@ message id from business identity — among the live ones:
 
 | Event | Module | Payload | Published when |
 |---|---|---|---|
-| `ug.co.smsone.settings.SettingChanged` | settings | `key, value` | a setting is created or updated |
+| `ug.co.smsone.settings.SettingChanged` | settings | `key, value, occurredAt` | a setting is created or updated |
 | `ug.co.smsone.settings.FeatureFlagChanged` | settings | `key, enabled, occurredAt` | a feature flag is created or toggled |
 | `ug.co.smsone.localization.TranslationChanged` | localization | `locale, key, occurredAt` | a translation is created, replaced or deleted (deletes publish explicitly) |
 | `ug.co.smsone.identity.UserProvisioned` | identity | `subject, email, occurredAt` | an admin provisions a new local user (`INVITED`) |
@@ -31,10 +31,9 @@ message id from business identity — among the live ones:
 | `ug.co.smsone.subscription.SubscriptionChanged` | subscription | `orgId, planCode, status, occurredAt` | a tenant's plan is assigned or changed |
 | `ug.co.smsone.exchange.JobCompleted` | exchange | `jobId, orgId, requester, handler, jobType, outcome, processed, failed, occurredAt` | an exchange job reaches a terminal state — published explicitly from the worker's terminal read (the job row stays authoritative; a crash between the write and the publish loses only the event) |
 
-Every event carries `occurredAt` except `SettingChanged`, which predates the rule and has no consumer
-to be idempotent for. Where it is present, `occurredAt` lets an idempotent consumer dedupe redelivery
-of the *same* change while still reacting to a genuine later re-toggle to the same state — add it
-before giving `SettingChanged` its first listener.
+Every event carries `occurredAt` — uniformly, since `SettingChanged` (the one late joiner) gained
+it ahead of its first consumer. It lets an idempotent consumer dedupe redelivery of the *same*
+change while still reacting to a genuine later re-toggle to the same state.
 
 ## Consumers
 
@@ -58,7 +57,8 @@ The webhooks consumer maps each organization event to its outbound wire code
 vocabulary is on the wire at `GET /api/v1/webhooks/event-types`.
 
 Four events currently have **no consumer**: `SettingChanged`, `UserActivated`,
-`TranslationChanged` and `DocumentRegistered`. They are still published through the registry (and appear in the generated
+`TranslationChanged` and `DocumentRegistered` (all now carry `occurredAt`, so their first
+consumers have the dedup key ready). They are still published through the registry (and appear in the generated
 module canvases); a first consumer must follow the `EventInbox` idempotency rule above.
 
 _(The **audit** module does not consume events — it records synchronously via the shared `AuditLog` port at each mutation, so it captures the actor and before/after state the events don't carry.)_

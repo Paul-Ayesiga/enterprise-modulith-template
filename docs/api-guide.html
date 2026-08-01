@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SMSOne Platform — API Guide for Testers</title>
+<style>
+  :root { --ink:#1a2332; --mut:#5a6b85; --line:#dde4ee; --bg:#f7f9fc; --code:#0e1626; --codeink:#d8e2f3;
+          --ok:#0a7d43; --warn:#a05a00; --bad:#b3261e; --brand:#1d4ed8; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.6 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); background:var(--bg); }
+  header { background:var(--code); color:#fff; padding:2.2rem 2rem 1.6rem; }
+  header h1 { margin:0 0 .3rem; font-size:1.7rem; }
+  header p { margin:0; color:#9fb2d4; max-width:64rem; }
+  nav { background:#fff; border-bottom:1px solid var(--line); padding:.7rem 2rem; position:sticky; top:0; z-index:5;
+        display:flex; flex-wrap:wrap; gap:.35rem .9rem; font-size:.86rem; }
+  nav a { color:var(--brand); text-decoration:none; }
+  nav a:hover { text-decoration:underline; }
+  main { max-width:66rem; margin:0 auto; padding:1.6rem 2rem 4rem; }
+  h2 { margin:2.6rem 0 .6rem; font-size:1.35rem; border-bottom:2px solid var(--line); padding-bottom:.35rem; }
+  h3 { margin:1.6rem 0 .4rem; font-size:1.05rem; }
+  p, li { color:var(--ink); }
+  .mut { color:var(--mut); }
+  code { background:#e9eef7; padding:.1rem .35rem; border-radius:4px; font-size:.86em; }
+  pre { background:var(--code); color:var(--codeink); padding: .9rem 1.1rem; border-radius:8px;
+        overflow-x:auto; font-size:.83rem; line-height:1.5; }
+  pre code { background:none; padding:0; color:inherit; }
+  table { border-collapse:collapse; width:100%; margin: .6rem 0 1rem; font-size:.88rem; background:#fff; }
+  th, td { border:1px solid var(--line); padding:.45rem .6rem; text-align:left; vertical-align:top; }
+  th { background:#eef2f9; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:8px; padding:1rem 1.2rem; margin:.8rem 0; }
+  .tip { border-left:4px solid var(--ok); }
+  .warn { border-left:4px solid var(--warn); }
+  .method { display:inline-block; min-width:3.4rem; text-align:center; font-weight:700; font-size:.74rem;
+            border-radius:4px; padding:.12rem .4rem; color:#fff; margin-right:.4rem; }
+  .GET{background:#0a7d43}.POST{background:#1d4ed8}.PUT{background:#a05a00}.DELETE{background:#b3261e}.PATCH{background:#6b21a8}
+  .ep { font-family:ui-monospace,Menlo,monospace; font-size:.86rem; }
+  footer { text-align:center; color:var(--mut); font-size:.8rem; padding:2rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>SMSOne Platform — API Guide for Testers</h1>
+  <p>Hands-on walkthroughs with sample data for every surface. The exhaustive reference is Swagger UI at
+     <code>http://localhost:8080/swagger-ui/index.html</code>; the machine spec (<code>/v3/api-docs</code>) imports
+     straight into Postman. All sample IDs below are illustrative.</p>
+</header>
+<nav>
+  <a href="#auth">Auth</a><a href="#envelope">Envelope &amp; errors</a><a href="#pagination">Pagination</a>
+  <a href="#ratelimit">Rate limits</a><a href="#idempotency">Idempotency</a><a href="#orgs">Tenant lifecycle</a>
+  <a href="#members">Members &amp; roles</a><a href="#subscription">Plans &amp; entitlements</a><a href="#billing">Billing</a>
+  <a href="#documents">Documents</a><a href="#search">Search</a><a href="#exchange">Exchange</a>
+  <a href="#webhooks">Webhooks</a><a href="#settings">Settings &amp; i18n</a><a href="#audit">Audit</a>
+  <a href="#impersonation">Impersonation</a><a href="#errors">Error codes</a><a href="#tips">Tips</a>
+</nav>
+<main>
+
+<h2 id="auth">1 · Authentication</h2>
+<p>Every call carries a Keycloak bearer token minted <em>for this API</em> (audience <code>smsone-api</code>).
+Dev shortcut: <code>make token</code> or <code>scripts/api.sh</code>. Raw flow (password grant, dev realm):</p>
+<pre><code>curl -s http://localhost:8081/realms/smsone/protocol/openid-connect/token \
+  -d grant_type=password -d client_id=smsone-web \
+  -d username=paul -d password=Paul123 | jq -r .access_token</code></pre>
+<div class="card tip"><strong>Two disjoint authority axes.</strong> Platform realm roles
+(<code>platform-support</code> → <code>platform-admin</code> → <code>platform-superadmin</code>) reach platform
+surfaces; <strong>org permissions</strong> (like <code>member:invite</code>) reach tenant surfaces. A platform role
+grants <em>zero</em> org permissions — crossing over is <a href="#impersonation">impersonation's</a> job.</div>
+<div class="card"><strong>Org-scoped tokens &amp; switching orgs.</strong> Tenant calls need the token's Keycloak
+<code>organization</code> claim to name the org in the path — a token scoped to org A gets <code>403</code> on org B
+even if the user is a member of both. A dual member "switches" by requesting a token scoped to the other org;
+the server never trusts a client-asserted active org.</div>
+<p>No-JIT: a valid JWT alone is not access — the subject also needs a provisioned <code>app_user</code> row
+(<code>403 ACCOUNT_NOT_PROVISIONED</code> otherwise). <code>GET /api/v1/me</code> is the one gate exception.</p>
+
+<h2 id="envelope">2 · The envelope, request ids, localized errors</h2>
+<p>Every JSON response is one envelope: <code>data</code> XOR <code>errors</code>, always <code>meta.requestId</code>
+(also the <code>X-Request-Id</code> header — quote it in bug reports).</p>
+<pre><code>{ "data": { "id": "org.example", "type": "setting",
+            "attributes": { "key": "org.example", "value": "42" } },
+  "meta": { "requestId": "01J4X9GVJ4C1T4V0V3S8B7NQZD" } }</code></pre>
+<pre><code>{ "errors": [ { "id": "01J4X9…-1", "status": "422", "code": "VALIDATION_FAILED",
+                "title": "Validation failed", "detail": "cron must be a valid six-field Spring cron expression (e.g. '0 0 2 * * *').",
+                "source": { "pointer": "/data/attributes/cron" } } ],
+  "meta": { "requestId": "01J4X9…" } }</code></pre>
+<ul>
+  <li>Prefer RFC 9457? Send <code>Accept: application/problem+json</code> — same data, standard shape.</li>
+  <li><strong>Localized details:</strong> send <code>Accept-Language: fr</code>; when the translation catalog holds
+      <code>error.&lt;code&gt;</code> (e.g. <code>error.resource_not_found</code>) the detail localizes; otherwise you get the English original.</li>
+  <li>Stack traces never reach the wire. A 500's detail is generic; the trace lives in the server log under your request id.</li>
+</ul>
+
+<h2 id="pagination">3 · Cursor pagination</h2>
+<p>Collections page by <strong>keyset cursor</strong> — no page numbers, no totals (by design).
+Parameters are literally <code>page[size]</code> and <code>page[after]</code> (encode the brackets or use
+<code>scripts/api.sh</code>, which does).</p>
+<pre><code>GET /api/v1/orgs/6a1f…/exchange/jobs?page[size]=2
+
+{ "data": [ { "id": "…", "type": "exchange-job", "attributes": { … } },
+            { "id": "…", "type": "exchange-job", "attributes": { … } } ],
+  "meta": { "requestId": "…",
+            "page": { "size": 2, "count": 2, "hasMore": true,
+                      "nextCursor": "Y3JlYXRlZEF0PXQ6MjAyNi0wOC0wMVQwNzoxNTo0Mlp8aWQ9dTo…" } },
+  "links": { "next": "…?page[size]=2&page[after]=Y3JlYXRlZEF0…" } }</code></pre>
+<p>Follow <code>links.next</code> until <code>hasMore</code> is false. Cursors are opaque and collection-specific —
+replaying one against another collection is a 422, not a 500.</p>
+
+<h2 id="ratelimit">4 · Rate limits</h2>
+<p>Tenant-keyed token buckets on <code>/api/**</code> (writes 60/min, reads 600/min by default). Every response
+carries the draft-IETF headers; a denial is <code>429 RATE_LIMITED</code> with <code>Retry-After</code>:</p>
+<pre><code>RateLimit-Policy: "read";q=600;w=60
+RateLimit: "read";r=597;t=60
+X-RateLimit-Remaining: 597</code></pre>
+
+<h2 id="idempotency">5 · Idempotency keys</h2>
+<p>Any unsafe request may carry <code>Idempotency-Key: &lt;your-uuid&gt;</code>. Same principal + same key + same
+body ⇒ the stored response replays; same key with a <em>different</em> body ⇒ <code>409</code>. Keys live 24h.</p>
+
+<h2 id="orgs">6 · Tenant lifecycle (platform axis)</h2>
+<p>Full story: <code>docs/TENANT_LIFECYCLE.md</code>. The operator flow:</p>
+<pre><code># create (platform-admin) — provisions Keycloak org + first OWNER (invite email via Mailpit :8025)
+curl -X POST :8080/api/v1/orgs -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"alias":"acme","name":"Acme Ltd","ownerEmail":"owner@acme.test","ownerFirstName":"Ada","ownerLastName":"Owner"}'
+# → 201 {"data":{"id":"6a1f22b0-…","type":"organization","attributes":{"alias":"acme","status":"ACTIVE",…}}}
+
+# observe the fleet (platform-support)
+GET /api/v1/admin/orgs?status=active&amp;page[size]=20
+GET /api/v1/admin/orgs/{orgId}            # one record
+GET /api/v1/admin/orgs/{orgId}/members    # read-only roster (subjects + role codes)
+
+# lifecycle (platform-admin)
+POST   /api/v1/orgs/{orgId}/suspend       # reversible; every member's access dies immediately
+POST   /api/v1/orgs/{orgId}/reactivate
+DELETE /api/v1/admin/orgs/{orgId}         # ONLY from SUSPENDED (409 otherwise); soft + audited,
+                                          # fans out the org.deleted webhook</code></pre>
+
+<h2 id="members">7 · Members, roles, permissions (tenant axis)</h2>
+<pre><code># the fixed permission vocabulary (any authenticated caller)
+GET /api/v1/permissions        # → [{"id":"member:invite","type":"permission",…}, …]
+
+# invite (member:invite) — idempotent re-invites return the existing membership
+POST /api/v1/orgs/{orgId}/members
+{"email":"jo@acme.test","firstName":"Jo","lastName":"Kintu","roleCode":"MEMBER"}
+
+# custom role (role:create) — permission NAMES come from the catalog above
+POST /api/v1/orgs/{orgId}/roles
+{"code":"AUDITOR","name":"Auditor","permissions":["org:read","audit:read"]}</code></pre>
+<div class="card warn"><strong>The escalation guard.</strong> You can only grant permissions you hold. Inviting
+someone into a role carrying <code>member:remove</code> when you lack it:
+<pre><code>403 {"errors":[{"code":"FORBIDDEN",
+  "detail":"You cannot grant permissions you do not hold: member:remove"}]}</code></pre>
+The same rule guards exchange imports — evaluated against the <em>requester</em> at processing time.</div>
+
+<h2 id="subscription">8 · Plans &amp; entitlements</h2>
+<pre><code>GET /api/v1/admin/plans                      # seeded catalog (support)
+# → FREE / PRO / ENTERPRISE; entitlements: null value = feature on, number = cap, absent = off/unlimited
+
+PUT /api/v1/admin/orgs/{orgId}/subscription  # assign (platform-admin, audited)
+{"plan":"PRO"}
+
+GET /api/v1/orgs/{orgId}/subscription        # the tenant's own view (org:read)
+# → {"attributes":{"planCode":"PRO","status":"ACTIVE",
+#     "entitlements":{"exchange.enabled":null,"members.max":250,"webhooks.max":50,"exchange.schedules.max":25}}}</code></pre>
+<p>Gates fire with <em>upgrade-shaped</em> 403s, before side effects:</p>
+<pre><code>403 {"errors":[{"code":"FORBIDDEN",
+  "detail":"Your organization's plan allows 25 for 'members.max' and that limit is reached. Upgrade the plan to add more."}]}</code></pre>
+<p>A plan change bites the <em>next</em> request (cache evicted through <code>SubscriptionChanged</code>) and fans out
+the <code>org.subscription_changed</code> webhook.</p>
+
+<h2 id="billing">9 · Billing (Kill Bill)</h2>
+<p>Kill Bill (<code>:8082</code>, Kaui UI <code>:9095</code>) is the billing system of record; entitlements above stay
+the single authority — billing events reconcile into them. Set <code>BILLING_BOOTSTRAP=true</code> for the dev
+tenant + catalog.</p>
+<pre><code>POST /api/v1/admin/orgs/{orgId}/billing/account        # link (platform-admin, idempotent)
+POST /api/v1/admin/orgs/{orgId}/billing/subscription   # {"plan":"PRO"} → 202; entitlements reconcile
+GET  /api/v1/admin/orgs/{orgId}/billing                # balance + live KB subscriptions + payment methods
+GET  /api/v1/orgs/{orgId}/billing/invoices             # the tenant's invoices (org:read)
+# → [{"id":"8c0e…","type":"invoice","attributes":{"invoiceNumber":"1001","amount":49.00,
+#      "balance":0.00,"currency":"USD","invoiceDate":"2026-08-01","status":"COMMITTED"}}]</code></pre>
+<p class="mut">Payment failure → subscription standing flips to <code>PAST_DUE</code> (entitlements kept — a grace);
+recovery → <code>ACTIVE</code>; cancellation reconciles to FREE. Adding a payment method is Kaui's / a KB payment
+plugin's job; the billing view lists what's on file.</p>
+
+<h2 id="documents">10 · Documents &amp; files</h2>
+<pre><code># upload into the org (document:manage; multipart field "file")
+curl -X POST :8080/api/v1/orgs/{orgId}/documents -H "Authorization: Bearer $TOKEN" -F file=@board-report.pdf
+# → 201 {"attributes":{"name":"board-report.pdf","source":"UPLOAD","sizeBytes":48211,…}}
+
+GET    /api/v1/orgs/{orgId}/documents          # paged catalog (document:read)
+GET    /api/v1/orgs/{orgId}/documents/{id}     # 302 → short-lived presigned URL; follow it for bytes
+DELETE /api/v1/orgs/{orgId}/documents/{id}     # bytes now, metadata row soft-remains (the trail)</code></pre>
+<p class="mut">Personal equivalents under <code>/api/v1/documents</code> (owner-scoped; support may read, admin may
+delete). Raw object storage lives under <code>/api/v1/files</code>. Exchange artifacts appear in this catalog with
+<code>source: "EXCHANGE"</code>.</p>
+
+<h2 id="search">11 · Search</h2>
+<pre><code>GET /api/v1/orgs/{orgId}/search?q=board+report&amp;page[size]=10       # org:read; tenant cut inside the SQL
+GET /api/v1/admin/search?q=ada&amp;org={orgId}                          # platform-support; org filter optional
+# hit → {"id":"…","type":"search-hit","attributes":{"entityType":"document","title":"board-report.pdf","rank":0.60}}</code></pre>
+<p class="mut">Full-text first (<code>websearch_to_tsquery</code>), trigram fallback for prefixes/typos — so
+<code>q=repor</code> still finds the report. Measured gate: p50 ~20ms / p95 ~35ms over 100k documents.</p>
+
+<h2 id="exchange">12 · Exchange — imports &amp; exports at scale</h2>
+<p>Import/export is <strong>jobs, never long requests</strong>. Formats: CSV, JSONL, XLSX, XML (+ zipped sources).
+Submitting needs the handler's own permission (e.g. <code>org-members</code> imports need <code>member:invite</code>).</p>
+<h3>Walkthrough: bulk member import</h3>
+<pre><code># 1 — discover handlers &amp; download the template
+GET /api/v1/exchange/handlers
+# → {"id":"org-members","attributes":{"importPermission":"member:invite","exportPermission":"member:read",
+#     "header":["email","firstName","lastName","roleCode"],"templateVersion":1,"formats":["CSV","JSONL","XLSX","XML"]}}
+GET /api/v1/exchange/handlers/org-members/template?format=CSV   # ready-to-fill file
+
+# 2 — fill it
+cat members.csv
+email,firstName,lastName,roleCode
+jo@acme.test,Jo,Kintu,MEMBER
+bad-address,Bad,Row,MEMBER
+amina@acme.test,Amina,Okello,ADMIN
+
+# 3 — submit (202: it's a background job)
+curl -X POST ":8080/api/v1/orgs/{orgId}/exchange/imports?handler=org-members&amp;format=CSV" \
+  -H "Authorization: Bearer $TOKEN" -F file=@members.csv
+# → 202 {"data":{"id":"9f6c818b-…","type":"exchange-job","attributes":{"status":"PENDING",…}}}
+
+# 4 — poll
+GET /api/v1/orgs/{orgId}/exchange/jobs/{jobId}
+# → {"attributes":{"status":"COMPLETED_WITH_ERRORS","processed":2,"failed":1,
+#     "handler":"org-members","handlerVersion":1,…}}
+
+# 5 — the row-addressed error report (302 → CSV)
+GET /api/v1/orgs/{orgId}/exchange/jobs/{jobId}/report
+row_number,error
+2,email is not a valid address: bad-address</code></pre>
+<p><code>row_number</code> counts data records from 1 (header excluded). The requester also gets an in-app
+"your import finished" notification, and subscribed webhooks receive <code>org.exchange.job_completed</code>.</p>
+<h3>Exports &amp; schedules</h3>
+<pre><code>POST /api/v1/orgs/{orgId}/exchange/exports   {"handler":"org-members","format":"XLSX"}   # → 202
+GET  /api/v1/orgs/{orgId}/exchange/jobs/{id}/result                                      # 302 → the file
+
+# recurring export (cron is six-field Spring cron, UTC); fires AS you — revoking your permission disables it
+POST /api/v1/orgs/{orgId}/exchange/schedules {"handler":"org-members","format":"CSV","cron":"0 0 2 * * *"}
+POST /api/v1/orgs/{orgId}/exchange/jobs/{id}/cancel     # best-effort, batch-boundary</code></pre>
+<div class="card tip"><strong>Scale semantics worth testing:</strong> a crashed/reclaimed import <em>resumes</em>
+from its last committed batch (at-least-once delivery into idempotent handlers — the suite proves 100k rows
+with a mid-run kill produce exactly 100k effects); data errors never burn retries; infra errors retry with
+backoff then FAIL with a curated message.</div>
+
+<h2 id="webhooks">13 · Webhooks (outbound)</h2>
+<pre><code>GET /api/v1/webhooks/event-types      # the subscribable vocabulary, with descriptions
+
+POST /api/v1/orgs/{orgId}/webhooks    # webhook:manage
+{"url":"https://hooks.acme.test/smsone","events":["org.member.added","org.exchange.job_completed"]}
+# → 201 {"attributes":{"secret":"whsec_9f3c1a…full-secret-shown-ONCE…",…}}   ← store it now; reads mask it</code></pre>
+<h3>Verifying a delivery</h3>
+<pre><code>POST https://hooks.acme.test/smsone
+X-Webhook-Event: org.member.added
+X-Webhook-Signature: sha256=88e2c4…
+
+{"event":"org.member.added","orgId":"6a1f…","occurredAt":"2026-08-01T07:15:42Z",
+ "subject":"kc-7d2e…","role":"MEMBER"}
+
+# verify: HMAC-SHA256 over the EXACT raw body with your secret
+echo -n "$RAW_BODY" | openssl dgst -sha256 -hmac "$WHSEC" -hex   # must equal the header after "sha256="</code></pre>
+<p class="mut">Delivery is at-least-once with backoff → dead-letter after 5 attempts; secrets are AES-GCM
+encrypted at rest; per-subscription delivery log at <code>…/webhooks/{id}/deliveries</code>.</p>
+
+<h2 id="settings">14 · Settings, flags, translations</h2>
+<pre><code>GET /api/v1/settings?page[size]=20            # any authenticated caller reads
+PUT /api/v1/settings/branding.name            # platform-admin writes
+{"value":"SMSOne"}
+GET /api/v1/feature-flags/new-dashboard       # unknown flags read as OFF, never an error
+PUT /api/v1/translations/fr/error.forbidden   # platform-admin; powers Accept-Language error details
+{"value":"Accès refusé."}</code></pre>
+
+<h2 id="audit">15 · Audit</h2>
+<pre><code>GET /api/v1/orgs/{orgId}/audit?from=2026-08-01T00:00:00Z&amp;page[size]=20    # audit:read (tenant's own trail)
+GET /api/v1/audit?org={orgId}                                              # platform-support, cross-tenant
+# row → {"attributes":{"action":"organization.member_added","actor":"kc-1f9a…","target":"kc-7d2e…",
+#         "fromState":null,"toState":"role=MEMBER","occurredAt":"2026-08-01T07:15:41Z"}}</code></pre>
+<p class="mut">Rows written during an impersonation session name the <em>operator</em> as actor and carry
+<code>onBehalfOf</code> — the one place those deliberately differ.</p>
+
+<h2 id="impersonation">16 · Impersonation (the audited bridge)</h2>
+<pre><code>POST /api/v1/admin/impersonations       # platform-support; WRITE mode needs platform-admin
+{"targetSubject":"kc-7d2e…","orgId":"6a1f…","reason":"Ticket #4812 — member cannot see documents","ttl":"PT15M"}
+# → 201 {"data":{"id":"3e7a…","type":"impersonation-session",…}}
+
+# wear it: add the header to any TENANT call (platform routes refuse it — a session carries no platform authority)
+GET /api/v1/orgs/6a1f…/documents
+X-Impersonate: 3e7a…
+
+DELETE /api/v1/admin/impersonations/3e7a…    # end early; expiry also ends it — re-checked EVERY request</code></pre>
+
+<h2 id="errors">17 · Error codes</h2>
+<table>
+<tr><th>HTTP</th><th>code</th><th>When</th></tr>
+<tr><td>400</td><td><code>BAD_REQUEST</code></td><td>Malformed JSON / unreadable request</td></tr>
+<tr><td>401</td><td><code>UNAUTHORIZED</code></td><td>Missing/expired/foreign-audience token</td></tr>
+<tr><td>403</td><td><code>FORBIDDEN</code></td><td>RBAC, escalation guard, entitlement gates (upgrade-shaped detail), policy denials</td></tr>
+<tr><td>403</td><td><code>ACCOUNT_NOT_PROVISIONED</code> / <code>ACCOUNT_DISABLED</code></td><td>No-JIT gate</td></tr>
+<tr><td>404</td><td><code>RESOURCE_NOT_FOUND</code></td><td>Unknown id — including another org's id (never a 403 oracle)</td></tr>
+<tr><td>409</td><td><code>CONFLICT</code></td><td>Duplicate alias, last-owner, idempotency body mismatch, delete-before-suspend, cancel-after-finish</td></tr>
+<tr><td>413/422</td><td><code>PAYLOAD_TOO_LARGE</code> / <code>VALIDATION_FAILED</code></td><td>Body cap / field problems with <code>source.pointer|parameter</code></td></tr>
+<tr><td>429</td><td><code>RATE_LIMITED</code></td><td>Bucket empty — honor <code>Retry-After</code></td></tr>
+<tr><td>503</td><td><code>SERVICE_UNAVAILABLE</code></td><td>Dependency breaker open — retry later</td></tr>
+</table>
+
+<h2 id="tips">18 · Tester tips</h2>
+<ul>
+<li><code>make run</code> boots app + full stack; <code>make seed</code> adds the <code>acme</code> demo org. Mailpit
+(<code>:8025</code>) catches invite emails; Grafana (<code>:3000</code>, folder <em>SMSOne</em>) shows the platform's own
+counters — dead-letters, 429s, exchange throughput.</li>
+<li>Async assertions: submits answer <code>202</code>; poll the job resource rather than sleeping. Webhook/notification
+deliveries are background workers — the delivery log endpoints are your observability.</li>
+<li>Repro reports: include <code>meta.requestId</code>, and for exchange the job id — every server log line for the
+run carries both (plus <code>org_id</code>).</li>
+<li>The whole test suite runs on real containers (<code>./gradlew test</code>) — Postgres, Keycloak, SeaweedFS, Valkey,
+Kill Bill. No mocks of infrastructure, so what passes here behaves the same against the compose stack.</li>
+</ul>
+
+</main>
+<footer>SMSOne Platform · docs/api-guide.html · generated alongside the code — when they disagree, the code and
+Swagger UI win; file it as doc drift.</footer>
+</body>
+</html>

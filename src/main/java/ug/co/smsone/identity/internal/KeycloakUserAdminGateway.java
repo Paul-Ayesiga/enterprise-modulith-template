@@ -31,6 +31,30 @@ class KeycloakUserAdminGateway {
     record KeycloakUser(String id, String email) {
     }
 
+    /** The subject's federated identities (subject IS the Keycloak user id). Read-only by design. */
+    List<Map<String, Object>> federatedIdentities(String subject) {
+        try {
+            List<?> identities = keycloakAdminRestClient.get()
+                    .uri("/users/{id}/federated-identity", subject)
+                    .retrieve()
+                    .body(List.class);
+            if (identities == null) {
+                return List.of();
+            }
+            List<Map<String, Object>> result = new java.util.ArrayList<>();
+            for (Object identity : identities) {
+                if (identity instanceof Map<?, ?> map) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> typed = (Map<String, Object>) map;
+                    result.add(typed);
+                }
+            }
+            return result;
+        } catch (org.springframework.web.client.HttpClientErrorException.NotFound notFound) {
+            return List.of(); // unknown Keycloak user: no links, not an error surface
+        }
+    }
+
     Optional<KeycloakUser> findByEmail(String email) {
         List<?> results = keycloakAdminRestClient.get()
                 .uri(uri -> uri.path("/users").queryParam("email", email).queryParam("exact", true).build())

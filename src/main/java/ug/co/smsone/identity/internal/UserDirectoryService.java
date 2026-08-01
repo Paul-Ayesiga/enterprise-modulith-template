@@ -12,9 +12,20 @@ import ug.co.smsone.identity.UserDirectory;
 class UserDirectoryService implements UserDirectory {
 
     private final UserRepository users;
+    private final KeycloakUserAdminGateway keycloak;
 
-    UserDirectoryService(UserRepository users) {
+    UserDirectoryService(UserRepository users, KeycloakUserAdminGateway keycloak) {
         this.users = users;
+        this.keycloak = keycloak;
+    }
+
+    @Override
+    public java.util.List<LinkedAccount> linkedAccounts(String subject) {
+        return keycloak.federatedIdentities(subject).stream()
+                .map(identity -> new LinkedAccount(
+                        String.valueOf(identity.get("identityProvider")),
+                        String.valueOf(identity.get("userName"))))
+                .toList();
     }
 
     @Override

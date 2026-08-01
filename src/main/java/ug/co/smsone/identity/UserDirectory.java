@@ -20,4 +20,14 @@ public interface UserDirectory {
      * Unknown subjects are simply absent from the map.
      */
     Map<String, String> emailsBySubjects(Collection<String> subjects);
+
+    /**
+     * The subject's IdP links (Keycloak federated identities) — READ-ONLY: linking and unlinking
+     * are Keycloak account-console acts; this platform displays, it never mutates IdP identity.
+     */
+    java.util.List<LinkedAccount> linkedAccounts(String subject);
+
+    /** One external identity link: which provider, and the username over there. */
+    record LinkedAccount(String provider, String username) {
+    }
 }

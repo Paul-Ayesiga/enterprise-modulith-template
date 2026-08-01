@@ -46,7 +46,7 @@ public class Setting extends SoftDeletableEntity {
         }
         this.value = value;
         this.description = description;
-        registerEvent(new SettingChanged(key, value));
+        registerEvent(new SettingChanged(key, value, java.time.Instant.now()));
     }
 
     public String getKey() {

@@ -16,6 +16,8 @@ interface MembershipRepository extends JpaRepository<Membership, UUID>, JpaSpeci
 
     long countByOrgId(UUID orgId);
 
+    List<Membership> findByUserSubjectAndStatus(String userSubject, MembershipStatus status);
+
     /**
      * Row-locks the active members holding a given role for the duration of the transaction. Two
      * concurrent owner removals/demotions contend on the same rows and serialize, closing the

@@ -43,7 +43,7 @@ class BillingService {
     }
 
     record BillingView(UUID orgId, UUID kbAccountId, java.math.BigDecimal balance, String currency,
-            List<KillBillGateway.KbSubscription> subscriptions) {
+            List<KillBillGateway.KbSubscription> subscriptions, List<String> paymentMethods) {
     }
 
     /** Idempotent: provisioning twice returns the same linkage. Remote first, row after. */
@@ -65,7 +65,8 @@ class BillingService {
         BillingAccount account = require(orgId);
         KillBillGateway.KbAccountView kb = killBill.accountView(account.getKbAccountId());
         return new BillingView(orgId, account.getKbAccountId(), kb.balance(), kb.currency(),
-                killBill.subscriptions(account.getKbAccountId()));
+                killBill.subscriptions(account.getKbAccountId()),
+                killBill.paymentMethods(account.getKbAccountId()));
     }
 
     List<KillBillGateway.KbInvoice> invoices(UUID orgId) {
