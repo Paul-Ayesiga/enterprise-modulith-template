@@ -59,10 +59,6 @@ class WebhookDelivery {
         return id;
     }
 
-    UUID getSubscriptionId() {
-        return subscriptionId;
-    }
-
     UUID getOrgId() {
         return orgId;
     }
@@ -93,9 +89,5 @@ class WebhookDelivery {
 
     Instant getCreatedAt() {
         return createdAt;
-    }
-
-    Instant getDeliveredAt() {
-        return deliveredAt;
     }
 }

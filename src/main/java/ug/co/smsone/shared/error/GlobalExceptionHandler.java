@@ -1,5 +1,6 @@
 package ug.co.smsone.shared.error;
 
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import jakarta.validation.ConstraintViolationException;
 import java.util.ArrayList;
 import java.util.List;
@@ -114,6 +115,23 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return render(statusCode, errorCode, List.of(error), meta, headers);
     }
 
+    // --- Degradation: a tripped breaker is the system protecting itself, not crashing ---
+
+    /**
+     * Without this the breaker's fast-fail lands in the catch-all: one full ERROR stack per
+     * short-circuited request for the whole outage, and clients see {@code INTERNAL_ERROR} —
+     * indistinguishable from a crash, when 503-retry-later is exactly what they can act on.
+     */
+    @ExceptionHandler(CallNotPermittedException.class)
+    public ResponseEntity<Object> handleCircuitOpen(CallNotPermittedException ex) {
+        ApiMeta meta = metaFactory.create();
+        log.warn("Circuit breaker '{}' is open [requestId={}]",
+                ex.getCausingCircuitBreakerName(), meta.requestId());
+        return render(ErrorCode.SERVICE_UNAVAILABLE, List.of(error(meta, new AtomicInteger(1),
+                ErrorCode.SERVICE_UNAVAILABLE, ErrorCode.SERVICE_UNAVAILABLE.code(),
+                "A backing service is temporarily unavailable. Retry shortly.", null)), meta);
+    }
+
     // --- Catch-all: fixed safe 500; the ONLY place the stack trace is logged ---
 
     @ExceptionHandler(Exception.class)
@@ -196,6 +214,9 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
             case UNAUTHORIZED -> ErrorCode.UNAUTHORIZED;
             case FORBIDDEN -> ErrorCode.FORBIDDEN;
             case CONFLICT -> ErrorCode.CONFLICT;
+            case PAYLOAD_TOO_LARGE -> ErrorCode.PAYLOAD_TOO_LARGE;
+            case TOO_MANY_REQUESTS -> ErrorCode.RATE_LIMITED;
+            case SERVICE_UNAVAILABLE -> ErrorCode.SERVICE_UNAVAILABLE;
             default -> status.is4xxClientError() ? ErrorCode.BAD_REQUEST : ErrorCode.INTERNAL_ERROR;
         };
     }

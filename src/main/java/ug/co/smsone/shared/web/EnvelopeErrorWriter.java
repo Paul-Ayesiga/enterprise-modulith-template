@@ -3,6 +3,7 @@ package ug.co.smsone.shared.web;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -31,6 +32,9 @@ public class EnvelopeErrorWriter {
             String detail, ApiSource source) throws IOException {
         ApiMeta meta = metaFactory.create();
         response.setStatus(errorCode.httpStatus().value());
+        // JSON is UTF-8 on the wire (RFC 8259); without this the servlet writer defaults to
+        // ISO-8859-1 and any non-ASCII detail arrives as mojibake.
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
 
         String accept = request.getHeader(HttpHeaders.ACCEPT);
         if (accept != null && accept.contains(MediaType.APPLICATION_PROBLEM_JSON_VALUE)) {

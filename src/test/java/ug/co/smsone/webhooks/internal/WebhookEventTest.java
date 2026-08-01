@@ -27,10 +27,6 @@ class WebhookEventTest {
     @ServiceConnection
     static final PostgreSQLContainer<?> POSTGRES = AbstractIntegrationTest.POSTGRES;
 
-    static {
-        POSTGRES.start();
-    }
-
     @Autowired
     private WebhookSubscriptionService subscriptions;
 

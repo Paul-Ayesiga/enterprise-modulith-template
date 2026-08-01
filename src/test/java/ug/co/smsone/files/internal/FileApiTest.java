@@ -28,12 +28,14 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import ug.co.smsone.files.FileStorageProvider;
+import ug.co.smsone.shared.security.PlatformRole;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
 /**
  * The file REST surface: upload namespaces the key under the caller, download 302s to a presigned URL,
- * and every read/delete/presign is owner-or-admin scoped. The storage provider is mocked — the real
- * S3/SeaweedFS round-trip is covered by {@code FileStorageIntegrationTest}.
+ * and every read/delete/presign is owner-scoped — with cross-namespace access tiered by blast radius
+ * (support reads, admin deletes). The storage provider is mocked — the real S3/SeaweedFS round-trip is
+ * covered by {@code FileStorageIntegrationTest}.
  */
 @AutoConfigureMockMvc
 class FileApiTest extends AbstractIntegrationTest {
@@ -46,6 +48,12 @@ class FileApiTest extends AbstractIntegrationTest {
 
     private static RequestPostProcessor user(String subject) {
         return jwt().jwt(builder -> builder.subject(subject));
+    }
+
+    /** A platform operator at exactly one tier — the ladder supplies the rest. */
+    private static RequestPostProcessor platform(String role) {
+        return jwt().jwt(builder -> builder.subject("platform-" + UUID.randomUUID()))
+                .authorities(new SimpleGrantedAuthority("ROLE_" + role));
     }
 
     @Test
@@ -89,14 +97,45 @@ class FileApiTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void adminMayReachAnyNamespace() throws Exception {
+    void supportMayReadAnyNamespace() throws Exception {
         String key = "u/anybody/" + UUID.randomUUID() + "/audit.log";
         given(storage.exists(key)).willReturn(true);
         given(storage.presignGet(any(), any())).willReturn(URI.create("https://storage.local/x").toURL());
 
-        mockMvc.perform(get("/api/v1/files/" + key)
-                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+        mockMvc.perform(get("/api/v1/files/" + key).with(platform(PlatformRole.SUPPORT)))
                 .andExpect(status().isFound());
+    }
+
+    @Test
+    void supportMayNotDeleteAnotherUsersFile() throws Exception {
+        String key = "u/anybody/" + UUID.randomUUID() + "/audit.log";
+
+        mockMvc.perform(delete("/api/v1/files/" + key).with(platform(PlatformRole.SUPPORT)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errors[0].code").value("FORBIDDEN"));
+
+        then(storage).should(never()).delete(any());
+    }
+
+    @Test
+    void adminMayDeleteAnyNamespace() throws Exception {
+        String key = "u/anybody/" + UUID.randomUUID() + "/audit.log";
+
+        mockMvc.perform(delete("/api/v1/files/" + key).with(platform(PlatformRole.ADMIN)))
+                .andExpect(status().isNoContent());
+
+        then(storage).should().delete(key);
+    }
+
+    /** The ladder reaches hand-rolled checks too, not just {@code @PreAuthorize}. */
+    @Test
+    void superadminInheritsTheDeleteTier() throws Exception {
+        String key = "u/anybody/" + UUID.randomUUID() + "/audit.log";
+
+        mockMvc.perform(delete("/api/v1/files/" + key).with(platform(PlatformRole.SUPERADMIN)))
+                .andExpect(status().isNoContent());
+
+        then(storage).should().delete(key);
     }
 
     @Test

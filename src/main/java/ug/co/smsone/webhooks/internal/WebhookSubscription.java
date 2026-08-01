@@ -10,12 +10,16 @@ import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import ug.co.smsone.shared.persistence.AggregateRoot;
+import org.hibernate.annotations.SQLDelete;
+import org.hibernate.annotations.SQLRestriction;
+import ug.co.smsone.shared.persistence.SoftDeletableEntity;
 
 /** A tenant's outbound endpoint: where to POST, what to send, and the secret to sign with. */
 @Entity
 @Table(name = "webhook_subscription")
-class WebhookSubscription extends AggregateRoot {
+@SQLDelete(sql = "update webhook_subscription set deleted_at = now(), version = version + 1 where id = ? and version = ?")
+@SQLRestriction("deleted_at is null")
+class WebhookSubscription extends SoftDeletableEntity {
 
     @Column(name = "org_id", nullable = false, updatable = false)
     private UUID orgId;

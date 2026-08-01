@@ -13,7 +13,9 @@ import ug.co.smsone.shared.error.ValidationException;
 /**
  * Opaque keyset-cursor codec: {@code property=<type>:<value>} pairs joined with {@code |},
  * base64url-encoded. Supported value types: Instant (t), UUID (u), Long (l), String (s) —
- * enough for keysets built from audited entities (createdAt, id, names).
+ * enough for keysets built from audited entities (createdAt, id, names). String values are
+ * percent-escaped for the two structural characters, so a value containing {@code |} or {@code =}
+ * cannot make the server mint a cursor its own decode rejects.
  */
 public final class Cursors {
 
@@ -59,7 +61,7 @@ public final class Cursors {
             case Instant instant -> "t:" + instant;
             case UUID uuid -> "u:" + uuid;
             case Long number -> "l:" + number;
-            case String string -> "s:" + string;
+            case String string -> "s:" + escape(string);
             default -> throw new IllegalArgumentException(
                     "Unsupported cursor key type: " + value.getClass().getName());
         };
@@ -71,8 +73,18 @@ public final class Cursors {
             case 't' -> Instant.parse(value);
             case 'u' -> UUID.fromString(value);
             case 'l' -> Long.parseLong(value);
-            case 's' -> value;
+            case 's' -> unescape(value);
             default -> throw new IllegalArgumentException("Unknown cursor type tag");
         };
+    }
+
+    // Only String values need it — the other types cannot contain the structural characters.
+    // '%' first on escape and last on unescape, so escapes never re-escape themselves.
+    private static String escape(String value) {
+        return value.replace("%", "%25").replace("|", "%7C").replace("=", "%3D");
+    }
+
+    private static String unescape(String value) {
+        return value.replace("%7C", "|").replace("%3D", "=").replace("%25", "%");
     }
 }

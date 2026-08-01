@@ -1,7 +1,9 @@
 package ug.co.smsone.organization.internal;
 
 import java.time.Instant;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
@@ -62,21 +64,43 @@ class MemberService {
         this.auditLog = auditLog;
     }
 
+    /** The id → code map the member listing renders with — see {@link RoleRepository#codesByOrgId}. */
+    @Transactional(readOnly = true)
+    Map<UUID, String> roleCodes(UUID orgId) {
+        return roles.codesByOrgId(orgId).stream()
+                .collect(Collectors.toMap(RoleRepository.RoleCode::getId, RoleRepository.RoleCode::getCode));
+    }
+
     Membership invite(UUID orgId, String email, String firstName, String lastName, String roleCode) {
+        // Resolved twice on purpose. Here for the escalation guard, which must run BEFORE anything is
+        // provisioned; again inside saveMembership, because the two Keycloak calls below are network
+        // round-trips and the role can be deleted while they are in flight.
         Role role = requireRole(orgId, roleCode);
         escalationGuard.requireCallerHolds(orgId, role.getPermissions());
         ProvisionedUser provisioned = userProvisioning.provision(new ProvisionRequest(email, firstName, lastName));
         keycloakOrg.addMember(orgId, provisioned.subject());
-        return saveMembership(orgId, provisioned.subject(), role);
+        // Explicit template, not @Transactional: this is a self-invocation, which never reaches the
+        // proxy — the same reason remove() opens its transaction this way.
+        return transactionTemplate.execute(tx -> saveMembership(orgId, provisioned.subject(), role.getCode()));
     }
 
-    Membership saveMembership(UUID orgId, String subject, Role role) {
-        // Idempotent: a re-invite of an existing member returns the current membership unchanged
-        // (role changes go through assignRole, which is last-owner protected). No @Transactional needed
-        // — this is a single save; the uq_membership_org_user constraint backstops a concurrent insert,
-        // and losing that race resolves to the winner's row (idempotent success, not a 500).
+    /**
+     * Idempotent: a re-invite of an existing member returns the current membership unchanged (role
+     * changes go through assignRole, which is last-owner protected). The
+     * {@code uq_membership_org_user_live} index backstops a concurrent insert, and losing that race
+     * resolves to the winner's row (idempotent success, not a 500).
+     *
+     * <p>Runs in the caller's transaction, and takes the role by CODE rather than by instance: an
+     * instance resolved before the Keycloak calls may be seconds stale, and since soft delete a
+     * deleted role still satisfies {@code membership.role_id}, so the insert would succeed against a
+     * hidden row. The member would then appear with a null role code and zero permissions, created by
+     * a 201, with nothing anywhere explaining why. The shared lock makes the re-read decisive rather
+     * than merely narrower — see {@link RoleRepository#lockByOrgIdAndCode}.
+     */
+    Membership saveMembership(UUID orgId, String subject, String roleCode) {
         return memberships.findByOrgIdAndUserSubject(orgId, subject)
                 .orElseGet(() -> {
+                    Role role = lockRole(orgId, roleCode);
                     try {
                         Membership created = memberships.save(
                                 Membership.create(orgId, subject, role.getId(), role.getCode()));
@@ -98,7 +122,7 @@ class MemberService {
     @Transactional
     Membership assignRole(UUID orgId, String subject, String newRoleCode) {
         Membership membership = requireMembership(orgId, subject);
-        Role newRole = requireRole(orgId, newRoleCode);
+        Role newRole = lockRole(orgId, newRoleCode); // same shared lock as the insert path: no assign-onto-deleted
         if (membership.getRoleId().equals(newRole.getId())) {
             return membership; // no-op, avoids a spurious event + cache flush
         }
@@ -137,7 +161,7 @@ class MemberService {
     }
 
     private void guardLastOwnerLoss(UUID orgId, Membership membership) {
-        Role owner = roles.findByOrgIdAndCode(orgId, "OWNER").orElse(null);
+        Role owner = roles.findByOrgIdAndCode(orgId, Role.OWNER_CODE).orElse(null);
         if (owner == null || !membership.getRoleId().equals(owner.getId())) {
             return; // not an owner — removing/demoting is always fine
         }
@@ -149,8 +173,22 @@ class MemberService {
     }
 
     private Role requireRole(UUID orgId, String roleCode) {
-        return roles.findByOrgIdAndCode(orgId, roleCode == null ? "" : roleCode.trim().toUpperCase())
-                .orElseThrow(() -> new NotFoundException("Role '" + roleCode + "' not found in this organization."));
+        return roles.findByOrgIdAndCode(orgId, normalize(roleCode))
+                .orElseThrow(() -> notFound(roleCode));
+    }
+
+    /** {@link #requireRole} for the paths that go on to WRITE the reference — see the repository. */
+    private Role lockRole(UUID orgId, String roleCode) {
+        return roles.lockByOrgIdAndCode(orgId, normalize(roleCode))
+                .orElseThrow(() -> notFound(roleCode));
+    }
+
+    private static String normalize(String roleCode) {
+        return roleCode == null ? "" : roleCode.trim().toUpperCase();
+    }
+
+    private static NotFoundException notFound(String roleCode) {
+        return new NotFoundException("Role '" + roleCode + "' not found in this organization.");
     }
 
     private Membership requireMembership(UUID orgId, String subject) {

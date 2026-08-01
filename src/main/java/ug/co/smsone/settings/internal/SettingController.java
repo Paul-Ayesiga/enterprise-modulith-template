@@ -1,5 +1,6 @@
 package ug.co.smsone.settings.internal;
 
+import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -32,17 +33,23 @@ class SettingController {
     }
 
     @GetMapping
+    @Operation(summary = "List platform settings")
     WindowedResult<ResourceObject> list(CursorPageRequest page) {
         return WindowedResult.of(settingService.list(page), page, SettingController::toResource);
     }
 
     @GetMapping("/{key}")
+    @Operation(summary = "Get one platform setting by key")
     ResourceObject get(@PathVariable String key) {
         return toResource(settingService.require(key));
     }
 
     @PutMapping("/{key}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Create or replace a platform setting",
+            description = """
+                    Upsert: a key that does not exist yet is created rather than rejected, so there is \
+                    no separate create call. Settings are global, not per-organization.""")
+    @PreAuthorize("hasRole('platform-admin')")
     ResourceObject put(@PathVariable String key, @Valid @RequestBody UpsertSettingRequest request) {
         return toResource(settingService.put(key, request.value(), request.description()));
     }

@@ -77,6 +77,23 @@ class ValkeyCacheIntegrationTest extends AbstractIntegrationTest {
     }
 
     /**
+     * Negative caching: a cached null must survive the L2 round-trip. Without NullValue support the
+     * serialized sentinel failed type validation on every read — each read became a WARN + miss that
+     * re-cached and re-broadcast, evicting peers' good entries (and {@code SettingService.valueOf}
+     * caches {@code orElse(null)} on its documented hot path).
+     */
+    @Test
+    void aCachedNullSurvivesAnL2OnlyRead() {
+        Cache cache = cacheManager.getCache("null-probe");
+        cache.put("missing", null);
+        caffeineCacheManager.getCache("null-probe").clear(); // wipe L1 only — force the L2 read
+
+        Cache.ValueWrapper wrapper = cache.get("missing");
+        assertThat(wrapper).as("the null entry must still be a HIT from L2, not a miss").isNotNull();
+        assertThat(wrapper.get()).isNull();
+    }
+
+    /**
      * Regression: L2 stores JSON, so without type information every collection came back as an
      * {@code ArrayList} and every object as a {@code LinkedHashMap} — a {@code @Cacheable} method
      * returning {@code Set<String>} then blew up with a ClassCastException inside the CGLIB proxy,
@@ -118,13 +135,10 @@ class ValkeyCacheIntegrationTest extends AbstractIntegrationTest {
         redisTemplate.convertAndSend(CacheInvalidationBroadcaster.TOPIC,
                 "some-other-instance\n" + SettingService.VALUES_CACHE + "\ncache.bcast");
 
-        long deadline = System.currentTimeMillis() + 5000;
-        while (System.currentTimeMillis() < deadline
-                && caffeineCacheManager.getCache(SettingService.VALUES_CACHE).get("cache.bcast") != null) {
-            Thread.sleep(50);
-        }
-        assertThat(caffeineCacheManager.getCache(SettingService.VALUES_CACHE).get("cache.bcast"))
-                .as("L1 entry evicted by foreign broadcast")
-                .isNull();
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5))
+                .untilAsserted(() -> assertThat(
+                        caffeineCacheManager.getCache(SettingService.VALUES_CACHE).get("cache.bcast"))
+                        .as("L1 entry evicted by foreign broadcast")
+                        .isNull());
     }
 }

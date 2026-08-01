@@ -58,6 +58,17 @@ class WebhookDeliveryQueue {
         });
     }
 
+    /**
+     * {@code s.deleted_at is null} is the revocation, not a tidiness filter. Soft delete leaves the
+     * subscription row in place, so the {@code on delete cascade} that used to wipe the queue never
+     * fires; without this predicate a deleted subscription's queued deliveries keep being claimed and
+     * keep being POSTed to the endpoint the tenant just revoked, signed with the secret they rotated
+     * away from. {@code @SQLRestriction} cannot reach native SQL, so it is spelled out here.
+     *
+     * <p>{@code s.status = 'ACTIVE'} is the softer half of the same rule: DISABLED pauses delivery
+     * immediately, queued rows included — not just future fan-out. Unlike a delete (which cancels
+     * outstanding rows), paused rows stay PENDING and resume the moment the tenant re-enables.
+     */
     List<ClaimedWebhookDelivery> claim(int batchSize, Duration staleLock) {
         return jdbc.query("""
                 update webhook_delivery d
@@ -70,7 +81,8 @@ class WebhookDeliveryQueue {
                     limit ?
                     for update skip locked
                 ) c, webhook_subscription s
-                where d.id = c.id and s.id = d.subscription_id
+                where d.id = c.id and s.id = d.subscription_id and s.deleted_at is null
+                  and s.status = 'ACTIVE'
                 returning d.id, s.url, s.secret, d.event_type, d.payload, d.attempts, d.max_attempts
                 """,
                 (rs, rowNum) -> new ClaimedWebhookDelivery(
@@ -105,9 +117,32 @@ class WebhookDeliveryQueue {
                 responseStatus, truncate(error), id, expectedAttempts));
     }
 
-    int purgeDeliveredBefore(Instant cutoff) {
-        return jdbc.update("delete from webhook_delivery where status = 'DELIVERED' and created_at < ?",
-                Timestamp.from(cutoff));
+    /**
+     * Dead-letters everything still outstanding for a subscription. The claim above simply stops
+     * seeing those rows, which would leave them PENDING until the retention purge — indistinguishable
+     * from "still trying". Cancelling them makes the delivery log say what actually happened, and the
+     * inner select re-selecting unclaimable ids forever is avoided.
+     */
+    int cancelOutstanding(UUID subscriptionId, String reason) {
+        return jdbc.update("update webhook_delivery set status = 'FAILED', locked_at = null, "
+                + "last_error = ? where subscription_id = ? and status in ('PENDING', 'PROCESSING')",
+                truncate(reason), subscriptionId);
+    }
+
+    /**
+     * One bounded batch of terminal rows (DELIVERED and FAILED) older than the cutoff; the caller
+     * loops until a short batch, each batch committing on its own connection. FAILED is included
+     * deliberately: a dead-letter past the retention window is stale noise nobody is coming back
+     * for — the delivery log is a log, not an archive.
+     */
+    int purgeTerminalBatch(Instant cutoff, int batchSize) {
+        return jdbc.update("""
+                delete from webhook_delivery where id in (
+                    select id from webhook_delivery
+                    where status in ('DELIVERED', 'FAILED') and created_at < ?
+                    order by created_at
+                    limit ?)
+                """, Timestamp.from(cutoff), batchSize);
     }
 
     private static void fenced(String operation, UUID id, int updated) {

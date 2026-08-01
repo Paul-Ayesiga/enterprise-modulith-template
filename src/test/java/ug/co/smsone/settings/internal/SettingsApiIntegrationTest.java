@@ -1,4 +1,4 @@
-package ug.co.smsone.settings;
+package ug.co.smsone.settings.internal;
 
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -24,7 +24,7 @@ class SettingsApiIntegrationTest extends AbstractIntegrationTest {
     @Test
     void adminUpsertsAndReadsSettingThroughTheEnvelope() throws Exception {
         mockMvc.perform(put("/api/v1/settings/branding.tagline")
-                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_platform-admin")))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"value\":\"Enterprise messaging\",\"description\":\"Landing tagline\"}"))
                 .andExpect(status().isOk())
@@ -43,7 +43,7 @@ class SettingsApiIntegrationTest extends AbstractIntegrationTest {
     void cursorPaginationWalksTheCollection() throws Exception {
         for (int i = 1; i <= 3; i++) {
             mockMvc.perform(put("/api/v1/settings/cursor.demo." + i)
-                            .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
+                            .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_platform-admin")))
                             .contentType(MediaType.APPLICATION_JSON)
                             .content("{\"value\":\"v" + i + "\"}"))
                     .andExpect(status().isOk());
@@ -104,7 +104,7 @@ class SettingsApiIntegrationTest extends AbstractIntegrationTest {
     @Test
     void blankValueYields422MultiErrorEnvelope() throws Exception {
         mockMvc.perform(put("/api/v1/settings/branding.tagline")
-                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_platform-admin")))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"value\":\"\"}"))
                 .andExpect(status().isUnprocessableEntity())

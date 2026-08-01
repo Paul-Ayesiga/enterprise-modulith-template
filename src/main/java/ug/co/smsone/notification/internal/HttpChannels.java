@@ -16,6 +16,9 @@ final class HttpChannels {
 
     private static final HttpClient CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
+            // NEVER is the JDK default, but here it is load-bearing: following a redirect would fetch
+            // a location SafeOutboundUrl never validated (302 → http://169.254.169.254/…).
+            .followRedirects(HttpClient.Redirect.NEVER)
             .build();
 
     private HttpChannels() {

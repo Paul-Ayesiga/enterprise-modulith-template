@@ -12,7 +12,7 @@ import ug.co.smsone.notification.NotificationChannel;
  * tunes the async fan-out worker.
  */
 @ConfigurationProperties(prefix = "app.notification")
-public record NotificationProperties(
+record NotificationProperties(
         String from,
         List<Admin> admins,
         String slackWebhookUrl,
@@ -51,7 +51,6 @@ public record NotificationProperties(
             Duration retryMaxBackoff,
             Duration staleLock,
             Duration retention,
-            Duration purgeInterval,
             int maxDrainBatches,
             Boolean workerAutoStart,
             Duration throttleDelay,
@@ -83,9 +82,6 @@ public record NotificationProperties(
             if (retention == null) {
                 retention = Duration.ofDays(7);
             }
-            if (purgeInterval == null) {
-                purgeInterval = Duration.ofHours(1);
-            }
             if (maxDrainBatches <= 0) {
                 maxDrainBatches = 25;
             }
@@ -102,7 +98,7 @@ public record NotificationProperties(
         }
 
         static Delivery defaults() {
-            return new Delivery(0, 0, 0, null, null, null, null, null, null, 0, null, null, null, null);
+            return new Delivery(0, 0, 0, null, null, null, null, null, 0, null, null, null, null);
         }
     }
 

@@ -3,6 +3,7 @@ package ug.co.smsone.identity.internal;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
+import com.jayway.jsonpath.JsonPath;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -21,6 +22,7 @@ import ug.co.smsone.identity.ProvisionRequest;
 import ug.co.smsone.identity.ProvisionedUser;
 import ug.co.smsone.identity.ProvisioningStatus;
 import ug.co.smsone.identity.UserProvisioning;
+import ug.co.smsone.shared.security.PlatformRole;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
 /**
@@ -101,6 +103,95 @@ class KeycloakProvisioningIntegrationTest extends AbstractIntegrationTest {
         ProvisionedUser again = provisioning.provision(new ProvisionRequest(email, "In", "Vitee"));
         assertThat(again.alreadyExisted()).isTrue();
         assertThat(again.subject()).isEqualTo(user.subject());
+    }
+
+    /**
+     * Provisioning grants the baseline realm role and nothing above it. The negative half is the point:
+     * invite is reachable by any org member holding {@code member:invite}, so if this path could attach
+     * a platform role, a tenant could mint platform operators.
+     */
+    @Test
+    void provisioningGrantsTheBaselineRealmRoleAndNoPlatformAuthority() {
+        String email = "baseline-" + UUID.randomUUID() + "@smsone.co.ug";
+
+        ProvisionedUser user = provisioning.provision(new ProvisionRequest(email, "Base", "Line"));
+
+        assertThat(keycloak.realmRoles(user.subject()))
+                .contains("USER")
+                .noneMatch(PlatformRole::isPlatformRole);
+    }
+
+    /**
+     * The tier guard for impersonation asks this gateway which platform roles a target holds, and its
+     * answer has to be the set the target's TOKEN will carry — {@code realm_access.roles}, which Keycloak
+     * resolves. Composite roles are the ordinary way an ops team tiers itself ({@code ops-lead} composed
+     * of {@code platform-admin}), and the direct role-mapping endpoint does not expand them: reading it
+     * would report "holds no platform role" about someone every {@code hasRole('platform-admin')} check
+     * lets through, which is the guardrail failing silently in the one direction that matters.
+     */
+    @Test
+    void realmRolesReportsRolesHeldThroughACompositeNotJustDirectMappings() {
+        String email = "composite-" + UUID.randomUUID() + "@smsone.co.ug";
+        ProvisionedUser user = provisioning.provision(new ProvisionRequest(email, "Comp", "Osite"));
+        String opsLead = "ops-lead-" + UUID.randomUUID();
+
+        createComposite(opsLead, PlatformRole.ADMIN);
+        keycloak.assignRealmRole(user.subject(), opsLead); // the ONLY direct mapping is the wrapper role
+
+        assertThat(keycloak.realmRoles(user.subject()))
+                .contains(opsLead)
+                .anyMatch(PlatformRole::isPlatformRole);
+    }
+
+    /**
+     * The fixture roles are created with the realm's BOOTSTRAP ADMIN, not the app's service account.
+     * That account holds only {@code view-realm} + {@code manage-users}, and it must stay that way: an
+     * application able to mint realm roles could grant itself the platform tier it is supposed to be
+     * constrained by. Composing roles is an operator action, so the test performs it as an operator.
+     */
+    private void createComposite(String parent, String child) {
+        String token = bootstrapAdminToken();
+        adminPost("/roles", "{\"name\":\"" + parent + "\"}", token);
+        String childId = JsonPath.read(adminGet("/roles/" + child, token), "$.id");
+        adminPost("/roles/" + parent + "/composites",
+                "[{\"id\":\"" + childId + "\",\"name\":\"" + child + "\"}]", token);
+    }
+
+    private String bootstrapAdminToken() {
+        String body = send(HttpRequest.newBuilder(URI.create(keycloakUrl("/realms/master/protocol/openid-connect/token")))
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .POST(HttpRequest.BodyPublishers.ofString(
+                        "grant_type=password&client_id=admin-cli&username=admin&password=admin")));
+        return JsonPath.read(body, "$.access_token");
+    }
+
+    private String adminGet(String path, String token) {
+        return send(HttpRequest.newBuilder(URI.create(keycloakUrl("/admin/realms/smsone" + path)))
+                .header("Authorization", "Bearer " + token).GET());
+    }
+
+    private void adminPost(String path, String json, String token) {
+        send(HttpRequest.newBuilder(URI.create(keycloakUrl("/admin/realms/smsone" + path)))
+                .header("Authorization", "Bearer " + token)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json)));
+    }
+
+    private static String keycloakUrl(String path) {
+        return "http://" + KEYCLOAK.getHost() + ":" + KEYCLOAK.getMappedPort(KEYCLOAK_PORT) + path;
+    }
+
+    private static String send(HttpRequest.Builder request) {
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            HttpResponse<String> response = client.send(request.build(), HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() >= 300) {
+                throw new IllegalStateException("Keycloak admin call failed: " + response.statusCode()
+                        + " " + response.body());
+            }
+            return response.body();
+        } catch (Exception ex) {
+            throw new IllegalStateException("Keycloak admin call failed", ex);
+        }
     }
 
     private String mailpitMessages() {

@@ -8,10 +8,13 @@ import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
+import ug.co.smsone.settings.internal.Setting;
 import ug.co.smsone.settings.internal.SettingService;
 import ug.co.smsone.shared.audit.AuditLog;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
@@ -28,6 +31,12 @@ class AuditRecordingTest extends AbstractIntegrationTest {
 
     @Autowired
     private AuditLog auditLog;
+
+    @Autowired
+    private AuditEntryRepository auditEntries;
+
+    @Autowired
+    private JpaRepository<Setting, UUID> settingRows; // SettingRepository, via its public supertype
 
     @Autowired
     private JdbcTemplate jdbc;
@@ -72,6 +81,38 @@ class AuditRecordingTest extends AbstractIntegrationTest {
         assertThat(jdbc.queryForObject(
                 "select actor from audit_log where action = 'test.system' and target = ?", String.class, target))
                 .isNull();
+    }
+
+    /**
+     * The trail outlives what it describes. {@code audit_log} is deliberately the one table V17 left
+     * alone — {@link AuditEntry} extends {@code BaseEntity}, not {@code SoftDeletableEntity} — so
+     * soft-deleting the entity an entry describes must not hide, orphan or cascade into its history.
+     * Deleting a setting is exactly the case where the audit row becomes the ONLY surviving record of
+     * who changed what.
+     */
+    @Test
+    void theTrailSurvivesTheSoftDeleteOfWhatItDescribes() {
+        String key = "retention.window-" + UUID.randomUUID();
+        authenticateAs("admin-alice");
+        settings.put(key, "30d", null);
+        settings.put(key, "90d", null);
+
+        Setting setting = settings.require(key);
+        settingRows.delete(setting);
+
+        assertThat(settingRows.findById(setting.getId())).isEmpty(); // the subject is gone from JPA...
+        assertThat(auditEntries.findAll(recordsFor(key)))            // ...its history is not
+                .extracting(AuditEntry::getToState)
+                .containsExactlyInAnyOrder("30d", "90d");
+        assertThat(auditEntries.findAll(recordsFor(key)))
+                .extracting(AuditEntry::getActor)
+                .containsOnly("admin-alice");
+        assertThat(jdbc.queryForObject(
+                "select count(*) from audit_log where target = ?", Integer.class, key)).isEqualTo(2);
+    }
+
+    private static Specification<AuditEntry> recordsFor(String target) {
+        return (root, query, cb) -> cb.equal(root.get("target"), target);
     }
 
     private Map<String, Object> row(String key, String toState) {

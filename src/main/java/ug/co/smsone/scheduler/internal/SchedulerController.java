@@ -1,5 +1,6 @@
 package ug.co.smsone.scheduler.internal;
 
+import io.swagger.v3.oas.annotations.Operation;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
@@ -13,7 +14,12 @@ import ug.co.smsone.shared.web.ResourceObject;
 /**
  * Read-only observability into clustered scheduling: the ShedLock rows show which job holds (or last
  * held) its lock, when, and on which instance — the proof that {@code @Scheduled} jobs fire exactly
- * once across the fleet. Admin-only; there is no trigger endpoint (jobs are time-driven by design).
+ * once across the fleet. The floor is {@code platform-support}: reading lock state is the
+ * ops-investigation job. There is no trigger endpoint (jobs are time-driven by design).
+ *
+ * <p>The {@code JdbcTemplate} read stays inline deliberately: {@code shedlock} is a framework-owned
+ * table with no entity and no domain service to delegate to — a service holding one two-column
+ * SELECT would be ceremony, not a boundary.
  */
 @RestController
 @RequestMapping("/api/v1/scheduler/locks")
@@ -31,7 +37,12 @@ class SchedulerController {
     }
 
     @GetMapping
-    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "List scheduled-job lock state across the fleet",
+            description = """
+                    One row per scheduled job, showing which instance holds (or last held) its lock \
+                    and until when — the evidence that a job fires once cluster-wide. Read-only: there \
+                    is no endpoint to trigger a job, they are time-driven by design.""")
+    @PreAuthorize("hasRole('platform-support')")
     List<ResourceObject> list() {
         return jdbc.query(
                 "select name, lock_until, locked_at, locked_by from shedlock order by locked_at desc",

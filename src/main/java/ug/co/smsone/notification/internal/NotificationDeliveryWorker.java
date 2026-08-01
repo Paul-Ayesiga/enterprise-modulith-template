@@ -1,5 +1,6 @@
 package ug.co.smsone.notification.internal;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -27,6 +28,9 @@ import ug.co.smsone.notification.NotificationMessage;
  * <p>Sends happen OUTSIDE any DB transaction; only the short status update touches the DB. In tests
  * the background poller is disabled ({@code worker-auto-start=false}) and {@link #drainOnce()} is
  * driven explicitly for determinism.
+ *
+ * <p>Public because tests outside this package drive it: {@code shared.ratelimit}'s egress-throttle
+ * IT calls {@link #drainOnce()} directly.
  */
 @Component
 public class NotificationDeliveryWorker implements SmartLifecycle {
@@ -39,20 +43,21 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
     private final ChannelRegistry channels;
     private final ChannelRateLimiter channelRateLimiter;
     private final NotificationProperties.Delivery config;
+    private final Clock clock;
 
     private final Semaphore permits;
 
     private volatile ExecutorService sendExecutor = Executors.newVirtualThreadPerTaskExecutor();
     private volatile boolean running;
     private volatile Thread poller;
-    private volatile Instant lastPurge = Instant.EPOCH;
 
     NotificationDeliveryWorker(NotificationDeliveryQueue queue, ChannelRegistry channels,
-            ChannelRateLimiter channelRateLimiter, NotificationProperties properties) {
+            ChannelRateLimiter channelRateLimiter, NotificationProperties properties, Clock clock) {
         this.queue = queue;
         this.channels = channels;
         this.channelRateLimiter = channelRateLimiter;
         this.config = properties.delivery();
+        this.clock = clock;
         this.permits = new Semaphore(config.concurrency());
     }
 
@@ -106,9 +111,7 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
     private void runLoop() {
         while (running) {
             try {
-                int processed = drainOnce();
-                maybePurge();
-                if (processed == 0) {
+                if (drainOnce() == 0) {
                     Thread.sleep(config.pollInterval().toMillis());
                 }
             } catch (InterruptedException ex) {
@@ -191,13 +194,13 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
             // an old message from a legitimate burst is just waiting its turn.
             Instant throttledSince = delivery.throttledSince();
             if (throttledSince != null
-                    && Duration.between(throttledSince, Instant.now()).compareTo(config.throttleMaxAge()) > 0) {
+                    && Duration.between(throttledSince, clock.instant()).compareTo(config.throttleMaxAge()) > 0) {
                 log.warn("Delivery {} to {} via {} dead-lettered: throttled continuously beyond {}",
                         delivery.id(), delivery.recipient(), delivery.channel(), config.throttleMaxAge());
                 queue.deadLetter(delivery.id(), "Throttled continuously beyond " + config.throttleMaxAge(),
                         delivery.attempts());
             } else {
-                queue.rescheduleThrottled(delivery.id(), Instant.now().plus(defer.get()), delivery.attempts());
+                queue.rescheduleThrottled(delivery.id(), clock.instant().plus(defer.get()), delivery.attempts());
             }
             return;
         }
@@ -214,7 +217,7 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
                         delivery.id(), delivery.recipient(), delivery.channel(), delivery.attempts(),
                         permanent ? "permanent failure" : "attempts exhausted", ex.toString());
             } else {
-                queue.reschedule(delivery.id(), Instant.now().plus(backoff(delivery.attempts())),
+                queue.reschedule(delivery.id(), clock.instant().plus(backoff(delivery.attempts())),
                         ex.getMessage(), delivery.attempts());
             }
             return;
@@ -234,21 +237,6 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
         long scaled = base << Math.min(attempts - 1, MAX_BACKOFF_SHIFT);
         long capped = Math.min(scaled, config.retryMaxBackoff().toMillis());
         return Duration.ofMillis(Math.max(base, capped));
-    }
-
-    private void maybePurge() {
-        if (Duration.between(lastPurge, Instant.now()).compareTo(config.purgeInterval()) < 0) {
-            return;
-        }
-        lastPurge = Instant.now();
-        try {
-            int deleted = queue.purgeSentBefore(Instant.now().minus(config.retention()));
-            if (deleted > 0) {
-                log.info("Purged {} delivered notifications older than {}", deleted, config.retention());
-            }
-        } catch (RuntimeException ex) {
-            log.warn("Delivery purge failed: {}", ex.toString());
-        }
     }
 
     private void sleepQuietly(long millis) {

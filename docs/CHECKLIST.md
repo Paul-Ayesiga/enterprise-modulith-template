@@ -31,7 +31,9 @@ its acceptance gate verified. Updated as work lands — this file is the single 
 - [x] `shared/observability` — `logback-spring.xml` JSON (human console for local/test), requestId+traceId in MDC, OTLP export, micrometer-java21 + virtual threads
 - [x] `shared/security` — Keycloak 26.7.0 in Compose + realm import (smsone); OAuth2 Resource Server
 - [x] `shared/security` — JWT roles → `ROLE_*`, `@EnableMethodSecurity`, `CurrentUser` + resolver, `PermissionEvaluator` seam; 401/403 as envelope; real-JWT gate test vs Keycloak container (dasniko dropped — TC1-only)
-- [x] `shared/persistence` — `BaseEntity`/`AggregateRoot`, UUID keys, auditing, soft-delete
+- [x] `shared/persistence` — `BaseEntity`/`AggregateRoot`, UUID keys, auditing
+      (soft-delete was listed here but only ever existed as an unused `SoftDeletableEntity` scaffold
+      with no column and no entity using it — actually delivered 2026-07-31, below)
 - [x] `shared/persistence` — Flyway (starter + postgresql module) `V1__baseline.sql`
 - [x] Testcontainers: Postgres `@ServiceConnection` singleton — **real containers, no H2/fakes** (Keycloak container lands with security)
 - [x] `OpenApiConfig` (bearer + Keycloak OAuth2 schemes, X-Request-Id header on all ops) + `./gradlew exportOpenApi` → `docs/openapi/*` (Postman imports the 3.1 spec natively)
@@ -66,19 +68,244 @@ its acceptance gate verified. Updated as work lands — this file is the single 
 - [x] Modulith Documenter → `docs/modulith/` (C4 `components.puml` + per-module PlantUML + canvases with events), refreshed every build, `./gradlew exportModulithDocs`
 - [x] `docs/ARCHITECTURE.md` (Mermaid module map + request-path sequence + contract index); `docs/EVENTS.md` event catalog
 - [x] ADR backlog written: 0002 cursor pagination · 0003 Testcontainers-only · 0004 two-level cache · 0005 idempotency keys · 0006 embedded DuckDB
-- [x] `docs/NEXT_TASKS.md` — pickup-ready backlog for the next agent (CI, notification, identity/organization, K8s, rate limiting, event externalization)
+- [x] `docs/NEXT_TASKS.md` — pickup-ready backlog for the next agent (CI, notification, identity/organization, K8s, rate limiting, event externalization) _(the file was retired 2026-08-01)_
 
 ## Notification module ✅ (2026-07-28)
 
 - [x] Pluggable channel SPI (`NotificationChannelSender`) + `Notifications` facade / `NotificationRequest` / `Recipient` (per-recipient channel addressing)
 - [x] Channels: Email (SMTP), In-app (persisted + REST), Webhook (HTTP POST), Slack (incoming-webhook POST), SMS (dev stub, `app.notification.sms.stub=false` to replace)
-- [x] `notification_log` audit (per-channel SENT/FAILED); one channel failing never aborts the others
+- [x] Per-channel delivery audit (SENT/FAILED); one channel failing never aborts the others —
+      the original `notification_log` table was superseded by the durable `notification_delivery`
+      queue in **V9**
 - [x] `@ApplicationModuleListener` on `FeatureFlagChanged` → notifies admins (email + in-app), idempotent via `EventInbox`; V8 migration
 - [x] In-app REST: `GET /api/v1/notifications` (cursor-paginated, own only), `POST /api/v1/notifications/{id}/read`
 - [x] Test-infra: capped Hikari pool + Postgres `max_connections=400` (suite outgrew the default 100)
 - [x] **Gate:** flag toggle lands an email in real Mailpit + an in-app row; webhook fan-out verified; `verify()` green with 6 modules; full `./gradlew build` green; OpenAPI + Modulith docs regenerated
 
+## Platform roles + hierarchy ✅ (2026-07-31)
+
+Slice A of [archive/PLATFORM_RBAC_IMPERSONATION_PLAN.md](archive/PLATFORM_RBAC_IMPERSONATION_PLAN.md).
+
+- [x] `PlatformRole` vocabulary (`platform-superadmin` → `platform-admin` → `platform-support`);
+      `ADMIN` removed from the realm export, `paul` reseated as `platform-superadmin`
+- [x] One `RoleHierarchy` bean, published for the web layer and fed to the method-security handler
+      via `setAuthorizationManagerFactory` (a custom handler opts out of the auto-configured
+      hierarchy; `setRoleHierarchy` is deprecated in Spring Security 7.1)
+- [x] `CurrentUserProvider` expands authorities through the hierarchy, so `CurrentUser.hasRole(…)`
+      and `@PreAuthorize("hasRole(…)")` cannot answer the same question differently
+- [x] 9 `@PreAuthorize` sites retiered (support: `/admin/users`, `/audit`, `/scheduler/locks`,
+      `/analytics/reports`; admin: `PUT /settings|/feature-flags`, `POST /orgs`, suspend/reactivate)
+- [x] `FileController` cross-namespace access split by blast radius — support reads, admin deletes
+      (presign-PUT always mints under the caller's own subject, so there was no write path to tier)
+- [x] **Gate:** `PlatformRoleHierarchyTest` — each tier granted exactly ONE authority, asserting
+      what it reaches *and* that the ladder does not run downwards
+- [x] **Gate:** real Keycloak token — paul holds only `platform-superadmin` yet reaches a
+      support-tier endpoint (proves the realm import + mapping + hierarchy end to end)
+- [x] **Gate:** full `./gradlew build` green (41 classes, 159 tests); OpenAPI + Modulith docs regenerated
+
+## Org roles → permission-based, OWNER-only ✅ (2026-07-31)
+
+Slice B of [archive/PLATFORM_RBAC_IMPERSONATION_PLAN.md](archive/PLATFORM_RBAC_IMPERSONATION_PLAN.md).
+
+- [x] `RoleSeeder` seeds `OWNER` and only `OWNER`; `Role.OWNER_CODE` is the single constant the
+      application names (first-owner bootstrap + last-owner protection)
+- [x] `RESERVED_CODES` shrinks to `{OWNER}`; a `PLATFORM*` prefix guard (422) keeps tenant roles from
+      reading like platform tiers
+- [x] **V16** flips pre-existing `ADMIN`/`MEMBER` to `system_role=false` — flipped, not deleted, since
+      `membership.role_id` references them
+- [x] Org RBAC tests build their own roles instead of leaning on seeded ones
+- [x] **Gate:** a fresh org has exactly one role; owner mints `AUDITOR`, assigns it, holder gets
+      exactly those permissions and 403 elsewhere — `OrgRbacAuthorityTest.aFreshOrganizationHasExactlyOneRole`,
+      `OrgRbacApiTest.ownerMintsARoleAndItsHolderGetsExactlyThosePermissions`
+- [x] **Gate:** a role code grants nothing by itself — `OrgRbacAuthorityTest.aRoleCodeGrantsNothingByItself`,
+      `OrgRbacApiTest.aRoleNamedAdminIsJustAnotherCustomRole`, `.aCustomRoleCarryingMemberInviteCanInvite`
+- [x] **Gate:** full `./gradlew build` green
+
+## Durable identity is the subject, not the username ✅ (2026-07-31)
+
+- [x] `CurrentUserProvider.currentSubject()` — one answer to "who is the caller, durably"
+- [x] `created_by`/`updated_by` record the subject (`JpaAuditingConfig`), not the mutable
+      `preferred_username`; `system` sentinel for writes outside a request
+- [x] Idempotency keys scope per subject — a recycled username could previously replay the previous
+      holder's stored responses (cross-account disclosure, not just bad attribution)
+- [x] Rate-limit buckets key by subject — the key type always said `sub` and now means it; a rename
+      no longer hands out a fresh quota
+- [x] **Gate:** `SubjectAttributionTest` builds authentication through the REAL
+      `KeycloakJwtAuthenticationConverter` — the `jwt()` mock defaults the principal name to the
+      subject, which is exactly why the whole suite passed while the bug was live
+
+## Soft delete ✅ (2026-07-31)
+
+- [x] All seven `AggregateRoot` tables carry `deleted_at`; `@SQLDelete` + `@SQLRestriction` per entity
+      (Hibernate inherits neither from a mapped superclass — a missing one is a silent hard delete or
+      a silent leak). `audit_log` and `in_app_notification` stay append-only/disposable by design.
+- [x] **V17** — every unique constraint on a soft-deletable table becomes a PARTIAL unique index
+      (`where deleted_at is null`), so a deleted key can be reused; without it, deleting the role
+      `AUDITOR` would forbid ever creating another
+- [x] Partial indexes on `deleted_at is not null` for the retention scan
+- [x] Retention purge job + soft-delete behaviour suite
+- [x] **Gate:** delete-then-recreate the same key succeeds; a soft-deleted membership resolves to zero
+      permissions; deleted rows invisible to every JPA path but present via native SQL
+
+## Audited impersonation ✅ (2026-07-31)
+
+Slice C of [archive/PLATFORM_RBAC_IMPERSONATION_PLAN.md](archive/PLATFORM_RBAC_IMPERSONATION_PLAN.md) — the only
+sanctioned path from the platform axis to tenant data, and the only one that leaves a trail.
+
+- [x] `shared.security` gains the seam: `ImpersonationLookup` port + `ImpersonatedPrincipal` +
+      `ImpersonatedAuthenticationToken`, implemented by `identity.internal.ImpersonationLookupImpl` —
+      the same shape as `OrgAuthorization`, so `shared` still compile-depends on no business module
+- [x] The token's authority collection is **empty**, which is the whole mechanism: org permissions
+      still resolve from the DB for the target (tenant endpoints work) while every
+      `hasRole('platform-*')` fails (`/admin/**` is unreachable from inside a session)
+- [x] `ImpersonationFilter` at `@Order(-2)` — after authentication, before rate limiting, idempotency
+      and the provisioning gate, so the whole request sees ONE effective principal; the previous
+      `SecurityContext` is restored in a `finally`
+- [x] `CurrentUser` gains a nested `Impersonation(sessionId, actorSubject)` and
+      `accountableSubject()`; `CurrentUserProvider` resolves both token types
+- [x] **V18** `impersonation_session` — `BaseEntity`, **not** soft-deletable: the person a delete
+      would serve is the operator whose reach the row records. Sessions *end*, they are never removed
+- [x] **V19** `audit_log.on_behalf_of` + `impersonation_id`. Attribution inverts inside a session —
+      `actor` is the operator, the worn identity moves to `on_behalf_of` — filled from the security
+      context in `AuditLogImpl`, so the `AuditLog` port signature is unchanged and no call site can
+      forget it
+- [x] `POST`/`GET`/`DELETE /api/v1/admin/impersonations` (floor `platform-support`; `mode=WRITE`
+      needs `platform-admin`; `?actor=` on the listing needs `platform-admin`), cursor-paginated
+- [x] Guardrails in `ImpersonationService`: target exists, not `DISABLED`, not soft-deleted (404 and
+      409 stay distinct); a platform-role holder needs `platform-superadmin`; `reason` ≥ 8 chars;
+      TTL default 15 min / cap 30, over-cap **rejected** not clamped; one live session per
+      (actor, target) with supersede audited; no self-impersonation
+- [x] Kill switch `app.impersonation.enabled` — off means **refused**, not absent: the routes and
+      the header both answer 403 naming the switch
+- [x] **Gate:** support reaches tenant data only *with* the header and `/api/v1/admin/users` only
+      *without* it — `ImpersonationReachTest.supportReachesTenantDataThroughASessionAndTheAdminSurfaceOnlyOutsideOne`
+- [x] **Gate:** a read-only session refuses an unsafe method (`GET`/`HEAD`/`OPTIONS` are safe) —
+      `ImpersonationReachTest.aReadOnlySessionRefusesAnUnsafeMethodAndNamesTheHeaderThatCausedIt`
+- [x] **Gate:** an audited write from inside a session names the operator *and* the identity worn —
+      `ImpersonationReachTest.anAuditRowFromInsideASessionNamesTheOperatorAndTheIdentityTheyWore`,
+      `.aWebhookCreatedInsideASessionNamesTheOperatorAndTheSession`
+- [x] **Gate:** every revocation kills the *very next* request — ending, expiry (no sweep job),
+      demoting the operator, disabling the operator, deleting the target —
+      `ImpersonationReachTest.endingASessionDeniesTheVeryNextRequest`,
+      `.anExpiredSessionDeniesWithoutAnySweepJobHavingRun`,
+      `.anOperatorWhoLosesTheirPlatformTierLosesTheSessionTheyHold`,
+      `.demotingAWriteOperatorRefusesTheWriteCapableSession`,
+      `.disablingTheOperatorsOwnAccountDeniesTheVeryNextImpersonatedRequest`,
+      `.deletingTheTargetMidSessionDeniesTheVeryNextImpersonatedRequest`
+- [x] **Gate:** a session id presented by a different actor is rejected, and a malformed one is a 403
+      envelope rather than a 500 — `ImpersonationReachTest.aSessionIdPresentedByADifferentActorIsRejected`,
+      `.aMalformedSessionIdIsAForbiddenEnvelopeNotAServerError`
+- [x] **Gate:** the context is restored, including when the chain throws —
+      `ImpersonationFilterTest.theContextIsSwappedForTheChainAndRestoredAfterwards`,
+      `.aChainThatThrowsStillLeavesTheOperatorsOwnContextOnTheThread`,
+      `ImpersonationReachTest.theRequestAfterAnImpersonatedOneSeesItsOwnIdentity`
+- [x] **Gate:** a session never activates the target it wears (the one context with the provisioning
+      gate switched on) — `ImpersonationProvisioningGateTest.aSessionNeverActivatesTheTargetItWears`
+- [x] **Gate:** the kill switch refuses the feature rather than removing it —
+      `ImpersonationDisabledTest.theRouteRefusesInsteadOfDisappearing`,
+      `.theListingAndTheEndpointThatEndsASessionRefuseToo`,
+      `.theImpersonateHeaderIsRefusedRatherThanIgnored`
+- [x] **Gate:** full `./gradlew build` green — 42 impersonation tests across five classes;
+      `ApplicationModules.verify()` and ArchUnit green, so `shared` gained no dependency on `identity`
+
+## Identity reconciliation ✅ (2026-07-31)
+
+Keycloak is the system of record for identity and `app_user` is a projection of it, but nothing pushes
+a deletion from there to here — so without a pull the projection only grows and a deleted account
+lingers as an `ACTIVE`-looking row. Access is never at risk from the lag (no-JIT provisioning, and a
+deleted account cannot mint a token), so this corrects the **record**, it does not close a hole.
+
+- [x] `IdentityReconciliationJob` — `@Scheduled` + `@SchedulerLock("identity-reconciliation")`, daily at
+      02:00 (`app.scheduler.identity-reconciliation-cron`). Lives in `identity`, not `scheduler`,
+      because it needs `KeycloakUserAdminGateway` and `UserRepository`, both module-internal
+- [x] `KeycloakUserAdminGateway.accountPresence` is **tri-state** — `PRESENT` / `ABSENT` / `UNKNOWN`;
+      a lookup that failed can never be read as a deletion
+- [x] `IdentityReconciliationProperties`: `action` (ships as `REPORT`), `grace-period` PT1H,
+      `max-orphan-ratio` 0.10, `batch-size` 500. Enabled/disabled by
+      `app.identity.reconciliation.enabled` via `@ConditionalOnProperty`
+- [x] One transaction per row (`TransactionTemplate`, not a self-invoked `@Transactional`): the status
+      change and the audit row that explains it commit together
+- [x] Audit action `identity.user_disabled_by_reconciliation`, with `actor` null — nobody did this, a
+      scheduled comparison did
+- [x] **Gate:** a deleted Keycloak account is disabled and audited —
+      `IdentityReconciliationJobTest.anAccountDeletedInKeycloakIsDisabledAndAudited`
+- [x] **Gate:** an inconclusive lookup revokes nobody, and a mass disappearance is treated as
+      misconfiguration and changes nothing — `.anInconclusiveLookupNeverRevokesAnybody`,
+      `.aMassDisappearanceIsTreatedAsMisconfigurationAndChangesNothing`
+- [x] **Gate:** the shipped `REPORT` default finds the orphan without revoking it, an already-disabled
+      row is not re-audited nightly, and a row inside the grace period is not examined —
+      `.reportModeFindsTheOrphanWithoutRevokingIt`, `.anAlreadyDisabledAccountIsNotVisitedAgain`,
+      `.anAccountInsideTheGracePeriodIsNotExamined`
+
+## Audit remediation — phases 1 & 2 ✅ (2026-08-01)
+
+From [reviews/2026-08-01-code-audit.md](reviews/2026-08-01-code-audit.md); phases 3–4 remain open.
+
+- [x] **H1** `spring.servlet.multipart` declared (25MB, env-overridable) — uploads over 1MB work over
+      HTTP again; `MultipartConfigContractTest` pins the relation to the 5MB multipart threshold
+- [x] **M1** cached nulls survive the L2 round-trip (`enableSpringCacheNullValueSupport` + `NullValue`
+      allowed by the type validator) — `ValkeyCacheIntegrationTest.aCachedNullSurvivesAnL2OnlyRead`
+- [x] **M2** `TwoLevelCache` evicts L2 strictly before L1, closing the stale-refill window
+- [x] **M3** idempotency `complete`/`release` fenced on the claim timestamp —
+      `IdempotencyIntegrationTest.aStaleClaimantCannotDestroyTheTakeoversClaim`; the request hash now
+      includes the query string (`.sameKeyWithDifferentQueryParametersIsAConflictNotAReplay`)
+- [x] **M4** webhook success-path status write isolated — a DB blip after a delivered POST leaves the
+      row PROCESSING for reclaim instead of re-POSTing or recording FAILED; javadoc states
+      at-least-once honestly
+- [x] **M5** DISABLED subscriptions pause queued deliveries and resume on re-enable —
+      `WebhookDeliveryTest.disablingASubscriptionPausesQueuedDeliveriesUntilReenabled`
+- [x] **M6/M7/M19** retention actually runs: `WebhookRetentionJob`, `NotificationRetentionJob`
+      (replacing the worker-loop purge), `EventInboxPurgeJob` — nightly, ShedLock-guarded, batched,
+      covering dead-letters too; one pinning test each
+- [x] **M8/M9/M14** S3: multipart aborted on failure, explicit connect/socket/api-call timeouts
+      (`app.storage.*`), no SDK type escapes the module
+- [x] **M10** DuckDB staging table unique per run + orphan cleanup — concurrent same-report runs
+      can no longer corrupt each other
+- [x] **M11** concurrent same-email provisioning resolves to the winner (Keycloak 409 mapped)
+- [x] **M12** a provisioned user / created org and its audit row commit in one transaction
+- [x] **M13** reconciliation walks ALL candidates in ordered keyset pages inside a lease deadline and
+      rethrows after isolating per-row failures —
+      `IdentityReconciliationJobTest.aPassExaminesEveryCandidateAcrossMultiplePages`
+- [x] **M17** (copies) `Role.getPermissions` defensive copy; L2 refills wrapped unmodifiable;
+      `getCacheNames` copied
+- [x] **M18** `app.idempotency.*` / `app.scheduler.*` declared in yaml and bound to validated records
+      (negative retention fails at startup; inbox retention must cover the redelivery window)
+- [x] **M22** workers stamp persisted times from the injected `Clock`
+- [x] **V20** — indexes for the member/role/subscription listings, case-insensitive email lookup,
+      `occurred_at` range filter, and the two retention scans
+- [x] Pulled-forward LOWs: `Redirect.NEVER` pinned with why-comments, fan-out payload serialized
+      once, UTF-8 invalidation decode, secret-default comments
+- [x] **Gate:** full `./gradlew test` green over the final tree
+
+## Audit remediation — phases 3 & 4 ✅ (2026-08-01)
+
+- [x] **M15** controllers are thin again: `AuditQueryService` (readOnly) behind `AuditController`;
+      `UserAccessService` owns the identity module's reads for `/me` and `/admin/users`;
+      `MemberService.roleCodes` (id→code projection) behind the member listing;
+      `SchedulerController`'s inline framework-table read carries its why
+- [x] **M16** role + webhook-subscription listings cursor-paginated (additive: `meta.page` appears,
+      `data` stays an array)
+- [x] **M20** settings/event-purge tests live in their `internal` packages; `FeatureFlag`,
+      `FeatureFlagService`, `EventPublicationPurgeJob`, `NotificationProperties`,
+      `AnalyticsProperties` demoted; `Setting`/`SettingService` stay public with the forcing tests
+      named in their javadoc
+- [x] **M21** startup role-catalog reconciler scans in keyset pages, not `findAll()`
+- [x] **M23** (rest) member listing maps role codes via one two-column query, not 1+N EAGER loads
+- [x] Phase-4 LOW sweep: breaker-open → quiet 503 `SERVICE_UNAVAILABLE` (+ 413/429/503 `mapStatus`
+      branches); `Cursors` escaping (+ test); `SafeOutboundUrl` 6to4/Teredo unwrap (+ tests);
+      idempotent no-op guards on settings/flags/org lifecycle; dead `MembershipStatus.SUSPENDED`
+      removed; impersonation `end` answers 404 to non-admin probes; single target read per
+      impersonated request; `FileController` tuned numbers moved to `StorageProperties`; UTF-8 +
+      nanoTime + memoized-bucket fixes in shared; Awaitility replaces both hand-rolled poll loops;
+      javadoc floors + docs-exposure acceptance written down
+- [x] **Gate:** full `./gradlew test` green over the final tree
+
 ---
 
-**Phases 0–4 + notification module complete and gated.** Remaining work: [NEXT_TASKS.md](NEXT_TASKS.md)
-(next free migration: **V9**). Completed modules: [COMPLETED_MODULES.md](COMPLETED_MODULES.md).
+**Phases 0–4 + notification module complete and gated.** (Next free migration: **V21**.) Completed modules: [COMPLETED_MODULES.md](COMPLETED_MODULES.md).
+
+| Reference | What it is |
+|---|---|
+| [AGENTS.md](../AGENTS.md) | Engineering standards — §1 is the rules that fail the build, §14 the review checklist |
+| [DATA_MODEL.md](DATA_MODEL.md) | Every table, column, index and invariant, plus migration history |
+| [SRS.md](SRS.md) | Functional/non-functional requirements with IDs and a traceability matrix |

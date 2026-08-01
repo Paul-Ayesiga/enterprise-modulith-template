@@ -1,5 +1,6 @@
 package ug.co.smsone.organization.internal;
 
+import io.swagger.v3.oas.annotations.Operation;
 import java.util.Arrays;
 import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -22,6 +23,10 @@ class PermissionCatalogController {
     }
 
     @GetMapping
+    @Operation(summary = "List every permission a role can grant",
+            description = """
+                    The fixed vocabulary for composing custom roles — the `code` values are what the \
+                    role endpoints accept. The catalog is global and identical for every organization.""")
     List<ResourceObject> list() {
         return Arrays.stream(Permission.values())
                 .map(permission -> new ResourceObject(permission.code(), RESOURCE_TYPE,

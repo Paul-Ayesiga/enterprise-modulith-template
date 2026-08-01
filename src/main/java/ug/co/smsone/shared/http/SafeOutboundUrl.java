@@ -74,6 +74,17 @@ public final class SafeOutboundUrl {
                 // 64:ff9b::/96 embeds an IPv4 in the low 32 bits — re-check it as an IPv4 target.
                 return isForbiddenIpv4(raw[12] & 0xFF, raw[13] & 0xFF, raw[14] & 0xFF, raw[15] & 0xFF);
             }
+            if ((raw[0] & 0xFF) == 0x20 && (raw[1] & 0xFF) == 0x02) {
+                // 2002::/16 (6to4) embeds the IPv4 in bytes 2-5; any relay routes straight to it —
+                // the same embedding NAT64 gets checked for, so it gets the same unwrap.
+                return isForbiddenIpv4(raw[2] & 0xFF, raw[3] & 0xFF, raw[4] & 0xFF, raw[5] & 0xFF);
+            }
+            if ((raw[0] & 0xFF) == 0x20 && (raw[1] & 0xFF) == 0x01 && raw[2] == 0 && raw[3] == 0) {
+                // 2001:0000::/32 (Teredo): the server IPv4 sits in bytes 4-7 and the CLIENT IPv4 —
+                // the reachable endpoint — bit-inverted in bytes 12-15. Check both.
+                return isForbiddenIpv4(~raw[12] & 0xFF, ~raw[13] & 0xFF, ~raw[14] & 0xFF, ~raw[15] & 0xFF)
+                        || isForbiddenIpv4(raw[4] & 0xFF, raw[5] & 0xFF, raw[6] & 0xFF, raw[7] & 0xFF);
+            }
             return false;
         }
         if (address instanceof Inet4Address) {

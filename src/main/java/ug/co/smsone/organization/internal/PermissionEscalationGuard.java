@@ -6,7 +6,6 @@ import java.util.UUID;
 import org.springframework.stereotype.Component;
 import ug.co.smsone.organization.Permission;
 import ug.co.smsone.shared.error.ForbiddenException;
-import ug.co.smsone.shared.error.UnauthorizedException;
 import ug.co.smsone.shared.security.CurrentUser;
 import ug.co.smsone.shared.security.CurrentUserProvider;
 
@@ -29,8 +28,7 @@ class PermissionEscalationGuard {
     }
 
     void requireCallerHolds(UUID orgId, Set<Permission> granted) {
-        CurrentUser caller = currentUser.currentUser()
-                .orElseThrow(() -> new UnauthorizedException("Authentication required."));
+        CurrentUser caller = currentUser.requireCurrentUser();
         Set<String> held = permissions.resolve(caller.subject(), orgId);
         List<String> escalated = granted.stream()
                 .map(Permission::code)

@@ -1,4 +1,4 @@
-package ug.co.smsone.settings;
+package ug.co.smsone.settings.internal;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -9,7 +9,7 @@ import org.springframework.modulith.test.ApplicationModuleTest;
 import org.springframework.modulith.test.Scenario;
 import org.springframework.test.context.ActiveProfiles;
 import org.testcontainers.containers.PostgreSQLContainer;
-import ug.co.smsone.settings.internal.SettingService;
+import ug.co.smsone.settings.SettingChanged;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
 /** Modulith slice test: boots the settings module (+ its dependencies) against real Postgres. */

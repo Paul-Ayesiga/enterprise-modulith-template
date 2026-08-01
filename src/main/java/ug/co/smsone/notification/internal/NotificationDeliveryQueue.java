@@ -138,8 +138,20 @@ class NotificationDeliveryQueue {
                 truncate(error, MAX_ERROR), id, expectedAttempts));
     }
 
-    int purgeSentBefore(Instant cutoff) {
-        return jdbc.update("delete from notification_delivery where status = 'SENT' and created_at < ?", Timestamp.from(cutoff));
+    /**
+     * One bounded batch of terminal rows (SENT and FAILED) older than the cutoff; the caller loops
+     * until a short batch, each committing on its own connection. FAILED is included deliberately —
+     * a dead-letter past retention is stale noise nobody is coming back for, and matching
+     * {@code webhook_delivery}'s rule keeps the two queues one pattern (AGENTS §7).
+     */
+    int purgeTerminalBatch(Instant cutoff, int batchSize) {
+        return jdbc.update("""
+                delete from notification_delivery where id in (
+                    select id from notification_delivery
+                    where status in ('SENT', 'FAILED') and created_at < ?
+                    order by created_at
+                    limit ?)
+                """, Timestamp.from(cutoff), batchSize);
     }
 
     private static void fenced(String operation, UUID id, int updated) {

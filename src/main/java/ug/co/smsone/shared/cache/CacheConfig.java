@@ -3,7 +3,6 @@ package ug.co.smsone.shared.cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.cache.caffeine.CaffeineCacheManager;
 import org.springframework.context.annotation.Bean;
@@ -41,6 +40,9 @@ public class CacheConfig {
             .allowIfSubType("java.lang.")
             .allowIfSubType("java.time.")
             .allowIfSubType("java.math.")
+            // Spring's NullValue sentinel — without it a cached null poisons its key: every read of
+            // the L2 entry fails type validation, counts as a miss, re-caches, and broadcasts.
+            .allowIfSubType("org.springframework.cache.support.")
             .build();
 
     @Bean
@@ -63,6 +65,9 @@ public class CacheConfig {
                 .serializeValuesWith(RedisSerializationContext.SerializationPair.fromSerializer(
                         GenericJacksonJsonRedisSerializer.builder()
                                 .enableDefaultTyping(CACHE_TYPE_VALIDATOR)
+                                // Negative caching: the default config allows null values but the
+                                // serializer does not round-trip NullValue unless told to.
+                                .enableSpringCacheNullValueSupport()
                                 .build()));
         return RedisCacheManager.builder(connectionFactory)
                 .cacheDefaults(cacheConfiguration)
@@ -91,7 +96,7 @@ public class CacheConfig {
         RedisMessageListenerContainer container = new RedisMessageListenerContainer();
         container.setConnectionFactory(connectionFactory);
         container.addMessageListener((message, pattern) -> {
-            String[] parts = new String(message.getBody()).split("\n", 3);
+            String[] parts = new String(message.getBody(), java.nio.charset.StandardCharsets.UTF_8).split("\n", 3);
             if (parts.length < 2 || CacheInvalidationBroadcaster.INSTANCE_ID.equals(parts[0])) {
                 return; // own broadcast — the local caches were already updated synchronously
             }

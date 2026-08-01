@@ -10,10 +10,12 @@ import org.springframework.util.AntPathMatcher;
  * Rate-limit configuration. Requests to {@code /api/**} are matched against {@code tiers} in order
  * (first match wins); unmatched requests fall through to {@code defaultTier}. Each tier maps 1:1 to
  * a named {@code RateLimit-Policy} in the response headers.
+ *
+ * <p>The {@code enabled} flag itself is read by {@code @ConditionalOnProperty} on {@code RateLimitConfig},
+ * {@code RateLimitFilter} and {@code RateLimitKeyResolver}, so it is deliberately not a component here.
  */
 @ConfigurationProperties(prefix = "app.rate-limit")
 public record RateLimitProperties(
-        boolean enabled,
         String keyPrefix,
         String tenantClaim,
         Duration backendTimeout,

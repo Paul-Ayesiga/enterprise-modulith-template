@@ -3,5 +3,8 @@
 |Base package
 |`ug.co.smsone.scheduler`
 |Bean references
-|* `u.c.s.s.idempotency.IdempotencyStore` (in Shared Kernel)
+|* `u.c.s.s.events.EventInbox` (in Shared Kernel)
+* `u.c.s.s.idempotency.IdempotencyStore` (in Shared Kernel)
+* `u.c.s.s.idempotency.IdempotencyProperties` (in Shared Kernel)
+* `u.c.s.s.persistence.SoftDeleteProperties` (in Shared Kernel)
 |===

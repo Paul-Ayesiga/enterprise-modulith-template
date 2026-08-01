@@ -1,14 +1,9 @@
 package ug.co.smsone.audit.internal;
 
-import jakarta.persistence.criteria.Predicate;
+import io.swagger.v3.oas.annotations.Operation;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.UUID;
-import org.springframework.data.domain.Sort;
-import org.springframework.data.domain.Window;
-import org.springframework.data.jpa.domain.Specification;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -21,29 +16,40 @@ import ug.co.smsone.shared.web.ResourceObject;
 import ug.co.smsone.shared.web.WindowedResult;
 
 /**
- * Read-only audit queries. {@code GET /api/v1/audit} is the platform-wide view (ADMIN); {@code GET
+ * Read-only audit queries. {@code GET /api/v1/audit} is the platform-wide view (investigating is the
+ * support job, so {@code platform-support} is the floor); {@code GET
  * /api/v1/orgs/{orgId}/audit} is scoped to one org and gated by the {@code audit:read} permission —
  * so an org's own admins can review their trail without platform access. Both are cursor-paginated
- * (newest first) and filterable by {@code action} and an {@code occurredFrom}/{@code occurredTo} window.
+ * (newest first) and filterable by {@code action} and a {@code from}/{@code to} ISO-instant window.
  */
 @RestController
 class AuditController {
 
     private static final String RESOURCE_TYPE = "audit-entry";
-    private static final Sort NEWEST_FIRST = Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
 
-    private final AuditEntryRepository entries;
+    private final AuditQueryService audit;
 
-    AuditController(AuditEntryRepository entries) {
-        this.entries = entries;
+    AuditController(AuditQueryService audit) {
+        this.audit = audit;
     }
 
-    record AuditAttributes(String action, String actor, String orgId, String target,
-            String fromState, String toState, Instant occurredAt, Instant recordedAt) {
+    /**
+     * {@code actor} is the accountable human. {@code onBehalfOf} is non-null only for a row written
+     * inside an impersonation session, and then names the identity the actor was wearing —
+     * {@code impersonationId} points at the session that carries the stated reason.
+     */
+    record AuditAttributes(String action, String actor, String onBehalfOf, String impersonationId,
+            String orgId, String target, String fromState, String toState,
+            Instant occurredAt, Instant recordedAt) {
     }
 
     @GetMapping("/api/v1/audit")
-    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Search the platform-wide audit trail",
+            description = """
+                    Newest first, narrowed by any combination of `org`, `action` and an ISO-8601 \
+                    `from`/`to` instant window. For a row written inside an impersonation session \
+                    `actor` is the accountable operator and `onBehalfOf` is the identity they wore.""")
+    @PreAuthorize("hasRole('platform-support')")
     WindowedResult<ResourceObject> platform(
             @RequestParam(required = false) UUID org,
             @RequestParam(required = false) String action,
@@ -54,6 +60,11 @@ class AuditController {
     }
 
     @GetMapping("/api/v1/orgs/{orgId}/audit")
+    @Operation(summary = "Search one organization's audit trail",
+            description = """
+                    Newest first, narrowed by `action` and an ISO-8601 `from`/`to` instant window. \
+                    For a row written inside an impersonation session `actor` is the accountable \
+                    operator and `onBehalfOf` is the identity they wore.""")
     @PreAuthorize("hasPermission(#orgId, 'organization', 'audit:read')")
     WindowedResult<ResourceObject> forOrg(
             @PathVariable UUID orgId,
@@ -66,30 +77,9 @@ class AuditController {
 
     private WindowedResult<ResourceObject> query(UUID orgId, String action, String from, String to,
             CursorPageRequest page) {
-        Specification<AuditEntry> spec = filter(orgId, action,
-                parseInstant(from, "from"), parseInstant(to, "to"));
-        Window<AuditEntry> window = entries.findBy(spec,
-                q -> q.limit(page.size()).sortBy(NEWEST_FIRST).scroll(page.scrollPosition()));
-        return WindowedResult.of(window, page, AuditController::toResource);
-    }
-
-    private static Specification<AuditEntry> filter(UUID orgId, String action, Instant from, Instant to) {
-        return (root, query, cb) -> {
-            List<Predicate> predicates = new ArrayList<>();
-            if (orgId != null) {
-                predicates.add(cb.equal(root.get("orgId"), orgId));
-            }
-            if (action != null && !action.isBlank()) {
-                predicates.add(cb.equal(root.get("action"), action));
-            }
-            if (from != null) {
-                predicates.add(cb.greaterThanOrEqualTo(root.get("occurredAt"), from));
-            }
-            if (to != null) {
-                predicates.add(cb.lessThan(root.get("occurredAt"), to));
-            }
-            return predicates.isEmpty() ? cb.conjunction() : cb.and(predicates.toArray(Predicate[]::new));
-        };
+        return WindowedResult.of(
+                audit.query(orgId, action, parseInstant(from, "from"), parseInstant(to, "to"), page),
+                page, AuditController::toResource);
     }
 
     private static Instant parseInstant(String value, String parameter) {
@@ -109,6 +99,8 @@ class AuditController {
                 new AuditAttributes(
                         entry.getAction(),
                         entry.getActor(),
+                        entry.getOnBehalfOf(),
+                        entry.getImpersonationId() == null ? null : entry.getImpersonationId().toString(),
                         entry.getOrgId() == null ? null : entry.getOrgId().toString(),
                         entry.getTarget(),
                         entry.getFromState(),

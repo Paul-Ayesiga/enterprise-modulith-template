@@ -14,6 +14,7 @@ import io.lettuce.core.codec.RedisCodec;
 import io.lettuce.core.codec.StringCodec;
 import jakarta.annotation.PreDestroy;
 import java.time.Duration;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
@@ -47,8 +48,12 @@ public class DistributedRateLimiter {
 
     private volatile StatefulRedisConnection<String, byte[]> connection;
     private volatile LettuceBasedProxyManager<String> proxyManager;
+    // Compared by subtraction (nanoTime() - retryNotBefore < 0), never by '<' directly: nanoTime has
+    // an arbitrary — possibly negative — origin, and only differences between readings are meaningful.
     private volatile long retryNotBefore;
     private volatile boolean disabledLogged;
+    private final ConcurrentHashMap<ConfigKey, Supplier<BucketConfiguration>> configurations =
+            new ConcurrentHashMap<>();
 
     public DistributedRateLimiter(ObjectProvider<RedisClient> clientProvider) {
         this.clientProvider = clientProvider;
@@ -61,7 +66,7 @@ public class DistributedRateLimiter {
             logDisabledOnce();
             return RateLimitVerdict.allowed(capacity, capacity, window); // rate limiting disabled -> allow
         }
-        if (System.nanoTime() < retryNotBefore) {
+        if (System.nanoTime() - retryNotBefore < 0) {
             return failOpen(capacity, window, failClosed); // recent backend error -> fail fast, don't touch Valkey
         }
         LettuceBasedProxyManager<String> manager = proxyManager(client);
@@ -86,7 +91,7 @@ public class DistributedRateLimiter {
     /** Best-effort return of one token — used to refund a send that never reached its provider. */
     public void addToken(String key, long capacity, Duration refillPeriod) {
         RedisClient client = clientProvider.getIfAvailable();
-        if (client == null || System.nanoTime() < retryNotBefore) {
+        if (client == null || System.nanoTime() - retryNotBefore < 0) {
             return;
         }
         LettuceBasedProxyManager<String> manager = proxyManager(client);
@@ -120,7 +125,7 @@ public class DistributedRateLimiter {
             if (proxyManager != null) {
                 return proxyManager;
             }
-            if (System.nanoTime() < retryNotBefore) {
+            if (System.nanoTime() - retryNotBefore < 0) {
                 return null; // a very recent connect attempt failed — don't retry-storm, fail open
             }
             StatefulRedisConnection<String, byte[]> conn =
@@ -159,12 +164,23 @@ public class DistributedRateLimiter {
         return last > 0 ? key.substring(0, last) : key;
     }
 
-    private static Supplier<BucketConfiguration> configuration(long capacity, Duration refillPeriod) {
-        Bandwidth limit = Bandwidth.builder()
-                .capacity(capacity)
-                .refillGreedy(capacity, refillPeriod)
-                .build();
-        return () -> BucketConfiguration.builder().addLimit(limit).build();
+    /**
+     * Memoized per tier: the tier set is small and static, and this sits on every {@code /api/**}
+     * request — no reason to rebuild a Bandwidth + configuration + supplier per call.
+     */
+    private Supplier<BucketConfiguration> configuration(long capacity, Duration refillPeriod) {
+        return configurations.computeIfAbsent(new ConfigKey(capacity, refillPeriod), key -> {
+            BucketConfiguration config = BucketConfiguration.builder()
+                    .addLimit(Bandwidth.builder()
+                            .capacity(key.capacity())
+                            .refillGreedy(key.capacity(), key.refillPeriod())
+                            .build())
+                    .build();
+            return () -> config;
+        });
+    }
+
+    private record ConfigKey(long capacity, Duration refillPeriod) {
     }
 
     @PreDestroy

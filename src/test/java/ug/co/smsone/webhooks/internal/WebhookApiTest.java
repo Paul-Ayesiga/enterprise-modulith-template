@@ -105,8 +105,49 @@ class WebhookApiTest extends AbstractIntegrationTest {
                 .andExpect(status().isNotFound());
     }
 
+    /**
+     * "What did we send that endpoint?" is the question asked AFTER someone deletes it, which is why
+     * the delivery log outlives the subscription. Resolving the log through the restricted finder made
+     * that retention unreachable for the log's entire life — 404 until the purge cascade destroyed it.
+     * The unrestricted lookup is still tenant-scoped: another org's id is a 404 exactly as before.
+     */
+    @Test
+    void theDeliveryLogOutlivesTheSubscriptionButStaysTenantScoped() throws Exception {
+        UUID orgId = UUID.randomUUID();
+        RequestPostProcessor manager = manager(orgId, "mgr-" + UUID.randomUUID());
+        String body = mockMvc.perform(post("/api/v1/orgs/{orgId}/webhooks", orgId).with(manager)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"https://hooks.example.com/z\",\"events\":[\"org.status_changed\"]}"))
+                .andReturn().getResponse().getContentAsString();
+        String id = JsonPath.read(body, "$.data.id");
+
+        mockMvc.perform(delete("/api/v1/orgs/{orgId}/webhooks/{id}", orgId, id).with(manager))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(get("/api/v1/orgs/{orgId}/webhooks/{id}/deliveries", orgId, id).with(manager))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").isArray());
+
+        UUID otherOrg = UUID.randomUUID();
+        mockMvc.perform(get("/api/v1/orgs/{orgId}/webhooks/{id}/deliveries", otherOrg, id)
+                        .with(manager(otherOrg, "mgr-" + UUID.randomUUID())))
+                .andExpect(status().isNotFound());
+    }
+
+    /** The permission lookup itself: scoped to the right org, and still refused without {@code webhook:manage}. */
     @Test
     void withoutThePermissionAccessIsDenied() throws Exception {
+        UUID orgId = UUID.randomUUID();
+        // OrgAuthorization is stubbed only inside manager(), so this subject resolves to false — which is
+        // the branch the name promises, and the one the no-active-org case never reaches.
+        mockMvc.perform(get("/api/v1/orgs/{orgId}/webhooks", orgId)
+                        .with(jwt().jwt(builder -> builder.subject("outsider-" + UUID.randomUUID())
+                                .claim("organization", Map.of("acme", Map.of("id", orgId.toString()))))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void aTokenWithNoActiveOrgIsDenied() throws Exception {
         UUID orgId = UUID.randomUUID();
         // No active-org scope on the token -> the evaluator denies before consulting OrgAuthorization.
         mockMvc.perform(get("/api/v1/orgs/{orgId}/webhooks", orgId).with(jwt()))

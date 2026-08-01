@@ -1,7 +1,7 @@
 package ug.co.smsone.webhooks.internal;
 
+import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -17,11 +17,13 @@ import org.springframework.stereotype.Component;
  * Drains the webhook queue: claims a batch, sends each on virtual threads (up to batch-size concurrent,
  * each bounded by the send timeout), and marks each DELIVERED / rescheduled (exponential backoff) /
  * dead-lettered. Self-managed background poller per instance; {@code SKIP LOCKED} lets instances share
- * the queue with no double-sends. In tests the poller is disabled
+ * the queue with no concurrent double-claims. Delivery is still <b>at-least-once</b>: a crash between
+ * the POST and its status write leaves the row PROCESSING, and the stale-lock reclaim re-POSTs it —
+ * receivers must tolerate a duplicate. In tests the poller is disabled
  * ({@code app.webhooks.worker-auto-start=false}) and {@link #drainOnce()} is driven directly.
  */
 @Component
-public class WebhookDeliveryWorker implements SmartLifecycle {
+class WebhookDeliveryWorker implements SmartLifecycle {
 
     private static final Logger log = LoggerFactory.getLogger(WebhookDeliveryWorker.class);
     private static final int MAX_BACKOFF_SHIFT = 16;
@@ -30,15 +32,18 @@ public class WebhookDeliveryWorker implements SmartLifecycle {
     private final WebhookDeliveryQueue queue;
     private final WebhookSender sender;
     private final WebhookProperties config;
+    private final Clock clock;
 
     private volatile ExecutorService sendExecutor = Executors.newVirtualThreadPerTaskExecutor();
     private volatile boolean running;
     private volatile Thread poller;
 
-    WebhookDeliveryWorker(WebhookDeliveryQueue queue, WebhookSender sender, WebhookProperties config) {
+    WebhookDeliveryWorker(WebhookDeliveryQueue queue, WebhookSender sender, WebhookProperties config,
+            Clock clock) {
         this.queue = queue;
         this.sender = sender;
         this.config = config;
+        this.clock = clock;
     }
 
     @Override
@@ -130,9 +135,9 @@ public class WebhookDeliveryWorker implements SmartLifecycle {
     }
 
     private void deliver(ClaimedWebhookDelivery delivery) {
+        int status;
         try {
-            int status = sender.send(delivery);
-            queue.markDelivered(delivery.id(), delivery.attempts(), status);
+            status = sender.send(delivery);
         } catch (RuntimeException ex) {
             // Catch ANY runtime failure, not just WebhookDeliveryException — otherwise an unexpected
             // error would leave the row PROCESSING and be reclaimed forever with no dead-letter.
@@ -143,9 +148,19 @@ public class WebhookDeliveryWorker implements SmartLifecycle {
                 log.warn("Webhook delivery {} dead-lettered after {} attempts ({}): {}",
                         delivery.id(), delivery.attempts(), permanent ? "permanent" : "exhausted", ex.getMessage());
             } else {
-                queue.reschedule(delivery.id(), Instant.now().plus(backoff(delivery.attempts())),
+                queue.reschedule(delivery.id(), clock.instant().plus(backoff(delivery.attempts())),
                         responseStatus, ex.getMessage(), delivery.attempts());
             }
+            return;
+        }
+        // POSTed successfully. Record it separately: if the status write fails, leave the row
+        // PROCESSING for the stale-lock reclaim — rescheduling here would re-POST a webhook the
+        // receiver already accepted, and dead-lettering would record a delivered webhook as FAILED.
+        try {
+            queue.markDelivered(delivery.id(), delivery.attempts(), status);
+        } catch (RuntimeException ex) {
+            log.error("Webhook delivery {} was DELIVERED but markDelivered failed; leaving PROCESSING for reclaim: {}",
+                    delivery.id(), ex.toString());
         }
     }
 

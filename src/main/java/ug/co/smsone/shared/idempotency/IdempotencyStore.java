@@ -28,10 +28,13 @@ public class IdempotencyStore {
     }
 
     /**
-     * Claims the key atomically. An in-progress claim older than {@code lease} is taken over —
-     * a crashed instance must not wedge the key until the purge job runs.
+     * Claims the key atomically, returning the claim's timestamp — the fence token for
+     * {@link #complete} and {@link #release}. An in-progress claim older than {@code lease} is taken
+     * over (a crashed instance must not wedge the key until the purge job runs); the returned
+     * timestamp is what stops that taken-over claimant, should it wake up later, from destroying the
+     * new owner's row — AGENTS §7's fencing rule, applied to this store itself.
      */
-    public boolean claim(String principal, String key, String requestHash, Duration lease) {
+    public Optional<Instant> claim(String principal, String key, String requestHash, Duration lease) {
         Instant now = clock.instant();
         int changed = jdbcTemplate.update("""
                 insert into idempotency_key (principal, idem_key, request_hash, created_at)
@@ -41,7 +44,7 @@ public class IdempotencyStore {
                     where idempotency_key.response_status is null
                       and idempotency_key.created_at < ?
                 """, principal, key, requestHash, Timestamp.from(now), Timestamp.from(now.minus(lease)));
-        return changed == 1;
+        return changed == 1 ? Optional.of(now) : Optional.empty();
     }
 
     public Optional<StoredResponse> find(String principal, String key) {
@@ -58,18 +61,25 @@ public class IdempotencyStore {
                 .stream().findFirst();
     }
 
-    public void complete(String principal, String key, int status, String body, String contentType) {
+    /** Fenced on {@code claimedAt}: after a lease takeover this claimant's write matches zero rows. */
+    public void complete(String principal, String key, Instant claimedAt, int status, String body,
+            String contentType) {
         jdbcTemplate.update("""
                 update idempotency_key
                 set response_status = ?, response_body = ?, content_type = ?
-                where principal = ? and idem_key = ?
-                """, status, body, contentType, principal, key);
+                where principal = ? and idem_key = ? and created_at = ?
+                """, status, body, contentType, principal, key, Timestamp.from(claimedAt));
     }
 
-    /** Frees the key after a failed execution so the client can retry. */
-    public void release(String principal, String key) {
-        jdbcTemplate.update("delete from idempotency_key where principal = ? and idem_key = ?",
-                principal, key);
+    /**
+     * Frees the key after a failed execution so the client can retry. Fenced on {@code claimedAt} —
+     * an unfenced delete here would let a zombie claimant erase the takeover's in-progress row, and
+     * a third duplicate would then re-claim and re-execute the side effect.
+     */
+    public void release(String principal, String key, Instant claimedAt) {
+        jdbcTemplate.update(
+                "delete from idempotency_key where principal = ? and idem_key = ? and created_at = ?",
+                principal, key, Timestamp.from(claimedAt));
     }
 
     public int purgeOlderThan(Duration retention) {

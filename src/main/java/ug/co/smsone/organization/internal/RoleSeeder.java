@@ -9,11 +9,16 @@ import org.springframework.transaction.annotation.Transactional;
 import ug.co.smsone.organization.Permission;
 
 /**
- * Seeds AND reconciles the immutable system roles (OWNER/ADMIN/MEMBER) for an organization.
- * Idempotent per-role upsert: a missing role is created; an existing one whose permission set has
- * drifted from the catalog (a new {@link Permission} enum value shipped) is updated — otherwise
- * "OWNER holds everything" would silently stop being true for pre-existing orgs, and the escalation
- * guard would make the new permission permanently ungrantable there. Custom roles are never touched.
+ * Seeds AND reconciles the one immutable system role — {@code OWNER} — for an organization.
+ * Idempotent upsert: a missing role is created; an existing one whose permission set has drifted from
+ * the catalog (a new {@link Permission} enum value shipped) is updated — otherwise "OWNER holds
+ * everything" would silently stop being true for pre-existing orgs, and the escalation guard would
+ * make the new permission permanently ungrantable there. Custom roles are never touched.
+ *
+ * <p>OWNER is the <em>only</em> seeded role by design: every other org role is a permission bundle the
+ * owner creates, and no code path names it. Shipping an {@code ADMIN}/{@code MEMBER} pair would have
+ * made two arbitrary permission sets look canonical, and tempted checks to key on the code rather than
+ * on the permission.
  */
 @Component
 class RoleSeeder {
@@ -28,16 +33,9 @@ class RoleSeeder {
     }
 
     static List<SystemRoleDefinition> systemRoleDefinitions() {
-        Set<Permission> adminPermissions = EnumSet.allOf(Permission.class);
-        adminPermissions.remove(Permission.ORG_DELETE);
         return List.of(
-                new SystemRoleDefinition("OWNER", "Owner", "Full control of the organization",
-                        EnumSet.allOf(Permission.class)),
-                new SystemRoleDefinition("ADMIN", "Administrator", "Manage members, roles and settings",
-                        adminPermissions),
-                new SystemRoleDefinition("MEMBER", "Member", "Read-only access",
-                        EnumSet.of(Permission.ORG_READ, Permission.MEMBER_READ, Permission.ROLE_READ,
-                                Permission.ORG_SETTINGS_READ)));
+                new SystemRoleDefinition(Role.OWNER_CODE, "Owner", "Full control of the organization",
+                        EnumSet.allOf(Permission.class)));
     }
 
     @Transactional

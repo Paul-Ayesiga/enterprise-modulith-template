@@ -3,7 +3,6 @@ package ug.co.smsone.shared.ratelimit;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.UUID;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -39,9 +38,15 @@ class RateLimitKeyResolver {
                 return key(tier, "tenant", tenant);
             }
         }
-        if ((tier.scope() == RateLimitScope.TENANT || tier.scope() == RateLimitScope.PRINCIPAL)
-                && isAuthenticated(authentication)) {
-            return key(tier, "sub", authentication.getName());
+        if (tier.scope() == RateLimitScope.TENANT || tier.scope() == RateLimitScope.PRINCIPAL) {
+            // The subject, not the display name — the key type has always said "sub" and now means it.
+            // A username-keyed bucket is escapable (rename yourself for a fresh quota) and inheritable
+            // (a recycled username lands in the previous holder's bucket). Falls through to IP when
+            // there is no authenticated subject.
+            String subject = currentUserProvider.currentSubject().orElse(null);
+            if (subject != null) {
+                return key(tier, "sub", subject);
+            }
         }
         return key(tier, "ip", clientIp(request));
     }
@@ -75,13 +80,6 @@ class RateLimitKeyResolver {
 
     private static Jwt jwt(Authentication authentication) {
         return (authentication != null && authentication.getPrincipal() instanceof Jwt token) ? token : null;
-    }
-
-    private static boolean isAuthenticated(Authentication authentication) {
-        return authentication != null
-                && authentication.isAuthenticated()
-                && !(authentication instanceof AnonymousAuthenticationToken)
-                && authentication.getName() != null;
     }
 
     private static final int MAX_IP_LENGTH = 45; // longest IPv6 textual form

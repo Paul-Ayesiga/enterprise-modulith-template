@@ -7,12 +7,19 @@ import java.util.Optional;
  * The fixed catalog of curated reports. Each carries **developer-authored** SQL only (never end-user
  * input, per the {@code AnalyticsEngine} contract): a Postgres {@code sourceSql} materialized into the
  * DuckDB mart {@code martTable}, then an aggregate {@code martQuery} run against that mart.
+ *
+ * <p><b>{@code sourceSql} runs as raw JDBC, so {@code @SQLRestriction} does not apply.</b> A report
+ * over a soft-deletable table must filter {@code deleted_at is null} itself, or it silently disagrees
+ * with the admin API reading the same table — and the report is the one used for headcounts and
+ * licence reconciliation. The soft-deletable tables are {@code setting}, {@code feature_flag},
+ * {@code app_user}, {@code organization}, {@code org_role}, {@code membership} and
+ * {@code webhook_subscription}; {@code notification_delivery} is not one of them.
  */
 enum AnalyticsReport {
 
     USERS_BY_STATUS("users-by-status",
             "Provisioned users grouped by lifecycle status",
-            "select status from app_user",
+            "select status from app_user where deleted_at is null",
             "mart_users_by_status",
             "select status, count(*) as total from mart_users_by_status group by status order by total desc"),
 

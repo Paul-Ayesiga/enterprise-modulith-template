@@ -10,6 +10,13 @@ import ug.co.smsone.shared.audit.AuditLog;
 import ug.co.smsone.shared.error.NotFoundException;
 import ug.co.smsone.shared.web.CursorPageRequest;
 
+/**
+ * Platform settings CRUD with the cached hot read {@link #valueOf}. Public — the §2.1 exception,
+ * with its why: the shared-kernel ITs outside this package (both Valkey cache tests, the event
+ * registry purge test, audit capture, analytics seeding) drive the platform's reference
+ * {@code @Cacheable} + event-publishing service through it, and a parallel test fixture would
+ * duplicate exactly this shape.
+ */
 @Service
 @Transactional
 public class SettingService {
@@ -39,7 +46,7 @@ public class SettingService {
                 q -> q.limit(page.size()).sortBy(LIST_SORT).scroll(page.scrollPosition(LIST_SORT)));
     }
 
-    /** Hot read path for other modules: cached in L1+L2, evicted on {@link #put}. */
+    /** The hot read path: cached in L1+L2, evicted on {@link #put} and {@link #delete}. */
     @Cacheable(cacheNames = VALUES_CACHE, key = "#key")
     @Transactional(readOnly = true)
     public String valueOf(String key) {
@@ -59,5 +66,19 @@ public class SettingService {
         Setting saved = repository.save(setting);
         auditLog.record("settings.changed", null, key, previousValue, value);
         return saved;
+    }
+
+    /**
+     * The only sanctioned way to remove a setting, and the reason it exists is the {@code @CacheEvict}.
+     * {@code repository.delete(..)} is a supported transition now that {@link Setting} is soft-deletable,
+     * but it evicts nothing — {@link #valueOf} would keep serving the pre-delete value out of L1/L2 for
+     * the full {@code app.cache.l2-ttl} while the database shows the row as gone, which is behaviour no
+     * one can explain from the data.
+     */
+    @CacheEvict(cacheNames = VALUES_CACHE, key = "#key")
+    public void delete(String key) {
+        Setting setting = require(key);
+        repository.delete(setting);
+        auditLog.record("settings.deleted", null, key, setting.getValue(), null);
     }
 }

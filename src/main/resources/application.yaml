@@ -6,6 +6,13 @@ spring:
       enabled: true
   jackson:
     default-property-inclusion: non_null
+  servlet:
+    multipart:
+      # Boot's default max-file-size is 1MB, which 413'd any real upload before the handler ran and
+      # left the files module's 5MB multipart branch unreachable over HTTP. Keep this above that
+      # threshold so the multipart path stays live.
+      max-file-size: ${UPLOAD_MAX_FILE_SIZE:25MB}
+      max-request-size: ${UPLOAD_MAX_REQUEST_SIZE:26MB}
   security:
     oauth2:
       resourceserver:
@@ -18,6 +25,7 @@ spring:
   datasource:
     url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:modulith}
     username: ${POSTGRES_USER:modulith}
+    # Dev default matches the Compose stack; ALWAYS override in production.
     password: ${POSTGRES_PASSWORD:modulith}
     hikari:
       # Keep pool >= notification delivery concurrency so fan-out status writes don't starve
@@ -59,6 +67,15 @@ spring:
 
 server:
   port: ${SERVER_PORT:8080}
+  tomcat:
+    # Our cursor parameters are named page[size] / page[after] (ADR 0002). RFC 3986 reserves [ and ]
+    # for IPv6 literals in the HOST, and Tomcat enforces that across the whole URI, so an unencoded
+    # bracket is rejected by the connector's parser — before any filter, which means a raw Tomcat HTML
+    # 400 rather than our envelope, and nothing in the application can catch it. Clients that do not
+    # percent-encode (Postman among them) would hit that on every paginated call.
+    # Publishing a parameter name the server refuses to parse is not a contract; allowing the two
+    # characters is. They carry no meaning in a query string, so nothing is relaxed but the spelling.
+    relaxed-query-chars: "[,]"
   error:
     include-stacktrace: never
     include-message: never
@@ -79,6 +96,10 @@ app:
     invite-lifespan: ${PROVISIONING_INVITE_LIFESPAN:PT12H}
     redirect-uri: ${PROVISIONING_REDIRECT_URI:}
     app-client-id: ${PROVISIONING_APP_CLIENT:smsone-web}
+    # Baseline realm role every provisioned account gets (blank grants none). Authority in this app
+    # comes from platform roles and org permissions, never from this one — and a platform role here is
+    # rejected at startup, since invite is reachable by any org member holding member:invite.
+    default-realm-role: ${PROVISIONING_DEFAULT_REALM_ROLE:USER}
   identity:
     dev-bootstrap:
       # Off by default. When on, projects the local app_user row for an EXISTING Keycloak account so a
@@ -86,6 +107,33 @@ app:
       # Keycloak account. Idempotent; needs Keycloak reachable.
       enabled: ${IDENTITY_DEV_BOOTSTRAP_ENABLED:false}
       email: ${IDENTITY_DEV_BOOTSTRAP_EMAIL:ayesigapo@gmail.com}
+    reconciliation:
+      # Keycloak is the system of record; app_user is a projection, and nothing pushes deletions to it.
+      # Without this pull a deleted account lingers as an ACTIVE-looking row forever. Access is never at
+      # risk from the lag (no-JIT means a deleted account cannot mint a token whatever this table says)
+      # — the job corrects the RECORD.
+      enabled: ${IDENTITY_RECONCILIATION_ENABLED:true}
+      # REPORT ships as the default deliberately: this is the only scheduled job that can revoke access,
+      # and a fork should watch what it WOULD have done before letting it act. Switch to DISABLE once the
+      # nightly log reads the way you expect.
+      action: ${IDENTITY_RECONCILIATION_ACTION:REPORT}
+      # Ignore accounts young enough to still be mid-provisioning, so a half-finished retry is not raced.
+      grace-period: ${IDENTITY_RECONCILIATION_GRACE:PT1H}
+      # Misconfiguration circuit breaker. One account gone is attrition; a tenth of them gone at once is
+      # a wrong realm, a wrong base URL, or a service account that lost view-users — and every one of
+      # those answers 404 per row. Above the cap the job changes NOTHING and logs an error.
+      max-orphan-ratio: ${IDENTITY_RECONCILIATION_MAX_ORPHAN_RATIO:0.10}
+      batch-size: ${IDENTITY_RECONCILIATION_BATCH_SIZE:500}
+  impersonation:
+    # The only sanctioned path from the platform axis to tenant data, and the only one that leaves a
+    # trail. Off means REFUSED, not absent: the routes and the X-Impersonate header both answer 403
+    # naming this switch. A 404 would look like a typo'd path, and ignoring the header is worse still —
+    # the request would succeed as the operator while they believed they were wearing the target.
+    enabled: ${IMPERSONATION_ENABLED:true}
+    # Minutes, not hours: a session covers one investigation, not standing access to an account. An
+    # over-cap request is rejected rather than clamped — see ImpersonationProperties for why.
+    default-ttl: ${IMPERSONATION_DEFAULT_TTL:PT15M}
+    max-ttl: ${IMPERSONATION_MAX_TTL:PT30M}
   organization:
     dev-bootstrap:
       # Off by default. When on, seeds a Keycloak org + local projection with an OWNER at startup so
@@ -132,6 +180,9 @@ app:
     retry-max-backoff: ${WEBHOOKS_RETRY_MAX:PT1H}
     timeout-seconds: ${WEBHOOKS_TIMEOUT:5}
     allow-private-hosts: ${WEBHOOKS_ALLOW_PRIVATE_HOSTS:false} # only true behind a trusted egress boundary
+    # The delivery log is a log, not an archive: terminal rows (DELIVERED and FAILED) past this are
+    # purged nightly. A dead-letter older than the window is stale noise nobody is coming back for.
+    retention: ${WEBHOOKS_RETENTION:P30D}
   notification:
     from: ${NOTIFICATION_FROM:no-reply@smsone.co.ug}
     slack-webhook-url: ${NOTIFICATION_SLACK_WEBHOOK:}
@@ -145,8 +196,8 @@ app:
       retry-base-backoff: ${NOTIFICATION_RETRY_BASE:PT10S}
       retry-max-backoff: ${NOTIFICATION_RETRY_MAX:PT10M}
       stale-lock: ${NOTIFICATION_STALE_LOCK:PT5M}
+      # Terminal rows (SENT + FAILED) past this are purged by the nightly retention job.
       retention: ${NOTIFICATION_RETENTION:P7D}
-      purge-interval: ${NOTIFICATION_PURGE_INTERVAL:PT1H}
       max-drain-batches: ${NOTIFICATION_MAX_DRAIN:25}
       throttle-delay: ${NOTIFICATION_THROTTLE_DELAY:PT1S}     # how long to defer a delivery its channel rate throttled
       throttle-max-age: ${NOTIFICATION_THROTTLE_MAX_AGE:PT1H} # dead-letter if throttled longer than this (mis-set-rate guard)
@@ -163,6 +214,31 @@ app:
     snapshot-dir: ${ANALYTICS_SNAPSHOT_DIR:data/snapshots}
     threads: ${ANALYTICS_THREADS:2}
     memory-limit: ${ANALYTICS_MEMORY_LIMIT:512MB}
+  persistence:
+    soft-delete:
+      # Nightly retention purge for soft-deleted aggregates (the seven AggregateRoot tables). Past this
+      # window the rows are HARD deleted and no longer restorable — that is the point: it is what makes
+      # an erasure request actually erase. audit_log is never in scope (append-only by design).
+      # Batches bound one transaction; max-batches bounds one run, so a huge backlog drains over several
+      # nights instead of overrunning the job's ShedLock lease.
+      purge-enabled: ${SOFT_DELETE_PURGE_ENABLED:true}
+      retention: ${SOFT_DELETE_RETENTION:P30D}
+      batch-size: ${SOFT_DELETE_PURGE_BATCH_SIZE:500}
+      max-batches: ${SOFT_DELETE_PURGE_MAX_BATCHES:100}
+  idempotency:
+    # Claim-first store (ADR 0005). The lease is how long an in-progress claim blocks duplicates
+    # before a crashed instance's claim is taken over; retention is how long a completed response
+    # stays replayable before the nightly purge. The body cap bounds what is hashed AND stored —
+    # an oversized request creates no row at all.
+    in-progress-lease: ${IDEMPOTENCY_LEASE:PT5M}
+    max-body-bytes: ${IDEMPOTENCY_MAX_BODY_BYTES:262144}
+    retention: ${IDEMPOTENCY_RETENTION:P1D}
+  scheduler:
+    # Completed event publications stay inspectable for a week, then the nightly purge removes them.
+    event-retention: ${SCHEDULER_EVENT_RETENTION:P7D}
+    # Inbox rows only matter while a publication could still be redelivered; comfortably above
+    # event-retention so a publication completed late still dedupes its restart redelivery.
+    event-inbox-retention: ${SCHEDULER_EVENT_INBOX_RETENTION:P14D}
   cache:
     l1-ttl: ${CACHE_L1_TTL:PT60S}
     l1-max-size: ${CACHE_L1_MAX_SIZE:10000}
@@ -171,10 +247,18 @@ app:
   storage:
     endpoint: ${S3_ENDPOINT:http://localhost:8333}
     region: ${S3_REGION:us-east-1}
+    # Dev defaults match docker/seaweedfs/s3-config.json; ALWAYS override in production.
     access-key: ${S3_ACCESS_KEY:smsone}
     secret-key: ${S3_SECRET_KEY:smsone-secret}
     bucket: ${S3_BUCKET:smsone}
     bootstrap-bucket: ${S3_BOOTSTRAP_BUCKET:true}
+    # Remote timeouts are mandatory (AGENTS §7). The Apache client's defaults would let a stalled
+    # endpoint hold a request thread ~30s per attempt, and the storage breaker counts only thrown
+    # failures — slow-but-completing calls never open it. api-call bounds one whole SDK operation
+    # (multipart parts are separate operations, so large uploads are not squeezed by it).
+    connect-timeout: ${S3_CONNECT_TIMEOUT:PT2S}
+    socket-timeout: ${S3_SOCKET_TIMEOUT:PT10S}
+    api-call-timeout: ${S3_API_CALL_TIMEOUT:PT30S}
 
 resilience4j:
   circuitbreaker:

@@ -2,6 +2,7 @@ package ug.co.smsone.shared.cache;
 
 import java.util.Collection;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
@@ -32,7 +33,7 @@ public class TwoLevelCacheManager implements CacheManager {
 
     @Override
     public Collection<String> getCacheNames() {
-        return caches.keySet();
+        return Set.copyOf(caches.keySet()); // the live keySet view would let a caller detach caches
     }
 
     /** L1-only eviction on invalidation messages from other instances. */

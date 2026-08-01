@@ -1,7 +1,6 @@
 package ug.co.smsone.analytics.internal;
 
 import jakarta.annotation.PreDestroy;
-import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -20,6 +19,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.StringJoiner;
+import java.util.UUID;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
@@ -115,7 +115,12 @@ class DuckDbAnalyticsEngine implements AnalyticsEngine {
     @Override
     public long materializeFromPostgres(String sourceSql, String martTable) {
         String mart = quoteIdentifier(martTable);
-        String staging = quoteIdentifier(martTable + "__staging");
+        // Staging name unique PER RUN: two concurrent refreshes of the same report must not share a
+        // staging table — one run's DROP would discard the other's half-inserted rows mid-build and
+        // the survivor could swap in duplicated rows. Each run builds its own; the last swap wins,
+        // and both were built from live data.
+        String staging = quoteIdentifier(martTable + "__staging_"
+                + UUID.randomUUID().toString().replace("-", ""));
         // own DuckDB connection (same shared instance): a long refresh must not block KPI reads,
         // and a failed refresh must leave the previous mart untouched (staging + atomic swap)
         try (Connection duck = open(properties.databasePath());
@@ -138,8 +143,18 @@ class DuckDbAnalyticsEngine implements AnalyticsEngine {
                 source.setAutoCommit(sourceAutoCommit);
             }
         } catch (SQLException e) {
+            dropQuietly(staging); // a failed run's staging table must not accumulate in the mart file
             throw new AnalyticsException("Materializing mart '" + martTable + "' failed "
                     + "(previous mart, if any, is untouched)", e);
+        }
+    }
+
+    private void dropQuietly(String stagingTable) {
+        try (Connection duck = open(properties.databasePath());
+                Statement statement = duck.createStatement()) {
+            statement.execute("DROP TABLE IF EXISTS " + stagingTable);
+        } catch (SQLException cleanupFailure) {
+            log.warn("Could not drop orphaned staging table {}: {}", stagingTable, cleanupFailure.getMessage());
         }
     }
 

@@ -15,8 +15,16 @@
   "roles": {
     "realm": [
       {
-        "name": "ADMIN",
-        "description": "Full administrative access"
+        "name": "platform-superadmin",
+        "description": "Platform escalation tier: everything platform-admin can do, plus what only it may authorize (impersonating a platform-role holder). Implies platform-admin via the app's RoleHierarchy."
+      },
+      {
+        "name": "platform-admin",
+        "description": "Changes platform behaviour: settings, feature flags, tenant lifecycle. Implies platform-support via the app's RoleHierarchy."
+      },
+      {
+        "name": "platform-support",
+        "description": "Read-only platform view: user listing, audit, ops reads. The floor of the platform tier ladder."
       },
       {
         "name": "USER",
@@ -637,7 +645,8 @@
           "view-organizations",
           "query-organizations",
           "manage-users",
-          "view-users"
+          "view-users",
+          "view-realm"
         ]
       }
     },
@@ -656,7 +665,7 @@
         }
       ],
       "realmRoles": [
-        "ADMIN",
+        "platform-superadmin",
         "USER"
       ]
     }

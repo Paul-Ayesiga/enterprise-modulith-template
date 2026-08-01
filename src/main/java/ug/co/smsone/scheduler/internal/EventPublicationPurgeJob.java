@@ -4,7 +4,6 @@ import java.time.Duration;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.modulith.events.CompletedEventPublications;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -14,7 +13,7 @@ import org.springframework.stereotype.Component;
  * window (audit/debugging), then purged. Locked so only one instance runs it.
  */
 @Component
-public class EventPublicationPurgeJob {
+class EventPublicationPurgeJob {
 
     private static final Logger log = LoggerFactory.getLogger(EventPublicationPurgeJob.class);
 
@@ -22,9 +21,9 @@ public class EventPublicationPurgeJob {
     private final Duration retention;
 
     EventPublicationPurgeJob(CompletedEventPublications completedPublications,
-            @Value("${app.scheduler.event-retention:P7D}") Duration retention) {
+            SchedulerRetentionProperties properties) {
         this.completedPublications = completedPublications;
-        this.retention = retention;
+        this.retention = properties.eventRetention();
     }
 
     @Scheduled(cron = "${app.scheduler.event-purge-cron:0 0 3 * * *}")

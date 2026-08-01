@@ -18,8 +18,9 @@ import org.springframework.stereotype.Component;
  * {@code preferred_username}.
  *
  * <p>Client roles are NAMESPACED by their client id, never flattened into the realm namespace: a
- * role named {@code ADMIN} on any client (present or future) must not satisfy
- * {@code hasRole('ADMIN')}, which this codebase documents as the platform-admin REALM role.
+ * role named {@code platform-admin} on any client (present or future) must not satisfy
+ * {@code hasRole('platform-admin')}, which is reserved for the REALM role — see
+ * {@link PlatformRole}.
  */
 @Component
 public class KeycloakJwtAuthenticationConverter implements Converter<Jwt, AbstractAuthenticationToken> {

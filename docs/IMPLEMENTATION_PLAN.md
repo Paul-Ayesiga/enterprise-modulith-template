@@ -1,6 +1,6 @@
 # Enterprise Spring Modulith Template — Implementation Plan
 
-> Companion to `Enterprise_Spring_Modulith_Template_Roadmap_v2.md`. The roadmap says **what** to
+> Companion to `archive/Enterprise_Spring_Modulith_Template_Roadmap_v2.md`. The roadmap says **what** to
 > build; this plan pins **exact versions, structure, contracts, and build order**. All versions were
 > web-verified against Maven Central / vendor registries on **2026-07-27** (HTTP 200 confirmed for
 > every pinned coordinate).

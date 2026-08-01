@@ -1,5 +1,6 @@
 package ug.co.smsone.organization.internal;
 
+import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
@@ -51,7 +52,14 @@ class OrganizationController {
     }
 
     @PostMapping
-    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Create an organization and its first owner",
+            description = """
+                    Creates the Keycloak organization, provisions the named owner (Keycloak account \
+                    plus temporary credentials e-mailed to `ownerEmail`), seeds the org's roles and \
+                    writes the local projection — there is no separate step to add the first member. \
+                    An alias already in use, locally or in Keycloak, is a 409: an existing \
+                    organization is never adopted.""")
+    @PreAuthorize("hasRole('platform-admin')")
     @ResponseStatus(HttpStatus.CREATED)
     ResourceObject create(@Valid @RequestBody CreateOrganizationRequest request) {
         return toResource(organizations.create(request.alias(), request.name(),
@@ -59,12 +67,15 @@ class OrganizationController {
     }
 
     @GetMapping("/{orgId}")
+    @Operation(summary = "Get an organization")
     @PreAuthorize("hasPermission(#orgId, 'organization', 'org:read')")
     ResourceObject get(@PathVariable UUID orgId) {
         return toResource(organizations.require(orgId));
     }
 
     @PatchMapping("/{orgId}")
+    @Operation(summary = "Rename an organization",
+            description = "`name` is the only mutable attribute; the alias is fixed at creation.")
     @PreAuthorize("hasPermission(#orgId, 'organization', 'org:update')")
     ResourceObject update(@PathVariable UUID orgId, @Valid @RequestBody UpdateOrganizationRequest request) {
         return toResource(organizations.rename(orgId, request.name()));
@@ -74,13 +85,19 @@ class OrganizationController {
     // immediately, so it cannot be gated on a permission held inside that same org.
 
     @PostMapping("/{orgId}/suspend")
-    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Suspend an organization",
+            description = """
+                    Every member of a suspended organization resolves to zero permissions, so all of \
+                    its org-scoped endpoints refuse them immediately — no role or membership is \
+                    changed, and reactivating restores access exactly as it was. Idempotent.""")
+    @PreAuthorize("hasRole('platform-admin')")
     ResourceObject suspend(@PathVariable UUID orgId) {
         return toResource(organizations.suspend(orgId));
     }
 
     @PostMapping("/{orgId}/reactivate")
-    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Reactivate a suspended organization")
+    @PreAuthorize("hasRole('platform-admin')")
     ResourceObject reactivate(@PathVariable UUID orgId) {
         return toResource(organizations.reactivate(orgId));
     }

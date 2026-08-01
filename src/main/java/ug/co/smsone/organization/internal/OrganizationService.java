@@ -3,6 +3,7 @@ package ug.co.smsone.organization.internal;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import ug.co.smsone.identity.ProvisionRequest;
 import ug.co.smsone.identity.ProvisionedUser;
 import ug.co.smsone.identity.UserProvisioning;
@@ -26,14 +27,17 @@ class OrganizationService {
     private final UserProvisioning userProvisioning;
     private final OrgProjectionWriter projectionWriter;
     private final AuditLog auditLog;
+    private final TransactionTemplate transactionTemplate;
 
     OrganizationService(OrganizationRepository organizations, KeycloakOrgAdminGateway keycloakOrg,
-            UserProvisioning userProvisioning, OrgProjectionWriter projectionWriter, AuditLog auditLog) {
+            UserProvisioning userProvisioning, OrgProjectionWriter projectionWriter, AuditLog auditLog,
+            TransactionTemplate transactionTemplate) {
         this.organizations = organizations;
         this.keycloakOrg = keycloakOrg;
         this.userProvisioning = userProvisioning;
         this.projectionWriter = projectionWriter;
         this.auditLog = auditLog;
+        this.transactionTemplate = transactionTemplate;
     }
 
     /**
@@ -50,10 +54,18 @@ class OrganizationService {
             throw new ConflictException("An organization with alias '" + normalizedAlias + "' already exists.");
         }
         UUID kcOrgId = keycloakOrg.createOrganization(normalizedAlias, name); // concurrent duplicate -> 409
-        Organization organization = provisionOwner(kcOrgId, normalizedAlias, name,
-                ownerEmail, ownerFirstName, ownerLastName);
-        auditLog.record("organization.created", kcOrgId, normalizedAlias, null, "owner=" + ownerEmail);
-        return organization;
+        ProvisionedUser owner = userProvisioning.provision(
+                new ProvisionRequest(ownerEmail, ownerFirstName, ownerLastName));
+        keycloakOrg.addMember(kcOrgId, owner.subject());
+        // Projection and the audit row that explains it commit together (projectWithOwner's
+        // @Transactional joins this template): separate commits would let a crash leave an
+        // organization no audit accounts for — and the strict-create retry (409) never writes it.
+        return transactionTemplate.execute(tx -> {
+            Organization organization = projectionWriter.projectWithOwner(
+                    kcOrgId, normalizedAlias, name, owner.subject());
+            auditLog.record("organization.created", kcOrgId, normalizedAlias, null, "owner=" + ownerEmail);
+            return organization;
+        });
     }
 
     /** Idempotent get-or-create for the dev bootstrap: reuses the local projection if present. */
@@ -92,6 +104,9 @@ class OrganizationService {
     Organization rename(UUID kcOrgId, String name) {
         Organization organization = require(kcOrgId);
         String previousName = organization.getName();
+        if (previousName.equals(name)) {
+            return organization; // idempotent no-op: no x → x audit row (the house discipline, §6)
+        }
         organization.rename(name);
         Organization saved = organizations.save(organization);
         auditLog.record("organization.renamed", kcOrgId, organization.getAlias(), previousName, name);
@@ -103,6 +118,11 @@ class OrganizationService {
         Organization organization = require(kcOrgId);
         String previousStatus = organization.getStatus().name();
         organization.suspend(); // publishes OrganizationStatusChanged -> permission cache eviction
+        if (organization.getStatus().name().equals(previousStatus)) {
+            // the entity early-returned (already suspended) — match it: no event was published, so
+            // no SUSPENDED → SUSPENDED audit row either
+            return organization;
+        }
         Organization saved = organizations.save(organization);
         auditLog.record("organization.suspended", kcOrgId, organization.getAlias(),
                 previousStatus, organization.getStatus().name());
@@ -114,6 +134,9 @@ class OrganizationService {
         Organization organization = require(kcOrgId);
         String previousStatus = organization.getStatus().name();
         organization.reactivate();
+        if (organization.getStatus().name().equals(previousStatus)) {
+            return organization; // already active — same rule as suspend()
+        }
         Organization saved = organizations.save(organization);
         auditLog.record("organization.reactivated", kcOrgId, organization.getAlias(),
                 previousStatus, organization.getStatus().name());

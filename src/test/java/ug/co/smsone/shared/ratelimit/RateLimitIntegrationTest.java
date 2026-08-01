@@ -119,6 +119,38 @@ class RateLimitIntegrationTest extends AbstractIntegrationTest {
         mockMvc.perform(get("/api/v1/settings").with(other)).andExpect(status().isOk());
     }
 
+    /**
+     * With no tenant to key on, the bucket falls back to the principal — which must be the immutable
+     * subject, not {@code preferred_username}. A name-keyed bucket is escapable (rename yourself for a
+     * fresh quota) and inheritable (a recycled username lands in the previous holder's bucket). Built
+     * through the real converter, which is what makes principal name differ from subject.
+     */
+    @Test
+    void principalFallbackKeysBySubjectNotUsername() throws Exception {
+        var converter = new ug.co.smsone.shared.security.KeycloakJwtAuthenticationConverter();
+        String subject = "sub-" + UUID.randomUUID();
+
+        java.util.function.Function<String, RequestPostProcessor> as = username ->
+                org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors
+                        .authentication(converter.convert(org.springframework.security.oauth2.jwt.Jwt
+                                .withTokenValue("token").header("alg", "RS256")
+                                .subject(subject)
+                                .claim("preferred_username", username)
+                                .claim("realm_access", Map.of("roles", List.of("USER")))
+                                .issuedAt(java.time.Instant.now())
+                                .expiresAt(java.time.Instant.now().plusSeconds(300))
+                                .build()));
+
+        // No tenant claim and no org claim -> PRINCIPAL fallback. Capacity is 3 for this tier.
+        mockMvc.perform(get("/api/v1/settings").with(as.apply("name-before"))).andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/settings").with(as.apply("name-before"))).andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/settings").with(as.apply("name-before"))).andExpect(status().isOk());
+
+        // Same subject, different display name: the rename must NOT hand out a fresh quota.
+        mockMvc.perform(get("/api/v1/settings").with(as.apply("name-after")))
+                .andExpect(status().isTooManyRequests());
+    }
+
     @Test
     void edgeFilterKeysByActiveOrgFromTheOrganizationClaim() throws Exception {
         UUID orgId = UUID.randomUUID();

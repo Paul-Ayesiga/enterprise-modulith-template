@@ -1,5 +1,6 @@
 package ug.co.smsone.settings.internal;
 
+import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -32,17 +33,23 @@ class FeatureFlagController {
     }
 
     @GetMapping
+    @Operation(summary = "List feature flags")
     WindowedResult<ResourceObject> list(CursorPageRequest page) {
         return WindowedResult.of(featureFlagService.list(page), page, FeatureFlagController::toResource);
     }
 
     @GetMapping("/{key}")
+    @Operation(summary = "Get one feature flag by key")
     ResourceObject get(@PathVariable String key) {
         return toResource(featureFlagService.require(key));
     }
 
     @PutMapping("/{key}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Create or toggle a feature flag",
+            description = """
+                    Upsert: a key that does not exist yet is created rather than rejected, so there is \
+                    no separate create call. Flags are global — there is no per-organization override.""")
+    @PreAuthorize("hasRole('platform-admin')")
     ResourceObject set(@PathVariable String key, @Valid @RequestBody ToggleFeatureFlagRequest request) {
         return toResource(featureFlagService.set(key, request.enabled(), request.description()));
     }

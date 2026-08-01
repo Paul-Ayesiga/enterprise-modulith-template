@@ -7,9 +7,12 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.AbortMultipartUploadRequest;
 import software.amazon.awssdk.services.s3.model.CompleteMultipartUploadRequest;
 import software.amazon.awssdk.services.s3.model.CompletedMultipartUpload;
 import software.amazon.awssdk.services.s3.model.CompletedPart;
@@ -30,6 +33,8 @@ import ug.co.smsone.files.FileStorageProvider;
 
 @Component
 class S3StorageProvider implements FileStorageProvider {
+
+    private static final Logger log = LoggerFactory.getLogger(S3StorageProvider.class);
 
     /** S3 minimum part size is 5 MiB (except the last part). */
     private static final int PART_SIZE_BYTES = 5 * 1024 * 1024;
@@ -65,12 +70,13 @@ class S3StorageProvider implements FileStorageProvider {
     @Override
     @CircuitBreaker(name = "storage")
     public void putLarge(String key, InputStream content, long contentLength, String contentType) {
-        String uploadId = s3.createMultipartUpload(CreateMultipartUploadRequest.builder()
-                .bucket(properties.bucket())
-                .key(key)
-                .contentType(contentType)
-                .build()).uploadId();
+        String uploadId = null;
         try {
+            uploadId = s3.createMultipartUpload(CreateMultipartUploadRequest.builder()
+                    .bucket(properties.bucket())
+                    .key(key)
+                    .contentType(contentType)
+                    .build()).uploadId();
             List<CompletedPart> parts = new ArrayList<>();
             byte[] buffer = new byte[PART_SIZE_BYTES];
             int partNumber = 1;
@@ -94,7 +100,29 @@ class S3StorageProvider implements FileStorageProvider {
                     .multipartUpload(CompletedMultipartUpload.builder().parts(parts).build())
                     .build());
         } catch (S3Exception | IOException e) {
+            abortQuietly(key, uploadId);
             throw new FileStorageException("multipart upload failed for key " + key, e);
+        }
+    }
+
+    /**
+     * Best-effort: an un-aborted multipart upload retains (and bills) every uploaded part server-side
+     * indefinitely, and no lifecycle rule cleans them up. Abort failure is logged, never rethrown —
+     * the upload failure itself is what the caller must see.
+     */
+    private void abortQuietly(String key, String uploadId) {
+        if (uploadId == null) {
+            return;
+        }
+        try {
+            s3.abortMultipartUpload(AbortMultipartUploadRequest.builder()
+                    .bucket(properties.bucket())
+                    .key(key)
+                    .uploadId(uploadId)
+                    .build());
+        } catch (RuntimeException abortFailure) {
+            log.warn("Could not abort multipart upload {} for key {} — parts remain until manual cleanup: {}",
+                    uploadId, key, abortFailure.toString());
         }
     }
 
@@ -109,6 +137,8 @@ class S3StorageProvider implements FileStorageProvider {
         } catch (NoSuchKeyException e) {
             // distinct type: a business not-found must never trip the breaker (ignore-exceptions)
             throw new FileNotFoundException("no object for key " + key, e);
+        } catch (S3Exception e) {
+            throw new FileStorageException("get failed for key " + key, e);
         }
     }
 
@@ -131,7 +161,12 @@ class S3StorageProvider implements FileStorageProvider {
     @Override
     @CircuitBreaker(name = "storage")
     public void delete(String key) {
-        s3.deleteObject(DeleteObjectRequest.builder().bucket(properties.bucket()).key(key).build());
+        try {
+            s3.deleteObject(DeleteObjectRequest.builder().bucket(properties.bucket()).key(key).build());
+        } catch (S3Exception e) {
+            // the port's contract: SDK types never cross the module boundary (AGENTS §2.3)
+            throw new FileStorageException("delete failed for key " + key, e);
+        }
     }
 
     @Override

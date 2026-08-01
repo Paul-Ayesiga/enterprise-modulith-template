@@ -5,17 +5,20 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
-import jakarta.persistence.UniqueConstraint;
 import java.time.Instant;
 import java.util.UUID;
+import org.hibernate.annotations.SQLDelete;
+import org.hibernate.annotations.SQLRestriction;
 import ug.co.smsone.organization.MembershipCreated;
 import ug.co.smsone.organization.MembershipRoleChanged;
-import ug.co.smsone.shared.persistence.AggregateRoot;
+import ug.co.smsone.shared.persistence.SoftDeletableEntity;
 
 /** A user's membership in an organization with a single role. Keyed by (orgId, userSubject). */
 @Entity
-@Table(name = "membership", uniqueConstraints = @UniqueConstraint(columnNames = {"org_id", "user_subject"}))
-class Membership extends AggregateRoot {
+@Table(name = "membership")
+@SQLDelete(sql = "update membership set deleted_at = now(), version = version + 1 where id = ? and version = ?")
+@SQLRestriction("deleted_at is null")
+class Membership extends SoftDeletableEntity {
 
     @Column(name = "org_id", nullable = false, updatable = false)
     private UUID orgId;

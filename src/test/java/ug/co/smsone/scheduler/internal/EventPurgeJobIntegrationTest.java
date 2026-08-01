@@ -1,4 +1,4 @@
-package ug.co.smsone.scheduler;
+package ug.co.smsone.scheduler.internal;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -9,7 +9,6 @@ import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.modulith.events.ApplicationModuleListener;
 import org.springframework.test.context.TestPropertySource;
-import ug.co.smsone.scheduler.internal.EventPublicationPurgeJob;
 import ug.co.smsone.settings.SettingChanged;
 import ug.co.smsone.settings.internal.SettingService;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
@@ -42,15 +41,8 @@ class EventPurgeJobIntegrationTest extends AbstractIntegrationTest {
         // produce a completed publication through the real event flow
         settingService.put("purge.probe", "x", null);
 
-        long deadline = System.currentTimeMillis() + 5000;
-        while (System.currentTimeMillis() < deadline && countCompleted() == 0) {
-            try {
-                Thread.sleep(100);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }
-        assertThat(countCompleted()).isGreaterThanOrEqualTo(1);
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5))
+                .untilAsserted(() -> assertThat(countCompleted()).isGreaterThanOrEqualTo(1));
 
         purgeJob.purgeCompletedPublications();
 

@@ -4,7 +4,7 @@
 #   scripts/api.sh GET  "/api/v1/settings?page[size]=5"
 #   scripts/api.sh GET  /api/v1/feature-flags
 #   scripts/api.sh PUT  /api/v1/settings/my.key -d '{"value":"hello","description":"demo"}'
-#   scripts/api.sh GET  /api/v1/admin/users                    # platform-admin listing (ADMIN)
+#   scripts/api.sh GET  /api/v1/admin/users                    # platform user listing (platform-support)
 #
 # Override with env: API_BASE, API_USER, API_PASSWORD, TOKEN (reuse an existing token).
 # Defaults to the realm's platform admin (paul); set API_USER/API_PASSWORD for a user you added.
@@ -21,7 +21,9 @@ method="${1:?usage: api.sh METHOD PATH [curl-args...]}"; shift
 path="${1:?usage: api.sh METHOD PATH [curl-args...]}"; shift
 
 # Percent-encode reserved brackets so page[size]/page[after] can be typed naturally.
-# (Tomcat rejects raw [ ] in the query string; spec-compliant clients send %5B/%5D.)
+# Kept for portability: this deployment sets server.tomcat.relaxed-query-chars "[,]" and accepts
+# raw brackets, but a deployment that has not will reject them before any filter runs, and
+# %5B/%5D is what a spec-compliant client sends anyway.
 path="${path//\[/%5B}"; path="${path//\]/%5D}"
 
 curl -sS -X "$method" "${API_BASE}${path}" \

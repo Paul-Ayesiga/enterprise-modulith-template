@@ -4,12 +4,12 @@ Opinionated, enterprise-grade **Spring Boot 4.1 + Spring Modulith 2.1** template
 A modular monolith with a future microservice-extraction path: modules own their data, communicate
 through events, and hide infrastructure behind interfaces.
 
-- Roadmap (the *what*): [docs/Enterprise_Spring_Modulith_Template_Roadmap_v2.md](docs/Enterprise_Spring_Modulith_Template_Roadmap_v2.md)
-- Implementation plan (the *how* — pinned versions, contracts, build order): [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)
-- Progress checklist (ticked as gates pass): [docs/CHECKLIST.md](docs/CHECKLIST.md)
+**Documentation index: [docs/README.md](docs/README.md).** The most-used entries:
+
+- Engineering standards (read §1 before writing code here): [AGENTS.md](AGENTS.md)
 - Architecture (module map, request path, generated C4/PlantUML): [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- Event catalog: [docs/EVENTS.md](docs/EVENTS.md) · Decisions: [docs/adr/](docs/adr/)
-- Next work, pickup-ready: [docs/NEXT_TASKS.md](docs/NEXT_TASKS.md)
+- Run & poke it locally (URLs, tokens, every endpoint): [docs/LOCAL_ACCESS.md](docs/LOCAL_ACCESS.md)
+- Progress (gates ticked as they pass): [docs/CHECKLIST.md](docs/CHECKLIST.md)
 
 ## Stack
 
@@ -49,17 +49,22 @@ Spring Modulith application modules are Java packages under `ug.co.smsone`:
 ```text
 ug.co.smsone
 ├── Application.java      # @Modulithic @SpringBootApplication (module root, not a module)
-├── shared/               # OPEN kernel: envelope, errors, security, persistence, cache, idempotency, events
+├── shared/               # OPEN kernel: envelope, errors, security, persistence, cache, idempotency, rate limiting, events
 ├── settings/             # key/value configuration + feature flags (SettingChanged, FeatureFlagChanged)
 ├── files/                # FileStorageProvider → SeaweedFS/S3 (presign, multipart, circuit breaker)
-├── scheduler/            # ShedLock-guarded cron (event-registry + idempotency purges)
-└── analytics/            # AnalyticsEngine → embedded DuckDB (marts, KPIs, Parquet snapshots)
+├── scheduler/            # ShedLock-guarded cron (event-registry, idempotency + soft-delete retention purges)
+├── analytics/            # AnalyticsEngine → embedded DuckDB (marts, KPIs, Parquet snapshots)
+├── notification/         # pluggable channels (email/in-app/webhook/Slack/SMS), durable async fan-out
+├── identity/             # Keycloak user projection, admin-driven provisioning (no JIT), audited impersonation
+├── organization/         # Keycloak Organizations projection + org-scoped RBAC authority
+├── audit/                # append-only who/when/where/what/from→to trail behind the AuditLog port
+└── webhooks/             # per-org outbound event subscriptions (HMAC-signed, durable delivery)
 ```
 
 `ApplicationModules.verify()` runs in the test suite on every build — boundary violations fail the build.
 
 ## Status
 
-Phases 0–4 complete and gated — see [docs/CHECKLIST.md](docs/CHECKLIST.md). Remaining work is
-queued in [docs/NEXT_TASKS.md](docs/NEXT_TASKS.md) (CI verification, notification/identity/
-organization modules, Kubernetes migration, rate limiting, event externalization).
+Phases 0–4 complete and gated, and all ten modules are shipped — see
+[docs/CHECKLIST.md](docs/CHECKLIST.md) and [docs/COMPLETED_MODULES.md](docs/COMPLETED_MODULES.md).
+Remaining: CI verification, the Kubernetes migration, and event externalization.

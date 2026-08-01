@@ -39,19 +39,11 @@ class InAppNotification extends BaseEntity {
         return readAt != null;
     }
 
-    String getRecipient() {
-        return recipient;
-    }
-
     String getSubject() {
         return subject;
     }
 
     String getBody() {
         return body;
-    }
-
-    Instant getReadAt() {
-        return readAt;
     }
 }

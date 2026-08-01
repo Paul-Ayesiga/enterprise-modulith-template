@@ -14,7 +14,8 @@ record WebhookProperties(
         Duration retryBaseBackoff,
         Duration retryMaxBackoff,
         Integer timeoutSeconds,
-        boolean allowPrivateHosts) {
+        boolean allowPrivateHosts,
+        Duration retention) {
 
     WebhookProperties {
         if (workerAutoStart == null) {
@@ -40,6 +41,9 @@ record WebhookProperties(
         }
         if (timeoutSeconds == null || timeoutSeconds <= 0) {
             timeoutSeconds = 5;
+        }
+        if (retention == null || retention.isZero() || retention.isNegative()) {
+            retention = Duration.ofDays(30); // a zero/negative window would purge the whole delivery log
         }
     }
 }

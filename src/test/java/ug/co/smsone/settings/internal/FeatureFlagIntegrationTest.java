@@ -1,4 +1,4 @@
-package ug.co.smsone.settings;
+package ug.co.smsone.settings.internal;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
@@ -14,7 +14,6 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
-import ug.co.smsone.settings.internal.FeatureFlagService;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
 @AutoConfigureMockMvc
@@ -37,7 +36,7 @@ class FeatureFlagIntegrationTest extends AbstractIntegrationTest {
     @Test
     void adminTogglesFlagThroughTheApi() throws Exception {
         mockMvc.perform(put("/api/v1/feature-flags/beta.dashboard")
-                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_platform-admin")))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"enabled\":true,\"description\":\"New dashboard\"}"))
                 .andExpect(status().isOk())

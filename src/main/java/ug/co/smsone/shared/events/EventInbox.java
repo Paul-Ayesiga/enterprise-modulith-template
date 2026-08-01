@@ -32,4 +32,20 @@ public class EventInbox {
                 """, listenerId, messageId, Timestamp.from(clock.instant()));
         return inserted == 1;
     }
+
+    /**
+     * One bounded batch of inbox rows older than the cutoff; the caller loops until a short batch.
+     * Dedup only needs to cover the at-least-once redelivery window (a restart re-publishing
+     * incomplete publications) — not all history, which is what this table accumulated before the
+     * purge existed.
+     */
+    public int purgeProcessedBatch(java.time.Instant cutoff, int batchSize) {
+        return jdbcTemplate.update("""
+                delete from event_inbox where (listener_id, message_id) in (
+                    select listener_id, message_id from event_inbox
+                    where processed_at < ?
+                    order by processed_at
+                    limit ?)
+                """, Timestamp.from(cutoff), batchSize);
+    }
 }

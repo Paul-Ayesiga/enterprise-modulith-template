@@ -7,7 +7,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * DuckDB runs in-process — the caps exist so analytics can never starve the application JVM.
  */
 @ConfigurationProperties(prefix = "app.analytics")
-public record AnalyticsProperties(
+record AnalyticsProperties(
         @DefaultValue("data/analytics.duckdb") String databasePath,
         @DefaultValue("data/snapshots") String snapshotDir,
         @DefaultValue("2") int threads,

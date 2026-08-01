@@ -31,9 +31,10 @@ class OrgProjectionWriter {
         Organization organization = organizations.findByKcOrgId(kcOrgId)
                 .orElseGet(() -> organizations.save(Organization.register(kcOrgId, alias, name)));
         roleSeeder.seedSystemRoles(kcOrgId); // idempotent; joins this transaction
-        Role ownerRole = roles.findByOrgIdAndCode(kcOrgId, "OWNER").orElseThrow();
+        Role ownerRole = roles.findByOrgIdAndCode(kcOrgId, Role.OWNER_CODE).orElseThrow();
         memberships.findByOrgIdAndUserSubject(kcOrgId, ownerSubject)
-                .orElseGet(() -> memberships.save(Membership.create(kcOrgId, ownerSubject, ownerRole.getId(), "OWNER")));
+                .orElseGet(() -> memberships.save(
+                        Membership.create(kcOrgId, ownerSubject, ownerRole.getId(), Role.OWNER_CODE)));
         return organization;
     }
 }

@@ -1,5 +1,10 @@
 # Enterprise Spring Modulith Template Roadmap
 
+> **ARCHIVED.** The original vision document. Superseded by
+> [../IMPLEMENTATION_PLAN.md](../IMPLEMENTATION_PLAN.md) (which pins what was actually built) and by
+> the shipped code — the group id (`io.commuza` → `ug.co.smsone`), the module list and several
+> library choices changed during implementation. Kept as written.
+
 ## Purpose
 This document is the master guide for building an opinionated, enterprise-grade Spring Boot + Spring Modulith template. It is organized into phases so each capability is built once and reused across future applications.
 

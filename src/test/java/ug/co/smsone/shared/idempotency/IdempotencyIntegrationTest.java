@@ -27,6 +27,57 @@ class IdempotencyIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @Autowired
+    private IdempotencyStore store;
+
+    /**
+     * The lease-takeover fence — AGENTS §7's fencing rule applied to the store itself. A claimant
+     * that outlives the PT5M lease loses the key; when it later wakes up, its release must not
+     * delete the new owner's in-progress row (a third duplicate would re-execute the side effect)
+     * and its complete must not overwrite the new owner's state.
+     */
+    @Test
+    void aStaleClaimantCannotDestroyTheTakeoversClaim() {
+        java.time.Duration lease = java.time.Duration.ofMinutes(5);
+        store.claim("fence-user", "fence-key", "hash-a", lease).orElseThrow();
+        // Age the claim past the lease, as a crashed instance's row would be — the returned stamp is
+        // exactly the fence token that crashed claimant would hold.
+        java.time.Instant staleClaim = jdbcTemplate.queryForObject(
+                "update idempotency_key set created_at = created_at - interval '10 minutes' "
+                        + "where principal = 'fence-user' and idem_key = 'fence-key' returning created_at",
+                java.sql.Timestamp.class).toInstant();
+        java.time.Instant takeover = store.claim("fence-user", "fence-key", "hash-b", lease)
+                .orElseThrow(() -> new AssertionError("the aged claim must be taken over"));
+
+        store.release("fence-user", "fence-key", staleClaim); // the zombie wakes up and releases
+        assertThat(store.find("fence-user", "fence-key"))
+                .as("the takeover's row must survive a stale release").isPresent();
+
+        store.complete("fence-user", "fence-key", staleClaim, 200, "zombie", "text/plain");
+        assertThat(store.find("fence-user", "fence-key").orElseThrow().inProgress())
+                .as("a stale complete must not overwrite the takeover's in-progress claim").isTrue();
+
+        store.release("fence-user", "fence-key", takeover); // the rightful owner still can
+        assertThat(store.find("fence-user", "fence-key")).isEmpty();
+    }
+
+    @Test
+    void sameKeyWithDifferentQueryParametersIsAConflictNotAReplay() throws Exception {
+        mockMvc.perform(adminPut("idem.query", "one", "key-query-1"))
+                .andExpect(status().isOk());
+
+        // same key, same body — but different query parameters: this is a different request, and
+        // replaying the stored response would silently ignore the parameters the client sent
+        mockMvc.perform(put("/api/v1/settings/idem.query?dryRun=true")
+                        .with(jwt().jwt(token -> token.subject("admin-alice"))
+                                .authorities(new SimpleGrantedAuthority("ROLE_platform-admin")))
+                        .header(IdempotencyFilter.KEY_HEADER, "key-query-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"value\":\"one\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errors[0].code").value("CONFLICT"));
+    }
+
     private MockHttpServletRequestBuilder adminPut(String settingKey, String value, String idemKey) {
         return adminPutAs("admin-alice", settingKey, value, idemKey);
     }
@@ -35,7 +86,7 @@ class IdempotencyIntegrationTest extends AbstractIntegrationTest {
             String idemKey) {
         return put("/api/v1/settings/" + settingKey)
                 .with(jwt().jwt(token -> token.subject(subject))
-                        .authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
+                        .authorities(new SimpleGrantedAuthority("ROLE_platform-admin")))
                 .header(IdempotencyFilter.KEY_HEADER, idemKey)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"value\":\"" + value + "\"}");

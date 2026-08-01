@@ -111,10 +111,13 @@ class NotificationDeliveryTest {
     }
 
     private void seedProvisionedAdmin() {
+        // The `where` is not optional: V17 replaced app_user's plain unique constraint on `subject` with
+        // the partial index uq_app_user_subject_live, and Postgres only infers a partial index as the
+        // ON CONFLICT arbiter when the statement repeats its predicate verbatim.
         jdbc.update("""
                 insert into app_user (id, subject, email, status, provisioned_at, version, created_at)
                 values (?, ?, ?, 'ACTIVE', now(), 0, now())
-                on conflict (subject) do nothing
+                on conflict (subject) where deleted_at is null do nothing
                 """, UUID.randomUUID(), ADMIN_SUBJECT, ADMIN_EMAIL);
     }
 

@@ -103,6 +103,100 @@ class WebhookDeliveryTest extends AbstractIntegrationTest {
         }
     }
 
+    /**
+     * DELETE is the only revocation the API offers, and before soft delete it was airtight: the row
+     * went away and {@code webhook_delivery}'s {@code on delete cascade} took the queue with it. The
+     * row now survives, so the cascade never fires — without an explicit stop, everything already
+     * enqueued keeps being POSTed to the endpoint the tenant just revoked, signed with the secret they
+     * just rotated away from, for as long as the retry schedule lasts.
+     */
+    @Test
+    void deletingASubscriptionStopsDeliveriesAlreadyQueued() throws Exception {
+        AtomicInteger hits = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/revoked", exchange -> {
+            hits.incrementAndGet();
+            exchange.sendResponseHeaders(200, -1);
+            exchange.close();
+        });
+        server.start();
+        try {
+            UUID orgId = UUID.randomUUID();
+            WebhookSubscription subscription = subscriptions.create(orgId,
+                    "http://127.0.0.1:" + server.getAddress().getPort() + "/revoked", Set.of("org.member.added"));
+            dispatcher.dispatch("m-" + UUID.randomUUID(), orgId, "org.member.added",
+                    WebhookPayload.of("org.member.added", orgId, Instant.now()).with("subject", "kc-newbie"));
+
+            subscriptions.delete(orgId, subscription.getId());
+            worker.drainOnce();
+
+            assertThat(hits.get()).isZero();
+            assertThat(deliveryStatus(subscription.getId())).isEqualTo("FAILED");
+            assertThat(jdbc.queryForObject("select last_error from webhook_delivery where subscription_id = ?",
+                    String.class, subscription.getId())).isEqualTo("subscription deleted");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    /**
+     * The claim predicate on its own. The test above also passes if only the cancellation half lands,
+     * so this one leaves the delivery PENDING — stamping {@code deleted_at} behind the service's back —
+     * and asserts the worker still refuses to pick it up. The claim is raw JDBC, which
+     * {@code @SQLRestriction} cannot reach, so nothing else in the codebase enforces this.
+     */
+    @Test
+    void aPendingDeliveryForADeletedSubscriptionIsNeverClaimed() throws Exception {
+        UUID orgId = UUID.randomUUID();
+        WebhookSubscription subscription = subscriptions.create(orgId,
+                "http://127.0.0.1:1/unreachable", Set.of("org.member.added"));
+        dispatcher.dispatch("m-" + UUID.randomUUID(), orgId, "org.member.added",
+                WebhookPayload.of("org.member.added", orgId, Instant.now()).with("subject", "kc-newbie"));
+        jdbc.update("update webhook_subscription set deleted_at = now() where id = ?", subscription.getId());
+
+        worker.drainOnce();
+
+        assertThat(deliveryStatus(subscription.getId())).isEqualTo("PENDING"); // never claimed, never attempted
+        assertThat(jdbc.queryForObject("select attempts from webhook_delivery where subscription_id = ?",
+                Integer.class, subscription.getId())).isZero();
+    }
+
+    /**
+     * DISABLED is the softer revocation and must stop queued rows too, not just future fan-out —
+     * unlike a delete, though, paused rows stay PENDING and resume on re-enable. The claim's status
+     * predicate is raw JDBC, which nothing else in the codebase enforces.
+     */
+    @Test
+    void disablingASubscriptionPausesQueuedDeliveriesUntilReenabled() throws Exception {
+        AtomicInteger hits = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/paused", exchange -> {
+            hits.incrementAndGet();
+            exchange.sendResponseHeaders(200, -1);
+            exchange.close();
+        });
+        server.start();
+        try {
+            UUID orgId = UUID.randomUUID();
+            WebhookSubscription subscription = subscriptions.create(orgId,
+                    "http://127.0.0.1:" + server.getAddress().getPort() + "/paused", Set.of("org.member.added"));
+            dispatcher.dispatch("m-" + UUID.randomUUID(), orgId, "org.member.added",
+                    WebhookPayload.of("org.member.added", orgId, Instant.now()).with("subject", "kc-newbie"));
+            jdbc.update("update webhook_subscription set status = 'DISABLED' where id = ?", subscription.getId());
+
+            worker.drainOnce();
+            assertThat(hits.get()).as("a paused subscription must not be POSTed").isZero();
+            assertThat(deliveryStatus(subscription.getId())).isEqualTo("PENDING");
+
+            jdbc.update("update webhook_subscription set status = 'ACTIVE' where id = ?", subscription.getId());
+            worker.drainOnce();
+            assertThat(hits.get()).as("re-enabling resumes what was queued").isEqualTo(1);
+            assertThat(deliveryStatus(subscription.getId())).isEqualTo("DELIVERED");
+        } finally {
+            server.stop(0);
+        }
+    }
+
     private String deliveryStatus(UUID subscriptionId) {
         return jdbc.queryForObject(
                 "select status from webhook_delivery where subscription_id = ? order by created_at desc limit 1",

@@ -13,19 +13,33 @@ generated diagrams below are refreshed on every build.
 ```mermaid
 flowchart TB
     subgraph app["ug.co.smsone (single deployable)"]
-        shared["shared (OPEN kernel)\nweb envelope · errors · security\npersistence · cache · idempotency · events"]
+        shared["shared (OPEN kernel)\nweb envelope · errors · security · impersonation filter\npersistence · cache · idempotency · rate limiting · events"]
         settings["settings\nkey/value config + feature flags"]
         files["files\nFileStorageProvider → S3"]
-        scheduler["scheduler\nShedLock cron jobs"]
+        scheduler["scheduler\nShedLock cron jobs\n(+ soft-delete retention purge)"]
         analytics["analytics\nAnalyticsEngine → DuckDB"]
+        notification["notification\npluggable channels · durable fan-out"]
+        identity["identity\nuser projection · no-JIT provisioning\nimpersonation sessions"]
+        organization["organization\nKeycloak Orgs projection · RBAC authority"]
+        audit["audit\nappend-only trail (AuditLog port)"]
+        webhooks["webhooks\nper-org outbound subscriptions"]
     end
 
     settings --> shared
     files --> shared
     scheduler --> shared
     analytics --> shared
+    notification --> shared
+    identity --> shared
+    organization --> shared
+    audit --> shared
+    webhooks --> shared
 
-    settings -. "SettingChanged / FeatureFlagChanged\n(DB-backed event registry)" .-> listeners(("future\nlisteners"))
+    organization --> identity
+    notification --> identity
+
+    settings -. "FeatureFlagChanged\n(DB-backed event registry)" .-> notification
+    organization -. "member / role / status events" .-> webhooks
 
     postgres[("PostgreSQL 18\nsystem of record")]
     valkey[("Valkey 8\nL2 cache + pub/sub")]
@@ -45,20 +59,30 @@ flowchart TB
 
 ## Request path (write with idempotency)
 
+Filter order is load-bearing, not incidental — see AGENTS.md §5.5: `ImpersonationFilter` at
+`@Order(-2)` swaps the principal **before** rate limiting (`-1`), idempotency (`0`) and the
+provisioning gate (`1`), so one request has one effective identity end to end.
+
 ```mermaid
 sequenceDiagram
     participant C as Client
     participant RF as RequestIdFilter
     participant SEC as Security (JWT)
+    participant IMP as ImpersonationFilter
+    participant RL as RateLimitFilter
     participant IF as IdempotencyFilter
+    participant PG as ProvisioningGateFilter
     participant CTRL as Controller
     participant DB as Postgres
 
     C->>RF: PUT /api/v1/... (Idempotency-Key, Bearer)
     RF->>SEC: requestId in MDC + response header
-    SEC->>IF: authenticated principal
+    SEC->>IMP: authenticated principal
+    IMP->>RL: effective principal (swapped iff X-Impersonate)
+    RL->>IF: within tenant/subject/IP budget
     IF->>DB: claim (principal, key) [lease takeover]
-    IF->>CTRL: cached-body request
+    IF->>PG: cached-body request
+    PG->>CTRL: provisioned (authorize; peek under a session)
     CTRL->>DB: business tx (+ event registry row)
     CTRL-->>IF: envelope response
     IF->>DB: complete (status < 400) / release
@@ -73,5 +97,9 @@ sequenceDiagram
 | Cursor pagination (`page[size]`/`page[after]`, no totals) | `shared/web` (`Cursors`, `WindowedResult`) |
 | Two-level cache (Caffeine L1 + Valkey L2, pub/sub invalidation) | `shared/cache` |
 | Idempotency keys (per principal, claim + lease, replay) | `shared/idempotency` |
+| Rate limiting (tiered token buckets keyed tenant → subject → IP) | `shared/ratelimit` (Bucket4j + Valkey) |
+| SSRF guard for caller-supplied outbound URLs | `shared/http` (`SafeOutboundUrl`) |
+| Impersonation (`X-Impersonate`, principal swapped before every other filter) | `shared/security` filter + port, `identity` sessions |
+| Soft delete + retention (`@SQLDelete`/`@SQLRestriction`, purge past `retention`) | `shared/persistence`, `scheduler` (`SoftDeletePurgeJob`) |
 | Outbox = Modulith DB event registry; Inbox = `EventInbox` | `shared/events`, `event_publication` |
 | Distributed locks for cron | `scheduler` (ShedLock JDBC) |

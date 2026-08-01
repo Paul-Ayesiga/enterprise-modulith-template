@@ -7,8 +7,6 @@ import org.springframework.data.domain.Window;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ug.co.smsone.shared.error.NotFoundException;
-import ug.co.smsone.shared.error.UnauthorizedException;
-import ug.co.smsone.shared.security.CurrentUser;
 import ug.co.smsone.shared.security.CurrentUserProvider;
 import ug.co.smsone.shared.web.CursorPageRequest;
 
@@ -55,8 +53,6 @@ class InAppNotificationService {
     }
 
     private String currentSubject() {
-        return currentUserProvider.currentUser()
-                .map(CurrentUser::subject)
-                .orElseThrow(() -> new UnauthorizedException("Authentication required."));
+        return currentUserProvider.requireCurrentUser().subject();
     }
 }

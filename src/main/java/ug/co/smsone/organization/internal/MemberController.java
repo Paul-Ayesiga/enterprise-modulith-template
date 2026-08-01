@@ -1,5 +1,6 @@
 package ug.co.smsone.organization.internal;
 
+import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
@@ -34,11 +35,9 @@ class MemberController {
     private static final String RESOURCE_TYPE = "member";
 
     private final MemberService members;
-    private final RoleRepository roles;
 
-    MemberController(MemberService members, RoleRepository roles) {
+    MemberController(MemberService members) {
         this.members = members;
-        this.roles = roles;
     }
 
     record MemberAttributes(String subject, String roleId, String roleCode, String status) {
@@ -52,6 +51,7 @@ class MemberController {
     }
 
     @GetMapping
+    @Operation(summary = "List organization members")
     @PreAuthorize("hasPermission(#orgId, 'organization', 'member:read')")
     WindowedResult<ResourceObject> list(@PathVariable UUID orgId, CursorPageRequest page) {
         Map<UUID, String> roleCodes = roleCodesFor(orgId);
@@ -60,6 +60,14 @@ class MemberController {
     }
 
     @PostMapping
+    @Operation(summary = "Invite a member to the organization",
+            description = """
+                    One call does three things: it provisions the identity (creating the Keycloak \
+                    account and e-mailing temporary credentials if the person is new), links them to \
+                    the Keycloak organization, and records the membership. Re-inviting an existing \
+                    member is idempotent and returns the current membership unchanged — it does not \
+                    re-role them. Handing over a role is granting its permissions, so the caller must \
+                    already hold every permission `roleCode` carries.""")
     @PreAuthorize("hasPermission(#orgId, 'organization', 'member:invite')")
     @ResponseStatus(HttpStatus.CREATED)
     ResourceObject invite(@PathVariable UUID orgId, @Valid @RequestBody InviteMemberRequest request) {
@@ -69,6 +77,12 @@ class MemberController {
     }
 
     @PutMapping("/{subject}/role")
+    @Operation(summary = "Reassign a member's role",
+            description = """
+                    Last-owner protected: demoting the only remaining OWNER is a 409, because it would \
+                    lock the organization out of its own administration. The caller must already hold \
+                    every permission the new role carries, so this endpoint alone cannot escalate. \
+                    Assigning the role the member already has is a no-op.""")
     @PreAuthorize("hasPermission(#orgId, 'organization', 'member:role:assign')")
     ResourceObject assignRole(@PathVariable UUID orgId, @PathVariable String subject,
             @Valid @RequestBody AssignRoleRequest request) {
@@ -77,16 +91,19 @@ class MemberController {
     }
 
     @DeleteMapping("/{subject}")
+    @Operation(summary = "Remove a member from the organization",
+            description = """
+                    Unlinks the membership and the Keycloak organization link only — the person's \
+                    Keycloak account is never deleted, so they keep their identity and any membership \
+                    of other organizations. Removing the last OWNER is a 409.""")
     @PreAuthorize("hasPermission(#orgId, 'organization', 'member:remove')")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     void remove(@PathVariable UUID orgId, @PathVariable String subject) {
         members.remove(orgId, subject);
     }
 
-    /** One query per request maps opaque role ids to their human-readable codes for the response. */
     private Map<UUID, String> roleCodesFor(UUID orgId) {
-        return roles.findByOrgId(orgId).stream()
-                .collect(Collectors.toMap(Role::getId, Role::getCode));
+        return members.roleCodes(orgId);
     }
 
     private static ResourceObject toResource(Membership membership, Map<UUID, String> roleCodes) {

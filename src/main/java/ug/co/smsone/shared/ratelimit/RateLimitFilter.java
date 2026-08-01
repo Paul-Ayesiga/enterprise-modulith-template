@@ -13,6 +13,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import ug.co.smsone.shared.error.ErrorCode;
 import ug.co.smsone.shared.ratelimit.RateLimitProperties.Tier;
 import ug.co.smsone.shared.web.EnvelopeErrorWriter;
+import ug.co.smsone.shared.web.RequestPaths;
 
 /**
  * Edge rate-limit filter for {@code /api/**}. Runs after the security chain (so the principal/tenant
@@ -45,14 +46,14 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        String path = path(request);
+        String path = RequestPaths.of(request);
         return !(path.equals("/api") || path.startsWith("/api/")) || "OPTIONS".equals(request.getMethod());
     }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        Tier tier = properties.tierFor(path(request), request.getMethod(), pathMatcher);
+        Tier tier = properties.tierFor(RequestPaths.of(request), request.getMethod(), pathMatcher);
         String key = keyResolver.resolve(request, tier);
         RateLimitVerdict verdict = limiter.tryConsume(key, tier.capacity(), tier.refillPeriod(), tier.failClosed());
 
@@ -65,12 +66,6 @@ public class RateLimitFilter extends OncePerRequestFilter {
         errorWriter.write(request, response, ErrorCode.RATE_LIMITED,
                 "Rate limit exceeded for '" + tier.id() + "'. Retry after " + verdict.retryAfterSeconds() + "s.",
                 null);
-    }
-
-    /** Context-relative path (so a non-empty server.servlet.context-path can't blind the filter). */
-    private static String path(HttpServletRequest request) {
-        String servletPath = request.getServletPath();
-        return (servletPath != null && !servletPath.isEmpty()) ? servletPath : request.getRequestURI();
     }
 
     private static void setRateLimitHeaders(HttpServletResponse response, Tier tier, RateLimitVerdict verdict) {

@@ -43,6 +43,18 @@ class SafeOutboundUrlTest {
     }
 
     @Test
+    void rejects6to4AndTeredoEmbeddedPrivateIpv4() {
+        assertBlocked("http://[2002:a00:1::]/x");         // 6to4 embedding 10.0.0.1
+        assertBlocked("http://[2002:a9fe:a9fe::]/x");     // 6to4 embedding the metadata IP
+        // Teredo: public server (93.184.216.34) but the bit-inverted CLIENT is 192.168.1.1 —
+        // the client is the reachable endpoint, so the address must be blocked.
+        assertBlocked("http://[2001:0:5db8:d822::3f57:fefe]/x");
+        // Same server with a public client (93.184.216.34 inverted): allowed.
+        assertThatCode(() -> SafeOutboundUrl.requireSafe("http://[2001:0:5db8:d822::a247:27dd]/x", false))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
     void allowsAPublicAddress() {
         assertThatCode(() -> SafeOutboundUrl.requireSafe("http://93.184.216.34/x", false))
                 .doesNotThrowAnyException();

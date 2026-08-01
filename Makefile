@@ -10,6 +10,9 @@ SHELL := /usr/bin/env bash
 COMPOSE_FILE := docker/docker-compose.yml
 ENV_FILE     := docker/.env
 COMPOSE      := docker compose -f $(COMPOSE_FILE) --env-file $(ENV_FILE)
+# Readiness gate for `fresh`: bootRun's own Compose wait races a stack that is still starting,
+# so we block on the realm being importable before handing over.
+KEYCLOAK_READY_URL := http://localhost:$(shell grep -E '^KEYCLOAK_PORT=' $(ENV_FILE) 2>/dev/null | cut -d= -f2 || echo 8081)/realms/smsone/.well-known/openid-configuration
 
 # App port + non-ServiceConnection endpoints are derived from the mapped ports in docker/.env
 # (falling back to clean-machine defaults). Keycloak needs BOTH the issuer URI (token validation)
@@ -25,7 +28,7 @@ RUN_ENV = set -a; . $(ENV_FILE); set +a; \
 	SMTP_HOST=localhost SMTP_PORT=$${SMTP_PORT:-1025}
 
 .DEFAULT_GOAL := help
-.PHONY: help env pull up down restart ps logs run seed token build test openapi nuke
+.PHONY: help env pull up down restart ps logs run seed token build test openapi nuke clean fresh
 
 help: ## List available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -70,6 +73,18 @@ test: ## Run the full test suite (real Testcontainers)
 
 openapi: ## Regenerate docs/openapi/*.{yaml,json} from the running app
 	./gradlew exportOpenApi
+
+clean: ## Drop local build caches (keeps downloaded deps and Docker images — both slow to refetch)
+	@./gradlew --stop >/dev/null 2>&1 || true
+	@rm -rf build .gradle data
+	@echo "Cleared build/ .gradle/ data/. Dependency jars and Docker images kept."
+
+fresh: clean ## clean + wipe data volumes + wait for the stack + run. The one command after a bad state.
+	@$(MAKE) nuke
+	@$(MAKE) up
+	@printf 'waiting for Keycloak to import the realm'
+	@until curl -sf $(KEYCLOAK_READY_URL) >/dev/null 2>&1; do printf '.'; sleep 3; done; echo ' ready'
+	@$(MAKE) run
 
 nuke: ## Stop the stack AND wipe its data volumes (fresh DB/Keycloak/objects next up)
 	$(COMPOSE) down -v

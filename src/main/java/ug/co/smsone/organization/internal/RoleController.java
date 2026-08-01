@@ -1,11 +1,11 @@
 package ug.co.smsone.organization.internal;
 
+import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
-import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -21,11 +21,14 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import ug.co.smsone.organization.Permission;
+import ug.co.smsone.shared.web.CursorPageRequest;
 import ug.co.smsone.shared.web.ResourceObject;
+import ug.co.smsone.shared.web.WindowedResult;
 
 /**
- * Org-scoped custom roles (bundles of permissions). System roles (OWNER/ADMIN/MEMBER) are visible but
- * immutable — update/delete on them return 403. All endpoints are org-scoped via {@code hasPermission}.
+ * Org-scoped custom roles (bundles of permissions). {@code OWNER} is the one system role — visible but
+ * immutable, so update/delete on it return 403; every other role in an org was created here. All
+ * endpoints are org-scoped via {@code hasPermission}.
  */
 @RestController
 @RequestMapping("/api/v1/orgs/{orgId}/roles")
@@ -56,18 +59,27 @@ class RoleController {
     }
 
     @GetMapping
+    @Operation(summary = "List the organization's roles")
     @PreAuthorize("hasPermission(#orgId, 'organization', 'role:read')")
-    List<ResourceObject> list(@PathVariable UUID orgId) {
-        return roles.list(orgId).stream().map(RoleController::toResource).toList();
+    WindowedResult<ResourceObject> list(@PathVariable UUID orgId, CursorPageRequest page) {
+        return WindowedResult.of(roles.list(orgId, page), page, RoleController::toResource);
     }
 
     @GetMapping("/{roleId}")
+    @Operation(summary = "Get one organization role")
     @PreAuthorize("hasPermission(#orgId, 'organization', 'role:read')")
     ResourceObject get(@PathVariable UUID orgId, @PathVariable UUID roleId) {
         return toResource(roles.require(orgId, roleId));
     }
 
     @PostMapping
+    @Operation(summary = "Create a custom organization role",
+            description = """
+                    `permissions` holds codes from `GET /api/v1/permissions`; an unknown one is a 422. \
+                    The caller must already hold every permission the new role bundles, so a role \
+                    cannot be used to mint authority its author lacks. `code` is upper-cased, must be \
+                    unique in the organization, and may be neither `OWNER` nor anything starting \
+                    `PLATFORM`.""")
     @PreAuthorize("hasPermission(#orgId, 'organization', 'role:create')")
     @ResponseStatus(HttpStatus.CREATED)
     ResourceObject create(@PathVariable UUID orgId, @Valid @RequestBody CreateRoleRequest request) {
@@ -76,6 +88,12 @@ class RoleController {
     }
 
     @PutMapping("/{roleId}")
+    @Operation(summary = "Replace a role's name and permissions",
+            description = """
+                    `permissions` is replaced wholesale, not merged — omitting a code revokes it from \
+                    every member holding the role. The caller must already hold every permission in \
+                    the new set. The built-in `OWNER` role is immutable: updating it is a 403. \
+                    `code` cannot be changed.""")
     @PreAuthorize("hasPermission(#orgId, 'organization', 'role:update')")
     ResourceObject update(@PathVariable UUID orgId, @PathVariable UUID roleId,
             @Valid @RequestBody UpdateRoleRequest request) {
@@ -84,6 +102,10 @@ class RoleController {
     }
 
     @DeleteMapping("/{roleId}")
+    @Operation(summary = "Delete a custom organization role",
+            description = """
+                    A role still assigned to any member is a 409 — reassign them first. The built-in \
+                    `OWNER` role cannot be deleted at all (403).""")
     @PreAuthorize("hasPermission(#orgId, 'organization', 'role:delete')")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     void delete(@PathVariable UUID orgId, @PathVariable UUID roleId) {

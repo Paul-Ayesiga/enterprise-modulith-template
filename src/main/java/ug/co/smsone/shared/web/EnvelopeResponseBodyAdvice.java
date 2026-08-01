@@ -44,7 +44,7 @@ public class EnvelopeResponseBodyAdvice implements ResponseBodyAdvice<Object> {
             String next = page.nextCursor() == null ? null
                     : selfPath + "?page[size]=" + page.size() + "&page[after]=" + page.nextCursor();
             return ApiResponse.of(windowed.items(), metaFactory.create().withPage(page),
-                    new ApiLinks(selfPath, null, null, next, null));
+                    new ApiLinks(selfPath, next));
         }
         return ApiResponse.of(body, metaFactory.create(), ApiLinks.self(selfPath));
     }

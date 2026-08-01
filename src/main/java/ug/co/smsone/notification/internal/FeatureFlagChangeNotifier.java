@@ -9,8 +9,9 @@ import ug.co.smsone.shared.events.EventInbox;
 /**
  * Notifies administrators (email + in-app) when a feature flag is toggled — the module's first
  * cross-module event consumer. Idempotent via {@link EventInbox}: at-least-once redelivery of the
- * same change is de-duplicated. The message id is {@code flag:<key>:<state>} since domain events
- * carry no envelope id, so re-toggling to an already-notified state is intentionally not re-sent.
+ * same change is de-duplicated. The message id is {@code flag:<key>:<state>@<occurredAt>}, derived
+ * from business identity since domain events carry no envelope id; {@code occurredAt} is what lets
+ * a genuine later re-toggle to the same state notify again while a redelivery of it does not.
  */
 @Component
 class FeatureFlagChangeNotifier {

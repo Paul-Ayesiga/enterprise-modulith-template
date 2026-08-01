@@ -1,5 +1,19 @@
 # Identity + Organization + Org-Scoped RBAC — Implementation Plan
 
+> **ARCHIVED — partly superseded (2026-07-31)** by
+> [PLATFORM_RBAC_IMPERSONATION_PLAN.md](PLATFORM_RBAC_IMPERSONATION_PLAN.md). Kept as written so the
+> decision history stays readable — what changed, and why:
+>
+> | This document says | Now | Why |
+> |---|---|---|
+> | Seeded system roles **OWNER / ADMIN / MEMBER** | **OWNER only** | ADMIN and MEMBER were two arbitrary permission sets that *looked* canonical. Making them ordinary owner-created roles removes the temptation to key a check on a code instead of a permission. Migration **V16** flips existing rows to `system_role=false` rather than deleting them — `membership.role_id` references them. |
+> | `RESERVED_CODES = {OWNER, ADMIN, MEMBER}` | `{OWNER}` + a `PLATFORM*` prefix guard (422) | `OWNER` is the one code the application names (first-owner bootstrap, last-owner protection). The prefix guard keeps tenant roles from *reading* like platform tiers; it is not a privilege boundary, since codes are inert to authorization. |
+> | Platform role **`ADMIN`** on `/orgs`, `/admin/users` | `platform-admin` / `platform-support`, hierarchical | A single platform role could not express "may read the platform" versus "may change it". |
+> | Permission catalog of **13** codes | **15** | Two modules that shipped later each added the one code their surface is gated on: `audit:read` (`GET /api/v1/orgs/{orgId}/audit`) and `webhook:manage` (`/api/v1/orgs/{orgId}/webhooks/**`). `ug.co.smsone.organization.Permission` is the authority. |
+>
+> Everything else here — no-JIT provisioning, the `organization` claim, cursor pagination, module
+> direction — is unchanged and still current.
+
 Decisions (confirmed 2026-07-28): **org-scoped RBAC**; active org from the **JWT `organization` claim**
 (Keycloak 26 **Organizations**, GA); **fixed permission catalog** (code) + **DB-editable custom roles**
 (bundles of permissions) with seeded OWNER/ADMIN/MEMBER; **admin-API + event-driven provisioning, no

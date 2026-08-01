@@ -6,7 +6,6 @@ import org.springframework.web.bind.support.WebDataBinderFactory;
 import org.springframework.web.context.request.NativeWebRequest;
 import org.springframework.web.method.support.HandlerMethodArgumentResolver;
 import org.springframework.web.method.support.ModelAndViewContainer;
-import ug.co.smsone.shared.error.UnauthorizedException;
 
 /** Resolves {@link CurrentUser} controller parameters from the authenticated JWT. */
 @Component
@@ -26,7 +25,6 @@ public class CurrentUserArgumentResolver implements HandlerMethodArgumentResolve
     @Override
     public Object resolveArgument(MethodParameter parameter, ModelAndViewContainer mavContainer,
             NativeWebRequest webRequest, WebDataBinderFactory binderFactory) {
-        return currentUserProvider.currentUser()
-                .orElseThrow(() -> new UnauthorizedException("Authentication is required."));
+        return currentUserProvider.requireCurrentUser();
     }
 }

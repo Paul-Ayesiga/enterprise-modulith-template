@@ -6,19 +6,14 @@ java = "21"
 
 # --- Pinned (NOT managed by any BOM) ---
 springdoc = "3.0.3"          # OpenAPI 3.1 + Swagger UI — 3.0.x is the Boot 4 line (2.8.x = Boot 3)
-mapstruct = "1.6.3"
 archunit = "1.4.2"
 shedlock = "7.7.0"
 logstashEncoder = "9.0"
 awssdk = "2.49.3"            # S3 v2 SDK BOM — drives SeaweedFS + managed S3
-tcKeycloak = "4.1.1"         # community dasniko Testcontainers module
-duckdb = "1.5.5.0"           # embedded OLAP (Phase 3A)
+duckdb = "1.5.5.0"           # embedded OLAP
 ulid = "5.2.3"               # sortable request IDs
-
+bucket4j = "8.14.0"          # note the _jdk17 artifact suffix
 resilience4j = "2.4.0"       # -spring-boot4 artifact (verified on repo1; search.maven index lags)
-
-# --- Deferred / verify-before-commit on Boot 4.1 ---
-bucket4j = "8.14.0"          # Phase 5 — note the _jdk17 artifact suffix
 
 [libraries]
 boot-bom            = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "springBoot" }
@@ -56,15 +51,12 @@ micrometer-java21 = { module = "io.micrometer:micrometer-java21" }  # virtual-th
 
 # Persistence (BOM-managed, except DuckDB)
 postgresql        = { module = "org.postgresql:postgresql" }
-flyway-core       = { module = "org.flywaydb:flyway-core" }
 flyway-postgresql = { module = "org.flywaydb:flyway-database-postgresql" }  # MANDATORY companion since Flyway 10
 caffeine          = { module = "com.github.ben-manes.caffeine:caffeine" }
 duckdb            = { module = "org.duckdb:duckdb_jdbc", version.ref = "duckdb" }
 
 # Pinned libraries
 springdoc           = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version.ref = "springdoc" }
-mapstruct           = { module = "org.mapstruct:mapstruct", version.ref = "mapstruct" }
-mapstruct-processor = { module = "org.mapstruct:mapstruct-processor", version.ref = "mapstruct" }
 archunit            = { module = "com.tngtech.archunit:archunit-junit5", version.ref = "archunit" }
 shedlock-spring     = { module = "net.javacrumbs.shedlock:shedlock-spring", version.ref = "shedlock" }
 shedlock-jdbc       = { module = "net.javacrumbs.shedlock:shedlock-provider-jdbc-template", version.ref = "shedlock" }

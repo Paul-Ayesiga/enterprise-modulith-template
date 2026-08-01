@@ -11,8 +11,8 @@ import org.springframework.stereotype.Component;
 
 /**
  * Dev-only: projects the local {@code app_user} row for the platform admin so a realm-imported
- * ADMIN can call {@code /api/v1/admin/**} out of the box — the no-JIT gate needs a provisioned row,
- * and a platform admin should not have to own an organization to get one. Opt-in via
+ * platform-role holder can call {@code /api/v1/admin/**} out of the box — the no-JIT gate needs a
+ * provisioned row, and a platform operator should not have to own an organization to get one. Opt-in via
  * {@code app.identity.dev-bootstrap.enabled=true} (set by the Makefile for local runs).
  *
  * <p>It resolves the subject from an <em>existing</em> Keycloak account and never creates one — so

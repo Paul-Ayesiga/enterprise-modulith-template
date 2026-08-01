@@ -1,5 +1,6 @@
 package ug.co.smsone.webhooks.internal;
 
+import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
@@ -55,6 +56,11 @@ class WebhookController {
     }
 
     @PostMapping
+    @Operation(summary = "Register a webhook subscription",
+            description = """
+                    The signing secret is returned in full exactly once — in this response. Every \
+                    later read masks it and there is no way to retrieve it again, so store it now: it \
+                    is the key that verifies the `X-Webhook-Signature` HMAC on delivered events.""")
     @PreAuthorize("hasPermission(#orgId, 'organization', 'webhook:manage')")
     @ResponseStatus(HttpStatus.CREATED)
     ResourceObject create(@PathVariable UUID orgId, @Valid @RequestBody CreateWebhookRequest request) {
@@ -63,13 +69,16 @@ class WebhookController {
     }
 
     @GetMapping
+    @Operation(summary = "List the organization's webhook subscriptions")
     @PreAuthorize("hasPermission(#orgId, 'organization', 'webhook:manage')")
-    List<ResourceObject> list(@PathVariable UUID orgId) {
-        return service.list(orgId).stream().map(subscription -> toResource(subscription, mask(subscription.getSecret())))
-                .toList();
+    WindowedResult<ResourceObject> list(@PathVariable UUID orgId, CursorPageRequest page) {
+        return WindowedResult.of(service.list(orgId, page), page,
+                subscription -> toResource(subscription, mask(subscription.getSecret())));
     }
 
     @GetMapping("/{id}")
+    @Operation(summary = "Get one webhook subscription",
+            description = "The `secret` attribute is masked here — it is shown in full only at create.")
     @PreAuthorize("hasPermission(#orgId, 'organization', 'webhook:manage')")
     ResourceObject get(@PathVariable UUID orgId, @PathVariable UUID id) {
         WebhookSubscription subscription = service.require(orgId, id);
@@ -77,6 +86,12 @@ class WebhookController {
     }
 
     @PutMapping("/{id}")
+    @Operation(summary = "Update a webhook subscription",
+            description = """
+                    `url` and `events` are replaced wholesale, not merged. Omitting `status` resets \
+                    the subscription to ACTIVE, so a disabled subscription silently resumes delivery \
+                    unless the update repeats `status: DISABLED`. The signing secret is never rotated \
+                    here.""")
     @PreAuthorize("hasPermission(#orgId, 'organization', 'webhook:manage')")
     ResourceObject update(@PathVariable UUID orgId, @PathVariable UUID id,
             @Valid @RequestBody UpdateWebhookRequest request) {
@@ -86,6 +101,12 @@ class WebhookController {
     }
 
     @DeleteMapping("/{id}")
+    @Operation(summary = "Delete a webhook subscription",
+            description = """
+                    Stops matching new events and cancels everything already queued for the endpoint, \
+                    so a revoked URL is not retried for hours. The delivery log survives and stays \
+                    readable — "what did we send that endpoint?" is exactly the question asked after \
+                    a delete.""")
     @PreAuthorize("hasPermission(#orgId, 'organization', 'webhook:manage')")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     void delete(@PathVariable UUID orgId, @PathVariable UUID id) {
@@ -93,6 +114,12 @@ class WebhookController {
     }
 
     @GetMapping("/{id}/deliveries")
+    @Operation(summary = "List a subscription's delivery attempts",
+            description = """
+                    The delivery log for one subscription, newest first: `attempts` against \
+                    `maxAttempts`, the receiver's `responseStatus`, and `lastError` for the failures. \
+                    Readable after the subscription itself is deleted, which is when it is most \
+                    often wanted.""")
     @PreAuthorize("hasPermission(#orgId, 'organization', 'webhook:manage')")
     WindowedResult<ResourceObject> deliveries(@PathVariable UUID orgId, @PathVariable UUID id,
             CursorPageRequest page) {

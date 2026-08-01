@@ -9,7 +9,9 @@ publications are re-published on restart, completed ones are purged by the sched
 Consumers use `@ApplicationModuleListener` (async, own transaction, after the publisher commits).
 Listeners with side effects must be idempotent — call
 `EventInbox.recordIfNew(listenerId, messageId)` first and skip when it returns false; derive the
-message id from business identity (e.g. `"setting:" + key + ":" + version`).
+message id from business identity — the two live ones are
+`"flag:" + key + ":" + enabled + "@" + occurredAt` (`FeatureFlagChangeNotifier`) and
+`subscriptionId + ":" + eventType + ":" + orgId + "@" + occurredAt` (`WebhookDispatcher`).
 
 | Event | Module | Payload | Published when |
 |---|---|---|---|
@@ -21,10 +23,13 @@ message id from business identity (e.g. `"setting:" + key + ":" + version`).
 | `ug.co.smsone.organization.MembershipCreated` | organization | `orgId, subject, roleCode, occurredAt` | a user is added to an organization |
 | `ug.co.smsone.organization.MembershipRoleChanged` | organization | `orgId, subject, occurredAt` | a member's role is reassigned |
 | `ug.co.smsone.organization.MemberRemoved` | organization | `orgId, subject, occurredAt` | a member is removed (published explicitly — a delete doesn't trigger `@DomainEvents`) |
-| `ug.co.smsone.organization.RolePermissionsChanged` | organization | `orgId, roleId, occurredAt` | a role's permissions are replaced (custom-role edit, or system-role catalog reconciliation) |
+| `ug.co.smsone.organization.RolePermissionsChanged` | organization | `orgId, roleId, occurredAt` | a role's permissions are replaced (custom-role edit, system-role catalog reconciliation) — or the role is soft-deleted, since its grants vanish with it |
 | `ug.co.smsone.organization.OrganizationStatusChanged` | organization | `orgId, status, occurredAt` | an organization is suspended or reactivated |
 
-`occurredAt` lets idempotent consumers dedupe redelivery of the *same* change while still reacting to a genuine later re-toggle to the same state.
+Every event carries `occurredAt` except `SettingChanged`, which predates the rule and has no consumer
+to be idempotent for. Where it is present, `occurredAt` lets an idempotent consumer dedupe redelivery
+of the *same* change while still reacting to a genuine later re-toggle to the same state — add it
+before giving `SettingChanged` its first listener.
 
 ## Consumers
 
@@ -32,10 +37,25 @@ message id from business identity (e.g. `"setting:" + key + ":" + version`).
 |---|---|---|
 | `ug.co.smsone.settings.FeatureFlagChanged` | notification | Notifies administrators (email + in-app) that a flag was toggled |
 | `RolePermissionsChanged` / `MembershipRoleChanged` / `MembershipCreated` / `MemberRemoved` / `OrganizationStatusChanged` | organization | Evicts the `org-permissions` cache so a role/membership/org-status change takes effect promptly (coarse clear-all) |
-
 | `MembershipCreated` / `MemberRemoved` / `MembershipRoleChanged` / `RolePermissionsChanged` / `OrganizationStatusChanged` | webhooks | Fans the org event out to matching active subscriptions and enqueues a signed delivery each (idempotent via `EventInbox`) |
 
+The webhooks consumer maps each organization event to its outbound wire code
+(`webhooks.internal.WebhookEventType`): `MembershipCreated` → `org.member.added`, `MemberRemoved` →
+`org.member.removed`, `MembershipRoleChanged` → `org.member.role_changed`,
+`RolePermissionsChanged` → `org.role.permissions_changed`, `OrganizationStatusChanged` →
+`org.status_changed`.
+
+Four events currently have **no consumer**: `SettingChanged`, `UserProvisioned`, `UserActivated`
+and `OrganizationRegistered`. They are still published through the registry (and appear in the
+generated module canvases); a first consumer must follow the `EventInbox` idempotency rule above.
+
 _(The **audit** module does not consume events — it records synchronously via the shared `AuditLog` port at each mutation, so it captures the actor and before/after state the events don't carry.)_
+
+_(**Impersonation adds no event, deliberately.** `platform.impersonation_started` / `_ended` /
+`_superseded` are `audit_log.action` values written through the same port, not records in an API
+package: nothing outside `identity` reacts to a session opening, so `ImpersonationSession` is a
+`BaseEntity` rather than an `AggregateRoot` and produces no `event_publication` rows. There is no
+`_expired` action either — expiry is evaluated on read. See `AGENTS.md` §5.5.)_
 
 The generated per-module canvases in [modulith/](modulith/) list published/listened events per
 module and are refreshed on every build — treat this file as the narrative companion, and add a row

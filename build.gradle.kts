@@ -87,8 +87,6 @@ dependencies {
     testImplementation(libs.testcontainers.junit)
     testImplementation(libs.modulith.test)
     testImplementation(libs.archunit)
-    // Later phases: data-jpa/flyway/postgresql, security/oauth2-rs, awssdk s3, data-redis/cache/caffeine,
-    //               shedlock, duckdb, resilience4j, bucket4j, testcontainers-*  (all in the catalog)
 }
 
 tasks.register<Test>("exportModulithDocs") {
@@ -112,6 +110,12 @@ tasks.register<Test>("exportOpenApi") {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+    // The suite keeps many Spring contexts cached in one worker (each distinct @TestPropertySource or
+    // webEnvironment forks another), and the default 512m heap runs out partway through — surfacing as
+    // "Test process encountered an unexpected problem" or an EOFException from the worker, AFTER every
+    // test has reported green. A crash that looks like a build failure but names no failing test costs
+    // far more to diagnose than the memory costs to grant.
+    maxHeapSize = "2g"
     // Testcontainers 2.x only reads this as an env var. With VM-based Docker (Colima, Docker
     // Desktop) Ryuk must mount the VM-internal socket, not the host-side proxy socket path.
     if (System.getenv("TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE") == null) {

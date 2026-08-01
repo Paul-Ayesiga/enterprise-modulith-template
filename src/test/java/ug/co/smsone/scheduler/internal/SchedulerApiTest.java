@@ -34,7 +34,7 @@ class SchedulerApiTest extends AbstractIntegrationTest {
                 job, now, now, "instance-alpha");
 
         mockMvc.perform(get("/api/v1/scheduler/locks")
-                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_platform-support"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[?(@.id=='" + job + "')].attributes.lockedBy")
                         .value("instance-alpha"))

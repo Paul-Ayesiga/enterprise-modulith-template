@@ -60,4 +60,17 @@ public class FeatureFlagService {
                 previous == null ? null : String.valueOf(previous), String.valueOf(enabled));
         return saved;
     }
+
+    /**
+     * The only sanctioned way to remove a flag: {@code repository.delete(..)} soft-deletes the row but
+     * evicts nothing, so {@link #isEnabled} would keep answering {@code true} out of L1/L2 for the full
+     * {@code app.cache.l2-ttl}. Deleting a flag is a way to kill a feature; a kill switch that takes ten
+     * minutes to reach the fleet — and only after the flag has visibly disappeared — is not one.
+     */
+    @CacheEvict(cacheNames = FLAGS_CACHE, key = "#key")
+    public void delete(String key) {
+        FeatureFlag flag = require(key);
+        repository.delete(flag);
+        auditLog.record("settings.feature_flag_deleted", null, key, String.valueOf(flag.isEnabled()), null);
+    }
 }

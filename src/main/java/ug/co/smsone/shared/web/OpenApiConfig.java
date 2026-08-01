@@ -5,18 +5,27 @@ import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.headers.Header;
 import io.swagger.v3.oas.models.info.Contact;
 import io.swagger.v3.oas.models.info.Info;
+import io.swagger.v3.oas.models.media.IntegerSchema;
 import io.swagger.v3.oas.models.media.StringSchema;
+import io.swagger.v3.oas.models.parameters.Parameter;
 import io.swagger.v3.oas.models.security.OAuthFlow;
 import io.swagger.v3.oas.models.security.OAuthFlows;
 import io.swagger.v3.oas.models.security.Scopes;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
 import io.swagger.v3.oas.models.servers.Server;
+import io.swagger.v3.oas.models.tags.Tag;
+import java.math.BigDecimal;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import org.springdoc.core.customizers.OpenApiCustomizer;
 import org.springdoc.core.customizers.OperationCustomizer;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.RequestMapping;
 
 /**
  * OpenAPI 3.1 definition. Two auth schemes so Postman (which imports this spec natively) can either
@@ -27,7 +36,104 @@ public class OpenApiConfig {
 
     public static final String BEARER_SCHEME = "bearerAuth";
     public static final String OAUTH2_SCHEME = "keycloak";
-    private static final String REQUEST_ID_HEADER = "X-Request-Id";
+    private static final String IMPERSONATE_HEADER = "X-Impersonate";
+
+    // ---------------------------------------------------------------------------------------------
+    // The tag scheme: "<axis> · <resource>". Its two halves are deliberately NOT the same kind of
+    // statement, and that asymmetry is the design — see authorizationAxisTags() for the full reasoning.
+    //
+    //   axis      DERIVED from the handler's own @PreAuthorize. It is a claim about WHO MAY CALL the
+    //             operation, so it must not be able to disagree with the code that enforces it.
+    //   resource  CURATED, from the controller map below. It is a filing label: getting it wrong puts
+    //             a request in the wrong Postman folder and misleads nobody about authority.
+    //
+    // Never fold the two into a single hardcoded path-to-tag map. That trade buys a few lines and
+    // silently converts an enforced fact into a maintained guess.
+    // ---------------------------------------------------------------------------------------------
+
+    static final String AXIS_PLATFORM = "Platform";
+    static final String AXIS_ORGANIZATION = "Organization";
+    static final String AXIS_SHARED = "Shared";
+    /** U+00B7 MIDDLE DOT, spaced. Reads as a breadcrumb and survives Postman's flat folder list. */
+    static final String AXIS_SEPARATOR = " · ";
+
+    private static final String TAG_PLATFORM_USERS = AXIS_PLATFORM + AXIS_SEPARATOR + "Users & impersonation";
+    private static final String TAG_PLATFORM_ORGS = AXIS_PLATFORM + AXIS_SEPARATOR + "Organizations";
+    private static final String TAG_PLATFORM_SETTINGS = AXIS_PLATFORM + AXIS_SEPARATOR + "Settings & flags";
+    private static final String TAG_PLATFORM_OPS = AXIS_PLATFORM + AXIS_SEPARATOR + "Ops";
+    private static final String TAG_ORG_PROFILE = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Profile";
+    private static final String TAG_ORG_MEMBERS = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Members";
+    private static final String TAG_ORG_ROLES = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Roles";
+    private static final String TAG_ORG_WEBHOOKS = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Webhooks";
+    private static final String TAG_ORG_AUDIT = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Audit";
+    private static final String TAG_SHARED_ME = AXIS_SHARED + AXIS_SEPARATOR + "Me & notifications";
+    private static final String TAG_SHARED_FILES = AXIS_SHARED + AXIS_SEPARATOR + "Files";
+    private static final String TAG_SHARED_SETTINGS = AXIS_SHARED + AXIS_SEPARATOR + "Settings & flags";
+    private static final String TAG_SHARED_REFERENCE = AXIS_SHARED + AXIS_SEPARATOR + "Reference data";
+
+    /**
+     * The curated half: which resource a controller's operations are FILED under, keyed by simple class
+     * name.
+     *
+     * <p>Keyed by name rather than by {@code Class} because {@code shared} must not compile-depend on a
+     * business module ({@code ApplicationModules.verify()} would fail) and every controller here is
+     * package-private in its module's {@code internal} package — it is not even visible from this file.
+     * The cost is that a rename lands in the fallback instead of failing to compile;
+     * {@code OpenApiTagContractTest} catches it, because the tag it would have filled goes unused.
+     *
+     * <p>Several controllers share a label on purpose ({@code SettingController} and
+     * {@code FeatureFlagController} are one folder to a reader; {@code MeController} and
+     * {@code NotificationController} are both "my stuff"). Nothing here decides authority.
+     */
+    private static final Map<String, String> RESOURCE_BY_CONTROLLER = Map.ofEntries(
+            Map.entry("UserAdminController", "Users & impersonation"),
+            Map.entry("ImpersonationController", "Users & impersonation"),
+            Map.entry("SettingController", "Settings & flags"),
+            Map.entry("FeatureFlagController", "Settings & flags"),
+            Map.entry("SchedulerController", "Ops"),
+            Map.entry("AnalyticsReportController", "Ops"),
+            Map.entry("MemberController", "Members"),
+            Map.entry("RoleController", "Roles"),
+            Map.entry("WebhookController", "Webhooks"),
+            Map.entry("MeController", "Me & notifications"),
+            Map.entry("NotificationController", "Me & notifications"),
+            Map.entry("FileController", "Files"),
+            Map.entry("PermissionCatalogController", "Reference data"));
+
+    /**
+     * The overrides for controllers that serve BOTH axes and genuinely mean a different resource on
+     * each. Consulted before {@link #RESOURCE_BY_CONTROLLER}, keyed {@code "<axis>|<class>"}.
+     *
+     * <p>{@code OrganizationController}: to an operator an org is one of many records they create and
+     * switch on and off; to a member it is <em>their</em> organization's profile. {@code AuditController}:
+     * the cross-tenant trail is an operations tool, the org-scoped one is a tenant feature.
+     *
+     * <p>This map only ever re-labels. The axis it is keyed on was already decided by the handler's
+     * {@code @PreAuthorize}, so adding an entry here can move a request to another folder and can never
+     * move it to another authority.
+     */
+    private static final Map<String, String> RESOURCE_BY_AXIS_AND_CONTROLLER = Map.of(
+            AXIS_PLATFORM + "|OrganizationController", "Organizations",
+            AXIS_ORGANIZATION + "|OrganizationController", "Profile",
+            AXIS_PLATFORM + "|AuditController", "Ops",
+            AXIS_ORGANIZATION + "|AuditController", "Audit");
+
+    /**
+     * Where an unmapped controller lands, per axis.
+     *
+     * <p>Each is a real, declared, populated group rather than a synthesized {@code "· Other"}: a tag no
+     * root {@code tags} entry declares sorts outside the deliberate order in Swagger UI and appears in
+     * Postman as a folder with no description — a spec defect — whereas one extra request in an existing
+     * folder is only a filing mistake, which is all the curated half can ever cost. Each of the three is
+     * the most general group on its axis, so the mistake is small and visible.
+     */
+    private static final Map<String, String> FALLBACK_TAG_BY_AXIS = Map.of(
+            AXIS_PLATFORM, TAG_PLATFORM_OPS,
+            AXIS_ORGANIZATION, TAG_ORG_PROFILE,
+            AXIS_SHARED, TAG_SHARED_REFERENCE);
+
+    private static final String CURSOR_SCHEMA_REF =
+            "#/components/schemas/" + CursorPageRequest.class.getSimpleName();
 
     @Bean
     OpenAPI apiDefinition(
@@ -42,7 +148,13 @@ public class OpenApiConfig {
                         .description("""
                                 Enterprise Spring Modulith template API. Every response uses the \
                                 unified envelope ({data | errors, meta, links}) with meta.requestId \
-                                always present; quote the requestId when reporting issues.""")
+                                always present; quote the requestId when reporting issues.
+
+                                Operations are grouped as `<axis> · <resource>`. The axis is the \
+                                authority the operation enforces — Platform (a realm role), \
+                                Organization (a permission inside one tenant), Shared (any \
+                                authenticated caller) — and it is read from the code that enforces it, \
+                                so a group name cannot promise access the API will refuse.""")
                         .contact(new Contact().name("SMSOne").email("ayesigapo@gmail.com")))
                 .servers(List.of(
                         new Server().url(localUrl).description("Local"),
@@ -63,9 +175,240 @@ public class OpenApiConfig {
                                         .scopes(new Scopes()
                                                 .addString("openid", "OpenID Connect")
                                                 .addString("profile", "Profile claims"))))))
+                // Declared here so the order is deliberate — the whole operator surface, then the whole
+                // tenant surface, then what neither owns — rather than alphabetical, and so each group
+                // states the rule that fills it. Anything an operation tags must appear in this list:
+                // an undeclared tag sorts outside this order and reaches Postman as a bare folder.
+                .tags(List.of(
+                        new Tag().name(TAG_PLATFORM_USERS).description(
+                                "Identities across every tenant, and the impersonation sessions that are "
+                                + "the only sanctioned way from an operator to tenant data. platform-support "
+                                + "reads and may open a session; wearing an account that itself holds a "
+                                + "platform role needs platform-superadmin. A session carries no authority "
+                                + "of its own, so from inside one this whole group answers 403."),
+                        new Tag().name(TAG_PLATFORM_ORGS).description(
+                                "Creating a tenant, suspending it, reactivating it. These are platform "
+                                + "actions ON an organization, not actions inside one, and that is why they "
+                                + "are here: a fresh org has no member to hold a permission, and suspension "
+                                + "cuts every member's access — neither can be gated on a permission granted "
+                                + "inside the org being acted on. Reading and editing the record itself is "
+                                + "the tenant's own business: " + TAG_ORG_PROFILE + "."),
+                        new Tag().name(TAG_PLATFORM_SETTINGS).description(
+                                "Writing platform-wide configuration: setting values and feature-flag state, "
+                                + "platform-admin. The same keys are readable by any authenticated caller "
+                                + "under " + TAG_SHARED_SETTINGS + " — same paths, different method, "
+                                + "different authority, which is why one controller lands in two groups."),
+                        new Tag().name(TAG_PLATFORM_OPS).description(
+                                "Running the platform: scheduler lock state (proof that clustered jobs fire "
+                                + "once), the curated analytics reports, and the cross-tenant audit trail. "
+                                + "Read-only and platform-support throughout — investigating is the support "
+                                + "job. One tenant's own view of that trail is " + TAG_ORG_AUDIT + "."),
+                        new Tag().name(TAG_ORG_PROFILE).description(
+                                "The organization record as its own members see it: read on org:read, edit "
+                                + "on org:update. Lifecycle is deliberately absent — that is "
+                                + TAG_PLATFORM_ORGS + "."),
+                        new Tag().name(TAG_ORG_MEMBERS).description(
+                                "Who belongs to one tenant and as what: list, invite, re-role, remove. Handing "
+                                + "someone a role IS granting its permissions, so invite and re-role are "
+                                + "additionally refused when they would grant more than the caller holds."),
+                        new Tag().name(TAG_ORG_ROLES).description(
+                                "A tenant's roles — named bundles of permission codes from the fixed catalogue "
+                                + "(" + TAG_SHARED_REFERENCE + "). Role codes are inert: no request path "
+                                + "resolves authority from a code, only from the permission set. System roles "
+                                + "refuse edits."),
+                        new Tag().name(TAG_ORG_WEBHOOKS).description(
+                                "One tenant's outbound event subscriptions and their delivery attempts, all on "
+                                + "webhook:manage. Endpoint URLs are SSRF-checked before they are stored, and "
+                                + "every delivery is signed and retried with backoff before it dead-letters."),
+                        new Tag().name(TAG_ORG_AUDIT).description(
+                                "The audit trail scoped to one tenant, on audit:read — an org's own admins can "
+                                + "review their trail without any platform access. Rows written during an "
+                                + "impersonation session name the operator, not the account they wore."),
+                        new Tag().name(TAG_SHARED_ME).description(
+                                "The caller's own identity and in-app notifications; no axis owns them because "
+                                + "a tenant member and a platform operator both legitimately arrive here. "
+                                + "GET /me is the one path the provisioning gate lets through for an "
+                                + "un-provisioned subject (onboarding), and still a hard stop for a disabled one."),
+                        new Tag().name(TAG_SHARED_FILES).description(
+                                "Upload, download, delete, presign. The one group whose rule lives in the "
+                                + "handler rather than in an annotation, which is exactly why neither axis "
+                                + "claims it: your own namespace always, someone else's only with a platform "
+                                + "tier (support to read, admin to delete)."),
+                        new Tag().name(TAG_SHARED_SETTINGS).description(
+                                "Reading platform configuration — settings and feature-flag state are visible "
+                                + "to any authenticated caller, because how the application behaves is not a "
+                                + "secret. Writing them is " + TAG_PLATFORM_SETTINGS + "."),
+                        new Tag().name(TAG_SHARED_REFERENCE).description(
+                                "Fixed vocabularies any authenticated caller may read — today the permission "
+                                + "catalogue that " + TAG_ORG_ROLES + " is composed from. A new shared "
+                                + "read lands here until it earns a group of its own.")))
                 .security(List.of(
                         new SecurityRequirement().addList(BEARER_SCHEME),
                         new SecurityRequirement().addList(OAUTH2_SCHEME)));
+    }
+
+    /**
+     * Publishes the REAL cursor parameters, {@code page[size]} and {@code page[after]}.
+     *
+     * <p>springdoc cannot see through {@link CursorPageRequestArgumentResolver}, so it documents the
+     * handler's {@code CursorPageRequest page} argument as ONE query parameter named after the Java
+     * variable ({@code page}) carrying an object schema. Anything generated from that spec sends the
+     * wrong names — Postman flattens the object to {@code size=…&after=…} — and since the resolver only
+     * reads the bracketed names, nothing binds and the request silently falls back to the default page
+     * size. The failure is invisible: {@code size=3919} looks accepted, while the real
+     * {@code page[size]=3919} would be rejected as over the {@value CursorPageRequest#MAX_SIZE} maximum.
+     *
+     * <p>Keyed off the handler's parameter type, so every paginated endpoint is corrected automatically
+     * and a new one cannot forget.
+     */
+    @Bean
+    OperationCustomizer cursorPaginationParameters() {
+        return (operation, handlerMethod) -> {
+            boolean paginated = Arrays.stream(handlerMethod.getMethodParameters())
+                    .anyMatch(parameter -> CursorPageRequest.class.equals(parameter.getParameterType()));
+            if (!paginated) {
+                return operation;
+            }
+            if (operation.getParameters() != null) {
+                operation.getParameters().removeIf(parameter -> parameter.getSchema() != null
+                        && CURSOR_SCHEMA_REF.equals(parameter.getSchema().get$ref()));
+            }
+            operation.addParametersItem(new Parameter()
+                    .in("query").name("page[size]").required(false)
+                    .description("Items per page, 1–" + CursorPageRequest.MAX_SIZE
+                            + ". Defaults to " + CursorPageRequest.DEFAULT_SIZE + ".")
+                    .schema(new IntegerSchema()
+                            .minimum(BigDecimal.ONE)
+                            .maximum(BigDecimal.valueOf(CursorPageRequest.MAX_SIZE))
+                            ._default(CursorPageRequest.DEFAULT_SIZE)));
+            operation.addParametersItem(new Parameter()
+                    .in("query").name("page[after]").required(false)
+                    .description("Opaque keyset cursor taken from a previous response's "
+                            + "meta.page.nextCursor. Omit for the first page.")
+                    .schema(new StringSchema()));
+            return operation;
+        };
+    }
+
+    /** Drops the {@code CursorPageRequest} schema the corrected parameters no longer reference. */
+    @Bean
+    OpenApiCustomizer removeOrphanedCursorSchema() {
+        return openApi -> {
+            if (openApi.getComponents() != null && openApi.getComponents().getSchemas() != null) {
+                openApi.getComponents().getSchemas().remove(CursorPageRequest.class.getSimpleName());
+            }
+        };
+    }
+
+    /**
+     * Documents the {@code X-Impersonate} request header.
+     *
+     * <p>It is not a parameter of any one endpoint — {@code ImpersonationFilter} reads it ahead of the
+     * whole chain, so it applies to any operation an operator might want to perform as the session's
+     * target. Declaring it per-controller would mean every future controller re-declaring it, so it is
+     * added here once, the same way {@code X-Request-Id} is.
+     *
+     * <p>Excluded from {@code /admin/**}: the impersonated principal deliberately carries no platform
+     * role, so those operations are 403 for the duration of a session. Advertising the header where it
+     * can only ever fail would document a capability that does not exist.
+     */
+    @Bean
+    OperationCustomizer impersonationHeader() {
+        return (operation, handlerMethod) -> {
+            String path = handlerMethod.getMethod().getDeclaringClass().getAnnotation(RequestMapping.class) != null
+                    ? String.join("", handlerMethod.getMethod().getDeclaringClass()
+                            .getAnnotation(RequestMapping.class).value())
+                    : "";
+            if (path.startsWith("/api/v1/admin")) {
+                return operation;
+            }
+            operation.addParametersItem(new Parameter()
+                    .in("header").name(IMPERSONATE_HEADER).required(false)
+                    .description("""
+                            Run this request as the target of an impersonation session (its id, from \
+                            POST /api/v1/admin/impersonations). The session must belong to the calling \
+                            operator; a READ_ONLY session refuses any unsafe method. Every write is \
+                            audited against the operator, not the target.""")
+                    .schema(new StringSchema().format("uuid")));
+            return operation;
+        };
+    }
+
+    /**
+     * Tags every operation {@code "<axis> · <resource>"}, replacing springdoc's default
+     * one-tag-per-controller-class.
+     *
+     * <p>Controller classes are an implementation detail — they split by module, so the default tags
+     * scatter one concept across several groups and tell a reader nothing about who may call what. The
+     * axis answers the only question a caller actually has (<em>can I call this?</em>); the resource half
+     * exists because an axis alone leaves the tenant surface as one unreadable 18-operation folder in
+     * Postman, which is a flat list of tags with no nesting.
+     *
+     * <p><strong>The two halves are not the same kind of statement, and must not be merged.</strong>
+     *
+     * <ul>
+     * <li><b>Axis — derived, load-bearing.</b> Read off the handler's own {@code @PreAuthorize}, never
+     * from a path or class list. A list would be a second source of truth that drifts the moment an
+     * authority changes, and a group that contradicts the enforced authority is worse than no group at
+     * all, because it is believed. Deriving it means a new endpoint is grouped correctly without anyone
+     * remembering to, and re-tiering one re-groups it.</li>
+     * <li><b>Resource — curated, cosmetic.</b> A label from {@link #RESOURCE_BY_CONTROLLER}. Its worst
+     * failure is a request filed in the wrong folder in a UI; it cannot misstate who may call anything.
+     * A hand-maintained map is the right tool for a label nothing enforces.</li>
+     * </ul>
+     *
+     * <p>So do not "simplify" this into one hardcoded path-to-tag map. The halves look alike in the
+     * output and are opposites in kind: that refactor would quietly turn an enforced fact into a
+     * maintained guess, and the day it drifted the spec would still look tidy.
+     *
+     * <p>A controller whose handlers span both axes therefore splits across two tags on its own:
+     * {@code AuditController} (platform-wide read vs org-scoped read) and {@code OrganizationController}
+     * (create/suspend/reactivate vs get/patch) both do today. Nothing declares them as split —
+     * {@link #RESOURCE_BY_AXIS_AND_CONTROLLER} only picks which label each side wears, and deleting both
+     * entries would still leave two tags, just with one label between them. That the split happens
+     * without being asked for is the observable proof the axis half is still derived, which is why
+     * {@code OpenApiTagContractTest} pins it.
+     *
+     * <p>The tag is only ever as honest as the annotation. {@code /files} carries no {@code @PreAuthorize}
+     * — it enforces owner-or-platform-tier inside the handler — so it lands on the shared axis, which is
+     * right (both axes reach it) even though the reasoning is invisible here. That is called out in the
+     * group's own description rather than special-cased.
+     */
+    @Bean
+    OperationCustomizer authorizationAxisTags() {
+        return (operation, handlerMethod) -> {
+            PreAuthorize preAuthorize = handlerMethod.getMethodAnnotation(PreAuthorize.class);
+            if (preAuthorize == null) {
+                preAuthorize = handlerMethod.getBeanType().getAnnotation(PreAuthorize.class);
+            }
+            String expression = preAuthorize == null ? "" : preAuthorize.value();
+            boolean org = expression.contains("hasPermission(");
+            boolean platform = expression.contains("hasRole('platform-");
+            // Both axes in one expression means neither owns it — the same reading as no annotation at
+            // all. No operation does this today; handled so the first one that does is not silently
+            // filed under whichever branch happens to run first.
+            String axis = org && !platform ? AXIS_ORGANIZATION
+                    : platform && !org ? AXIS_PLATFORM
+                    : AXIS_SHARED;
+            // set, not add — drops springdoc's controller-name default
+            operation.setTags(List.of(tagFor(axis, handlerMethod.getBeanType().getSimpleName())));
+            return operation;
+        };
+    }
+
+    /**
+     * Composes the tag: the derived axis, then the curated label for the controller on that axis, then
+     * the controller's label on any axis, then the axis's fallback group.
+     *
+     * <p>{@code getBeanType()} returns the user-defined class even for the CGLIB proxy that
+     * {@code @PreAuthorize} creates, so the simple name is the one written in the map.
+     */
+    private static String tagFor(String axis, String controller) {
+        String resource = RESOURCE_BY_AXIS_AND_CONTROLLER.get(axis + "|" + controller);
+        if (resource == null) {
+            resource = RESOURCE_BY_CONTROLLER.get(controller);
+        }
+        return resource == null ? FALLBACK_TAG_BY_AXIS.get(axis) : axis + AXIS_SEPARATOR + resource;
     }
 
     /** Documents the always-present X-Request-Id response header on every operation. */
@@ -74,7 +417,7 @@ public class OpenApiConfig {
         return (operation, handlerMethod) -> {
             if (operation.getResponses() != null) {
                 operation.getResponses().forEach((status, response) -> response.addHeaderObject(
-                        REQUEST_ID_HEADER,
+                        RequestIdFilter.REQUEST_ID_HEADER,
                         new Header()
                                 .description("Public request id (accepted inbound, else minted as a ULID).")
                                 .schema(new StringSchema())));

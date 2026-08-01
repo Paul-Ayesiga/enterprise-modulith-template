@@ -20,7 +20,7 @@ class KeycloakJwtAuthenticationConverterTest {
                 .header("alg", "RS256")
                 .subject("3f0f7a5e-0000-0000-0000-000000000001")
                 .claim("preferred_username", "paul")
-                .claim("realm_access", Map.of("roles", List.of("ADMIN", "USER")))
+                .claim("realm_access", Map.of("roles", List.of(PlatformRole.ADMIN, "USER")))
                 .claim("resource_access", Map.of("smsone-web", Map.of("roles", List.of("dashboard-viewer"))))
                 .issuedAt(Instant.now())
                 .expiresAt(Instant.now().plusSeconds(60))
@@ -29,18 +29,18 @@ class KeycloakJwtAuthenticationConverterTest {
         AbstractAuthenticationToken authentication = converter.convert(jwt);
 
         assertThat(authentication.getName()).isEqualTo("paul");
-        // Client roles are namespaced by client id — a client role named ADMIN must never satisfy
-        // hasRole('ADMIN'), which is reserved for the realm role.
+        // Client roles are namespaced by client id — a client role named platform-admin must never
+        // satisfy hasRole('platform-admin'), which is reserved for the realm role.
         assertThat(authentication.getAuthorities()).extracting(GrantedAuthority::getAuthority)
-                .containsExactlyInAnyOrder("ROLE_ADMIN", "ROLE_USER", "ROLE_smsone-web_dashboard-viewer");
+                .containsExactlyInAnyOrder("ROLE_platform-admin", "ROLE_USER", "ROLE_smsone-web_dashboard-viewer");
     }
 
     @Test
-    void clientRoleNamedAdminDoesNotBecomeRealmAdmin() {
+    void clientRoleNamedPlatformAdminDoesNotBecomeRealmPlatformAdmin() {
         Jwt jwt = Jwt.withTokenValue("token")
                 .header("alg", "RS256")
                 .subject("attacker")
-                .claim("resource_access", Map.of("other-client", Map.of("roles", List.of("ADMIN"))))
+                .claim("resource_access", Map.of("other-client", Map.of("roles", List.of(PlatformRole.ADMIN))))
                 .issuedAt(Instant.now())
                 .expiresAt(Instant.now().plusSeconds(60))
                 .build();
@@ -48,8 +48,8 @@ class KeycloakJwtAuthenticationConverterTest {
         AbstractAuthenticationToken authentication = converter.convert(jwt);
 
         assertThat(authentication.getAuthorities()).extracting(GrantedAuthority::getAuthority)
-                .containsExactly("ROLE_other-client_ADMIN")
-                .doesNotContain("ROLE_ADMIN");
+                .containsExactly("ROLE_other-client_platform-admin")
+                .doesNotContain("ROLE_platform-admin");
     }
 
     @Test

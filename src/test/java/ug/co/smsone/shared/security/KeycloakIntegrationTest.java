@@ -90,7 +90,20 @@ class KeycloakIntegrationTest extends AbstractIntegrationTest {
         assertThat(claims.path("sub").asText()).isNotBlank();
         assertThat(claims.path("preferred_username").asText()).isEqualTo("paul");
         assertThat(claims.path("realm_access").path("roles"))
-                .extracting(JsonNode::asText).contains("ADMIN", "USER");
+                .extracting(JsonNode::asText).contains(PlatformRole.SUPERADMIN, "USER");
+    }
+
+    /**
+     * End-to-end proof of the tier ladder on a REAL token: paul holds only {@code platform-superadmin}
+     * in the realm, yet reaches a {@code platform-support} endpoint. Real JWKS validation → realm role
+     * mapping → {@code RoleHierarchy}. {@link PlatformRoleHierarchyTest} covers the full matrix.
+     */
+    @Test
+    void aRealSuperadminTokenReachesASupportTierEndpoint() throws Exception {
+        String token = passwordGrantToken("paul", "Paul123");
+
+        mockMvc.perform(get("/api/v1/admin/users").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
     }
 
     @Test

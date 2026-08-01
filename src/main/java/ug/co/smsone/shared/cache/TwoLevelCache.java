@@ -1,6 +1,7 @@
 package ug.co.smsone.shared.cache;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -10,6 +11,7 @@ import java.util.concurrent.Callable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.cache.Cache;
+import org.springframework.cache.support.SimpleValueWrapper;
 
 /**
  * Caffeine-first cache with a shared Valkey/Redis second level. L2 failures degrade to L1-only
@@ -55,9 +57,14 @@ class TwoLevelCache implements Cache {
         try {
             ValueWrapper shared = l2.get(key);
             if (shared != null) {
-                l1.put(key, shared.get());
+                // The JSON round-trip strips the producer's immutability (an unmodifiable set comes
+                // back a plain LinkedHashSet), and this one instance is then shared by every caller
+                // on this node — one caller's mutation would poison the entry for all later reads.
+                Object value = immutableView(shared.get());
+                l1.put(key, value);
+                return new SimpleValueWrapper(value);
             }
-            return shared;
+            return null;
         } catch (RuntimeException e) {
             log.warn("L2 cache '{}' get failed, degrading to L1-only: {}", name, e.getMessage());
             return null;
@@ -70,6 +77,11 @@ class TwoLevelCache implements Cache {
         return wrapper == null ? null : type.cast(wrapper.get());
     }
 
+    /**
+     * Does NOT serialize concurrent loads, so {@code @Cacheable(sync = true)} would compile against
+     * this cache but provide no stampede protection. No caller relies on it today; revisit (delegate
+     * to Caffeine's per-key locking) before one does.
+     */
     @Override
     @SuppressWarnings("unchecked")
     public <T> T get(Object key, Callable<T> valueLoader) {
@@ -104,7 +116,9 @@ class TwoLevelCache implements Cache {
 
     @Override
     public void evict(Object key) {
-        l1.evict(key);
+        // L2 strictly before L1: evicting L1 first opens a window where a concurrent reader misses
+        // L1, refills it from the still-stale L2 AFTER this method returns — and the invalidation
+        // listener skips our own broadcast, so the resurrected entry would live a full L1 TTL.
         boolean l2Evicted = true;
         if (l2 != null) {
             try {
@@ -117,6 +131,7 @@ class TwoLevelCache implements Cache {
                         name, e.getMessage());
             }
         }
+        l1.evict(key);
         if (l2Evicted) {
             // non-String keys can't be round-tripped through the text topic — clear peers' cache
             broadcast(key instanceof String stringKey ? stringKey : null);
@@ -125,7 +140,8 @@ class TwoLevelCache implements Cache {
 
     @Override
     public void clear() {
-        l1.clear();
+        // Same ordering rationale as evict(): L2 first, so a concurrent reader cannot repopulate L1
+        // from entries this clear is about to remove.
         boolean l2Cleared = true;
         if (l2 != null) {
             try {
@@ -136,6 +152,7 @@ class TwoLevelCache implements Cache {
                         name, e.getMessage());
             }
         }
+        l1.clear();
         if (l2Cleared) {
             broadcast(null);
         }
@@ -169,6 +186,20 @@ class TwoLevelCache implements Cache {
         }
         if (value instanceof Map<?, ?> map) {
             return new LinkedHashMap<>(map);
+        }
+        return value;
+    }
+
+    /** Views, not copies: the cached entry itself is never written through them. */
+    private static Object immutableView(Object value) {
+        if (value instanceof Set<?> set) {
+            return Collections.unmodifiableSet(set);
+        }
+        if (value instanceof List<?> list) {
+            return Collections.unmodifiableList(list);
+        }
+        if (value instanceof Map<?, ?> map) {
+            return Collections.unmodifiableMap(map);
         }
         return value;
     }

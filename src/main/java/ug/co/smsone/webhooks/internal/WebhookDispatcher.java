@@ -32,11 +32,11 @@ class WebhookDispatcher {
         if (!inbox.recordIfNew(LISTENER_ID, messageId)) {
             return; // already fanned out
         }
+        String json = payload.toJson(); // one serialization — every matching subscription gets the same bytes
         List<NewWebhookDelivery> deliveries = subscriptions.findByOrgIdAndStatus(orgId, SubscriptionStatus.ACTIVE)
                 .stream()
                 .filter(subscription -> subscription.subscribesTo(eventCode))
-                .map(subscription -> new NewWebhookDelivery(
-                        subscription.getId(), orgId, eventCode, payload.toJson()))
+                .map(subscription -> new NewWebhookDelivery(subscription.getId(), orgId, eventCode, json))
                 .toList();
         if (!deliveries.isEmpty()) {
             queue.enqueue(deliveries, properties.maxAttempts());

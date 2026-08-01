@@ -28,7 +28,13 @@ class S3ClientConfig {
                 .credentialsProvider(StaticCredentialsProvider.create(
                         AwsBasicCredentials.create(properties.accessKey(), properties.secretKey())))
                 .serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(true).build())
-                .httpClientBuilder(ApacheHttpClient.builder())
+                // §7: explicit timeouts on anything remote. The Apache defaults would let a stalled
+                // endpoint hold a request thread ~30s per attempt, and the storage breaker counts
+                // only thrown failures — a slow-but-completing call would never open it.
+                .httpClientBuilder(ApacheHttpClient.builder()
+                        .connectionTimeout(properties.connectTimeout())
+                        .socketTimeout(properties.socketTimeout()))
+                .overrideConfiguration(override -> override.apiCallTimeout(properties.apiCallTimeout()))
                 .build();
     }
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Print a Keycloak access token for a dev user.
 #
-#   scripts/token.sh                 # paul — the platform super-admin (ADMIN+USER)
+#   scripts/token.sh                 # paul — the platform super-admin (platform-superadmin+USER)
 #   scripts/token.sh paul Paul123    # explicit password
 #   scripts/token.sh someone pass    # any user you added to the realm yourself
 #   TOKEN=$(scripts/token.sh)        # capture into a variable

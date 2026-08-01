@@ -7,19 +7,23 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.UUID;
+import org.hibernate.annotations.SQLDelete;
+import org.hibernate.annotations.SQLRestriction;
 import ug.co.smsone.organization.OrganizationRegistered;
 import ug.co.smsone.organization.OrganizationStatusChanged;
-import ug.co.smsone.shared.persistence.AggregateRoot;
+import ug.co.smsone.shared.persistence.SoftDeletableEntity;
 
 /** Local projection of a Keycloak organization. {@code kcOrgId} is the tenant key used everywhere. */
 @Entity
 @Table(name = "organization")
-class Organization extends AggregateRoot {
+@SQLDelete(sql = "update organization set deleted_at = now(), version = version + 1 where id = ? and version = ?")
+@SQLRestriction("deleted_at is null")
+class Organization extends SoftDeletableEntity {
 
-    @Column(name = "kc_org_id", nullable = false, unique = true, updatable = false)
+    @Column(name = "kc_org_id", nullable = false, updatable = false)
     private UUID kcOrgId;
 
-    @Column(nullable = false, unique = true, length = 120)
+    @Column(nullable = false, length = 120)
     private String alias;
 
     @Column(nullable = false, length = 200)

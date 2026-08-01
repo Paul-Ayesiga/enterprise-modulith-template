@@ -1,10 +1,10 @@
 package ug.co.smsone.identity.internal;
 
+import io.swagger.v3.oas.annotations.Operation;
 import java.util.Set;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import ug.co.smsone.shared.error.UnauthorizedException;
 import ug.co.smsone.shared.security.CurrentUser;
 import ug.co.smsone.shared.security.CurrentUserProvider;
 import ug.co.smsone.shared.web.ResourceObject;
@@ -14,12 +14,14 @@ import ug.co.smsone.shared.web.ResourceObject;
 @RequestMapping("/api/v1/me")
 class MeController {
 
-    private final CurrentUserProvider currentUserProvider;
-    private final UserRepository users;
+    private static final String RESOURCE_TYPE = "user";
 
-    MeController(CurrentUserProvider currentUserProvider, UserRepository users) {
+    private final CurrentUserProvider currentUserProvider;
+    private final UserAccessService access;
+
+    MeController(CurrentUserProvider currentUserProvider, UserAccessService access) {
         this.currentUserProvider = currentUserProvider;
-        this.users = users;
+        this.access = access;
     }
 
     record MeAttributes(String email, Set<String> roles, String activeOrgAlias, String activeOrgId,
@@ -27,17 +29,18 @@ class MeController {
     }
 
     @GetMapping
+    @Operation(summary = "Get the current user's profile and access",
+            description = """
+                    The one path reachable before provisioning completes, so a freshly invited account \
+                    can render onboarding — every other `/api/**` path answers \
+                    `ACCOUNT_NOT_PROVISIONED` until then. A disabled account is refused here too.""")
     ResourceObject me() {
-        CurrentUser user = currentUserProvider.currentUser()
-                .orElseThrow(() -> new UnauthorizedException("Authentication required."));
-        String status = users.findBySubject(user.subject())
-                .map(entity -> entity.getStatus().name())
-                .orElse("UNPROVISIONED");
-        return new ResourceObject(user.subject(), "user", new MeAttributes(
+        CurrentUser user = currentUserProvider.requireCurrentUser();
+        return new ResourceObject(user.subject(), RESOURCE_TYPE, new MeAttributes(
                 user.email(),
                 user.roles(),
                 user.activeOrgAlias(),
                 user.activeOrgId() == null ? null : user.activeOrgId().toString(),
-                status));
+                access.provisioningStatusOf(user.subject())));
     }
 }

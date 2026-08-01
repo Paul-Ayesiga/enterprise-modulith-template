@@ -1,5 +1,6 @@
 package ug.co.smsone.notification.internal;
 
+import io.swagger.v3.oas.annotations.Operation;
 import java.time.Instant;
 import java.util.UUID;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -28,11 +29,16 @@ class NotificationController {
     }
 
     @GetMapping
+    @Operation(summary = "List your in-app notifications")
     WindowedResult<ResourceObject> list(CursorPageRequest page) {
         return WindowedResult.of(service.listForCurrentUser(page), page, NotificationController::toResource);
     }
 
     @PostMapping("/{id}/read")
+    @Operation(summary = "Mark one of your notifications as read",
+            description = """
+                    Idempotent — marking an already-read notification returns it unchanged rather than \
+                    failing. Someone else's notification is a 404, not a 403.""")
     ResourceObject markRead(@PathVariable UUID id) {
         return toResource(service.markRead(id));
     }

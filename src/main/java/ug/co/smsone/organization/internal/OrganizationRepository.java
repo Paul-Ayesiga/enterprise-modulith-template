@@ -11,7 +11,5 @@ interface OrganizationRepository extends JpaRepository<Organization, UUID>, JpaS
 
     Optional<Organization> findByAlias(String alias);
 
-    boolean existsByKcOrgId(UUID kcOrgId);
-
     boolean existsByAlias(String alias);
 }

@@ -31,19 +31,19 @@ System_Boundary("Application_boundary", "Application", $tags="") {
 
 }
 
+Rel(Application.Application.Files, Application.Application.SharedKernel, "depends on", $techn="", $tags="", $link="")
+Rel(Application.Application.Analytics, Application.Application.SharedKernel, "depends on", $techn="", $tags="", $link="")
+Rel(Application.Application.Scheduler, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Identity, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Settings, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Notification, Application.Application.Settings, "listens to", $techn="", $tags="", $link="")
 Rel(Application.Application.Notification, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Notification, Application.Application.Identity, "uses", $techn="", $tags="", $link="")
-Rel(Application.Application.Scheduler, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
-Rel(Application.Application.Settings, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Audit, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
-Rel(Application.Application.Webhooks, Application.Application.Organization, "listens to", $techn="", $tags="", $link="")
-Rel(Application.Application.Webhooks, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
-Rel(Application.Application.Files, Application.Application.SharedKernel, "depends on", $techn="", $tags="", $link="")
-Rel(Application.Application.Identity, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
-Rel(Application.Application.Analytics, Application.Application.SharedKernel, "depends on", $techn="", $tags="", $link="")
 Rel(Application.Application.Organization, Application.Application.Identity, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Organization, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Webhooks, Application.Application.Organization, "listens to", $techn="", $tags="", $link="")
+Rel(Application.Application.Webhooks, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 
 SHOW_LEGEND(true)
 hide stereotypes
