@@ -28,7 +28,7 @@ import ug.co.smsone.shared.web.RequestPaths;
  * filter enforces the identity-aware, per-tenant business quota.
  */
 @Component
-@Order(-1)
+@Order(0) // after the org-MDC filter (-1), so every denial is logged and counted with its tenant
 @ConditionalOnProperty(name = "app.rate-limit.enabled", havingValue = "true", matchIfMissing = true)
 public class RateLimitFilter extends OncePerRequestFilter {
 

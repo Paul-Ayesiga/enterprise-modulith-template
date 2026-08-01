@@ -87,6 +87,12 @@ class MembersExchangeHandler implements ExchangeHandler {
             // Everything the API surface would answer 4xx (unknown role, escalation, conflicts) is
             // a DATA problem here, and the message is already tenant-curated by construction.
             throw new InvalidRecordException(ex.getMessage());
+        } catch (org.springframework.web.client.HttpClientErrorException ex) {
+            // Keycloak 4xx'd THIS record (its email validation is stricter than ours): a data
+            // problem too — classifying it as infrastructure would fail the whole job over one row.
+            // Curated message only; the provider's response body never reaches the tenant report.
+            throw new InvalidRecordException(
+                    "The identity provider rejected this record (check the email address).");
         }
     }
 

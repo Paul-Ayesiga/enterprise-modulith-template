@@ -13,6 +13,8 @@ interface WebhookSubscriptionRepository
 
     List<WebhookSubscription> findByOrgId(UUID orgId);
 
+    long countByOrgId(UUID orgId);
+
     List<WebhookSubscription> findByOrgIdAndStatus(UUID orgId, SubscriptionStatus status);
 
     Optional<WebhookSubscription> findByIdAndOrgId(UUID id, UUID orgId);

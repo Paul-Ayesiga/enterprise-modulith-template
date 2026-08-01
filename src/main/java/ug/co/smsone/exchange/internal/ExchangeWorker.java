@@ -93,9 +93,19 @@ class ExchangeWorker implements SmartLifecycle {
             return 0;
         }
         ExchangeJob job = claimed.get();
+        if (job.attempts() > config.maxAttempts()) {
+            // Reclaim-loop circuit breaker: attempts normally cap inside failOrRetry, but a job
+            // that keeps LOSING its claim (never reaching an exception) would otherwise burn claim
+            // generations forever. Above the cap it dies loudly instead.
+            store.markTerminal(job.id(), job.attempts(), ExchangeJob.FAILED, null, null,
+                    "The job was reclaimed repeatedly without completing and gave up after "
+                            + job.attempts() + " attempts. Quote job id " + job.id() + " to support.");
+            store.find(job.id(), job.orgId()).ifPresent(metrics::jobFinished);
+            return 1;
+        }
         // MDC, not method arguments: every log line the run produces — handler code included —
         // carries the tenant and the job without any layer having to pass them along.
-        MDC.put("org_id", job.orgId().toString());
+        MDC.put("org_id", String.valueOf(job.orgId()));
         MDC.put("exchange_job_id", job.id().toString());
         MDC.put("exchange_handler", job.handler());
         try {
@@ -104,14 +114,15 @@ class ExchangeWorker implements SmartLifecycle {
             } else {
                 imports.run(job);
             }
+            // One read, one call site: the runners already wrote the terminal status, so counting
+            // from the row can never disagree with it (a released-for-retry job is not an outcome
+            // yet). Inside the MDC scope, so a failure here logs with its job attribution.
+            store.find(job.id(), job.orgId()).ifPresent(metrics::jobFinished);
         } finally {
             MDC.remove("org_id");
             MDC.remove("exchange_job_id");
             MDC.remove("exchange_handler");
         }
-        // One read, one call site: the runners already wrote the terminal status, so counting from
-        // the row can never disagree with it (a released-for-retry job is not an outcome yet).
-        store.find(job.id(), job.orgId()).ifPresent(metrics::jobFinished);
         return 1;
     }
 

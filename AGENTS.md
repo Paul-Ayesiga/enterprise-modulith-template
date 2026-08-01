@@ -186,7 +186,7 @@ Window<Membership> list(UUID orgId, CursorPageRequest page) {
 |---|---|---|
 | Request id | `RequestIdFilter` (`HIGHEST_PRECEDENCE`) | ULID unless the client sends a well-formed `X-Request-Id`. `traceId`/`spanId` never go on the wire |
 | Impersonation | `ImpersonationFilter` (`@Order(-2)`) | `X-Impersonate: <sessionId>` swaps the effective principal **before** every other filter, so one request has ONE identity end to end — §5.5. Never reorder it below rate limiting, idempotency or the provisioning gate |
-| Idempotency | `IdempotencyFilter` (`@Order(0)`, after security) | keys are **per principal** — a global namespace is an authorization hole (ADR 0005). Only status < 400 is stored |
+| Idempotency | `IdempotencyFilter` (`@Order(1)`, after the org-MDC filter (`-1`) and rate limiting (`0`)) | keys are **per principal** — a global namespace is an authorization hole (ADR 0005). Only status < 400 is stored |
 | Rate limiting | `RateLimitFilter` + `RateLimitKeyResolver` | buckets key on tenant → subject → IP. Never on username |
 | Caching | `TwoLevelCache` (`@Primary` manager) | cache String keys and JSON-serializable values; writers evict **and** broadcast (ADR 0004) |
 | SSRF | `SafeOutboundUrl.requireSafe(url, allowPrivateHosts)` | **mandatory** for any caller-supplied outbound URL. It is the first line only — a deployment still needs an egress policy |
@@ -299,8 +299,8 @@ step by step; copy that reasoning, not just the shape.
 
 ### 4.5 Migrations
 
-- `src/main/resources/db/migration/V<n>__<snake_name>.sql`. **V24 is taken; the next free number is
-  V25.** Never edit an applied migration; never renumber.
+- `src/main/resources/db/migration/V<n>__<snake_name>.sql`. **V26 is taken; the next free number is
+  V27.** Never edit an applied migration; never renumber.
 - `ddl-auto: validate`. The schema is the migration's job, always.
 - Head the file with a comment explaining the *decision*, not the statements — `V17__soft_delete.sql`
   and `V11__organization_rbac.sql` are the reference voice.
@@ -390,8 +390,8 @@ on no business module, and it is not optional.
 | The previous `SecurityContext` is restored in a `finally` | `ImpersonationFilter` | Request threads are pooled. A leaked context hands the next request somebody else's identity — the worst failure this codebase can produce |
 | A session **reads** the account it wears; it never writes to it | `ProvisioningGateFilter.decide` (`peek`, not `authorize`) | Lazy `INVITED → ACTIVE` means "the person finally showed up", and an operator wearing them is not them showing up |
 
-**Ordering is load-bearing.** `@Order(-2)` — immediately after authentication (`-100`) and before rate
-limiting (`-1`), idempotency (`0`) and the provisioning gate (`1`). The whole downstream request must
+**Ordering is load-bearing.** `@Order(-2)` — immediately after authentication (`-100`) and before the
+org-MDC filter (`-1`), rate limiting (`0`), idempotency (`1`) and the provisioning gate (`2`). The whole downstream request must
 see ONE effective principal; swapping later would bucket the operator's rate limit and idempotency
 keys under their own identity while the handler ran as someone else. The filter's own two decisions
 are the mode check — `READ_ONLY` admits `GET`, `HEAD` and `OPTIONS` only, since none of them can

@@ -1,0 +1,13 @@
+[%autowidth.stretch, cols="h,a"]
+|===
+|Base package
+|`ug.co.smsone.subscription`
+|Spring components
+|_Services_
+
+* `u.c.s.s.Entitlements` (via `u.c.s.s.internal.EntitlementsImpl`)
+|Bean references
+|* `u.c.s.s.audit.AuditLog` (in Shared Kernel)
+|Events listened to
+|* `u.c.s.s.SubscriptionChanged` (async) 
+|===

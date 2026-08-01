@@ -33,6 +33,10 @@ include::module-scheduler.adoc[]
 plantuml::module-settings.puml[,,format=svg]
 include::module-settings.adoc[]
 
+== Subscription
+plantuml::module-subscription.puml[,,format=svg]
+include::module-subscription.adoc[]
+
 == Exchange
 plantuml::module-exchange.puml[,,format=svg]
 include::module-exchange.adoc[]

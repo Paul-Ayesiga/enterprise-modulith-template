@@ -65,6 +65,7 @@ dependencies {
 
     // exchange bundle (import/export platform — streaming CSV)
     implementation(libs.commons.csv)
+    implementation(libs.poi.ooxml)
 
     // storage bundle (files module — SeaweedFS/S3 via AWS SDK v2)
     implementation(platform(libs.awssdk.bom))

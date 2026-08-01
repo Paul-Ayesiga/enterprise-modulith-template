@@ -5,7 +5,7 @@
     <springProfile name="local,test">
         <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
             <encoder>
-                <pattern>%d{HH:mm:ss.SSS} %-5level [%thread] [rid=%X{requestId:-}] [trace=%X{traceId:-}] %logger{36} : %msg%n</pattern>
+                <pattern>%d{HH:mm:ss.SSS} %-5level [%thread] [rid=%X{requestId:-}] [org=%X{org_id:-}] [trace=%X{traceId:-}] %logger{36} : %msg%n</pattern>
             </encoder>
         </appender>
         <root level="INFO">

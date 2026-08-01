@@ -7,8 +7,8 @@ import org.springframework.stereotype.Component;
 
 /**
  * Exchange throughput as numbers someone can alert on: jobs by terminal outcome and records by
- * result. Registered per tag set on first use — the registry dedupes, so this stays allocation-free
- * after warm-up.
+ * result. The registry dedupes the counter per tag set (the builder itself still allocates per
+ * call — fine at per-batch and per-job frequency, would not be on a per-record path).
  */
 @Component
 class ExchangeMetrics {

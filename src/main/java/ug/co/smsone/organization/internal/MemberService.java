@@ -49,11 +49,12 @@ class MemberService {
     private final PermissionEscalationGuard escalationGuard;
     private final TransactionTemplate transactionTemplate;
     private final AuditLog auditLog;
+    private final ug.co.smsone.subscription.Entitlements entitlements;
 
     MemberService(MembershipRepository memberships, RoleRepository roles, UserProvisioning userProvisioning,
             KeycloakOrgAdminGateway keycloakOrg, ApplicationEventPublisher events,
             PermissionEscalationGuard escalationGuard, TransactionTemplate transactionTemplate,
-            AuditLog auditLog) {
+            AuditLog auditLog, ug.co.smsone.subscription.Entitlements entitlements) {
         this.memberships = memberships;
         this.roles = roles;
         this.userProvisioning = userProvisioning;
@@ -62,6 +63,7 @@ class MemberService {
         this.escalationGuard = escalationGuard;
         this.transactionTemplate = transactionTemplate;
         this.auditLog = auditLog;
+        this.entitlements = entitlements;
     }
 
     /** The id → code map the member listing renders with — see {@link RoleRepository#codesByOrgId}. */
@@ -93,6 +95,11 @@ class MemberService {
     }
 
     private Membership doInvite(UUID orgId, String email, String firstName, String lastName, Role role) {
+        // The plan gate runs BEFORE anything is provisioned — a refused invite must leave no
+        // half-created identity behind. Counts live members; re-invites of existing members pass
+        // through saveMembership's idempotent return either way.
+        entitlements.requireWithinLimit(orgId,
+                ug.co.smsone.subscription.EntitlementKeys.MEMBERS_MAX, memberships.countByOrgId(orgId));
         ProvisionedUser provisioned = userProvisioning.provision(new ProvisionRequest(email, firstName, lastName));
         keycloakOrg.addMember(orgId, provisioned.subject());
         // Explicit template, not @Transactional: this is a self-invocation, which never reaches the

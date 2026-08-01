@@ -342,6 +342,55 @@ Slice 3 of [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md).
 - [x] **Gate:** full `./gradlew test` green (13 modules); docs regenerated; DATA_MODEL §4.11 /
       SRS §3.17 + catalogue + traceability updated
 
+## Guideline completion + tenant lifecycle + subscriptions ✅ (2026-08-01, overnight)
+
+Zero-deferral order: nothing in `reusable-data-exchange-platform-guidelines.md` left unimplemented,
+plus the platform tenant surface and a subscriptions module — with the three-reviewer final audit's
+confirmed findings fixed in the same pass.
+
+- [x] **V25** exchange completion: XLSX codec (SAX streaming read via a vthread bridge, SXSSF
+      streaming write), XML codec (StAX, XXE-disabled), ZIP source unwrap (magic-byte sniffed),
+      template versioning (`templateVersion()` on the SPI, stamped per job) + downloadable
+      templates (an empty export — one code path for all four formats), recurring export schedules
+      (cron/UTC, ShedLock firing job, revocation DISABLES loudly), retry backoff between claim
+      generations, `exchange.job_submitted`/`_cancel_requested`/schedule audit rows,
+      `org_id` tightened NOT NULL
+- [x] Localized error details: `Messages` port moved to `shared.i18n` (kernel-port pattern);
+      `ErrorDetailLocalizer` resolves `error.<code>` per Accept-Language in BOTH error paths
+      (MVC handler + filter writer); catalog gap keeps the author's English — proven in
+      `LocalizationApiTest.errorDetailsLocalizeThroughTheCatalogByAcceptLanguage`
+- [x] **Audit hardening (the escapee hunt's confirmed findings)**: mid-batch heartbeat + claim-time
+      reclaim cap (the two HIGHs — slow per-record remote work can no longer get a healthy claimant
+      double-claimed, and a reclaim loop dies loudly); Keycloak per-record 4xx reclassified as DATA;
+      malformed CSV mid-file → curated FAILED, one attempt; truncated-on-resume source → FAILED,
+      never a silent COMPLETED; error report streamed with a real fetchSize; cancelled runs upload
+      their report; `SKIPPED` outcomes counted; dead-URL guard on document + exchange downloads;
+      upload validates metadata BEFORE storing bytes (422, no orphaned object); personal-doc
+      404-oracle closed (tiered: support gets the honest 403); translation PUT race resolves to the
+      winner; `MessageFormat` can no longer break the never-throws contract; evict keys use
+      `Locale.ROOT`; search erasure residue swept nightly (users/orgs un-indexed once their rows are
+      hard-purged); notification unknown-channel dead-letters counted; export metrics count only the
+      winning terminal write; HTTP p95 panel now queries the metric this app actually emits
+      (+ percentiles-histogram config); purge-silence alert rewritten as `absent_over_time`;
+      filter order renumbered (impersonation −2 → org-MDC −1 → rate limit 0 → idempotency 1 →
+      provisioning gate 2) so 429s and replays carry the tenant
+- [x] Platform tenant surface + lifecycle (docs/TENANT_LIFECYCLE.md): `GET /api/v1/admin/orgs`
+      (+`?status=`), `GET /{id}`, `GET /{id}/members`, `DELETE /{id}` (SUSPENDED-only, soft,
+      audited, `OrganizationDeleted` → cache evict + `org.deleted` webhook; Keycloak org kept
+      deliberately) — `AdminOrganizationApiTest`
+- [x] **V26** subscriptions: seeded FREE/PRO/ENTERPRISE catalog, one live subscription per org
+      (none = FREE), `Entitlements` gating port wired into member invite (pre-provisioning),
+      webhook create, exchange submit + schedule cap; upgrade-shaped 403s;
+      `SubscriptionChanged` evicts the entitlement cache (a downgrade cannot ride the TTL) and
+      fans out `org.subscription_changed` — `SubscriptionGatingTest` (Awaitility on the async
+      evictor)
+- [x] OpenApiConfig additions (user's file — flagged): three tag constants + declarations
+      (`Organization · Exchange schedules`, `Platform · Billing & plans`, `Shared · Exchange
+      catalog`) and six curated-map entries; soft-deletables now ELEVEN (exchange_schedule,
+      org_subscription) with every count bumped; FK total six; next free migration **V27**
+- [x] **Gate:** full `./gradlew test` green; DATA_MODEL §4.12–4.13 / SRS §3.18–3.19 + FR-SUB +
+      endpoint catalogue + TENANT_LIFECYCLE + EVENTS + ARCHITECTURE updated
+
 ## Observability pass ✅ (2026-08-01)
 
 Slice 5 of [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md) — numbers someone can alert on, plus the
@@ -439,7 +488,7 @@ have closed the cycle `document → search → organization → exchange`, and `
 
 ---
 
-**Phases 0–4 + notification module complete and gated.** (Next free migration: **V21**.) Completed modules: [COMPLETED_MODULES.md](COMPLETED_MODULES.md).
+**Phases 0–4 + notification module complete and gated.** (Next free migration: **V27**.) Completed modules: [COMPLETED_MODULES.md](COMPLETED_MODULES.md).
 
 | Reference | What it is |
 |---|---|

@@ -1,4 +1,4 @@
-package ug.co.smsone.localization;
+package ug.co.smsone.shared.i18n;
 
 import java.util.Locale;
 
@@ -7,6 +7,10 @@ import java.util.Locale;
  * language only → the configured default locale → the key itself. The last step is deliberate —
  * a missing translation must render as its key, never throw: a gap in the catalog is a content
  * problem, not an outage.
+ *
+ * <p>A kernel port on the {@code AuditLog} pattern, implemented by the {@code localization}
+ * module: the error pipeline (shared) localizes response details through it, and shared cannot
+ * compile-depend on a business module.
  */
 public interface Messages {
 

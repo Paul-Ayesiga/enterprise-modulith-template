@@ -67,6 +67,10 @@ public class OpenApiConfig {
     private static final String TAG_ORG_WEBHOOKS = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Webhooks";
     private static final String TAG_ORG_AUDIT = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Audit";
     private static final String TAG_ORG_EXCHANGE = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Exchange";
+    private static final String TAG_ORG_EXCHANGE_SCHEDULES =
+            AXIS_ORGANIZATION + AXIS_SEPARATOR + "Exchange schedules";
+    private static final String TAG_PLATFORM_BILLING = AXIS_PLATFORM + AXIS_SEPARATOR + "Billing & plans";
+    private static final String TAG_SHARED_EXCHANGE = AXIS_SHARED + AXIS_SEPARATOR + "Exchange catalog";
     private static final String TAG_SHARED_ME = AXIS_SHARED + AXIS_SEPARATOR + "Me & notifications";
     private static final String TAG_SHARED_FILES = AXIS_SHARED + AXIS_SEPARATOR + "Files";
     private static final String TAG_SHARED_SETTINGS = AXIS_SHARED + AXIS_SEPARATOR + "Settings & flags";
@@ -97,6 +101,10 @@ public class OpenApiConfig {
             Map.entry("RoleController", "Roles"),
             Map.entry("WebhookController", "Webhooks"),
             Map.entry("ExchangeController", "Exchange"),
+            Map.entry("ExchangeScheduleController", "Exchange schedules"),
+            Map.entry("ExchangeHandlersController", "Exchange catalog"),
+            Map.entry("AdminOrganizationController", "Organizations"),
+            Map.entry("AdminSubscriptionController", "Billing & plans"),
             Map.entry("MeController", "Me & notifications"),
             Map.entry("NotificationController", "Me & notifications"),
             Map.entry("FileController", "Files"),
@@ -200,6 +208,11 @@ public class OpenApiConfig {
                                 + "platform-admin. The same keys are readable by any authenticated caller "
                                 + "under " + TAG_SHARED_SETTINGS + " — same paths, different method, "
                                 + "different authority, which is why one controller lands in two groups."),
+                        new Tag().name(TAG_PLATFORM_BILLING).description(
+                                "The commercial axis of a tenant: the seeded plan catalogue and each "
+                                + "org's subscription. Reading is platform-support; assigning a plan is "
+                                + "platform-admin, audited, and bites the very next entitlement gate. A "
+                                + "tenant reads its own state under " + TAG_ORG_PROFILE + "'s surface."),
                         new Tag().name(TAG_PLATFORM_OPS).description(
                                 "Running the platform: scheduler lock state (proof that clustered jobs fire "
                                 + "once), the curated analytics reports, and the cross-tenant audit trail. "
@@ -233,7 +246,12 @@ public class OpenApiConfig {
                                 + "runtime, so no annotation can name that gate. Job metadata reads on "
                                 + "org:read; the artifacts (source, error report, result) answer only to the "
                                 + "requester or a holder of that same handler permission. The handler "
-                                + "catalogue itself is " + TAG_SHARED_REFERENCE + "."),
+                                + "catalogue itself is " + TAG_SHARED_EXCHANGE + "."),
+                        new Tag().name(TAG_ORG_EXCHANGE_SCHEDULES).description(
+                                "Recurring exports on a cron (UTC), firing as their creator — whose export "
+                                + "permission is re-checked at every fire, so a revocation stops the "
+                                + "schedule loudly instead of letting it keep exporting. One-off jobs and "
+                                + "their artifacts are " + TAG_ORG_EXCHANGE + "."),
                         new Tag().name(TAG_SHARED_ME).description(
                                 "The caller's own identity and in-app notifications; no axis owns them because "
                                 + "a tenant member and a platform operator both legitimately arrive here. "
@@ -251,7 +269,12 @@ public class OpenApiConfig {
                         new Tag().name(TAG_SHARED_REFERENCE).description(
                                 "Fixed vocabularies any authenticated caller may read — today the permission "
                                 + "catalogue that " + TAG_ORG_ROLES + " is composed from. A new shared "
-                                + "read lands here until it earns a group of its own.")))
+                                + "read lands here until it earns a group of its own."),
+                        new Tag().name(TAG_SHARED_EXCHANGE).description(
+                                "The exchange handler catalogue and its downloadable templates — which "
+                                + "datasets can move, what each file must look like, which permissions "
+                                + "gate it. Readable by any authenticated caller; running one is "
+                                + TAG_ORG_EXCHANGE + ".")))
                 .security(List.of(
                         new SecurityRequirement().addList(BEARER_SCHEME),
                         new SecurityRequirement().addList(OAUTH2_SCHEME)));

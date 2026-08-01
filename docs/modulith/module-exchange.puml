@@ -17,6 +17,7 @@ top to bottom direction
 
 System_Boundary("Application_boundary", "Application", $tags="") {
   Container_Boundary("Application.Application_boundary", "Application", $tags="") {
+    Component(Application.Application.Subscription, "Subscription", $techn="Module", $descr="", $tags="", $link="")
     Component(Application.Application.Exchange, "Exchange", $techn="Module", $descr="", $tags="", $link="")
     Component(Application.Application.SharedKernel, "Shared Kernel", $techn="Module", $descr="", $tags="", $link="")
     Component(Application.Application.Files, "Files", $techn="Module", $descr="", $tags="", $link="")
@@ -24,9 +25,11 @@ System_Boundary("Application_boundary", "Application", $tags="") {
 
 }
 
-Rel(Application.Application.Files, Application.Application.SharedKernel, "depends on", $techn="", $tags="", $link="")
 Rel(Application.Application.Exchange, Application.Application.Files, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Exchange, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Exchange, Application.Application.Subscription, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Files, Application.Application.SharedKernel, "depends on", $techn="", $tags="", $link="")
+Rel(Application.Application.Subscription, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 
 SHOW_LEGEND(true)
 hide stereotypes

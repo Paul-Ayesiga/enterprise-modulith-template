@@ -6,4 +6,6 @@
 |* `u.c.s.f.FileStorageProvider` (in Files)
 * `u.c.s.s.document.Documents` (in Shared Kernel)
 * `u.c.s.s.security.OrgAuthorization` (in Shared Kernel)
+* `u.c.s.s.audit.AuditLog` (in Shared Kernel)
+* `u.c.s.s.Entitlements` (in Subscription)
 |===

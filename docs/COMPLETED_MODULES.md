@@ -14,7 +14,8 @@ _Last updated: 2026-08-01._
 | **localization** | Translation catalog + `Messages` resolution port | `/api/v1/translations/**` | `TranslationChanged` | ✅ |
 | **search** | Postgres FTS projection + `SearchIndex` port | `/api/v1/orgs/{orgId}/search`, `/api/v1/admin/search` | — (consumes `OrganizationRegistered`, `UserProvisioned`) | ✅ |
 | **document** | Managed-file catalog over the files port + `Documents` port | `/api/v1/orgs/{orgId}/documents/**`, `/api/v1/documents/**` | `DocumentRegistered` | ✅ |
-| **exchange** | Data Exchange Platform — durable, resumable import/export jobs behind the `ExchangeHandler` SPI | `/api/v1/orgs/{orgId}/exchange/**`, `/api/v1/exchange/handlers` | — (drives domain services through the SPI) | ✅ |
+| **exchange** | Data Exchange Platform — durable, resumable import/export jobs behind the `ExchangeHandler` SPI (CSV/JSONL/XLSX/XML + ZIP, templates, recurring schedules) | `/api/v1/orgs/{orgId}/exchange/**`, `/api/v1/exchange/handlers/**` | — (drives domain services through the SPI) | ✅ |
+| **subscription** | Plan catalog + per-org subscription + the `Entitlements` gating port | `/api/v1/admin/orgs/{id}/subscription`, `/api/v1/admin/plans`, `/api/v1/orgs/{orgId}/subscription` | `SubscriptionChanged` | ✅ |
 | **files** | S3-compatible object storage | `/api/v1/files` | — | ✅ |
 | **scheduler** | Clustered scheduled jobs | `/api/v1/scheduler/locks` | — | ✅ |
 | **analytics** | Embedded OLAP / reporting | `/api/v1/analytics/reports` | — | ✅ |
@@ -53,7 +54,7 @@ Message localization behind the `Messages` port.
 - **Endpoints**: `GET /api/v1/translations[?locale=]` (cursor-paginated), `GET/PUT/DELETE
   /api/v1/translations/{locale}/{key}` — writes `platform-admin`, all changes audited with from→to.
   Locales stored lowercased (tags are case-insensitive); unparseable tags 422.
-- Soft-deletable (`V21`), purged last in `PURGE_ORDER`; deletes publish `TranslationChanged`
+- Soft-deletable (`V21`), eighth of eleven in `PURGE_ORDER`; deletes publish `TranslationChanged`
   explicitly.
 
 ## search
@@ -110,6 +111,21 @@ its spec): import/export as durable, resumable background jobs — built for sca
 - **Endpoints**: `POST …/exchange/imports|exports` (202 + pollable job), `GET …/jobs[/{id}]`
   (progress), `POST …/{id}/cancel` (batch-boundary, best-effort), `GET …/{id}/report|result`
   (302 presigned), `GET /api/v1/exchange/handlers` (the catalog with header templates).
+
+## subscription
+The commercial axis of a tenant — plans, subscriptions, and the gates everything else consults.
+- **Catalog**: FREE/PRO/ENTERPRISE seeded create-if-absent (`PlanSeeder`); entitlement encoding:
+  key present = feature on, positive value = cap, absent = off/unlimited (ENTERPRISE has no caps).
+- **Gating**: the `Entitlements` port, resolved per org (no subscription row = FREE) and cached;
+  wired into member invite (pre-provisioning), webhook create, exchange submit + schedule create —
+  refusals are upgrade-shaped 403s, never permission-shaped.
+- **Change bites immediately**: assigning a plan publishes `SubscriptionChanged` → the entitlement
+  cache evicts (a downgrade cannot ride the TTL) and `org.subscription_changed` fans out to the
+  tenant's webhooks. Assignments are `platform-admin` and audited.
+- **Lifecycle doc**: [TENANT_LIFECYCLE.md](TENANT_LIFECYCLE.md) — states, transitions, and the
+  platform surface (`/api/v1/admin/orgs/**`) that drives them, including SUSPENDED-only delete.
+- Payment processing out of scope BY DESIGN — the module is the entitlement authority; billing
+  integrates through the same admin endpoint.
 
 ## files
 Object storage behind a single S3 abstraction (AWS SDK v2).

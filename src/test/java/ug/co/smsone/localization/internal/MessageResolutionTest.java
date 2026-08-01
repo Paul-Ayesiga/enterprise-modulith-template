@@ -6,7 +6,7 @@ import java.util.Locale;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import ug.co.smsone.localization.Messages;
+import ug.co.smsone.shared.i18n.Messages;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
 /**

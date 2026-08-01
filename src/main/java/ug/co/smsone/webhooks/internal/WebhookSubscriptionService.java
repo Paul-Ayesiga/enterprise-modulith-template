@@ -39,19 +39,23 @@ class WebhookSubscriptionService {
     private final WebhookDeliveryQueue queue;
     private final WebhookProperties properties;
     private final AuditLog auditLog;
+    private final ug.co.smsone.subscription.Entitlements entitlements;
 
     WebhookSubscriptionService(WebhookSubscriptionRepository subscriptions,
             WebhookDeliveryRepository deliveries, WebhookDeliveryQueue queue, WebhookProperties properties,
-            AuditLog auditLog) {
+            AuditLog auditLog, ug.co.smsone.subscription.Entitlements entitlements) {
         this.subscriptions = subscriptions;
         this.deliveries = deliveries;
         this.queue = queue;
         this.properties = properties;
         this.auditLog = auditLog;
+        this.entitlements = entitlements;
     }
 
     @Transactional
     WebhookSubscription create(UUID orgId, String url, Set<String> eventCodes) {
+        entitlements.requireWithinLimit(orgId,
+                ug.co.smsone.subscription.EntitlementKeys.WEBHOOKS_MAX, subscriptions.countByOrgId(orgId));
         requireSafeUrl(url);
         Set<String> events = requireKnownEvents(eventCodes);
         String secret = "whsec_" + randomHex();

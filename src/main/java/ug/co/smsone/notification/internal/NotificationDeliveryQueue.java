@@ -30,9 +30,11 @@ class NotificationDeliveryQueue {
     private static final int MAX_ERROR = 1000;
 
     private final JdbcTemplate jdbc;
+    private final io.micrometer.core.instrument.MeterRegistry meters;
 
-    NotificationDeliveryQueue(JdbcTemplate jdbc) {
+    NotificationDeliveryQueue(JdbcTemplate jdbc, io.micrometer.core.instrument.MeterRegistry meters) {
         this.jdbc = jdbc;
+        this.meters = meters;
     }
 
     void enqueue(List<NewDelivery> deliveries, int maxAttempts) {
@@ -100,6 +102,15 @@ class NotificationDeliveryQueue {
             if (delivery.channel() == null) {
                 log.warn("Delivery {} has an unrecognized channel value — dead-lettering", delivery.id());
                 deadLetter(delivery.id(), "Unrecognized channel value", delivery.attempts());
+                // This give-up happens at claim time, before the worker's counter helper can see
+                // it — counted here or a bad channel rename dead-letters a whole backlog invisibly.
+                io.micrometer.core.instrument.Counter.builder("smsone.deliveries.dead_lettered")
+                        .description("Deliveries given up on, by queue and reason")
+                        .tag("queue", "notification")
+                        .tag("channel", "unknown")
+                        .tag("reason", "unknown_channel")
+                        .register(meters)
+                        .increment();
             } else {
                 deliverable.add(delivery);
             }

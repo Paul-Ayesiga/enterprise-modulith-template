@@ -54,6 +54,11 @@ class OrgPermissionCacheEvictor {
         evict(); // suspension must cut cached access immediately
     }
 
+    @ApplicationModuleListener
+    void onOrganizationDeleted(ug.co.smsone.organization.OrganizationDeleted event) {
+        evict(); // same urgency as suspension: cached grants must not outlive the tenant
+    }
+
     private void evict() {
         Cache cache = cacheManager.getCache(PermissionResolver.CACHE);
         if (cache != null) {

@@ -18,7 +18,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * (the claim must be resolved) and does nothing for platform/unscoped calls.
  */
 @Component
-@Order(0)
+@Order(-1) // after impersonation (-2) so the EFFECTIVE org lands; before rate limit (0) so 429s carry it
 public class OrgMdcFilter extends OncePerRequestFilter {
 
     public static final String MDC_KEY = "org_id";

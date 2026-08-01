@@ -40,9 +40,11 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     private static final Pattern CAMEL_BOUNDARY = Pattern.compile("(?<=[a-z0-9])(?=[A-Z])");
 
     private final ApiMetaFactory metaFactory;
+    private final ErrorDetailLocalizer localizer;
 
-    public GlobalExceptionHandler(ApiMetaFactory metaFactory) {
+    public GlobalExceptionHandler(ApiMetaFactory metaFactory, ErrorDetailLocalizer localizer) {
         this.metaFactory = metaFactory;
+        this.localizer = localizer;
     }
 
     // --- Bean validation on @RequestBody: multi-error 422 ---
@@ -86,7 +88,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         ApiMeta meta = metaFactory.create();
         ErrorCode errorCode = ex.errorCode();
         return render(errorCode, List.of(error(meta, new AtomicInteger(1), errorCode,
-                errorCode.code(), ex.detail(), ex.source())), meta);
+                errorCode.code(), localizer.localize(errorCode, ex.detail()), ex.source())), meta);
     }
 
     // --- Method-security denials: must not fall into the 500 catch-all ---

@@ -33,6 +33,14 @@ public interface ExchangeHandler {
     /** The record shape: column order for CSV, key set for JSONL — also the downloadable template. */
     List<String> header();
 
+    /**
+     * Version of {@link #header()}'s shape. Bump it when the template changes; jobs record the
+     * version they were submitted against, so a mismatch names WHICH template to re-download.
+     */
+    default int templateVersion() {
+        return 1;
+    }
+
     /** Apply one import record. Idempotent; throws {@link InvalidRecordException} on data problems. */
     ImportOutcome importRecord(ExchangeContext context, Map<String, String> record);
 

@@ -64,7 +64,9 @@ class SoftDeletePurgeJob {
             "setting",
             "feature_flag",
             "translation",
-            "document");
+            "document",
+            "exchange_schedule",
+            "org_subscription");
 
     /**
      * Bounded batch: the inner select is what the {@code idx_<table>_deleted} partial indexes (V17) were
@@ -138,8 +140,34 @@ class SoftDeletePurgeJob {
         } else if (firstFailure == null) {
             log.debug("Soft-delete purge found nothing deleted before {}", cutoff);
         }
+        sweepSearchResidue();
         if (firstFailure != null) {
             throw firstFailure;
+        }
+    }
+
+    /**
+     * Erasure must reach the search projection too: users and organizations are indexed by event
+     * with no delete event to un-index them, so a hard-purged user's email would otherwise remain
+     * admin-searchable forever — the exact residue the purge exists to remove. A reconciliation
+     * sweep (row's source no longer exists AT ALL, soft-deleted included) rather than id plumbing
+     * through the batches; documents un-index themselves on delete and are not swept here.
+     */
+    private void sweepSearchResidue() {
+        try {
+            int removed = jdbc.update("""
+                    delete from search_document sd
+                    where (sd.entity_type = 'user'
+                           and not exists (select 1 from app_user u where u.subject = sd.entity_id))
+                       or (sd.entity_type = 'organization'
+                           and not exists (select 1 from organization o where o.kc_org_id::text = sd.entity_id))
+                    """);
+            ug.co.smsone.shared.metrics.PurgeMetrics.purged(meters, "soft-delete-purge", "search_document", removed);
+            if (removed > 0) {
+                log.info("Soft-delete purge un-indexed {} search rows whose source rows are gone", removed);
+            }
+        } catch (RuntimeException ex) {
+            log.error("Search-residue sweep failed (continuing — next run retries)", ex);
         }
     }
 

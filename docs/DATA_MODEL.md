@@ -9,8 +9,9 @@ Schema ownership: Flyway owns every table (`spring.jpa.hibernate.ddl-auto: valid
 `src/main/resources/application.yaml:29`). No `spring.flyway.*` property is set anywhere in
 `src/main/resources` or `src/test/resources`, so Boot's defaults apply — enabled, scanning
 `classpath:db/migration`. There is no `schema.sql`, no test-only DDL, and no Hibernate-generated
-schema in any profile. **V1..V24 exist; V20 is the 2026-08-01 audit's index remediation, V21
-localization, V22 search, V23 document, V24 the exchange job queue; the next free number is V25.**
+schema in any profile. **V1..V26 exist; V20 is the 2026-08-01 audit's index remediation, V21
+localization, V22 search, V23 document, V24 the exchange job queue, V25 the exchange
+guideline completion (templates/schedules), V26 subscriptions; the next free number is V27.**
 
 ---
 
@@ -20,7 +21,7 @@ Four stores, each with a distinct job. Only one of them is a system of record.
 
 | Store | Role | What lives there | Why not Postgres |
 |---|---|---|---|
-| **PostgreSQL 18** | System of record | All 23 tables below: aggregates, work queues, the audit and impersonation trails, and the framework tables (Flyway history, the Modulith event registry, ShedLock) | — |
+| **PostgreSQL 18** | System of record | All 27 tables below: aggregates, work queues, the audit and impersonation trails, and the framework tables (Flyway history, the Modulith event registry, ShedLock) | — |
 | **Valkey 8** | Cache L2 + rate-limit buckets + invalidation bus | Three named caches (`setting-values`, `feature-flags`, `org-permissions`) under key prefix `smsone:cache:`, Bucket4j token buckets under `<app.rate-limit.key-prefix>:<tier-id>:<tenant\|sub\|ip>:<value>`, and the `smsone:cache:invalidations` pub/sub topic | Derived, expendable data. Every value is recomputable from Postgres; an outage degrades to L1-only or fail-open, never to data loss (ADR 0004) |
 | **SeaweedFS (S3 API)** | Object storage | Uploaded file bytes, keyed `u/<subject>/<uuid>/<sanitized-filename>` (`files/internal/FileController.newKey:132-136`) | **No database row describes an uploaded object.** The `files` module owns no table: the key encodes the owner, the object store is the index, and authorization is a namespace prefix check |
 | **DuckDB (embedded)** | OLAP marts | `mart_users_by_status`, `mart_delivery_outcomes` in the DuckDB file at `app.analytics.database-path` (`data/analytics.duckdb`). Parquet export exists as an unwired seam only — see below | Postgres stays OLTP-only. Marts are point-in-time copies rebuilt from Postgres on each report run; the `AnalyticsEngine` seam keeps ClickHouse/Trino a pure implementation swap (ADR 0006) |
@@ -31,7 +32,7 @@ Three consequences worth stating plainly, because each has bitten:
   Postgres, so `@SQLRestriction` does not apply. A report over a soft-deletable table must filter
   `deleted_at is null` itself — `USERS_BY_STATUS` does exactly that
   (`analytics/internal/AnalyticsReport.java:22`) and the enum's javadoc enumerates the
-  nine soft-deletable tables so the next report author does the same.
+  eleven soft-deletable tables so the next report author does the same.
 - **Valkey holds an authorization decision.** `org-permissions` caches the resolved permission set per
   `(orgId, subject)`. Organization status is evaluated *inside* the cached value
   (`organization/internal/PermissionResolver.java:34-41`) so a suspension plus its eviction takes
@@ -302,6 +303,12 @@ flowchart TB
     subgraph exch["exchange"]
         X1[exchange_job]
         X2[exchange_job_error]
+        X3[exchange_schedule]
+    end
+    subgraph subs["subscription"]
+        P1[plan]
+        P2[plan_entitlement]
+        P3[org_subscription]
     end
     subgraph shared["shared kernel (OPEN)"]
         K1[idempotency_key]
@@ -317,6 +324,8 @@ flowchart TB
     O2 --> O4
     W1 --> W2
     X1 --> X2
+    P1 --> P2
+    P3 --> P1
 
     I1 -. "sub" .-> O4
     O1 -. "kc_org_id" .-> O2
@@ -324,6 +333,8 @@ flowchart TB
     O1 -. "kc_org_id" .-> W1
     O1 -. "kc_org_id" .-> A1
     O1 -. "kc_org_id" .-> X1
+    O1 -. "kc_org_id" .-> X3
+    O1 -. "kc_org_id" .-> P3
     I1 -. "sub" .-> N1
     I1 -. "sub" .-> A1
     I1 -. "sub (actor + target)" .-> I2
@@ -1549,13 +1560,45 @@ marathons; fan-out is instances sharing the queue, not threads inside one). Prog
 counters + offset + the batch's error rows in ONE transaction. Handlers see at-least-once delivery
 of the uncommitted batch and are idempotent by contract (`ExchangeHandler` javadoc).
 
-#### 4.12.2 `exchange_job_error`
+#### 4.12.2 `exchange_schedule`
+
+`V25__exchange_platform_completion.sql`. Entity `exchange.internal.ExchangeSchedule`
+(soft-deletable — user-managed configuration, the `webhook_subscription` species; tenth in
+`PURGE_ORDER`). A recurring EXPORT: six-field Spring cron evaluated in UTC, fired by
+`ExchangeScheduleFiringJob` (every minute, ShedLock `exchange-schedule-fire`, due rows row-locked
+with SKIP LOCKED). Fires AS the schedule's `requester`, whose export permission is re-resolved at
+every fire — a revocation DISABLES the schedule loudly rather than letting it keep exporting.
+Imports cannot recur (no source to re-read); `V25` also stamps `handler_version` onto jobs (which
+template shape a job was submitted against) and tightens `exchange_job.org_id` to NOT NULL — the
+V24 "platform-scoped" relaxation had no submitter and a null would have NPE'd the worker.
+
+#### 4.12.3 `exchange_job_error`
 
 `V24__exchange.sql`, cascade FK to `exchange_job` — same-module FK, allowed. Row errors are
 DURABLE, not worker memory: they commit with the batch that found them, so the finalize step
 streams the COMPLETE row-addressed report even across crashes, and the `(job_id, row_num)` PK plus
 `on conflict do nothing` makes replayed batches rewrite nothing. `row_num` is the 1-based data
 record ordinal (header excluded). `error` is the curated `InvalidRecordException` message.
+
+### 4.13 Subscription module
+
+`V26__subscription.sql`. The commercial axis of a tenant, orthogonal to lifecycle status.
+
+**`plan` + `plan_entitlement`** — seeded vocabulary (`PlanSeeder`: FREE/PRO/ENTERPRISE,
+create-if-absent), NOT soft-deletable. `plan_entitlement` is an `@ElementCollection` map
+(`role_permission`'s species; cascade FK): key present with `limit_value = -1` = feature ON
+(a NEGATIVE sentinel, because Hibernate drops null-valued map entries on load), positive value =
+numeric cap, absent key = feature-off / unlimited — so ENTERPRISE carries no limit rows.
+
+**`org_subscription`** — one live row per org (partial unique on `org_id`), soft-deletable
+(eleventh in `PURGE_ORDER`); `plan_id` FK intra-module; status `ACTIVE|TRIALING|PAST_DUE|CANCELLED`;
+no row at all = the seeded FREE plan. Assigning a plan is a platform act
+(`PUT /api/v1/admin/orgs/{id}/subscription`), audited, and publishes `SubscriptionChanged`
+explicitly — the `org-entitlements` cache evicts so a DOWNGRADE bites the very next gate check.
+Consumers gate through the `subscription.Entitlements` port: `members.max` at invite,
+`webhooks.max` at subscription create, `exchange.enabled` + `exchange.schedules.max` at exchange
+submit/schedule. Payment processing is out of scope by design — this module is the entitlement
+authority; a billing integration drives the same admin endpoint.
 
 ## 5. Soft delete
 
@@ -1564,9 +1607,10 @@ Migration `V17__soft_delete.sql`. Deletion is **recorded, not executed**: the ro
 
 ### 5.1 Which tables
 
-**In scope (9).** Every `SoftDeletableEntity` table: `setting`, `feature_flag`, `app_user`,
+**In scope (11).** Every `SoftDeletableEntity` table: `setting`, `feature_flag`, `app_user`,
 `organization`, `org_role`, `membership`, `webhook_subscription` (all wired by `V17:23-29,67-73`),
-plus `translation` (`V21`) and `document` (`V23`), each born soft-deletable. Each gets `deleted_at timestamptz`, a partial
+plus `translation` (`V21`), `document` (`V23`), `exchange_schedule` (`V25`) and `org_subscription`
+(`V26`), each born soft-deletable. Each gets `deleted_at timestamptz`, a partial
 retention index, a place in `SoftDeletePurgeJob.PURGE_ORDER`, and its own `@SQLDelete` +
 `@SQLRestriction` pair on the entity.
 
@@ -1764,7 +1808,7 @@ The schema alone reads as if these cascades are live behaviour. They are not, ex
 | `V8__notification.sql` | `notification_log` + `idx_notification_log_created_at`; `in_app_notification` + `idx_in_app_notification_recipient` |
 | `V9__notification_delivery.sql` | **Drops `notification_log`.** Creates `notification_delivery` + the partial claim index. Replaces synchronous logging with a claimable durable queue |
 | `V10__identity_user.sql` | `app_user` (unique `subject`) + `idx_app_user_email` |
-| `V11__organization_rbac.sql` | `organization` (unique `kc_org_id`, `alias`), `org_role` (`uq_org_role_org_code`) + `idx_org_role_org`, `role_permission` (cascade FK), `membership` (FK to `org_role`, `uq_membership_org_user`) + `idx_membership_subject`, `idx_membership_role`. **All three of the schema's FKs come from here and V15** |
+| `V11__organization_rbac.sql` | `organization` (unique `kc_org_id`, `alias`), `org_role` (`uq_org_role_org_code`) + `idx_org_role_org`, `role_permission` (cascade FK), `membership` (FK to `org_role`, `uq_membership_org_user`) + `idx_membership_subject`, `idx_membership_role`. **The schema's first three FKs come from here and V15; V24 (`exchange_job_error`) and V26 (`plan_entitlement`, `org_subscription`) bring the total to six, all intra-module** |
 | `V12__notification_delivery_throttle.sql` | Adds `notification_delivery.throttled_since`, so throttle-max-age measures *continuous* throttled time rather than age-since-enqueue |
 | `V13__audit_log.sql` | `audit_log` (with `detail varchar(500)`) + `idx_audit_created`, `idx_audit_org_created`, `idx_audit_action` |
 | `V14__audit_log_state.sql` | **Drops `audit_log.detail`**; adds `from_state`/`to_state varchar(1000)`. Turns the trail into a full who/when/where/what/from→to record |
@@ -1778,8 +1822,10 @@ The schema alone reads as if these cascades are live behaviour. They are not, ex
 | `V22__search.sql` | `pg_trgm` extension + `search_document` — a rebuildable projection (NOT soft-deletable, the header argues it), generated `tsv` column, GIN on `tsv`, trigram GIN on `title`, org filter index |
 | `V23__document.sql` | `document` — soft-deletable catalog over files-held keys; partial unique on `storage_key`; org/personal listing indexes. The header states delete's bytes-now/row-soft asymmetry |
 | `V24__exchange.sql` | `exchange_job` (the §7-discipline job queue: fenced `attempts`, `next_offset` resume point, heartbeat `locked_at`, partial claim/terminal indexes) + `exchange_job_error` (durable row errors, PK `(job_id, row_num)`, cascade FK). Neither soft-deletable — queue species |
+| `V25__exchange_platform_completion.sql` | `exchange_job.handler_version` (template versioning); `org_id` tightened to NOT NULL (the V24 relaxation had no submitter and would NPE the worker); `exchange_schedule` — soft-deletable recurring exports with due/org/retention indexes |
+| `V26__subscription.sql` | `plan` (+ unique `code`) and `plan_entitlement` (cascade FK, `@ElementCollection` map; feature-on stored as -1 — Hibernate drops null map values); `org_subscription` — soft-deletable, partial unique on live `org_id`, `plan_id` FK. Brings the schema's FK total to six, all intra-module |
 
-**The next free migration number is V25.**
+**The next free migration number is V27.**
 
 ---
 

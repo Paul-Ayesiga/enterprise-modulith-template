@@ -57,6 +57,7 @@ class DocumentApiTest extends AbstractIntegrationTest {
     void orgUploadListDownloadDeleteRoundTrip() throws Exception {
         UUID orgId = UUID.randomUUID();
         seedMember(orgId, "doc-manager", true);
+        given(storage.exists(anyString())).willReturn(true); // download's dead-URL guard
         given(storage.presignGet(anyString(), any())).willReturn(URI.create("http://storage.local/signed").toURL());
 
         MvcResult created = mockMvc.perform(multipart("/api/v1/orgs/{orgId}/documents", orgId)
@@ -119,10 +120,15 @@ class DocumentApiTest extends AbstractIntegrationTest {
         mockMvc.perform(multipart("/api/v1/orgs/{orgId}/documents", orgId)
                         .file(pdf("nope.pdf")).with(member(orgId, "doc-reader")))
                 .andExpect(status().isForbidden());
+        // Both halves of the name: delete is gated at @PreAuthorize, before any lookup.
+        mockMvc.perform(delete("/api/v1/orgs/{orgId}/documents/{id}", orgId, UUID.randomUUID())
+                        .with(member(orgId, "doc-reader")))
+                .andExpect(status().isForbidden());
     }
 
     @Test
     void personalDocumentsTierByBlastRadius() throws Exception {
+        given(storage.exists(anyString())).willReturn(true); // download's dead-URL guard
         given(storage.presignGet(anyString(), any())).willReturn(URI.create("http://storage.local/p").toURL());
         MvcResult created = mockMvc.perform(multipart("/api/v1/documents")
                         .file(pdf("mine.pdf"))
@@ -130,8 +136,9 @@ class DocumentApiTest extends AbstractIntegrationTest {
                 .andExpect(status().isCreated()).andReturn();
         String id = JsonPath.read(created.getResponse().getContentAsString(), "$.data.id");
 
+        // 404, not 403: a foreign personal id must answer exactly like an unknown one (no oracle).
         mockMvc.perform(get("/api/v1/documents/{id}", id).with(jwt().jwt(t -> t.subject("intruder"))))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
         mockMvc.perform(get("/api/v1/documents/{id}", id)
                         .with(jwt().jwt(t -> t.subject("support-1"))
                                 .authorities(new SimpleGrantedAuthority("ROLE_platform-support"))))

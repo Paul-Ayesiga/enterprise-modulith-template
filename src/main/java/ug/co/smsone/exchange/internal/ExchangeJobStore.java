@@ -49,6 +49,7 @@ class ExchangeJobStore {
             rs.getString("requester"),
             rs.getString("job_type"),
             rs.getString("handler"),
+            rs.getInt("handler_version"),
             rs.getString("format"),
             rs.getString("status"),
             rs.getString("source_key"),
@@ -72,14 +73,14 @@ class ExchangeJobStore {
         this.clock = clock;
     }
 
-    UUID submit(UUID orgId, String requester, String jobType, String handler, String format,
-            String sourceKey) {
+    UUID submit(UUID orgId, String requester, String jobType, String handler, int handlerVersion,
+            String format, String sourceKey) {
         UUID id = UUID.randomUUID();
         jdbc.update("""
-                insert into exchange_job (id, org_id, requester, job_type, handler, format, status,
-                                          source_key, created_at)
-                values (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)
-                """, id, orgId, requester, jobType, handler, format, sourceKey,
+                insert into exchange_job (id, org_id, requester, job_type, handler, handler_version,
+                                          format, status, source_key, created_at)
+                values (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)
+                """, id, orgId, requester, jobType, handler, handlerVersion, format, sourceKey,
                 Timestamp.from(clock.instant()));
         return id;
     }
@@ -106,6 +107,18 @@ class ExchangeJobStore {
                 returning j.*
                 """, JOB, staleLock.toMillis());
         return claimed.stream().findFirst();
+    }
+
+    /**
+     * Mid-batch heartbeat: re-stamps the lock WITHOUT touching progress, so a batch whose records
+     * do slow remote work (the members handler's provisioning round-trips) cannot silently exceed
+     * the stale-lock and get double-claimed. False = the claim was lost — stop working immediately.
+     */
+    boolean heartbeat(UUID id, int attempts) {
+        return jdbc.update("""
+                update exchange_job set locked_at = now(), updated_at = now()
+                where id = ? and attempts = ? and status in ('VALIDATING', 'PROCESSING')
+                """, id, attempts) == 1;
     }
 
     /** Fenced status hop (e.g. PENDING→VALIDATING→PROCESSING). False = the claim was lost. */
@@ -159,12 +172,19 @@ class ExchangeJobStore {
                 """, status, resultKey, errorReportKey, truncate(lastError), id, attempts) == 1;
     }
 
-    /** Retryable failure: release the lock so the next poll reclaims and RESUMES from next_offset. */
-    void releaseForRetry(UUID id, int attempts, String lastError) {
+    /**
+     * Retryable failure: release the claim so a later poll reclaims and RESUMES from next_offset —
+     * after {@code backoff}. The claim predicate reads {@code locked_at < now() - staleLock}, so
+     * "claimable at now + backoff" is written as {@code locked_at = now() + backoff - staleLock};
+     * one column serves as both the lock and the retry schedule.
+     */
+    void releaseForRetry(UUID id, int attempts, String lastError, Duration backoff, Duration staleLock) {
         int updated = jdbc.update("""
-                update exchange_job set locked_at = null, last_error = ?, updated_at = now()
+                update exchange_job
+                set locked_at = now() + (? * interval '1 millisecond') - (? * interval '1 millisecond'),
+                    last_error = ?, updated_at = now()
                 where id = ? and attempts = ? and status in ('VALIDATING', 'PROCESSING')
-                """, truncate(lastError), id, attempts);
+                """, backoff.toMillis(), staleLock.toMillis(), truncate(lastError), id, attempts);
         if (updated == 0) {
             log.warn("Stale release for exchange job {} ignored (row was re-claimed)", id);
         }
@@ -183,12 +203,21 @@ class ExchangeJobStore {
                 .stream().findFirst();
     }
 
-    /** The finalize step streams the COMPLETE, ordered report from here — memory never holds it. */
+    /**
+     * The finalize step streams the COMPLETE, ordered report from here. Streaming is real, not
+     * claimed: pgjdbc only honors fetchSize inside a transaction with a forward-only cursor, so
+     * this runs in one — otherwise a 100k-error report would materialize entirely in heap first.
+     */
     void forEachError(UUID id, ErrorRowConsumer consumer) {
-        jdbc.query("select row_num, error from exchange_job_error where job_id = ? order by row_num",
-                rs -> {
-                    consumer.accept(rs.getLong("row_num"), rs.getString("error"));
-                }, id);
+        transactions.executeWithoutResult(tx -> jdbc.query(con -> {
+            PreparedStatement ps = con.prepareStatement(
+                    "select row_num, error from exchange_job_error where job_id = ? order by row_num");
+            ps.setFetchSize(500);
+            ps.setObject(1, id);
+            return ps;
+        }, rs -> {
+            consumer.accept(rs.getLong("row_num"), rs.getString("error"));
+        }));
     }
 
     <T> WindowedResult<T> list(UUID orgId, CursorPageRequest page,

@@ -54,10 +54,18 @@ class CsvCodec implements FormatCodec {
         return new RecordReader() {
             @Override
             public Map<String, String> next() {
-                if (!records.hasNext()) {
-                    return null;
+                CSVRecord record;
+                try {
+                    if (!records.hasNext()) {
+                        return null;
+                    }
+                    record = records.next();
+                } catch (RuntimeException ex) {
+                    // commons-csv surfaces an unclosed quote / bad character mid-file as its own
+                    // unchecked types — a FILE problem, same species as a bad header, never infra.
+                    throw new StructureViolation("The CSV is malformed (an unclosed quote or "
+                            + "invalid character) — fix the file and submit it again.");
                 }
-                CSVRecord record = records.next();
                 Map<String, String> map = new LinkedHashMap<>();
                 for (String column : header) {
                     map.put(column, record.isMapped(column) && record.isSet(column)

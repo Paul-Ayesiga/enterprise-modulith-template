@@ -3,7 +3,7 @@ package ug.co.smsone.localization.internal;
 import java.text.MessageFormat;
 import java.util.Locale;
 import org.springframework.stereotype.Component;
-import ug.co.smsone.localization.Messages;
+import ug.co.smsone.shared.i18n.Messages;
 
 /**
  * The {@link Messages} port: walks the fallback chain over cached bundles. At most three bundle
@@ -26,9 +26,18 @@ class MessagesImpl implements Messages {
         if (text == null) {
             text = key; // the contract's last step: a catalog gap renders, it never throws
         }
-        return args.length == 0 ? text : new MessageFormat(text, locale == null
-                ? Locale.forLanguageTag(properties.defaultLocale())
-                : locale).format(args);
+        if (args.length == 0) {
+            return text;
+        }
+        try {
+            return new MessageFormat(text, locale == null
+                    ? Locale.forLanguageTag(properties.defaultLocale())
+                    : locale).format(args);
+        } catch (IllegalArgumentException ex) {
+            // A malformed pattern (unbalanced brace, bad argument) is a CONTENT problem — the
+            // port's never-throws contract holds by rendering the raw text instead.
+            return text;
+        }
     }
 
     private String lookup(String key, Locale locale) {

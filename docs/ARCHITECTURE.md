@@ -19,6 +19,7 @@ flowchart TB
         search["search\nPostgres FTS projection · SearchIndex port"]
         document["document\nmanaged-file catalog · Documents port"]
         exchange["exchange\nimport/export job platform · ExchangeHandler SPI"]
+        subscription["subscription\nplan catalog · Entitlements gating port"]
         files["files\nFileStorageProvider → S3"]
         scheduler["scheduler\nShedLock cron jobs\n(+ soft-delete retention purge)"]
         analytics["analytics\nAnalyticsEngine → DuckDB"]
@@ -50,6 +51,10 @@ flowchart TB
     document --> search
     exchange --> shared
     exchange --> files
+    subscription --> shared
+    organization --> subscription
+    webhooks --> subscription
+    exchange --> subscription
     organization --> exchange
     exchange -. "artifacts via shared\nDocuments port" .-> document
 
@@ -77,8 +82,9 @@ flowchart TB
 ## Request path (write with idempotency)
 
 Filter order is load-bearing, not incidental — see AGENTS.md §5.5: `ImpersonationFilter` at
-`@Order(-2)` swaps the principal **before** rate limiting (`-1`), idempotency (`0`) and the
-provisioning gate (`1`), so one request has one effective identity end to end.
+`@Order(-2)` swaps the principal **before** the org-MDC filter (`-1`, so every later log line and
+429 carries the EFFECTIVE tenant), rate limiting (`0`), idempotency (`1`) and the provisioning
+gate (`2`) — one request, one effective identity, end to end.
 
 ```mermaid
 sequenceDiagram

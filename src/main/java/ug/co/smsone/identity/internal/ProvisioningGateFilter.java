@@ -31,7 +31,7 @@ import ug.co.smsone.shared.web.RequestPaths;
  * their owners — and does <em>not</em> activate them: see {@link #decide}.
  */
 @Component
-@Order(1)
+@Order(2) // after idempotency (1): a replayed response short-circuits before the gate re-runs
 @ConditionalOnProperty(name = "app.provisioning.gate-enabled", havingValue = "true", matchIfMissing = true)
 class ProvisioningGateFilter extends OncePerRequestFilter {
 

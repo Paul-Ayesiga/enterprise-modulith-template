@@ -88,7 +88,12 @@ class OrgDocumentController {
         documents.delete(documents.requireInOrg(orgId, id));
     }
 
-    /** Shared store step: mint the key, push the bytes through the files port, build the metadata. */
+    /**
+     * Shared store step: mint the key, VALIDATE the metadata, then push the bytes. The metadata is
+     * built before the upload on purpose — {@code NewDocument}'s length checks throwing after the
+     * put would orphan an unreachable object on every over-long filename, and turn a 422's worth
+     * of input into a 500.
+     */
     NewDocument store(MultipartFile file, String namespace, UUID orgId, String ownerSubject) {
         if (file.isEmpty()) {
             throw new ValidationException("Uploaded file is empty.", ApiSource.parameter("file"));
@@ -96,14 +101,20 @@ class OrgDocumentController {
         String name = file.getOriginalFilename() == null || file.getOriginalFilename().isBlank()
                 ? "document" : file.getOriginalFilename();
         String safe = name.replaceAll("[^A-Za-z0-9._-]", "_");
+        if (safe.length() > 200) {
+            throw new ValidationException("File name is too long (200 characters max).",
+                    ApiSource.parameter("file"));
+        }
         String key = "doc/" + namespace + "/" + UUID.randomUUID() + "/" + safe;
         String contentType = file.getContentType() == null ? "application/octet-stream" : file.getContentType();
-        try {
-            storage.put(key, file.getInputStream(), file.getSize(), contentType);
+        NewDocument meta = new NewDocument(orgId, ownerSubject, key, safe, contentType,
+                file.getSize(), "UPLOAD");
+        try (java.io.InputStream in = file.getInputStream()) {
+            storage.put(key, in, file.getSize(), contentType);
         } catch (java.io.IOException ex) {
             throw new ValidationException("Could not read the uploaded file.", ApiSource.parameter("file"));
         }
-        return new NewDocument(orgId, ownerSubject, key, safe, contentType, file.getSize(), "UPLOAD");
+        return meta;
     }
 
     static ResourceObject toResource(Document document) {

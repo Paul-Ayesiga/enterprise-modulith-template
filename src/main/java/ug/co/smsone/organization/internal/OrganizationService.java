@@ -29,15 +29,57 @@ class OrganizationService {
     private final AuditLog auditLog;
     private final TransactionTemplate transactionTemplate;
 
+    private final org.springframework.context.ApplicationEventPublisher events;
+
     OrganizationService(OrganizationRepository organizations, KeycloakOrgAdminGateway keycloakOrg,
             UserProvisioning userProvisioning, OrgProjectionWriter projectionWriter, AuditLog auditLog,
-            TransactionTemplate transactionTemplate) {
+            TransactionTemplate transactionTemplate,
+            org.springframework.context.ApplicationEventPublisher events) {
         this.organizations = organizations;
         this.keycloakOrg = keycloakOrg;
         this.userProvisioning = userProvisioning;
         this.projectionWriter = projectionWriter;
         this.auditLog = auditLog;
         this.transactionTemplate = transactionTemplate;
+        this.events = events;
+    }
+
+    private static final org.springframework.data.domain.Sort PLATFORM_SORT =
+            org.springframework.data.domain.Sort.by(
+                    org.springframework.data.domain.Sort.Order.desc("createdAt"),
+                    org.springframework.data.domain.Sort.Order.desc("id"));
+
+    /** The operator's view: every tenant, newest first, optionally narrowed by status. */
+    org.springframework.data.domain.Window<Organization> platformList(OrganizationStatus status,
+            ug.co.smsone.shared.web.CursorPageRequest page) {
+        return organizations.findBy(
+                (root, query, cb) -> status == null ? cb.conjunction() : cb.equal(root.get("status"), status),
+                query -> query.limit(page.size()).sortBy(PLATFORM_SORT)
+                        .scroll(page.scrollPosition(PLATFORM_SORT)));
+    }
+
+    /**
+     * Tenant deletion, the lifecycle's terminal step: SUSPENDED first, by force — suspension is the
+     * reversible "are you sure" that already cut every member's access, so delete never surprises a
+     * live tenant. Soft like every aggregate (restorable until the retention purge); memberships
+     * and roles stay in place under it so an un-delete restores a working org. The Keycloak org is
+     * kept — see {@link ug.co.smsone.organization.OrganizationDeleted}.
+     */
+    void delete(UUID kcOrgId) {
+        transactionTemplate.executeWithoutResult(tx -> {
+            Organization organization = require(kcOrgId);
+            if (organization.getStatus() != OrganizationStatus.SUSPENDED) {
+                throw new ug.co.smsone.shared.error.ConflictException(
+                        "Suspend the organization first — deletion is only allowed from SUSPENDED.");
+            }
+            organizations.delete(organization); // soft: @SQLDelete stamps deleted_at
+            // A delete fires no @DomainEvents — publish explicitly (evicts permission caches,
+            // fans out the org.deleted webhook).
+            events.publishEvent(new ug.co.smsone.organization.OrganizationDeleted(
+                    kcOrgId, java.time.Instant.now()));
+            auditLog.record("organization.deleted", kcOrgId, organization.getAlias(),
+                    OrganizationStatus.SUSPENDED.name(), null);
+        });
     }
 
     /**

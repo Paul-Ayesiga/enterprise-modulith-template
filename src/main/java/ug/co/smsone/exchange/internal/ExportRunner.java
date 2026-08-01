@@ -92,8 +92,11 @@ class ExportRunner {
                     == ExchangeJobStore.Progress.LOST_CLAIM) {
                 return; // another claimant re-exports; this artifact stays as an unreferenced document
             }
-            metrics.records(job.handler(), "exported", written.get());
-            store.markTerminal(job.id(), job.attempts(), ExchangeJob.COMPLETED, key, null, null);
+            // Counted only if THIS attempt wins the terminal write — a re-exported file after a
+            // crash-between-writes must not double-count its records.
+            if (store.markTerminal(job.id(), job.attempts(), ExchangeJob.COMPLETED, key, null, null)) {
+                metrics.records(job.handler(), "exported", written.get());
+            }
         } finally {
             Files.deleteIfExists(temp);
         }
@@ -107,7 +110,8 @@ class ExportRunner {
                             + "error. Quote job id " + job.id() + " to support.");
         } else {
             store.releaseForRetry(job.id(), job.attempts(),
-                    "A system error interrupted the export; it will restart automatically.");
+                    "A system error interrupted the export; it will restart automatically.",
+                    config.retryBackoff(job.attempts()), config.staleLock());
         }
     }
 }

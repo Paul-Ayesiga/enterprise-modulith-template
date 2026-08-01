@@ -10,16 +10,17 @@
       "id": 1,
       "type": "timeseries",
       "title": "HTTP p95 latency by route (5m)",
+      "description": "Micrometer's http.server.requests timer over OTLP (milliseconds base unit); buckets come from management.metrics.distribution.percentiles-histogram.",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.95, sum by (http_route, le) (rate(http_server_request_duration_seconds_bucket[5m])))",
-          "legendFormat": "{{http_route}}"
+          "expr": "histogram_quantile(0.95, sum by (uri, le) (rate(http_server_requests_milliseconds_bucket[5m])))",
+          "legendFormat": "{{uri}}"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] }
     },
     {
       "id": 2,

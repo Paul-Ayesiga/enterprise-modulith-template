@@ -22,14 +22,18 @@ public class EnvelopeErrorWriter {
 
     private final ObjectMapper objectMapper;
     private final ApiMetaFactory metaFactory;
+    private final ug.co.smsone.shared.error.ErrorDetailLocalizer localizer;
 
-    public EnvelopeErrorWriter(ObjectMapper objectMapper, ApiMetaFactory metaFactory) {
+    public EnvelopeErrorWriter(ObjectMapper objectMapper, ApiMetaFactory metaFactory,
+            ug.co.smsone.shared.error.ErrorDetailLocalizer localizer) {
         this.objectMapper = objectMapper;
         this.metaFactory = metaFactory;
+        this.localizer = localizer;
     }
 
     public void write(HttpServletRequest request, HttpServletResponse response, ErrorCode errorCode,
             String detail, ApiSource source) throws IOException {
+        detail = localizer.localize(errorCode, detail);
         ApiMeta meta = metaFactory.create();
         response.setStatus(errorCode.httpStatus().value());
         // JSON is UTF-8 on the wire (RFC 8259); without this the servlet writer defaults to

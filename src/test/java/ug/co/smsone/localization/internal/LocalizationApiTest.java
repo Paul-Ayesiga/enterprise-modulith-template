@@ -58,6 +58,26 @@ class LocalizationApiTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void errorDetailsLocalizeThroughTheCatalogByAcceptLanguage() throws Exception {
+        // The error pipeline resolves "error.<code>" per request locale; a catalog gap keeps the
+        // author's English detail — additive, so this seeds French and asserts both directions.
+        mockMvc.perform(adminPut("fr", "error.resource_not_found", "Ressource introuvable."))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/v1/translations/{locale}/{key}", "en", "missing." + UUID.randomUUID())
+                        .with(jwt())
+                        .header("Accept-Language", "fr"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errors[0].detail").value("Ressource introuvable."));
+
+        mockMvc.perform(get("/api/v1/translations/{locale}/{key}", "en", "missing." + UUID.randomUUID())
+                        .with(jwt())
+                        .header("Accept-Language", "de"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errors[0].detail").value("Translation not found."));
+    }
+
+    @Test
     void aNonAdminCannotWrite() throws Exception {
         mockMvc.perform(put("/api/v1/translations/en/api.denied")
                         .with(jwt())

@@ -25,8 +25,8 @@ class SearchPerformanceTest extends AbstractIntegrationTest {
     private static final int ORGS = 20;
     private static final int QUERIES = 50;
     // The assertions are regression TRIPWIRES with headroom for a shared container under full-suite
-    // load; the printed figures are the benchmark (standalone on the reference container: p50 16ms,
-    // p95 20ms). A tight p95 here would flake on neighbors, not on search.
+    // load; the printed figures are the benchmark (standalone on the reference container: ~p50 20ms,
+    // ~p95 35ms). A tight p95 here would flake on neighbors, not on search.
     private static final long P50_BUDGET_MS = 50;
     private static final long P95_BUDGET_MS = 150;
     /** Bump when the corpus shape changes — stale rows from an old shape must be reseeded. */

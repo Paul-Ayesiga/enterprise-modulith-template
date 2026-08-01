@@ -127,6 +127,6 @@ class ExchangeResumeTest extends AbstractIntegrationTest {
         String key = "exch/o/" + orgId + "/test/source.csv";
         storage.objects.put(key, csv.toString().getBytes(StandardCharsets.UTF_8));
         return store.submit(orgId, "requester-1", ExchangeJob.IMPORT,
-                ExchangeTestSupport.CountingExchangeHandler.ID, "CSV", key);
+                ExchangeTestSupport.CountingExchangeHandler.ID, 1, "CSV", key);
     }
 }

@@ -38,6 +38,11 @@ tags:
     \ state, platform-admin. The same keys are readable by any authenticated caller\
     \ under Shared · Settings & flags — same paths, different method, different authority,\
     \ which is why one controller lands in two groups."
+- name: Platform · Billing & plans
+  description: "The commercial axis of a tenant: the seeded plan catalogue and each\
+    \ org's subscription. Reading is platform-support; assigning a plan is platform-admin,\
+    \ audited, and bites the very next entitlement gate. A tenant reads its own state\
+    \ under Organization · Profile's surface."
 - name: Platform · Ops
   description: "Running the platform: scheduler lock state (proof that clustered jobs\
     \ fire once), the curated analytics reports, and the cross-tenant audit trail.\
@@ -68,8 +73,12 @@ tags:
     \ without the chosen handler's own permission — the handler is picked at runtime,\
     \ so no annotation can name that gate. Job metadata reads on org:read; the artifacts\
     \ (source, error report, result) answer only to the requester or a holder of that\
-    \ same handler permission. The handler catalogue itself is Shared · Reference\
-    \ data."
+    \ same handler permission. The handler catalogue itself is Shared · Exchange catalog."
+- name: Organization · Exchange schedules
+  description: "Recurring exports on a cron (UTC), firing as their creator — whose\
+    \ export permission is re-checked at every fire, so a revocation stops the schedule\
+    \ loudly instead of letting it keep exporting. One-off jobs and their artifacts\
+    \ are Organization · Exchange."
 - name: Shared · Me & notifications
   description: "The caller's own identity and in-app notifications; no axis owns them\
     \ because a tenant member and a platform operator both legitimately arrive here.\
@@ -88,6 +97,10 @@ tags:
   description: Fixed vocabularies any authenticated caller may read — today the permission
     catalogue that Organization · Roles is composed from. A new shared read lands
     here until it earns a group of its own.
+- name: Shared · Exchange catalog
+  description: "The exchange handler catalogue and its downloadable templates — which\
+    \ datasets can move, what each file must look like, which permissions gate it.\
+    \ Readable by any authenticated caller; running one is Organization · Exchange."
 paths:
   /api/v1/translations/{locale}/{key}:
     get:
@@ -690,6 +703,67 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/orgs/{orgId}/subscription:
+    get:
+      tags:
+      - Platform · Billing & plans
+      summary: Inspect a tenant's subscription as the platform
+      operationId: get_5
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+    put:
+      tags:
+      - Platform · Billing & plans
+      summary: Assign a tenant's plan
+      description: "Upserts the subscription onto the named plan (`FREE`, `PRO`, `ENTERPRISE`\
+        \ as seeded) in good standing. Takes effect on the very next gate check —\
+        \ the entitlement cache is evicted through `SubscriptionChanged`, which also\
+        \ fans out `org.subscription_changed` to the tenant's webhooks. Audited."
+      operationId: assign
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssignRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/orgs:
     post:
       tags:
@@ -1105,6 +1179,109 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}/exchange/schedules:
+    get:
+      tags:
+      - Organization · Exchange schedules
+      summary: List the organization's recurring exports
+      operationId: list_3
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: "page[size]"
+        in: query
+        description: "Items per page, 1–100. Defaults to 20."
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 20
+          maximum: 100
+          minimum: 1
+      - name: "page[after]"
+        in: query
+        description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
+          Omit for the first page.
+        required: false
+        schema:
+          type: string
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/WindowedResultResourceObject"
+    post:
+      tags:
+      - Organization · Exchange schedules
+      summary: Create a recurring export
+      description: "Fires the handler's export on a six-field Spring cron (UTC), running\
+        \ as YOU — if your export permission is later revoked, the schedule disables\
+        \ itself rather than keep exporting. Exports only: an import has no source\
+        \ to re-read."
+      operationId: create_3
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/orgs/{orgId}/exchange/jobs/{id}/cancel:
     post:
       tags:
@@ -1276,7 +1453,7 @@ paths:
       tags:
       - Organization · Profile
       summary: List the organization's documents
-      operationId: list_3
+      operationId: list_4
       parameters:
       - name: orgId
         in: path
@@ -1518,7 +1695,7 @@ paths:
       tags:
       - Shared · Reference data
       summary: List your personal documents
-      operationId: list_4
+      operationId: list_5
       parameters:
       - name: user
         in: query
@@ -1619,7 +1796,7 @@ paths:
         \ `actor=<subject>` names another operator's instead and requires platform-admin.\
         \ `active` is computed when the row is read, so a lapsed session reports inactive\
         \ with no sweep job involved."
-      operationId: list_5
+      operationId: list_6
       parameters:
       - name: actor
         in: query
@@ -1691,7 +1868,7 @@ paths:
       tags:
       - Organization · Profile
       summary: Get an organization
-      operationId: get_5
+      operationId: get_6
       parameters:
       - name: orgId
         in: path
@@ -1769,7 +1946,7 @@ paths:
       tags:
       - Shared · Reference data
       summary: "List translations, optionally for one locale"
-      operationId: list_6
+      operationId: list_7
       parameters:
       - name: locale
         in: query
@@ -1821,7 +1998,7 @@ paths:
       tags:
       - Shared · Settings & flags
       summary: List platform settings
-      operationId: list_7
+      operationId: list_8
       parameters:
       - name: "page[size]"
         in: query
@@ -1872,7 +2049,7 @@ paths:
         \ held) its lock and until when — the evidence that a job fires once cluster-wide.\
         \ Read-only: there is no endpoint to trigger a job, they are time-driven by\
         \ design."
-      operationId: list_8
+      operationId: list_9
       parameters:
       - name: X-Impersonate
         in: header
@@ -1907,7 +2084,7 @@ paths:
       description: The fixed vocabulary for composing custom roles — the `code` values
         are what the role endpoints accept. The catalog is global and identical for
         every organization.
-      operationId: list_9
+      operationId: list_10
       parameters:
       - name: X-Impersonate
         in: header
@@ -1997,6 +2174,44 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/WindowedResultResourceObject"
+  /api/v1/orgs/{orgId}/subscription:
+    get:
+      tags:
+      - Organization · Profile
+      summary: Read the organization's subscription and entitlements
+      description: "No subscription row means the seeded FREE plan. `entitlements`:\
+        \ null value = feature on, number = cap, absent key = off/unlimited."
+      operationId: get_7
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/orgs/{orgId}/search:
     get:
       tags:
@@ -2069,7 +2284,7 @@ paths:
       tags:
       - Organization · Exchange
       summary: List the organization's exchange jobs
-      operationId: list_10
+      operationId: list_11
       parameters:
       - name: orgId
         in: path
@@ -2122,7 +2337,7 @@ paths:
       tags:
       - Organization · Exchange
       summary: Get one exchange job with its progress
-      operationId: get_6
+      operationId: get_8
       parameters:
       - name: orgId
         in: path
@@ -2404,7 +2619,7 @@ paths:
       tags:
       - Shared · Me & notifications
       summary: List your in-app notifications
-      operationId: list_11
+      operationId: list_12
       parameters:
       - name: "page[size]"
         in: query
@@ -2559,7 +2774,7 @@ paths:
       tags:
       - Shared · Settings & flags
       summary: List feature flags
-      operationId: list_12
+      operationId: list_13
       parameters:
       - name: "page[size]"
         in: query
@@ -2604,12 +2819,12 @@ paths:
   /api/v1/exchange/handlers:
     get:
       tags:
-      - Shared · Reference data
+      - Shared · Exchange catalog
       summary: List the available exchange handlers
       description: "Each handler names the dataset it moves, the permissions its imports\
-        \ and exports require, and `header` — the exact CSV column order (or JSONL\
-        \ key set) its files use. `header` doubles as the import template."
-      operationId: list_13
+        \ and exports require, `header` — the exact column order its files use — and\
+        \ the current `templateVersion`. Download a ready-to-fill file from `/handlers/{id}/template`."
+      operationId: list_14
       parameters:
       - name: X-Impersonate
         in: header
@@ -2636,6 +2851,51 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ResourceObject"
+  /api/v1/exchange/handlers/{id}/template:
+    get:
+      tags:
+      - Shared · Exchange catalog
+      summary: Download a handler's import template
+      description: "An empty, correctly-headed file in the requested `format` (default\
+        \ CSV) — fill it and submit it back. The filename carries the template version,\
+        \ so a header mismatch on import names exactly which file to re-download."
+      operationId: template
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: format
+        in: query
+        required: false
+        schema:
+          type: string
+          default: CSV
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: string
+                format: byte
   /api/v1/documents/{id}:
     get:
       tags:
@@ -2859,7 +3119,7 @@ paths:
       tags:
       - Platform · Users & impersonation
       summary: List provisioned users across the platform
-      operationId: list_14
+      operationId: list_15
       parameters:
       - name: "page[size]"
         in: query
@@ -2946,6 +3206,168 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/WindowedResultResourceObject"
+  /api/v1/admin/plans:
+    get:
+      tags:
+      - Platform · Billing & plans
+      summary: List the plan catalog
+      description: "Seeded vocabulary, rank-ordered. `entitlements` uses the module's\
+        \ encoding: null value = feature on, number = cap, absent key = off/unlimited."
+      operationId: plans
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/orgs:
+    get:
+      tags:
+      - Platform · Organizations
+      summary: List every organization on the platform
+      description: Newest first; narrow with `status` (ACTIVE or SUSPENDED).
+      operationId: list_16
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: "page[size]"
+        in: query
+        description: "Items per page, 1–100. Defaults to 20."
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 20
+          maximum: 100
+          minimum: 1
+      - name: "page[after]"
+        in: query
+        description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
+          Omit for the first page.
+        required: false
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/WindowedResultResourceObject"
+  /api/v1/admin/orgs/{orgId}:
+    get:
+      tags:
+      - Platform · Organizations
+      summary: Inspect one organization as the platform
+      operationId: get_9
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+    delete:
+      tags:
+      - Platform · Organizations
+      summary: Delete an organization
+      description: "Terminal lifecycle step, `platform-admin`, and only from SUSPENDED\
+        \ (409 otherwise) — suspension is the reversible step that already cut access.\
+        \ The row soft-deletes and is restorable until the retention purge; the Keycloak\
+        \ organization is kept (see the lifecycle doc)."
+      operationId: delete_6
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "204":
+          description: No Content
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+  /api/v1/admin/orgs/{orgId}/members:
+    get:
+      tags:
+      - Platform · Organizations
+      summary: List an organization's members as the platform
+      description: "The support view of a tenant's roster — subjects and role codes,\
+        \ read-only. Managing members stays a tenant action (or an impersonation session's)."
+      operationId: listMembers
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: "page[size]"
+        in: query
+        description: "Items per page, 1–100. Defaults to 20."
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 20
+          maximum: 100
+          minimum: 1
+      - name: "page[after]"
+        in: query
+        description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
+          Omit for the first page.
+        required: false
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/WindowedResultResourceObject"
   /api/v1/orgs/{orgId}/members/{subject}:
     delete:
       tags:
@@ -2968,6 +3390,51 @@ paths:
         required: true
         schema:
           type: string
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "204":
+          description: No Content
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+  /api/v1/orgs/{orgId}/exchange/schedules/{id}:
+    delete:
+      tags:
+      - Organization · Exchange schedules
+      summary: Delete a recurring export
+      description: "Allowed to its creator, or to anyone holding the handler's export\
+        \ permission."
+      operationId: delete_7
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
       - name: X-Impersonate
         in: header
         description: "Run this request as the target of an impersonation session (its\
@@ -3093,6 +3560,11 @@ components:
           type: string
       required:
       - enabled
+    AssignRequest:
+      type: object
+      properties:
+        plan:
+          type: string
     CreateOrganizationRequest:
       type: object
       properties:
@@ -3173,6 +3645,15 @@ components:
       required:
       - email
       - roleCode
+    CreateRequest:
+      type: object
+      properties:
+        handler:
+          type: string
+        format:
+          type: string
+        cron:
+          type: string
     CurrentUser:
       type: object
       properties:

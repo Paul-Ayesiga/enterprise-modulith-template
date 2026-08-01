@@ -36,7 +36,7 @@ import ug.co.smsone.shared.web.RequestPaths;
  * Ordered after the security chain — unauthenticated requests never claim keys.
  */
 @Component
-@Order(0)
+@Order(1) // rate limit (0) first — a replayed response must still spend a token; MDC (-1) covers replay logs
 public class IdempotencyFilter extends OncePerRequestFilter {
 
     public static final String KEY_HEADER = "Idempotency-Key";

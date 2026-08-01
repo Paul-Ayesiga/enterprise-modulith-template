@@ -19,6 +19,7 @@ _Others_
 * `u.c.s.s.cache.TwoLevelCacheManager`
 * `u.c.s.s.config.AsyncConfig`
 * `u.c.s.s.config.ClockConfig`
+* `u.c.s.s.error.ErrorDetailLocalizer`
 * `u.c.s.s.error.GlobalExceptionHandler`
 * `u.c.s.s.events.EventInbox`
 * `u.c.s.s.idempotency.IdempotencyFilter`

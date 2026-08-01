@@ -97,6 +97,11 @@ class DocumentService implements Documents {
     }
 
     URL downloadUrl(Document document) {
+        // The files pattern in full: presigning is local crypto and never checks the object, so a
+        // crash-window row (or a deleted EXCHANGE artifact) would 302 to a dead URL without this.
+        if (!storage.exists(document.getStorageKey())) {
+            throw new NotFoundException("The document's content is no longer available.");
+        }
         return storage.presignGet(document.getStorageKey(), properties.presignTtl());
     }
 

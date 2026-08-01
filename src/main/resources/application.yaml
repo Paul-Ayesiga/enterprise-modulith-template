@@ -219,12 +219,18 @@ app:
     # per this many records. Larger = fewer round trips; smaller = finer resume granularity.
     batch-size: ${EXCHANGE_BATCH_SIZE:500}
     poll-interval: ${EXCHANGE_POLL_INTERVAL:PT2S}
-    # Reclaim deadline for a crashed claimant. The per-batch progress write doubles as the
-    # heartbeat, so a healthy job of any length never goes stale.
+    # Reclaim deadline for a crashed claimant. The lock is re-stamped on every progress commit AND
+    # mid-batch (~ a third of this window), so a healthy job only goes stale if one single record's
+    # remote work outlives the whole window.
     stale-lock: ${EXCHANGE_STALE_LOCK:PT5M}
     # Claim generations per job, not record retries — data errors never retry at all.
     max-attempts: ${EXCHANGE_MAX_ATTEMPTS:3}
     presign-ttl: ${EXCHANGE_PRESIGN_TTL:PT10M}
+    # Exponential backoff between claim generations (base × 2^(attempts-1), capped). Zero base is
+    # legal — the test profile retries immediately.
+    retry-base-backoff: ${EXCHANGE_RETRY_BASE:PT30S}
+    retry-max-backoff: ${EXCHANGE_RETRY_MAX:PT10M}
+    schedule-fire-enabled: ${EXCHANGE_SCHEDULE_FIRE:true}
   localization:
     # The fallback chain's floor: exact tag -> language -> THIS -> the key itself. An unparseable
     # tag fails at startup, not at first resolve.
@@ -295,6 +301,12 @@ springdoc:
   paths-to-exclude: /test/**   # test-classpath contract endpoints must never reach the spec
 
 management:
+  metrics:
+    distribution:
+      percentiles-histogram:
+        # Without explicit buckets the OTLP export carries count/sum/max only, and the Grafana
+        # latency panel's histogram_quantile has no _bucket series to read.
+        http.server.requests: true
   endpoints:
     web:
       exposure:

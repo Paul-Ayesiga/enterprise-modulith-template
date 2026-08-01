@@ -2,8 +2,6 @@
 |===
 |Base package
 |`ug.co.smsone.localization`
-|Spring components
-|* `u.c.s.l.Messages` (via `u.c.s.l.internal.MessagesImpl`)
 |Bean references
 |* `u.c.s.s.audit.AuditLog` (in Shared Kernel)
 |===

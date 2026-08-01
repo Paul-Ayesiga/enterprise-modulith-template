@@ -9,7 +9,7 @@ publications are re-published on restart, completed ones are purged by the sched
 Consumers use `@ApplicationModuleListener` (async, own transaction, after the publisher commits).
 Listeners with side effects must be idempotent — call
 `EventInbox.recordIfNew(listenerId, messageId)` first and skip when it returns false; derive the
-message id from business identity — the two live ones are
+message id from business identity — among the live ones:
 `"flag:" + key + ":" + enabled + "@" + occurredAt` (`FeatureFlagChangeNotifier`) and
 `subscriptionId + ":" + eventType + ":" + orgId + "@" + occurredAt` (`WebhookDispatcher`).
 
@@ -27,6 +27,8 @@ message id from business identity — the two live ones are
 | `ug.co.smsone.organization.RolePermissionsChanged` | organization | `orgId, roleId, occurredAt` | a role's permissions are replaced (custom-role edit, system-role catalog reconciliation) — or the role is soft-deleted, since its grants vanish with it |
 | `ug.co.smsone.document.DocumentRegistered` | document | `documentId, orgId, name, source, occurredAt` | a document joins the catalog — upload or a platform producer; published explicitly (the id is persist-assigned) |
 | `ug.co.smsone.organization.OrganizationStatusChanged` | organization | `orgId, status, occurredAt` | an organization is suspended or reactivated |
+| `ug.co.smsone.organization.OrganizationDeleted` | organization | `orgId, occurredAt` | the platform deletes a tenant (soft; published explicitly — a delete fires no `@DomainEvents`) |
+| `ug.co.smsone.subscription.SubscriptionChanged` | subscription | `orgId, planCode, status, occurredAt` | a tenant's plan is assigned or changed |
 
 Every event carries `occurredAt` except `SettingChanged`, which predates the rule and has no consumer
 to be idempotent for. Where it is present, `occurredAt` lets an idempotent consumer dedupe redelivery
@@ -42,12 +44,15 @@ before giving `SettingChanged` its first listener.
 | `MembershipCreated` / `MemberRemoved` / `MembershipRoleChanged` / `RolePermissionsChanged` / `OrganizationStatusChanged` | webhooks | Fans the org event out to matching active subscriptions and enqueues a signed delivery each (idempotent via `EventInbox`) |
 | `OrganizationRegistered` | search | Indexes the organization (alias) into the org-scoped search projection |
 | `UserProvisioned` | search | Indexes the user (email) platform-wide — visible to admin search only |
+| `OrganizationDeleted` | organization (evictor), webhooks | Clears the permission cache; fans out `org.deleted` — the tenant's last outbound event |
+| `SubscriptionChanged` | subscription (evictor), webhooks | Evicts the `org-entitlements` cache so a plan change bites the next gate; fans out `org.subscription_changed` |
 
 The webhooks consumer maps each organization event to its outbound wire code
 (`webhooks.internal.WebhookEventType`): `MembershipCreated` → `org.member.added`, `MemberRemoved` →
 `org.member.removed`, `MembershipRoleChanged` → `org.member.role_changed`,
 `RolePermissionsChanged` → `org.role.permissions_changed`, `OrganizationStatusChanged` →
-`org.status_changed`.
+`org.status_changed`, `OrganizationDeleted` → `org.deleted`, `SubscriptionChanged` →
+`org.subscription_changed`.
 
 Four events currently have **no consumer**: `SettingChanged`, `UserActivated`,
 `TranslationChanged` and `DocumentRegistered`. They are still published through the registry (and appear in the generated

@@ -139,7 +139,7 @@ step — *which is exactly why the logical boundaries are enforced now*.
 
 ### 2.2 Module map
 
-Fourteen modules. Verified from the `package-info.java` files and `docs/modulith/components.puml`.
+Fifteen modules. Verified from the `package-info.java` files and `docs/modulith/components.puml`.
 
 | Module | Display name | Owns (tables) | Public API package contains |
 |---|---|---|---|
@@ -150,7 +150,8 @@ Fourteen modules. Verified from the `package-info.java` files and `docs/modulith
 | `localization` | Localization | `translation` | `Messages` port, `TranslationChanged` |
 | `search` | Search | `search_document` | `SearchIndex` port, `SearchDoc` |
 | `document` | Document | `document` | `DocumentRegistered` (the `Documents` port + `NewDocument` live in `shared.document` — the `AuditLog` pattern, implemented here, so producers like `exchange` need no compile edge into this module) |
-| `exchange` | Exchange | `exchange_job`, `exchange_job_error` | `ExchangeHandler` (SPI), `ExchangeContext`, `ImportOutcome`, `InvalidRecordException`, `RecordWriter` |
+| `subscription` | Subscription | `plan`, `plan_entitlement`, `org_subscription` | `Entitlements` port, `EntitlementKeys`, `SubscriptionChanged` |
+| `exchange` | Exchange | `exchange_job`, `exchange_job_error`, `exchange_schedule` | `ExchangeHandler` (SPI), `ExchangeContext`, `ImportOutcome`, `InvalidRecordException`, `RecordWriter` |
 | `audit` | Audit | `audit_log` | (none — consumed through the `shared.audit.AuditLog` port) |
 | `notification` | Notification | `in_app_notification`, `notification_delivery` | `Notifications`, `NotificationChannelSender` (SPI), `NotificationChannel`, `NotificationMessage`, `NotificationRequest`, `Recipient` |
 | `webhooks` | Webhooks | `webhook_subscription`, `webhook_delivery` | (none — the module is a pure consumer + REST surface) |
@@ -158,7 +159,7 @@ Fourteen modules. Verified from the `package-info.java` files and `docs/modulith
 | `analytics` | Analytics | none in Postgres (DuckDB marts + Parquet) | `AnalyticsEngine`, `AnalyticsException` |
 | `scheduler` | Scheduler | none (consumes `shedlock`) | (none) |
 
-Twenty of the schema's twenty-three tables appear above. The remaining three are **framework-owned and
+Twenty-four of the schema's twenty-seven tables appear above. The remaining three are **framework-owned and
 belong to no module**: `event_publication` (Spring Modulith's JDBC registry, `V2`), `shedlock`
 (ShedLock, `V4`) and `flyway_schema_history` (created by Flyway itself, in no migration). They are
 read and written by libraries, not by application code, and `V17` deliberately leaves all three out of
@@ -239,7 +240,7 @@ as they start.
 | Constraint | Source | Consequence |
 |---|---|---|
 | Flyway owns the schema; `spring.jpa.hibernate.ddl-auto: validate` | `application.yaml:27-29` | No DDL outside `db/migration`. There is no `schema.sql` and no test-only DDL anywhere. |
-| Migrations are forward-only and numbered; **V1–V24 exist, next free is V25** | `db/migration/`, `AGENTS.md` §4.5 | V17 is soft delete, V18–V19 impersonation, V20 the audit's index remediation, V21–V24 localization/search/document/exchange. Any plan citing an old "next free" number is stale — `AGENTS.md` §4.5 is kept current. |
+| Migrations are forward-only and numbered; **V1–V26 exist, next free is V27** | `db/migration/`, `AGENTS.md` §4.5 | V21–V24 are localization/search/document/exchange; V25 completes the exchange guidelines (templates, schedules, org_id tightened NOT NULL); V26 is subscriptions. Any plan citing an old "next free" number is stale — `AGENTS.md` §4.5 is kept current. |
 | No cross-module foreign keys | `AGENTS.md` §1 | Referential integrity across modules is an application concern; `SoftDeletePurgeJob` states the consequence for purge ordering (`SoftDeletePurgeJob.java:49-53`). |
 | `spring.jpa.open-in-view: false` | `application.yaml:30` | No lazy loading past the service boundary. |
 | No Lombok; records + constructor injection | ADR 0001, `ArchitectureTests.noFieldInjection` | Enforced by ArchUnit. |
@@ -791,7 +792,7 @@ The system SHALL:
 | FR-SRCH-2 | serve platform search at `GET /api/v1/admin/search` (`platform-support`), reaching org and platform-wide rows, optionally narrowed by `org` | same | same |
 | FR-SRCH-3 | rank with `ts_rank_cd` over `websearch_to_tsquery('simple', q)`, falling back to trigram `word_similarity` over titles when nothing token-matches; the cursor carries the mode so later pages never re-decide, and ranks travel as `float8` (the float4 text round-trip would repeat page 1) | `main:search/internal/SearchQueryService.java` (the cast's why-comment) | `test:search/internal/SearchApiTest.aPrefixThatMatchesNoTokenFallsBackToTrigramAndTheCursorKeepsTheMode` |
 | FR-SRCH-4 | index idempotently: the `(entity_type, entity_id)` upsert plus the `EventInbox` guard make at-least-once redelivery produce exactly one document | `main:search/internal/{SearchIndexStore,SearchEventListeners}.java` | `test:search/internal/SearchApiTest.anEventRedeliveryDoesNotDuplicateTheDocument` |
-| FR-SRCH-5 | answer 50 warm org-scoped queries over 100,000 documents with **p95 under 50 ms** on the reference container — measured, not asserted by adjective | `V22`'s GIN indexes + `main:search/internal/SearchQueryService.java` | `test:search/internal/SearchPerformanceTest.p95StaysUnderBudgetAcross100kDocuments` (prints the measured p50/p95) |
+| FR-SRCH-5 | answer 50 warm org-scoped queries over 100,000 documents within the asserted tripwires (**p50 < 50 ms, p95 < 150 ms**, headroom for full-suite neighbor load; standalone reference ~p50 20 / p95 35 ms) — measured and printed every run, not asserted by adjective | `V22`'s GIN indexes + `main:search/internal/SearchQueryService.java` | `test:search/internal/SearchPerformanceTest.p95StaysUnderBudgetAcross100kDocuments` (prints the measured p50/p95) |
 | FR-SRCH-6 | reject a blank or over-long `q` with 422 naming the parameter | `main:search/internal/SearchQueryService.requireQuery` | `test:search/internal/SearchApiTest.aBlankQueryIsA422NamingTheParameter` |
 
 ### 3.17 Documents (FR-DOC)
@@ -821,7 +822,23 @@ implementation. The system SHALL:
 | FR-EXC-5 | keep the two failure species apart: `InvalidRecordException` is DATA — reported row-addressed, never retried, job completes `COMPLETED_WITH_ERRORS`; anything else is INFRASTRUCTURE — the batch is abandoned and the job retries up to `max-attempts`, then `FAILED` with a curated `last_error` (real causes go to the log only) | `main:exchange/{InvalidRecordException}.java`, `ImportRunner.failOrRetry` | same two tests |
 | FR-EXC-6 | persist row errors durably (`exchange_job_error`, idempotent PK) and serve the COMPLETE `row_number,error` report behind a **302** presigned URL | `ImportRunner.uploadErrorReport`, `V24` | `ExchangeApiTest.importLifecycleReportsInvalidRowsByNumberAndFilesItsArtifacts` |
 | FR-EXC-7 | authorize twice: the submitter must hold the handler's import/export permission at submit (programmatic — the code is runtime-chosen), and grant-shaped records re-check the REQUESTER'S permissions at processing time, so revocation between submit and run takes effect; artifacts download only to the requester or holders of that same permission | `main:exchange/internal/ExchangeService.java`, `main:organization/internal/PermissionEscalationGuard.requireSubjectHolds` | `ExchangeApiTest.submittingWithoutTheHandlersPermissionIsRefused`, `.exportRoundTrips…`, `MembersExchangeHandlerTest.importInvitesThroughTheEscalationGuardOfTheRequester` |
-| FR-EXC-8 | honor cancellation at batch boundaries (committed work stays; a PENDING job never starts), reclaim stale claims after `stale-lock` (the per-batch progress write is the heartbeat), and register every artifact — source, error report, export result — as an `EXCHANGE` document | `ExchangeJobStore.{progress,claimOne}`, `ArtifactStore` | `ExchangeResumeTest.{cancel*,aDeadClaimantsJob*}`, `ExchangeApiTest` (document count) |
+| FR-EXC-8 | honor cancellation at batch boundaries (committed work stays and a cancelled run still uploads its error report; a PENDING job never starts), reclaim stale claims after `stale-lock`, and register every artifact — source, error report, export result — as an `EXCHANGE` document | `ExchangeJobStore.{progress,claimOne}`, `ArtifactStore` | `ExchangeResumeTest.{cancel*,aDeadClaimantsJob*}`, `ExchangeApiTest` (document count) |
+| FR-EXC-9 | ship four formats through the ONE codec seam — CSV (RFC-4180), JSONL, XLSX (SAX streaming read / SXSSF streaming write — never the whole workbook in memory) and record-oriented XML (StAX, XXE-disabled) — plus the ZIP medium (a zipped source unwraps to its first entry, magic-byte sniffed); adding a format touches no business logic | `main:exchange/internal/{CsvCodec,JsonlCodec,XlsxCodec,XmlCodec}.java`, `ImportRunner.unwrapIfZipped` | `test:exchange/internal/ExchangeCompletionTest` (XLSX/XML/JSONL round trips, ZIP unwrap) |
+| FR-EXC-10 | version templates: handlers declare `templateVersion()`, jobs record the version they were submitted against, and `GET /api/v1/exchange/handlers/{id}/template?format=` serves a ready-to-fill file (an EMPTY export — one code path per format) whose filename carries the version | `main:exchange/ExchangeHandler.templateVersion`, `ExchangeHandlersController.template`, `V25` | catalog + template exercised in `ExchangeApiTest`/`ExchangeCompletionTest` |
+| FR-EXC-11 | schedule recurring EXPORTS on a six-field UTC cron (imports cannot recur — no source to re-read): fired by a ShedLock minute job AS the schedule's requester, whose export permission is re-resolved at every fire — a revocation DISABLES the schedule loudly; capped by the `exchange.schedules.max` entitlement | `main:exchange/internal/{ExchangeSchedule,ExchangeScheduleService,ExchangeScheduleFiringJob,ExchangeScheduleController}.java`, `V25` | `test:exchange/internal/ExchangeScheduleTest` |
+| FR-EXC-12 | retry with exponential backoff between claim generations (base × 2^(attempts−1), capped; zero base legal for tests), heartbeat the lock MID-BATCH (~staleLock/3) so slow per-record remote work cannot get a healthy claimant double-claimed, cap runaway reclaims at claim time, and write `exchange.job_submitted` / `exchange.job_cancel_requested` / schedule audit rows | `ExchangeJobStore.{releaseForRetry,heartbeat}`, `ImportRunner`, `ExchangeWorker`, `ExchangeService` | `ExchangeCompletionTest.{exhaustedInfrastructureRetries…,aLostClaimIsAnswered…}` |
+
+### 3.19 Subscriptions and entitlement gating (FR-SUB)
+
+The system SHALL:
+
+| ID | Requirement | Where | Verified by |
+|---|---|---|---|
+| FR-SUB-1 | seed a plan catalog (FREE/PRO/ENTERPRISE, rank-ordered, create-if-absent) whose entitlement encoding is: key present = feature on, positive value = numeric cap, absent = off/unlimited | `main:subscription/internal/{Plan,PlanSeeder}.java`, `V26` | `test:subscription/internal/SubscriptionGatingTest.theSeededCatalogIsDiscoverableToSupport` |
+| FR-SUB-2 | resolve an org's effective entitlements from its subscription (no row = FREE), cached per org and evicted through `SubscriptionChanged` so a plan change — especially a DOWNGRADE — bites the very next gate check | `main:subscription/internal/{EntitlementResolver,EntitlementsImpl,SubscriptionCacheEvictor}.java` | `SubscriptionGatingTest.aCappedPlanRefusesTheGatesUntilUpgraded` (Awaitility on the async evictor) |
+| FR-SUB-3 | gate real capabilities through the `Entitlements` port with upgrade-shaped 403s, BEFORE side effects: member count at invite (pre-provisioning), webhook count at create, the exchange feature and schedule cap at submit | `organization/internal/MemberService.doInvite`, `webhooks/internal/WebhookSubscriptionService.create`, `exchange/internal/{ExchangeService,ExchangeScheduleService}` | same test (403 details name the upgrade) |
+| FR-SUB-4 | expose the commercial state on both axes: platform assigns (`PUT /api/v1/admin/orgs/{id}/subscription`, `platform-admin`, audited, fans out `org.subscription_changed`) and reads (`GET`, + `GET /api/v1/admin/plans`, `platform-support`); the tenant reads its own (`GET /api/v1/orgs/{orgId}/subscription`, `org:read`) | `subscription/internal/{AdminSubscriptionController,OrgSubscriptionController}.java` | same test |
+| FR-SUB-5 | manage the tenant lifecycle end to end per `docs/TENANT_LIFECYCLE.md`: platform list/get/members views (`platform-support`), and delete only from SUSPENDED (409 otherwise) — soft, audited, `OrganizationDeleted` published (caches evicted, `org.deleted` webhook), Keycloak org deliberately kept | `organization/internal/{AdminOrganizationController,OrganizationService}.java` | `test:organization/internal/AdminOrganizationApiTest` |
 
 ## 4. External interface requirements
 
@@ -1036,7 +1053,17 @@ no `@PreAuthorize`. Every endpoint can additionally return 401, 403 `ACCOUNT_NOT
 | DELETE | `/api/v1/orgs/{orgId}/documents/{id}` | `document:manage` | **204** | 404 |
 | POST / GET | `/api/v1/documents` | authenticated | 201 / 200 (paged, own) | 422 |
 | GET / DELETE | `/api/v1/documents/{id}` | owner; `platform-support` reads / `platform-admin` deletes across users | 302 / 204 | 403, 404 |
-| GET | `/api/v1/exchange/handlers` | authenticated | 200 (list, un-paged — the handler catalogue with header templates) | — |
+| GET | `/api/v1/exchange/handlers` | authenticated | 200 (list, un-paged — the handler catalogue with header templates + versions) | — |
+| GET | `/api/v1/exchange/handlers/{id}/template` | authenticated | 200 (ready-to-fill file in the requested format; filename carries the template version) | 404 unknown handler, 422 bad format |
+| POST / GET | `/api/v1/orgs/{orgId}/exchange/schedules` | `org:read` **plus the handler's export permission** to create | **201** / 200 (paged) | 403, 404, 422 bad cron |
+| DELETE | `/api/v1/orgs/{orgId}/exchange/schedules/{id}` | creator, or the handler's export permission | **204** | 403, 404 |
+| GET | `/api/v1/admin/orgs` | `platform-support` | 200 (paged; `?status=` filter) | 422 bad status |
+| GET | `/api/v1/admin/orgs/{orgId}` | `platform-support` | 200 | 404 |
+| GET | `/api/v1/admin/orgs/{orgId}/members` | `platform-support` | 200 (paged, read-only roster) | 404 |
+| DELETE | `/api/v1/admin/orgs/{orgId}` | `platform-admin` | **204** (soft; only from SUSPENDED) | 404, **409 not suspended** |
+| GET / PUT | `/api/v1/admin/orgs/{orgId}/subscription` | `platform-support` reads / `platform-admin` assigns | 200 | 404 unknown org-plan |
+| GET | `/api/v1/admin/plans` | `platform-support` | 200 (list, un-paged) | — |
+| GET | `/api/v1/orgs/{orgId}/subscription` | `org:read` | 200 (plan + entitlements; no row = FREE) | — |
 | POST | `/api/v1/orgs/{orgId}/exchange/imports` (multipart `file` + `handler`, `format`) | `org:read` **plus the handler's import permission** (checked programmatically) | **202** | 403 missing handler permission, 404 unknown handler, 422 empty file / bad format |
 | POST | `/api/v1/orgs/{orgId}/exchange/exports` | `org:read` **plus the handler's export permission** | **202** | 403, 404, 422 |
 | GET | `/api/v1/orgs/{orgId}/exchange/jobs` | `org:read` | 200 (paged) | — |
@@ -1057,8 +1084,9 @@ no `@PreAuthorize`. Every endpoint can additionally return 401, 403 `ACCOUNT_NOT
 | GET | `/v3/api-docs*`, `/swagger-ui/**` | **public** | 200 | — |
 
 **Absent by design or by gap:** no `DELETE /api/v1/settings/{key}`, no
-`DELETE /api/v1/feature-flags/{key}`, no organization delete, no user disable, no soft-delete restore
-endpoint, no webhook event-type catalogue, no job-trigger endpoint.
+`DELETE /api/v1/feature-flags/{key}`, no user disable, no soft-delete restore
+endpoint, no webhook event-type catalogue, no job-trigger endpoint. (Organization delete exists
+since the tenant-lifecycle work: `DELETE /api/v1/admin/orgs/{id}`, SUSPENDED-only.)
 
 **Unreachable from inside an impersonation session:** every row above whose authority column names a
 `platform-*` tier, including the three impersonation routes themselves — the impersonated principal
@@ -1400,7 +1428,7 @@ Three structural facts worth stating here:
 - **Every column value is supplied by the application.** The only DB `DEFAULT` in the entire schema
   is `notification_delivery.attempts int not null default 0`. Primary keys are generated in Java
   (`@UuidGenerator`, or `UUID.randomUUID()` in the JDBC queues) — no `gen_random_uuid()` anywhere.
-- **Three foreign keys exist, all intra-module** (§2.2). Two are now largely dormant under soft
+- **Six foreign keys exist, all intra-module** (§2.2 — the three originals plus `exchange_job_error` (V24), `plan_entitlement` and `org_subscription` (V26)). Two are now largely dormant under soft
   delete: `webhook_delivery.subscription_id`'s cascade can only fire during the hard-delete purge,
   never during a user-facing delete, and `role_permission`'s cascade is precisely why role deletion
   bypasses `@SQLDelete` (FR-DLC-11).

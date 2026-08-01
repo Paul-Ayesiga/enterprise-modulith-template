@@ -1,0 +1,99 @@
+package ug.co.smsone.organization.internal;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import java.util.UUID;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.test.web.servlet.MockMvc;
+import ug.co.smsone.testsupport.AbstractIntegrationTest;
+
+/**
+ * The platform tenant surface and the lifecycle's terminal step: support reads the fleet, one
+ * tenant and its roster; delete refuses a live tenant (409), soft-deletes a SUSPENDED one, leaves
+ * the audit row, and the deleted org vanishes from the surface (404).
+ */
+@AutoConfigureMockMvc
+class AdminOrganizationApiTest extends AbstractIntegrationTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @Autowired
+    private JdbcTemplate jdbc;
+
+    @Test
+    void supportReadsTheFleetAndAdminDeletesOnlyFromSuspended() throws Exception {
+        UUID orgId = UUID.randomUUID();
+        seedOrgWithMember(orgId, "fleet-member");
+
+        mockMvc.perform(get("/api/v1/admin/orgs").param("page[size]", "5").with(support()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").isArray());
+        mockMvc.perform(get("/api/v1/admin/orgs/{id}", orgId).with(support()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.attributes.status").value("ACTIVE"));
+        mockMvc.perform(get("/api/v1/admin/orgs/{id}/members", orgId).with(support()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].attributes.subject").value("fleet-member"))
+                .andExpect(jsonPath("$.data[0].attributes.roleCode").value("FLEET"));
+
+        // Live tenants refuse deletion; the status filter narrows the fleet view.
+        mockMvc.perform(delete("/api/v1/admin/orgs/{id}", orgId).with(admin()))
+                .andExpect(status().isConflict());
+        jdbc.update("update organization set status = 'SUSPENDED' where kc_org_id = ?", orgId);
+        mockMvc.perform(get("/api/v1/admin/orgs").param("status", "suspended").with(support()))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(delete("/api/v1/admin/orgs/{id}", orgId).with(admin()))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(get("/api/v1/admin/orgs/{id}", orgId).with(support()))
+                .andExpect(status().isNotFound());
+        assertThat(jdbc.queryForObject(
+                "select count(*) from organization where kc_org_id = ? and deleted_at is not null",
+                Integer.class, orgId)).as("soft, restorable until the purge").isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "select count(*) from audit_log where action = 'organization.deleted' and org_id = ?",
+                Integer.class, orgId)).isEqualTo(1);
+    }
+
+    @Test
+    void theSurfaceIsPlatformTiered() throws Exception {
+        mockMvc.perform(get("/api/v1/admin/orgs")
+                        .with(jwt().jwt(t -> t.subject("nobody"))))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(delete("/api/v1/admin/orgs/{id}", UUID.randomUUID()).with(support()))
+                .andExpect(status().isForbidden());
+    }
+
+    private static org.springframework.test.web.servlet.request.RequestPostProcessor support() {
+        return jwt().jwt(t -> t.subject("support-1"))
+                .authorities(new SimpleGrantedAuthority("ROLE_platform-support"));
+    }
+
+    private static org.springframework.test.web.servlet.request.RequestPostProcessor admin() {
+        return jwt().jwt(t -> t.subject("admin-1"))
+                .authorities(new SimpleGrantedAuthority("ROLE_platform-admin"));
+    }
+
+    private void seedOrgWithMember(UUID orgId, String subject) {
+        jdbc.update("insert into organization (id, kc_org_id, alias, name, status, version, created_at) "
+                        + "values (?, ?, ?, ?, 'ACTIVE', 0, now()) "
+                        + "on conflict (kc_org_id) where deleted_at is null do nothing",
+                UUID.randomUUID(), orgId, "org-" + orgId.toString().substring(0, 13), "Org " + orgId);
+        UUID roleId = UUID.randomUUID();
+        jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
+                + "values (?, ?, 'FLEET', 'Fleet', false, 0, now())", roleId, orgId);
+        jdbc.update("insert into role_permission (role_id, permission) values (?, 'ORG_READ')", roleId);
+        jdbc.update("insert into membership (id, org_id, user_subject, role_id, status, version, created_at) "
+                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, subject, roleId);
+    }
+}

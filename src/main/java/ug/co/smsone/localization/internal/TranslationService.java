@@ -50,11 +50,24 @@ class TranslationService {
     }
 
     // The evict key repeats normalizeLocale's trim+lowercase in SpEL (rather than #result.locale)
-    // because the entity's getters are package-private, which SpEL cannot read.
-    @CacheEvict(cacheNames = TranslationBundles.BUNDLES_CACHE, key = "#locale.trim().toLowerCase()")
+    // because the entity's getters are package-private, which SpEL cannot read. Locale.ROOT
+    // matters here too: the no-arg toLowerCase() uses the JVM default, and on a Turkish-locale
+    // JVM "IT" would evict "ıt" while the store and every read use "it".
+    @CacheEvict(cacheNames = TranslationBundles.BUNDLES_CACHE,
+            key = "#locale.trim().toLowerCase(T(java.util.Locale).ROOT)")
     Translation put(String locale, String key, String value) {
         String normalized = normalizeLocale(locale);
-        Translation translation = translations.findByLocaleAndMsgKey(normalized, key)
+        try {
+            return translations.saveAndFlush(upsert(normalized, key, value));
+        } catch (org.springframework.dao.DataIntegrityViolationException ex) {
+            // Two admins created the same (locale, key) at once: the unique index picked a winner.
+            // A PUT is idempotent-by-meaning, so the loser applies its value to the winner's row.
+            return translations.saveAndFlush(upsert(normalized, key, value));
+        }
+    }
+
+    private Translation upsert(String normalized, String key, String value) {
+        return translations.findByLocaleAndMsgKey(normalized, key)
                 .map(existing -> {
                     String previous = existing.getMsgValue();
                     existing.change(value);
@@ -70,10 +83,10 @@ class TranslationService {
                             normalized + ":" + key, null, value);
                     return created;
                 });
-        return translations.save(translation);
     }
 
-    @CacheEvict(cacheNames = TranslationBundles.BUNDLES_CACHE, key = "#locale.trim().toLowerCase()")
+    @CacheEvict(cacheNames = TranslationBundles.BUNDLES_CACHE,
+            key = "#locale.trim().toLowerCase(T(java.util.Locale).ROOT)")
     void delete(String locale, String key) {
         Translation translation = require(locale, key);
         translations.delete(translation); // soft: @SQLDelete stamps deleted_at

@@ -72,4 +72,26 @@ class WebhookEventListener {
                 WebhookPayload.of(code, event.orgId(), event.occurredAt())
                         .with("status", event.status()));
     }
+
+    @ApplicationModuleListener
+    void on(ug.co.smsone.subscription.SubscriptionChanged event) {
+        String code = WebhookEventType.ORG_SUBSCRIPTION_CHANGED.code();
+        dispatcher.dispatch(
+                code + ":" + event.orgId() + ":" + event.planCode() + ":" + event.occurredAt(),
+                event.orgId(), code,
+                WebhookPayload.of(code, event.orgId(), event.occurredAt())
+                        .with("plan", event.planCode())
+                        .with("status", event.status()));
+    }
+
+    @ApplicationModuleListener
+    void on(ug.co.smsone.organization.OrganizationDeleted event) {
+        // The tenant's LAST outbound event: subscriptions survive as soft rows, but with the org
+        // gone nothing later matches them — receivers hear the door close.
+        String code = WebhookEventType.ORG_DELETED.code();
+        dispatcher.dispatch(
+                code + ":" + event.orgId() + ":" + event.occurredAt(),
+                event.orgId(), code,
+                WebhookPayload.of(code, event.orgId(), event.occurredAt()));
+    }
 }

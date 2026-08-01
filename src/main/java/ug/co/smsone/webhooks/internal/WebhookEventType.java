@@ -15,7 +15,9 @@ enum WebhookEventType {
     MEMBER_REMOVED("org.member.removed"),
     MEMBER_ROLE_CHANGED("org.member.role_changed"),
     ROLE_PERMISSIONS_CHANGED("org.role.permissions_changed"),
-    ORG_STATUS_CHANGED("org.status_changed");
+    ORG_STATUS_CHANGED("org.status_changed"),
+    ORG_DELETED("org.deleted"),
+    ORG_SUBSCRIPTION_CHANGED("org.subscription_changed");
 
     private static final Map<String, WebhookEventType> BY_CODE =
             Arrays.stream(values()).collect(Collectors.toUnmodifiableMap(WebhookEventType::code, e -> e));

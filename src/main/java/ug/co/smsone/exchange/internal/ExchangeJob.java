@@ -5,9 +5,9 @@ import java.util.UUID;
 
 /** Read model of one job row — the store maps it; nothing mutates it. */
 record ExchangeJob(UUID id, UUID orgId, String requester, String jobType, String handler,
-        String format, String status, String sourceKey, String resultKey, String errorReportKey,
-        long processed, long failed, long nextOffset, int attempts, boolean cancelRequested,
-        String lastError, Instant createdAt) {
+        int handlerVersion, String format, String status, String sourceKey, String resultKey,
+        String errorReportKey, long processed, long failed, long nextOffset, int attempts,
+        boolean cancelRequested, String lastError, Instant createdAt) {
 
     static final String IMPORT = "IMPORT";
     static final String EXPORT = "EXPORT";

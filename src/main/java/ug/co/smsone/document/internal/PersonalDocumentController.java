@@ -76,6 +76,13 @@ class PersonalDocumentController {
         if (document.getOwnerSubject().equals(user.subject()) || user.hasRole(platformTier)) {
             return;
         }
-        throw new ForbiddenException("You can only access your own documents.");
+        if (user.hasRole(PlatformRole.SUPPORT)) {
+            // A platform tier below the required one can already SEE the document exists (support
+            // reads across users), so the honest answer is the real refusal.
+            throw new ForbiddenException("This action needs a higher platform tier.");
+        }
+        // For everyone else 404, not 403: a foreign id must answer exactly like an unknown one —
+        // the org surface's rule — or the status difference is an existence oracle for guessed ids.
+        throw new ug.co.smsone.shared.error.NotFoundException("Document not found.");
     }
 }

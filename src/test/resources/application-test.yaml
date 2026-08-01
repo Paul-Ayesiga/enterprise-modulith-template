@@ -34,6 +34,9 @@ app:
   # Exchange worker is driven explicitly by tests via drainOnce() — no background claims racing asserts.
   exchange:
     worker-auto-start: false
+    retry-base-backoff: PT0S   # release-then-reclaim tests re-drain immediately
+    schedule-fire-enabled: false  # tests drive fireDueSchedules() directly; a minute-cadence
+                                  # background trigger would race them from every cached context
   # Webhook worker is driven explicitly by tests; receivers run on localhost so private hosts are allowed.
   webhooks:
     worker-auto-start: false

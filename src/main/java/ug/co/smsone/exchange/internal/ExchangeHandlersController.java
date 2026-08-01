@@ -22,29 +22,60 @@ class ExchangeHandlersController {
 
     private final HandlerRegistry handlers;
     private final List<FormatCodec> codecs;
+    private final ExchangeService exchange;
 
-    ExchangeHandlersController(HandlerRegistry handlers, List<FormatCodec> codecs) {
+    ExchangeHandlersController(HandlerRegistry handlers, List<FormatCodec> codecs,
+            ExchangeService exchange) {
         this.handlers = handlers;
         this.codecs = codecs;
+        this.exchange = exchange;
     }
 
     record HandlerAttributes(String importPermission, String exportPermission, List<String> header,
-            List<String> formats) {
+            int templateVersion, List<String> formats) {
     }
 
     @GetMapping("/handlers")
     @Operation(summary = "List the available exchange handlers",
             description = """
                     Each handler names the dataset it moves, the permissions its imports and \
-                    exports require, and `header` — the exact CSV column order (or JSONL key set) \
-                    its files use. `header` doubles as the import template.""")
+                    exports require, `header` — the exact column order its files use — and the \
+                    current `templateVersion`. Download a ready-to-fill file from \
+                    `/handlers/{id}/template`.""")
     List<ResourceObject> list() {
         List<String> formats = codecs.stream().map(FormatCodec::id).sorted().toList();
         return handlers.all().stream()
                 .sorted(Comparator.comparing(ExchangeHandler::id))
                 .map(handler -> new ResourceObject(handler.id(), RESOURCE_TYPE,
                         new HandlerAttributes(handler.importPermission(), handler.exportPermission(),
-                                handler.header(), formats)))
+                                handler.header(), handler.templateVersion(), formats)))
                 .toList();
+    }
+
+    @GetMapping("/handlers/{id}/template")
+    @Operation(summary = "Download a handler's import template",
+            description = """
+                    An empty, correctly-headed file in the requested `format` (default CSV) — fill \
+                    it and submit it back. The filename carries the template version, so a header \
+                    mismatch on import names exactly which file to re-download.""")
+    org.springframework.http.ResponseEntity<byte[]> template(
+            @org.springframework.web.bind.annotation.PathVariable String id,
+            @org.springframework.web.bind.annotation.RequestParam(name = "format", defaultValue = "CSV")
+            String format) {
+        ExchangeHandler handler = exchange.requireHandler(id);
+        String normalized = exchange.requireFormat(format);
+        FormatCodec codec = codecs.stream().filter(c -> c.id().equals(normalized)).findFirst().orElseThrow();
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        try (FormatCodec.RecordSink sink = codec.writer(out, handler.header())) {
+            // Zero records: the template IS an empty export — one code path for every format.
+        } catch (java.io.IOException ex) {
+            throw new IllegalStateException("Template generation failed", ex);
+        }
+        String fileName = handler.id() + "-template-v" + handler.templateVersion()
+                + "." + codec.fileExtension();
+        return org.springframework.http.ResponseEntity.ok()
+                .header("Content-Disposition", "attachment; filename=\"" + fileName + "\"")
+                .contentType(org.springframework.http.MediaType.parseMediaType(codec.contentType()))
+                .body(out.toByteArray());
     }
 }

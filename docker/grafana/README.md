@@ -26,9 +26,15 @@ the `prometheus` datasource. Thresholds are deliberately conservative; tune to y
     sum by (tier) (increase(smsone_ratelimit_denied_total[5m])) > 50
 
 **A purge went silent** — every retention job runs nightly; more than a day of silence on a table
-that normally has churn means the job is failing (its own log line did not happen either):
+that normally has churn means the job is failing (its own log line did not happen either). Zero
+deletions are deliberately NOT recorded, so absence of the series — not a zero value — is the
+signal; alert per job with `absent_over_time`:
 
-    sum by (job) (increase(smsone_purge_deleted_total[26h])) == 0
+    absent_over_time(smsone_purge_deleted_total{job="soft-delete-purge"}[26h])
+    absent_over_time(smsone_purge_deleted_total{job="webhook-delivery-retention"}[26h])
+
+(One caveat: a table with genuinely nothing to purge also produces no series — scope this alert to
+jobs whose tables always have churn in your deployment.)
 
 **Exchange jobs failing** — FAILED is the retries-exhausted outcome, so even one deserves a look:
 
