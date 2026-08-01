@@ -1638,7 +1638,11 @@ port, so a paid plan arrives via the same audited assign path a manual comp does
 failure flips standing to `PAST_DUE` without inventing a second entitlement authority. The
 callback endpoint is token-authenticated (Kill Bill cannot do OAuth) and permit-listed in
 `SecurityConfig`; dev bootstrap (`app.billing.bootstrap`) creates the KB tenant + simple catalog
-plans so the compose stack bills out of the box.
+plans so the compose stack bills out of the box. Payment METHODS are managed on the tenant's own
+surface (`OrgBillingController`, `org:update`) but only ever as a plugin reference — a payment
+plugin / hosted page captures the card and this API forwards the resulting token, never a PAN, so
+it stays out of PCI scope; that surface doubles as the pay-to-recover path out of a paused
+subscription.
 
 ### 4.15 Profile module
 

@@ -199,10 +199,18 @@ POST /api/v1/admin/orgs/{orgId}/billing/subscription   # {"plan":"PRO"} → 202;
 GET  /api/v1/admin/orgs/{orgId}/billing                # balance + live KB subscriptions + payment methods
 GET  /api/v1/orgs/{orgId}/billing/invoices             # the tenant's invoices (org:read)
 # → [{"id":"8c0e…","type":"invoice","attributes":{"invoiceNumber":"1001","amount":49.00,
-#      "balance":0.00,"currency":"USD","invoiceDate":"2026-08-01","status":"COMMITTED"}}]</code></pre>
+#      "balance":0.00,"currency":"USD","invoiceDate":"2026-08-01","status":"COMMITTED"}}]
+
+# Payment methods — the tenant's own surface (also the pay-to-recover path out of a pause):
+GET    /api/v1/orgs/{orgId}/billing/payment-methods              # list (org:read)
+POST   /api/v1/orgs/{orgId}/billing/payment-methods              # add (org:update) → 201
+{"pluginName":"stripe","isDefault":true,"pluginProperties":{"token":"tok_from_hosted_page"}}
+PUT    /api/v1/orgs/{orgId}/billing/payment-methods/{id}/default # make default (org:update)
+DELETE /api/v1/orgs/{orgId}/billing/payment-methods/{id}         # remove (org:update) → 204</code></pre>
 <p class="mut">Payment failure → subscription standing flips to <code>PAST_DUE</code> (entitlements kept — a grace);
-recovery → <code>ACTIVE</code>; cancellation reconciles to FREE. Adding a payment method is Kaui's / a KB payment
-plugin's job; the billing view lists what's on file.</p>
+recovery → <code>ACTIVE</code>; cancellation reconciles to FREE. Payment methods attach through a Kill Bill
+payment PLUGIN — <strong>raw card data never touches this API</strong>; <code>pluginProperties</code> carries only
+what a hosted page / plugin tokenized (the card-capture UI is the plugin's job).</p>
 
 <h2 id="documents">10 · Documents &amp; files</h2>
 <pre><code># upload into the org (document:manage; multipart field "file")

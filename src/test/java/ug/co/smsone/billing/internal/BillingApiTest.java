@@ -3,10 +3,14 @@ package ug.co.smsone.billing.internal;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.verify;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -141,6 +145,54 @@ class BillingApiTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.errors[0].source.pointer").value("/data/attributes/plan"));
     }
 
+    @Test
+    void paymentMethodsAreManagedOnTheOrgSurfaceAndRequireOrgUpdate() throws Exception {
+        UUID orgId = UUID.randomUUID();
+        UUID kbAccountId = UUID.randomUUID();
+        UUID pmId = UUID.randomUUID();
+        seedOrgUpdate(orgId, "pm-admin");
+        seedOrgRead(orgId, "pm-reader");
+        given(killBill.ensureAccount(any(), anyString())).willReturn(kbAccountId);
+        given(killBill.addPaymentMethod(eq(kbAccountId), eq("stripe"), eq(true), any())).willReturn(pmId);
+        given(killBill.paymentMethodDetails(kbAccountId)).willReturn(
+                List.of(new KillBillGateway.KbPaymentMethod(pmId, "stripe", true)));
+
+        // Provision the billing account (a platform act).
+        mockMvc.perform(post("/api/v1/admin/orgs/{orgId}/billing/account", orgId).with(admin()))
+                .andExpect(status().isCreated());
+
+        // org:read cannot add a payment method...
+        mockMvc.perform(post("/api/v1/orgs/{orgId}/billing/payment-methods", orgId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"pluginName\":\"stripe\",\"isDefault\":true}")
+                        .with(member(orgId, "pm-reader")))
+                .andExpect(status().isForbidden());
+        // ...but org:update can, and never sees raw card data — only a plugin reference.
+        mockMvc.perform(post("/api/v1/orgs/{orgId}/billing/payment-methods", orgId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"pluginName\":\"stripe\",\"isDefault\":true}")
+                        .with(member(orgId, "pm-admin")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.id").value(pmId.toString()))
+                .andExpect(jsonPath("$.data.attributes.pluginName").value("stripe"));
+
+        // Any org:read member can list.
+        mockMvc.perform(get("/api/v1/orgs/{orgId}/billing/payment-methods", orgId)
+                        .with(member(orgId, "pm-reader")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].attributes.isDefault").value(true));
+
+        // Set-default and remove need org:update and reach the gateway.
+        mockMvc.perform(put("/api/v1/orgs/{orgId}/billing/payment-methods/{id}/default", orgId, pmId)
+                        .with(member(orgId, "pm-admin")))
+                .andExpect(status().isOk());
+        mockMvc.perform(delete("/api/v1/orgs/{orgId}/billing/payment-methods/{id}", orgId, pmId)
+                        .with(member(orgId, "pm-admin")))
+                .andExpect(status().isNoContent());
+        verify(killBill).setDefaultPaymentMethod(kbAccountId, pmId);
+        verify(killBill).deletePaymentMethod(kbAccountId, pmId);
+    }
+
     private static org.springframework.test.web.servlet.request.RequestPostProcessor admin() {
         return jwt().jwt(t -> t.subject("admin-1"))
                 .authorities(new SimpleGrantedAuthority("ROLE_platform-admin"));
@@ -165,6 +217,19 @@ class BillingApiTest extends AbstractIntegrationTest {
         jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
                 + "values (?, ?, 'BILL', 'Bill', false, 0, now())", roleId, orgId);
         jdbc.update("insert into role_permission (role_id, permission) values (?, 'ORG_READ')", roleId);
+        jdbc.update("insert into membership (id, org_id, user_subject, role_id, status, version, created_at) "
+                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, subject, roleId);
+    }
+
+    private void seedOrgUpdate(UUID orgId, String subject) {
+        jdbc.update("insert into organization (id, kc_org_id, alias, name, status, version, created_at) "
+                        + "values (?, ?, ?, ?, 'ACTIVE', 0, now()) "
+                        + "on conflict (kc_org_id) where deleted_at is null do nothing",
+                UUID.randomUUID(), orgId, "org-" + orgId.toString().substring(0, 13), "Org " + orgId);
+        UUID roleId = UUID.randomUUID();
+        jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
+                + "values (?, ?, 'BILLADM', 'BillAdmin', false, 0, now())", roleId, orgId);
+        jdbc.update("insert into role_permission (role_id, permission) values (?, 'ORG_UPDATE')", roleId);
         jdbc.update("insert into membership (id, org_id, user_subject, role_id, status, version, created_at) "
                 + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, subject, roleId);
     }

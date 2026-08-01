@@ -45,6 +45,9 @@ class KillBillGateway {
     record KbAccountView(UUID accountId, BigDecimal balance, String currency) {
     }
 
+    record KbPaymentMethod(UUID paymentMethodId, String pluginName, boolean isDefault) {
+    }
+
     /** Idempotent: an existing externalKey resolves to the existing account, never a duplicate. */
     UUID ensureAccount(UUID orgId, String name) {
         Optional<UUID> existing = findAccountByExternalKey(orgId);
@@ -124,7 +127,7 @@ class KillBillGateway {
         return result;
     }
 
-    /** Read-only: which payment methods the account holds. ADDING one is Kaui's / a KB payment plugin's job. */
+    /** Human summary line per payment method, for the billing overview. Structured form below. */
     List<String> paymentMethods(UUID kbAccountId) {
         List<?> methods = killBill.get()
                 .uri("/1.0/kb/accounts/" + kbAccountId + "/paymentMethods")
@@ -141,6 +144,62 @@ class KillBillGateway {
             }
         }
         return result;
+    }
+
+    /** Structured payment methods for the management surface (id + plugin + default flag). */
+    List<KbPaymentMethod> paymentMethodDetails(UUID kbAccountId) {
+        List<?> methods = killBill.get()
+                .uri("/1.0/kb/accounts/" + kbAccountId + "/paymentMethods")
+                .retrieve()
+                .body(List.class);
+        List<KbPaymentMethod> result = new ArrayList<>();
+        if (methods == null) {
+            return result;
+        }
+        for (Object method : methods) {
+            if (method instanceof Map<?, ?> m && m.get("paymentMethodId") != null) {
+                result.add(new KbPaymentMethod(
+                        UUID.fromString(String.valueOf(m.get("paymentMethodId"))),
+                        String.valueOf(m.get("pluginName")),
+                        Boolean.TRUE.equals(m.get("isDefault"))));
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Attach a payment method to the account through a Kill Bill payment PLUGIN. Raw card data never
+     * reaches us: {@code pluginProperties} carries only what a hosted page / plugin tokenized (a
+     * plugin reference, a nonce), which keeps this out of PCI scope — the card-capture UI is the
+     * plugin's job. Returns the created payment method id (KB's 201 + Location idiom).
+     */
+    UUID addPaymentMethod(UUID kbAccountId, String pluginName, boolean isDefault,
+            Map<String, Object> pluginProperties) {
+        ResponseEntity<Void> response = killBill.post()
+                .uri(uri -> uri.path("/1.0/kb/accounts/" + kbAccountId + "/paymentMethods")
+                        .queryParam("isDefault", isDefault).build())
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("pluginName", pluginName,
+                        "pluginInfo", pluginProperties == null ? Map.of() : pluginProperties))
+                .retrieve()
+                .toBodilessEntity();
+        return idFromLocation(response.getHeaders().getLocation());
+    }
+
+    /** Make one of the account's payment methods the one Kill Bill charges. */
+    void setDefaultPaymentMethod(UUID kbAccountId, UUID paymentMethodId) {
+        killBill.put()
+                .uri("/1.0/kb/accounts/" + kbAccountId + "/paymentMethods/" + paymentMethodId + "/setDefault")
+                .retrieve()
+                .toBodilessEntity();
+    }
+
+    /** Detach a payment method (Kill Bill refuses to remove one while it is the account default). */
+    void deletePaymentMethod(UUID kbAccountId, UUID paymentMethodId) {
+        killBill.delete()
+                .uri("/1.0/kb/accounts/" + kbAccountId + "/paymentMethods/" + paymentMethodId)
+                .retrieve()
+                .toBodilessEntity();
     }
 
     List<KbInvoice> invoices(UUID kbAccountId) {

@@ -1,6 +1,7 @@
 package ug.co.smsone.billing.internal;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -71,6 +72,37 @@ class BillingService {
 
     List<KillBillGateway.KbInvoice> invoices(UUID orgId) {
         return killBill.invoices(require(orgId).getKbAccountId());
+    }
+
+    List<KillBillGateway.KbPaymentMethod> paymentMethods(UUID orgId) {
+        return killBill.paymentMethodDetails(require(orgId).getKbAccountId());
+    }
+
+    /**
+     * Attach a payment method via a KB payment plugin (raw card data never reaches us — see the
+     * gateway). Audited. The org's own {@code /billing} surface stays reachable while a subscription
+     * is paused, so this doubles as the pay-to-recover path out of read-only.
+     */
+    UUID addPaymentMethod(UUID orgId, String pluginName, boolean isDefault, Map<String, Object> pluginProperties) {
+        if (pluginName == null || pluginName.isBlank()) {
+            throw new ValidationException("pluginName is required (the Kill Bill payment plugin).",
+                    ApiSource.pointer("/data/attributes/pluginName"));
+        }
+        UUID paymentMethodId = killBill.addPaymentMethod(require(orgId).getKbAccountId(),
+                pluginName.trim(), isDefault, pluginProperties);
+        auditLog.record("billing.payment_method_added", orgId, paymentMethodId.toString(), null,
+                "plugin=" + pluginName.trim() + (isDefault ? " default" : ""));
+        return paymentMethodId;
+    }
+
+    void setDefaultPaymentMethod(UUID orgId, UUID paymentMethodId) {
+        killBill.setDefaultPaymentMethod(require(orgId).getKbAccountId(), paymentMethodId);
+        auditLog.record("billing.payment_method_default_set", orgId, paymentMethodId.toString(), null, null);
+    }
+
+    void removePaymentMethod(UUID orgId, UUID paymentMethodId) {
+        killBill.deletePaymentMethod(require(orgId).getKbAccountId(), paymentMethodId);
+        auditLog.record("billing.payment_method_removed", orgId, paymentMethodId.toString(), null, null);
     }
 
     /**

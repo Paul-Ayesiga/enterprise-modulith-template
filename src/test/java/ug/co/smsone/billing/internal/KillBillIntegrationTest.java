@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.math.BigDecimal;
 import java.time.Duration;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -79,5 +80,29 @@ class KillBillIntegrationTest extends AbstractIntegrationTest {
 
         assertThat(gateway.accountView(accountId).currency()).isNotBlank();
         assertThat(gateway.invoices(accountId)).isNotNull(); // auto-invoicing depends on KB config
+    }
+
+    @Test
+    void paymentMethodsRoundTripAgainstRealKillBill() {
+        gateway.ensureTenant();
+        UUID orgId = UUID.randomUUID();
+        UUID accountId = gateway.ensureAccount(orgId, "org-" + orgId);
+
+        // Kill Bill's built-in external-payment plugin needs no install and no card data. It is a
+        // singleton per account (the real card plugins are what hold several tokenized methods), so
+        // this exercises add + list + set-default against the live wire; delete is covered by the
+        // mocked BillingApiTest since KB won't drop the sole default without a force flag.
+        UUID pmId = gateway.addPaymentMethod(accountId, "__EXTERNAL_PAYMENT__", true, Map.of());
+        assertThat(pmId).isNotNull();
+        assertThat(gateway.paymentMethodDetails(accountId))
+                .singleElement()
+                .satisfies(pm -> {
+                    assertThat(pm.paymentMethodId()).isEqualTo(pmId);
+                    assertThat(pm.pluginName()).isEqualTo("__EXTERNAL_PAYMENT__");
+                    assertThat(pm.isDefault()).isTrue();
+                });
+        // Re-defaulting the current default round-trips (idempotent) — proves the set-default wire.
+        gateway.setDefaultPaymentMethod(accountId, pmId);
+        assertThat(gateway.paymentMethodDetails(accountId)).hasSize(1);
     }
 }

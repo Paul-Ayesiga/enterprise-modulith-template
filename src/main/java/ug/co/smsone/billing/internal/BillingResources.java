@@ -18,6 +18,9 @@ final class BillingResources {
             String currency, String invoiceDate, String status) {
     }
 
+    record PaymentMethodAttributes(String pluginName, boolean isDefault) {
+    }
+
     private BillingResources() {
     }
 
@@ -36,6 +39,13 @@ final class BillingResources {
                         new InvoiceAttributes(invoice.invoiceNumber(), invoice.amount(),
                                 invoice.balance(), invoice.currency(), invoice.invoiceDate(),
                                 invoice.status())))
+                .toList();
+    }
+
+    static List<ResourceObject> toPaymentMethodResources(List<KillBillGateway.KbPaymentMethod> methods) {
+        return methods.stream()
+                .map(method -> new ResourceObject(method.paymentMethodId().toString(), "payment-method",
+                        new PaymentMethodAttributes(method.pluginName(), method.isDefault())))
                 .toList();
     }
 }
