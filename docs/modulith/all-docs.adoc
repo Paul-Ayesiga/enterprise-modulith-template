@@ -49,3 +49,7 @@ include::module-search.adoc[]
 plantuml::module-webhooks.puml[,,format=svg]
 include::module-webhooks.adoc[]
 
+== Document
+plantuml::module-document.puml[,,format=svg]
+include::module-document.adoc[]
+

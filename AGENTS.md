@@ -201,7 +201,7 @@ Window<Membership> list(UUID orgId, CursorPageRequest page) {
 |---|---|---|---|
 | `BaseEntity` | UUID id, `@Version`, created/updated at/by, id-based equality | rows that are records of fact, not aggregates | `AuditEntry`, `InAppNotification`, `ImpersonationSession` |
 | `AggregateRoot` | + `registerEvent(...)` published on `save(..)` | aggregate roots that emit domain events | — |
-| `SoftDeletableEntity` | + `deleted_at`, `markDeleted`, `restore` | aggregate roots whose deletion must be recorded | `Organization`, `Membership`, `Role`, `Setting`, `FeatureFlag`, `User`, `WebhookSubscription`, `Translation` |
+| `SoftDeletableEntity` | + `deleted_at`, `markDeleted`, `restore` | aggregate roots whose deletion must be recorded | `Organization`, `Membership`, `Role`, `Setting`, `FeatureFlag`, `User`, `WebhookSubscription`, `Translation`, `Document` |
 
 Entity conventions, all visible in `organization/internal/Organization.java`:
 

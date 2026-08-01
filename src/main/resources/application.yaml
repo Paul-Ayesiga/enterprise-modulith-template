@@ -209,6 +209,10 @@ app:
       # In-app targeting resolves the admin's Keycloak subject from this email (identity module) —
       # the default matches the shipped dev realm's admin user so in-app delivery works out of the box.
       - email: ${NOTIFICATION_ADMIN_EMAIL:ayesigapo@gmail.com}
+  document:
+    # Presigned-download lifetime: long enough to follow the 302, short enough not to be a durable
+    # capability. Bytes never pass through the API.
+    presign-ttl: ${DOCUMENT_PRESIGN_TTL:PT10M}
   localization:
     # The fallback chain's floor: exact tag -> language -> THIS -> the key itself. An unparseable
     # tag fails at startup, not at first resolve.

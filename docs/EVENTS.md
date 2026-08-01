@@ -25,6 +25,7 @@ message id from business identity — the two live ones are
 | `ug.co.smsone.organization.MembershipRoleChanged` | organization | `orgId, subject, occurredAt` | a member's role is reassigned |
 | `ug.co.smsone.organization.MemberRemoved` | organization | `orgId, subject, occurredAt` | a member is removed (published explicitly — a delete doesn't trigger `@DomainEvents`) |
 | `ug.co.smsone.organization.RolePermissionsChanged` | organization | `orgId, roleId, occurredAt` | a role's permissions are replaced (custom-role edit, system-role catalog reconciliation) — or the role is soft-deleted, since its grants vanish with it |
+| `ug.co.smsone.document.DocumentRegistered` | document | `documentId, orgId, name, source, occurredAt` | a document joins the catalog — upload or a platform producer; published explicitly (the id is persist-assigned) |
 | `ug.co.smsone.organization.OrganizationStatusChanged` | organization | `orgId, status, occurredAt` | an organization is suspended or reactivated |
 
 Every event carries `occurredAt` except `SettingChanged`, which predates the rule and has no consumer
@@ -48,8 +49,8 @@ The webhooks consumer maps each organization event to its outbound wire code
 `RolePermissionsChanged` → `org.role.permissions_changed`, `OrganizationStatusChanged` →
 `org.status_changed`.
 
-Three events currently have **no consumer**: `SettingChanged`, `UserActivated` and
-`TranslationChanged`. They are still published through the registry (and appear in the generated
+Four events currently have **no consumer**: `SettingChanged`, `UserActivated`,
+`TranslationChanged` and `DocumentRegistered`. They are still published through the registry (and appear in the generated
 module canvases); a first consumer must follow the `EventInbox` idempotency rule above.
 
 _(The **audit** module does not consume events — it records synchronously via the shared `AuditLog` port at each mutation, so it captures the actor and before/after state the events don't carry.)_

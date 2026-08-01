@@ -13,6 +13,7 @@ _Last updated: 2026-07-31._
 | **settings** | System settings + feature flags | `/api/v1/settings`, `/api/v1/feature-flags` | `SettingChanged`, `FeatureFlagChanged` | ✅ |
 | **localization** | Translation catalog + `Messages` resolution port | `/api/v1/translations/**` | `TranslationChanged` | ✅ |
 | **search** | Postgres FTS projection + `SearchIndex` port | `/api/v1/orgs/{orgId}/search`, `/api/v1/admin/search` | — (consumes `OrganizationRegistered`, `UserProvisioned`) | ✅ |
+| **document** | Managed-file catalog over the files port + `Documents` port | `/api/v1/orgs/{orgId}/documents/**`, `/api/v1/documents/**` | `DocumentRegistered` | ✅ |
 | **files** | S3-compatible object storage | `/api/v1/files` | — | ✅ |
 | **scheduler** | Clustered scheduled jobs | `/api/v1/scheduler/locks` | — | ✅ |
 | **analytics** | Embedded OLAP / reporting | `/api/v1/analytics/reports` | — | ✅ |
@@ -68,6 +69,21 @@ Lightning-fast full-text search on Postgres — no new engine, and the speed is 
   `GET /api/v1/admin/search` (`platform-support`, reaches null-org rows).
 - **Verified at scale**: 100k documents, 50 warm org-scoped queries — **p50 16ms, p95 20ms**
   (budget 50ms), printed by the gate test on every run.
+
+## document
+The business record OF a stored file, over keys the `files` module holds.
+- **Catalog**: name, owner subject, org (null = personal), provenance (`UPLOAD` | `EXCHANGE` via the
+  `Documents` port — the exchange platform files its artifacts here). Soft-deletable, ninth in
+  `PURGE_ORDER`.
+- **Scoping**: org documents behind the additive `document:read`/`document:manage` pair (reconciled
+  onto existing OWNERs at startup); personal documents tier by blast radius like files —
+  support reads across users, admin deletes.
+- **Delete, asymmetric by design**: the object goes immediately (remote, outside the tx), the row
+  soft-remains with its audit trail — a restore recovers the record, never the content.
+- **Search tie-in**: titles registered/un-indexed through the `SearchIndex` port — the port's
+  reference producer.
+- **Endpoints**: org `POST/GET` list, `GET /{id}` (302 presigned), `DELETE /{id}`; personal
+  equivalents under `/api/v1/documents`.
 
 ## files
 Object storage behind a single S3 abstraction (AWS SDK v2).

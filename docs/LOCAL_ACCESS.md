@@ -147,6 +147,11 @@ Keycloak admin: `admin` / `admin`. SeaweedFS creds live in `docker/seaweedfs/s3-
 | `GET` | `/api/v1/files/{key}` | USER (owner) or **platform-support** | 302 → short-lived presigned download URL |
 | `DELETE` | `/api/v1/files/{key}` | USER (owner) or **platform-admin** | Delete an object |
 | `POST` | `/api/v1/files/presign` | USER (owner) or **platform-support** | Presigned `PUT`/`GET` URL. Body `{"operation","key?","contentType?"}` |
+| `GET`/`POST` | `/api/v1/orgs/{orgId}/documents` | `document:read` / `document:manage` | Org document catalog (multipart upload; download 302s to presigned URL) |
+| `GET`/`DELETE` | `/api/v1/orgs/{orgId}/documents/{id}` | `document:read` / `document:manage` | Download / delete (bytes go immediately, the record soft-remains) |
+| `GET`/`POST` | `/api/v1/documents` | USER | Personal documents (support may read others', admin delete) |
+| `GET` | `/api/v1/orgs/{orgId}/search` | `org:read` | Ranked FTS with trigram fallback, cursor-paginated |
+| `GET` | `/api/v1/admin/search` | **platform-support** | Platform-wide search (users + all orgs) |
 | `GET` | `/api/v1/audit` | **platform-support** | Audit trail (all orgs); filter `action`/`from`/`to`, cursor-paginated |
 | `GET` | `/api/v1/orgs/{orgId}/audit` | `audit:read` | That org's audit trail (org admins) |
 | `GET`/`POST`/`PUT`/`DELETE` | `/api/v1/orgs/{orgId}/webhooks[/{id}]` | `webhook:manage` | Outbound webhook subscriptions (secret shown once) |

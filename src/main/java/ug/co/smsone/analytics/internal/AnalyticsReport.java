@@ -13,7 +13,7 @@ import java.util.Optional;
  * with the admin API reading the same table — and the report is the one used for headcounts and
  * licence reconciliation. The soft-deletable tables are {@code setting}, {@code feature_flag},
  * {@code app_user}, {@code organization}, {@code org_role}, {@code membership},
- * {@code webhook_subscription} and {@code translation}; {@code notification_delivery} is not one
+ * {@code webhook_subscription}, {@code translation} and {@code document}; {@code notification_delivery} is not one
  * of them.
  */
 enum AnalyticsReport {

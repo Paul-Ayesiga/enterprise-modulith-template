@@ -53,6 +53,7 @@ ug.co.smsone
 ├── settings/             # key/value configuration + feature flags (SettingChanged, FeatureFlagChanged)
 ├── localization/         # translation catalog + Messages port (exact → language → default → key fallback)
 ├── search/               # Postgres FTS projection (tsvector GIN + trigram fallback) + SearchIndex port
+├── document/             # managed-file catalog over the files port (Documents port; exchange files artifacts here)
 ├── files/                # FileStorageProvider → SeaweedFS/S3 (presign, multipart, circuit breaker)
 ├── scheduler/            # ShedLock-guarded cron (event-registry, idempotency + soft-delete retention purges)
 ├── analytics/            # AnalyticsEngine → embedded DuckDB (marts, KPIs, Parquet snapshots)

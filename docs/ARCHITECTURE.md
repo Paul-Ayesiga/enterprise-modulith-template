@@ -17,6 +17,7 @@ flowchart TB
         settings["settings\nkey/value config + feature flags"]
         localization["localization\ntranslation catalog · Messages port"]
         search["search\nPostgres FTS projection · SearchIndex port"]
+        document["document\nmanaged-file catalog · Documents port"]
         files["files\nFileStorageProvider → S3"]
         scheduler["scheduler\nShedLock cron jobs\n(+ soft-delete retention purge)"]
         analytics["analytics\nAnalyticsEngine → DuckDB"]
@@ -43,6 +44,9 @@ flowchart TB
     search --> shared
     search --> identity
     search --> organization
+    document --> shared
+    document --> files
+    document --> search
 
     settings -. "FeatureFlagChanged\n(DB-backed event registry)" .-> notification
     organization -. "member / role / status events" .-> webhooks

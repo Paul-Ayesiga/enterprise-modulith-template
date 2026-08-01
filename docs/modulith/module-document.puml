@@ -1,0 +1,36 @@
+@startuml
+title <size:24>Document</size>
+
+set separator none
+top to bottom direction
+
+<style>
+  root {
+    BackgroundColor: #ffffff
+    FontColor: #444444
+  }
+</style>
+
+!include <C4/C4>
+!include <C4/C4_Context>
+!include <C4/C4_Component>
+
+System_Boundary("Application_boundary", "Application", $tags="") {
+  Container_Boundary("Application.Application_boundary", "Application", $tags="") {
+    Component(Application.Application.Search, "Search", $techn="Module", $descr="", $tags="", $link="")
+    Component(Application.Application.Document, "Document", $techn="Module", $descr="", $tags="", $link="")
+    Component(Application.Application.SharedKernel, "Shared Kernel", $techn="Module", $descr="", $tags="", $link="")
+    Component(Application.Application.Files, "Files", $techn="Module", $descr="", $tags="", $link="")
+  }
+
+}
+
+Rel(Application.Application.Search, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Files, Application.Application.SharedKernel, "depends on", $techn="", $tags="", $link="")
+Rel(Application.Application.Document, Application.Application.Files, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Document, Application.Application.Search, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Document, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+
+SHOW_LEGEND(true)
+hide stereotypes
+@enduml

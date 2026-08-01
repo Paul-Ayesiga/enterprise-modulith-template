@@ -1,0 +1,13 @@
+[%autowidth.stretch, cols="h,a"]
+|===
+|Base package
+|`ug.co.smsone.document`
+|Spring components
+|_Services_
+
+* `u.c.s.d.Documents` (via `u.c.s.d.internal.DocumentService`)
+|Bean references
+|* `u.c.s.f.FileStorageProvider` (in Files)
+* `u.c.s.s.SearchIndex` (in Search)
+* `u.c.s.s.audit.AuditLog` (in Shared Kernel)
+|===

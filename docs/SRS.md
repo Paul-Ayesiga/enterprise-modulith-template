@@ -139,7 +139,7 @@ step — *which is exactly why the logical boundaries are enforced now*.
 
 ### 2.2 Module map
 
-Twelve modules. Verified from the `package-info.java` files and `docs/modulith/components.puml`.
+Thirteen modules. Verified from the `package-info.java` files and `docs/modulith/components.puml`.
 
 | Module | Display name | Owns (tables) | Public API package contains |
 |---|---|---|---|
@@ -149,6 +149,7 @@ Twelve modules. Verified from the `package-info.java` files and `docs/modulith/c
 | `settings` | Settings | `setting`, `feature_flag` | `SettingChanged`, `FeatureFlagChanged` |
 | `localization` | Localization | `translation` | `Messages` port, `TranslationChanged` |
 | `search` | Search | `search_document` | `SearchIndex` port, `SearchDoc` |
+| `document` | Document | `document` | `Documents` port, `NewDocument`, `DocumentRegistered` |
 | `audit` | Audit | `audit_log` | (none — consumed through the `shared.audit.AuditLog` port) |
 | `notification` | Notification | `in_app_notification`, `notification_delivery` | `Notifications`, `NotificationChannelSender` (SPI), `NotificationChannel`, `NotificationMessage`, `NotificationRequest`, `Recipient` |
 | `webhooks` | Webhooks | `webhook_subscription`, `webhook_delivery` | (none — the module is a pure consumer + REST surface) |
@@ -156,7 +157,7 @@ Twelve modules. Verified from the `package-info.java` files and `docs/modulith/c
 | `analytics` | Analytics | none in Postgres (DuckDB marts + Parquet) | `AnalyticsEngine`, `AnalyticsException` |
 | `scheduler` | Scheduler | none (consumes `shedlock`) | (none) |
 
-Seventeen of the schema's twenty tables appear above. The remaining three are **framework-owned and
+Eighteen of the schema's twenty-one tables appear above. The remaining three are **framework-owned and
 belong to no module**: `event_publication` (Spring Modulith's JDBC registry, `V2`), `shedlock`
 (ShedLock, `V4`) and `flyway_schema_history` (created by Flyway itself, in no migration). They are
 read and written by libraries, not by application code, and `V17` deliberately leaves all three out of
@@ -793,6 +794,19 @@ The system SHALL:
 | FR-SRCH-5 | answer 50 warm org-scoped queries over 100,000 documents with **p95 under 50 ms** on the reference container — measured, not asserted by adjective | `V22`'s GIN indexes + `main:search/internal/SearchQueryService.java` | `test:search/internal/SearchPerformanceTest.p95StaysUnderBudgetAcross100kDocuments` (prints the measured p50/p95) |
 | FR-SRCH-6 | reject a blank or over-long `q` with 422 naming the parameter | `main:search/internal/SearchQueryService.requireQuery` | `test:search/internal/SearchApiTest.aBlankQueryIsA422NamingTheParameter` |
 
+### 3.17 Documents (FR-DOC)
+
+The system SHALL:
+
+| ID | Requirement | Where | Verified by |
+|---|---|---|---|
+| FR-DOC-1 | keep the catalog record of a stored file (name, owner, org, provenance) over keys held by the files port — no storage SDK type appears in the module | `main:document/internal/{Document,DocumentService}.java` | `test:document/internal/DocumentApiTest.orgUploadListDownloadDeleteRoundTrip` |
+| FR-DOC-2 | gate org documents on the additive `document:read` / `document:manage` permission pair (the startup reconciler hands them to existing OWNERs); resolve documents strictly within the addressed org — a foreign document is 404, never 403 | `main:organization/Permission.java`, `main:document/internal/OrgDocumentController.java`, `DocumentService.requireInOrg` | `test:document/internal/DocumentApiTest.aReaderCannotUploadOrDelete`, `.anotherOrgsDocumentIsNotFoundNotForbidden` |
+| FR-DOC-3 | tier personal documents by blast radius, mirroring files: owner always; `platform-support` may read across users; destroying takes `platform-admin` | `main:document/internal/PersonalDocumentController.java` | `test:document/internal/DocumentApiTest.personalDocumentsTierByBlastRadius` |
+| FR-DOC-4 | delete asymmetrically: bytes immediately (remote, outside the transaction), the row soft-deleted with its `document.deleted` audit row in one transaction — a restore recovers the record, never the content | `main:document/internal/DocumentService.delete`, `V23`'s header | `DocumentApiTest.orgUploadListDownloadDeleteRoundTrip` (deleted_at + storage.delete + audit sequence) |
+| FR-DOC-5 | register titles into the search projection on register and un-index on delete — the reference `SearchIndex` producer | `main:document/internal/DocumentService.register/delete` | same test (searchRows assertions) |
+| FR-DOC-6 | accept registrations from other modules through the `Documents` port with `source` recording provenance (`EXCHANGE` artifacts file here) | `main:document/{Documents,NewDocument}.java` | exercised end-to-end by the exchange module's gate |
+
 ## 4. External interface requirements
 
 ### 4.1 The response envelope
@@ -1000,6 +1014,12 @@ no `@PreAuthorize`. Every endpoint can additionally return 401, 403 `ACCOUNT_NOT
 | DELETE | `/api/v1/translations/{locale}/{key}` | `platform-admin` | **204** | 404, 422 bad locale |
 | GET | `/api/v1/orgs/{orgId}/search` | `org:read` | 200 (paged, ranked) | 422 blank/over-long `q` or foreign cursor |
 | GET | `/api/v1/admin/search` | `platform-support` | 200 (paged, ranked) | 422 |
+| POST | `/api/v1/orgs/{orgId}/documents` | `document:manage` | **201** | 422 empty file |
+| GET | `/api/v1/orgs/{orgId}/documents` | `document:read` | 200 (paged) | — |
+| GET | `/api/v1/orgs/{orgId}/documents/{id}` | `document:read` | **302** presigned | 404 (incl. foreign org) |
+| DELETE | `/api/v1/orgs/{orgId}/documents/{id}` | `document:manage` | **204** | 404 |
+| POST / GET | `/api/v1/documents` | authenticated | 201 / 200 (paged, own) | 422 |
+| GET / DELETE | `/api/v1/documents/{id}` | owner; `platform-support` reads / `platform-admin` deletes across users | 302 / 204 | 403, 404 |
 | GET | `/api/v1/notifications` | authenticated (scoped to caller's subject) | 200 (paged) | — |
 | POST | `/api/v1/notifications/{id}/read` | authenticated (scoped) | 200 | 404 (also when it is another user's) |
 | POST | `/api/v1/files` (multipart `file`) | authenticated | **201** | 422 empty / unreadable |
@@ -1552,6 +1572,7 @@ do not appear there. **✗** marks a requirement with no automated verification 
 | FR-IMP-22, 24 | `main:audit/internal/{AuditLogImpl,AuditEntry,AuditController}.java`, **`V19__audit_log_impersonation.sql`** | `test:identity/internal/ImpersonationReachTest.anAuditRowFromInsideASessionNamesTheOperatorAndTheIdentityTheyWore`, `.aWebhookCreatedInsideASessionNamesTheOperatorAndTheSession` |
 | FR-IMP-25 | `@Value("${app.impersonation.enabled:true}")` on `main:identity/internal/ImpersonationController.java:55` (enforced per handler by `requireEnabled()`) and `main:shared/security/ImpersonationFilter.java:72`; `application.yaml:119-128` | `test:identity/internal/ImpersonationDisabledTest` (3 tests) |
 | FR-LOC-1..6 | `main:localization/{Messages,TranslationChanged}.java`, `main:localization/internal/{Translation,TranslationRepository,TranslationBundles,MessagesImpl,TranslationService,TranslationController,LocalizationProperties}.java`, **`V21__localization.sql`** | `test:localization/internal/MessageResolutionTest` (3 tests), `test:localization/internal/LocalizationApiTest` (4 tests) |
+| FR-DOC-1..6 | `main:document/{Documents,NewDocument,DocumentRegistered}.java`, `main:document/internal/{Document,DocumentRepository,DocumentService,OrgDocumentController,PersonalDocumentController,DocumentProperties}.java`, **`V23__document.sql`** | `test:document/internal/DocumentApiTest` (4 tests) |
 | FR-SRCH-1..6 | `main:search/{SearchIndex,SearchDoc}.java`, `main:search/internal/{SearchIndexStore,SearchIndexImpl,SearchEventListeners,SearchQueryService,SearchController}.java`, **`V22__search.sql`**, `main:shared/web/Cursors.java` (the `d:` tag) | `test:search/internal/SearchApiTest` (5 tests), `test:search/internal/SearchPerformanceTest` (measured p95), `test:shared/web/CursorsEscapingTest` |
 | FR-SET-1..11 | `main:settings/internal/{SettingController,SettingService,Setting,SettingRepository,FeatureFlagController,FeatureFlagService,FeatureFlag,FeatureFlagRepository}.java`, `main:settings/{SettingChanged,FeatureFlagChanged}.java`, `V3`, `V6` | `test:settings/SettingsApiIntegrationTest` (6), `test:settings/FeatureFlagIntegrationTest` (4), `test:settings/SettingsModuleTest` (2) |
 | FR-FIL-1..8, 9 ✗, 10..12, 13 ✗ | `main:files/internal/{FileController,S3StorageProvider,S3ClientConfig,StorageProperties,BucketBootstrap}.java`, `main:files/{FileStorageProvider,FileStorageException,FileNotFoundException}.java` | `test:files/internal/FileApiTest` (10), `test:files/FileStorageIntegrationTest` (3), `test:files/ResilienceSmokeTest` |
