@@ -391,7 +391,12 @@ The three items left open by choice, now worked:
 - [x] **Per-org SLA overrides (V38)** — `org_sla_override` + `AdminSlaController`
       (`/api/v1/admin/orgs/{id}/sla/{priority}`, platform-admin writes / platform-support reads),
       consulted at ticket open; clearing falls back to the seeded `sla_policy`. `SlaOverrideTest`.
-- [ ] **Per-org retention overrides** — the remaining half of the last item (in progress).
+- [x] **Per-org retention overrides (V39)** — `org_retention_override` + the shared `RetentionOverrides`
+      port / `RetentionPurges` two-pass helper; the webhook + exchange retention jobs purge
+      non-overridden orgs at the platform default, then each overridden org at its own cutoff.
+      `AdminRetentionController` (`/api/v1/admin/orgs/{id}/retention/{scope}`). Notification deliveries
+      are recipient-scoped, so excluded. `RetentionPurgesTest` + `ExchangeRetentionOverrideTest` +
+      `RetentionOverrideApiTest`. **All three deferred items closed.** Next free V40.
 
 ## P7 — Maintenance windows ✅ (2026-08-01)
 

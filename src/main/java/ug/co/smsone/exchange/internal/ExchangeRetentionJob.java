@@ -1,13 +1,15 @@
 package ug.co.smsone.exchange.internal;
 
 import java.time.Clock;
-import java.time.Instant;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import ug.co.smsone.shared.metrics.PurgeMetrics;
+import ug.co.smsone.shared.retention.RetentionOverrides;
+import ug.co.smsone.shared.retention.RetentionPurges;
+import ug.co.smsone.shared.retention.RetentionScope;
 
 /**
  * The retention job the V24 terminal index was always waiting for: terminal jobs past
@@ -26,13 +28,16 @@ class ExchangeRetentionJob {
 
     private final ExchangeJobStore store;
     private final ExchangeProperties config;
+    private final RetentionOverrides retentionOverrides;
     private final Clock clock;
     private final io.micrometer.core.instrument.MeterRegistry meters;
 
-    ExchangeRetentionJob(ExchangeJobStore store, ExchangeProperties config, Clock clock,
+    ExchangeRetentionJob(ExchangeJobStore store, ExchangeProperties config,
+            RetentionOverrides retentionOverrides, Clock clock,
             io.micrometer.core.instrument.MeterRegistry meters) {
         this.store = store;
         this.config = config;
+        this.retentionOverrides = retentionOverrides;
         this.clock = clock;
         this.meters = meters;
     }
@@ -40,16 +45,10 @@ class ExchangeRetentionJob {
     @Scheduled(cron = "${app.scheduler.exchange-retention-cron:0 45 4 * * *}")
     @SchedulerLock(name = "exchange-job-retention", lockAtMostFor = "PT30M")
     public void purgeExpiredJobs() {
-        Instant cutoff = clock.instant().minus(config.retention());
-        int total = 0;
-        for (int batch = 0; batch < MAX_BATCHES; batch++) {
-            int deleted = store.purgeTerminalBatch(cutoff, BATCH_SIZE);
-            total += deleted;
-            if (deleted < BATCH_SIZE) {
-                break;
-            }
-        }
+        int total = RetentionPurges.purge(retentionOverrides, RetentionScope.EXCHANGE_JOB,
+                clock.instant(), config.retention(), BATCH_SIZE, MAX_BATCHES,
+                store::purgeTerminalBatch, store::purgeTerminalBatchForOrg);
         PurgeMetrics.purged(meters, "exchange-job-retention", "exchange_job", total);
-        log.info("Purged {} terminal exchange jobs older than {}", total, config.retention());
+        log.info("Purged {} terminal exchange jobs (default retention {})", total, config.retention());
     }
 }

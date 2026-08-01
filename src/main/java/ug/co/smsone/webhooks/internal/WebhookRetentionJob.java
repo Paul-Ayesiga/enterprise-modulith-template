@@ -1,12 +1,14 @@
 package ug.co.smsone.webhooks.internal;
 
 import java.time.Clock;
-import java.time.Instant;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.shared.retention.RetentionOverrides;
+import ug.co.smsone.shared.retention.RetentionPurges;
+import ug.co.smsone.shared.retention.RetentionScope;
 
 /**
  * Nightly retention for the delivery log — the machinery three in-repo claims described but nothing
@@ -24,13 +26,16 @@ class WebhookRetentionJob {
 
     private final WebhookDeliveryQueue queue;
     private final WebhookProperties properties;
+    private final RetentionOverrides retentionOverrides;
     private final Clock clock;
     private final io.micrometer.core.instrument.MeterRegistry meters;
 
-    WebhookRetentionJob(WebhookDeliveryQueue queue, WebhookProperties properties, Clock clock,
+    WebhookRetentionJob(WebhookDeliveryQueue queue, WebhookProperties properties,
+            RetentionOverrides retentionOverrides, Clock clock,
             io.micrometer.core.instrument.MeterRegistry meters) {
         this.queue = queue;
         this.properties = properties;
+        this.retentionOverrides = retentionOverrides;
         this.clock = clock;
         this.meters = meters;
     }
@@ -38,16 +43,10 @@ class WebhookRetentionJob {
     @Scheduled(cron = "${app.scheduler.webhook-retention-cron:0 15 4 * * *}")
     @SchedulerLock(name = "webhook-delivery-retention", lockAtMostFor = "PT30M")
     public void purgeExpiredDeliveries() {
-        Instant cutoff = clock.instant().minus(properties.retention());
-        int total = 0;
-        for (int batch = 0; batch < MAX_BATCHES; batch++) {
-            int deleted = queue.purgeTerminalBatch(cutoff, BATCH_SIZE);
-            total += deleted;
-            if (deleted < BATCH_SIZE) {
-                break;
-            }
-        }
+        int total = RetentionPurges.purge(retentionOverrides, RetentionScope.WEBHOOK_DELIVERY,
+                clock.instant(), properties.retention(), BATCH_SIZE, MAX_BATCHES,
+                queue::purgeTerminalBatch, queue::purgeTerminalBatchForOrg);
         ug.co.smsone.shared.metrics.PurgeMetrics.purged(meters, "webhook-delivery-retention", "webhook_delivery", total);
-        log.info("Purged {} terminal webhook deliveries older than {}", total, properties.retention());
+        log.info("Purged {} terminal webhook deliveries (default retention {})", total, properties.retention());
     }
 }

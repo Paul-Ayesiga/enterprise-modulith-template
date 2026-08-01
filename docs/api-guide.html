@@ -360,6 +360,16 @@ DELETE /api/v1/admin/compliance/legal-holds/{id}      # release
 POST   /api/v1/admin/compliance/erasure   {"subject":"kc-7d2e…"}   # REFUSED while held</code></pre>
 <p class="mut">Erasure soft-deletes immediately (invisible at once); hard erasure follows at the retention
 window, which itself skips anything under a legal hold.</p>
+<h3>Per-org retention overrides</h3>
+<pre><code># platform keeps (or drops) ONE org's log rows on a different schedule than the platform default
+PUT    /api/v1/admin/orgs/{orgId}/retention/webhook-delivery   {"days":365}   # platform-admin
+PUT    /api/v1/admin/orgs/{orgId}/retention/exchange-job       {"days":30}
+GET    /api/v1/admin/orgs/{orgId}/retention                    # the org's overrides (platform-support)
+DELETE /api/v1/admin/orgs/{orgId}/retention/exchange-job       # clear → back to the platform default</code></pre>
+<p class="mut">Scopes are the ORG-scoped logs only — <code>webhook-delivery</code> and <code>exchange-job</code>.
+Notification deliveries are keyed by recipient (email / phone / user), not by org, so a per-org retention
+has no meaning there. The nightly retention jobs purge non-overridden orgs at the default, then each
+overridden org at its own cutoff.</p>
 
 <h2 id="maintenance">13f · Maintenance windows</h2>
 <pre><code># platform schedules a window (platform-admin). orgId null = platform-wide.

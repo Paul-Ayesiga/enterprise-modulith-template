@@ -28,6 +28,7 @@ _Others_
 * `u.c.s.s.persistence.SoftDeleteRecovery`
 * `u.c.s.s.ratelimit.DistributedRateLimiter`
 * `u.c.s.s.ratelimit.RateLimitFilter`
+* `u.c.s.s.retention.RetentionOverrides`
 * `u.c.s.s.security.ApiAccessDeniedHandler`
 * `u.c.s.s.security.ApiAuthenticationEntryPoint`
 * `u.c.s.s.security.ApiKeyAuthenticationFilter`

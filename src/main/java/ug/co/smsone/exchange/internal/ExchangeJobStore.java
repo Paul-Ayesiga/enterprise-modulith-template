@@ -6,11 +6,14 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.KeysetScrollPosition;
@@ -190,16 +193,51 @@ class ExchangeJobStore {
         }
     }
 
-    /** Retention: oldest-first bounded batches over the V24 partial terminal index. */
-    int purgeTerminalBatch(java.time.Instant cutoff, int batchSize) {
+    /**
+     * Retention: oldest-first bounded batches over the V24 partial terminal index, excluding orgs
+     * that carry their own retention override (handled per-org). A null org_id is platform-scoped
+     * and never overridden, so it is purged at the default cutoff.
+     */
+    int purgeTerminalBatch(java.time.Instant cutoff, Collection<UUID> excludeOrgs, int batchSize) {
+        if (excludeOrgs.isEmpty()) {
+            return jdbc.update("""
+                    delete from exchange_job where id in (
+                        select id from exchange_job
+                        where status in ('COMPLETED', 'COMPLETED_WITH_ERRORS', 'FAILED', 'CANCELLED')
+                          and created_at < ?
+                        order by created_at
+                        limit ?)
+                    """, Timestamp.from(cutoff), batchSize);
+        }
+        String inClause = excludeOrgs.stream().map(o -> "?").collect(Collectors.joining(", "));
+        Object[] args = new Object[excludeOrgs.size() + 2];
+        args[0] = Timestamp.from(cutoff);
+        int i = 1;
+        for (UUID orgId : excludeOrgs) {
+            args[i++] = orgId;
+        }
+        args[i] = batchSize;
         return jdbc.update("""
                 delete from exchange_job where id in (
                     select id from exchange_job
                     where status in ('COMPLETED', 'COMPLETED_WITH_ERRORS', 'FAILED', 'CANCELLED')
                       and created_at < ?
+                      and (org_id is null or org_id not in (%s))
                     order by created_at
                     limit ?)
-                """, Timestamp.from(cutoff), batchSize);
+                """.formatted(inClause), args);
+    }
+
+    /** One org's terminal jobs older than its own cutoff — the per-org retention-override pass. */
+    int purgeTerminalBatchForOrg(java.time.Instant cutoff, UUID orgId, int batchSize) {
+        return jdbc.update("""
+                delete from exchange_job where id in (
+                    select id from exchange_job
+                    where status in ('COMPLETED', 'COMPLETED_WITH_ERRORS', 'FAILED', 'CANCELLED')
+                      and created_at < ? and org_id = ?
+                    order by created_at
+                    limit ?)
+                """, Timestamp.from(cutoff), orgId, batchSize);
     }
 
     boolean requestCancel(UUID id, UUID orgId) {

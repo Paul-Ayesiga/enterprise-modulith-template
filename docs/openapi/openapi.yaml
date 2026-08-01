@@ -43,6 +43,14 @@ tags:
     \ reply (public or an internal note the tenant never sees), transition status.\
     \ SLA breaches escalate automatically — a minute job bumps priority, counts the\
     \ breach, and fires org.ticket.escalated."
+- name: Platform · SLA policies
+  description: "Per-org SLA overrides (platform-admin writes, platform-support reads):\
+    \ set an org's first-response/resolution targets tighter or looser than the seeded\
+    \ per-priority defaults. Consulted at ticket open."
+- name: Platform · Retention
+  description: "Per-org retention overrides (platform-admin writes, platform-support\
+    \ reads) for the org-scoped logs (webhook-delivery, exchange-job): keep or drop\
+    \ one org's rows on a different schedule than the platform default."
 - name: Platform · Maintenance
   description: "Scheduling maintenance windows (platform-admin), platform-wide or\
     \ targeted at one org. RESTRICT pauses org writes for the window; ANNOUNCE is\
@@ -910,6 +918,44 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}/billing/payment-methods/{paymentMethodId}/default:
+    put:
+      tags:
+      - Organization · Billing
+      summary: Make a payment method the default
+      operationId: setDefault
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: paymentMethodId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
   /api/v1/me/profile:
     get:
       tags:
@@ -1241,6 +1287,137 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/orgs/{orgId}/sla/{priority}:
+    put:
+      tags:
+      - Platform · SLA policies
+      summary: Set an org's SLA target for a priority
+      description: "Upserts the org's first-response and resolution minutes for `priority`\
+        \ (P1–P4), overriding the seeded default. Takes effect on tickets opened after."
+      operationId: set_2
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: priority
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SlaRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+    delete:
+      tags:
+      - Platform · SLA policies
+      summary: Clear an org's SLA override (fall back to the seeded default)
+      operationId: clear
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: priority
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: No Content
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+  /api/v1/admin/orgs/{orgId}/retention/{scope}:
+    put:
+      tags:
+      - Platform · Retention
+      summary: Set an org's retention for a scope
+      description: Overrides the platform default with `days` (positive) for `scope`
+        (`webhook-delivery` | `exchange-job`). May keep rows longer OR shorter than
+        the default. Applies on the next retention run.
+      operationId: set_3
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: scope
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RetentionRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+    delete:
+      tags:
+      - Platform · Retention
+      summary: Clear an org's retention override (fall back to the platform default)
+      operationId: clear_1
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: scope
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: No Content
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
   /api/v1/admin/integrations:
     get:
       tags:
@@ -2493,6 +2670,90 @@ paths:
                   format: binary
               required:
               - file
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}/billing/payment-methods:
+    get:
+      tags:
+      - Organization · Billing
+      summary: List the organization's payment methods (from Kill Bill)
+      operationId: paymentMethods
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceObject"
+    post:
+      tags:
+      - Organization · Billing
+      summary: Add a payment method
+      description: "Attaches a payment method through a Kill Bill payment PLUGIN.\
+        \ Raw card data never touches this API — `pluginProperties` carries only what\
+        \ a hosted page / plugin tokenized; the card-capture UI is the plugin's job.\
+        \ Stays reachable while the subscription is paused, so a tenant can pay to\
+        \ recover."
+      operationId: addPaymentMethod
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentMethodRequest"
+        required: true
       responses:
         "201":
           description: Created
@@ -5614,6 +5875,64 @@ paths:
                 \ ULID)."
               schema:
                 type: string
+  /api/v1/admin/orgs/{orgId}/sla:
+    get:
+      tags:
+      - Platform · SLA policies
+      summary: List an org's SLA overrides
+      description: Priorities not listed fall back to the seeded per-priority default.
+      operationId: list_28
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/orgs/{orgId}/retention:
+    get:
+      tags:
+      - Platform · Retention
+      summary: List an org's retention overrides
+      description: Scopes not listed use the platform default retention for that log.
+      operationId: list_29
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceObject"
   /api/v1/admin/orgs/{orgId}/members:
     get:
       tags:
@@ -5890,6 +6209,44 @@ paths:
         required: true
         schema:
           $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "204":
+          description: No Content
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+  /api/v1/orgs/{orgId}/billing/payment-methods/{paymentMethodId}:
+    delete:
+      tags:
+      - Organization · Billing
+      summary: Remove a payment method
+      operationId: remove_1
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: paymentMethodId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
       - name: X-Impersonate
         in: header
         description: "Run this request as the target of an impersonation session (its\
@@ -6290,6 +6647,21 @@ components:
       properties:
         plan:
           type: string
+    SlaRequest:
+      type: object
+      properties:
+        firstResponseMinutes:
+          type: integer
+          format: int32
+        resolutionMinutes:
+          type: integer
+          format: int32
+    RetentionRequest:
+      type: object
+      properties:
+        days:
+          type: integer
+          format: int32
     CreateOrganizationRequest:
       type: object
       properties:
@@ -6423,6 +6795,16 @@ components:
           type: string
         format:
           type: string
+    PaymentMethodRequest:
+      type: object
+      properties:
+        pluginName:
+          type: string
+        isDefault:
+          type: boolean
+        pluginProperties:
+          type: object
+          additionalProperties: {}
     RegisterRequest:
       type: object
       properties:

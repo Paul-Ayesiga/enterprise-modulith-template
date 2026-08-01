@@ -25,11 +25,11 @@ System_Boundary("Application_boundary", "Application", $tags="") {
 
 }
 
-Rel(Application.Application.Search, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Files, Application.Application.SharedKernel, "depends on", $techn="", $tags="", $link="")
 Rel(Application.Application.Document, Application.Application.Files, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Document, Application.Application.Search, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Document, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Search, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 
 SHOW_LEGEND(true)
 hide stereotypes

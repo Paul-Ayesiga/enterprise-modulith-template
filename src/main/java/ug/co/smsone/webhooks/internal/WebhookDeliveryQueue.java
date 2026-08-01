@@ -5,8 +5,11 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.BatchPreparedStatementSetter;
@@ -135,14 +138,44 @@ class WebhookDeliveryQueue {
      * deliberately: a dead-letter past the retention window is stale noise nobody is coming back
      * for — the delivery log is a log, not an archive.
      */
-    int purgeTerminalBatch(Instant cutoff, int batchSize) {
+    int purgeTerminalBatch(Instant cutoff, Collection<UUID> excludeOrgs, int batchSize) {
+        if (excludeOrgs.isEmpty()) {
+            return jdbc.update("""
+                    delete from webhook_delivery where id in (
+                        select id from webhook_delivery
+                        where status in ('DELIVERED', 'FAILED') and created_at < ?
+                        order by created_at
+                        limit ?)
+                    """, Timestamp.from(cutoff), batchSize);
+        }
+        // Orgs with a retention override are handled in their own pass — exclude them here.
+        String inClause = excludeOrgs.stream().map(o -> "?").collect(Collectors.joining(", "));
+        Object[] args = new Object[excludeOrgs.size() + 2];
+        args[0] = Timestamp.from(cutoff);
+        int i = 1;
+        for (UUID orgId : excludeOrgs) {
+            args[i++] = orgId;
+        }
+        args[i] = batchSize;
         return jdbc.update("""
                 delete from webhook_delivery where id in (
                     select id from webhook_delivery
                     where status in ('DELIVERED', 'FAILED') and created_at < ?
+                      and org_id not in (%s)
                     order by created_at
                     limit ?)
-                """, Timestamp.from(cutoff), batchSize);
+                """.formatted(inClause), args);
+    }
+
+    /** One org's terminal deliveries older than its own cutoff — the per-org retention-override pass. */
+    int purgeTerminalBatchForOrg(Instant cutoff, UUID orgId, int batchSize) {
+        return jdbc.update("""
+                delete from webhook_delivery where id in (
+                    select id from webhook_delivery
+                    where status in ('DELIVERED', 'FAILED') and created_at < ? and org_id = ?
+                    order by created_at
+                    limit ?)
+                """, Timestamp.from(cutoff), orgId, batchSize);
     }
 
     private static void fenced(String operation, UUID id, int updated) {

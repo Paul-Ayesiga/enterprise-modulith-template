@@ -11,8 +11,8 @@ Schema ownership: Flyway owns every table (`spring.jpa.hibernate.ddl-auto: valid
 `classpath:db/migration`. There is no `schema.sql`, no test-only DDL, and no Hibernate-generated
 schema in any profile. **V1..V26 exist; V20 is the 2026-08-01 audit's index remediation, V21
 localization, V22 search, V23 document, V24 the exchange job queue, V25 the exchange
-guideline completion (templates/schedules), V26 subscriptions, V27 billing, V28 profile, V29 api-keys, V30 groups, V31 devices, V32 security policies, V33 integration hub, V34 compliance, V35 maintenance, V36 support, V37 subscription trial + pause, V38 per-org SLA overrides; the next free
-number is V39.**
+guideline completion (templates/schedules), V26 subscriptions, V27 billing, V28 profile, V29 api-keys, V30 groups, V31 devices, V32 security policies, V33 integration hub, V34 compliance, V35 maintenance, V36 support, V37 subscription trial + pause, V38 per-org SLA overrides, V39 per-org retention overrides; the next free
+number is V40.**
 
 ---
 
@@ -1973,8 +1973,9 @@ The schema alone reads as if these cascades are live behaviour. They are not, ex
 | `V36__support.sql` | `ticket` (soft-deletable; org/status/SLA indexes) + `ticket_message` (append-only child, cascade FK — the ninth intra-module FK) + `sla_policy` (seeded per-priority reference data) |
 | `V37__subscription_trial.sql` | `org_subscription` gains `trial_ends_at` + a `PAUSED` status (no new table); a partial index over live TRIALING rows backs the hourly expiry scan |
 | `V38__org_sla_override.sql` | `org_sla_override` (not soft-deletable; unique `(org_id, priority)`) — per-org SLA targets overriding the seeded `sla_policy`, consulted at ticket open |
+| `V39__org_retention_override.sql` | `org_retention_override` (not soft-deletable; unique `(org_id, scope)`) — per-org retention (days) for the org-scoped logs (`WEBHOOK_DELIVERY`, `EXCHANGE_JOB`), owned by scheduler, consulted by the retention jobs through the shared `RetentionOverrides` port |
 
-**The next free migration number is V39.**
+**The next free migration number is V40.**
 
 ---
 
