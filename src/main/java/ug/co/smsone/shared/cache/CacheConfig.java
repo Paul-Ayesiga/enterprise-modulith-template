@@ -84,9 +84,10 @@ public class CacheConfig {
     @Primary
     TwoLevelCacheManager cacheManager(CaffeineCacheManager caffeineCacheManager,
             org.springframework.beans.factory.ObjectProvider<RedisCacheManager> redisCacheManager,
-            org.springframework.beans.factory.ObjectProvider<CacheInvalidationBroadcaster> broadcaster) {
+            org.springframework.beans.factory.ObjectProvider<CacheInvalidationBroadcaster> broadcaster,
+            io.micrometer.core.instrument.MeterRegistry meters) {
         return new TwoLevelCacheManager(caffeineCacheManager,
-                redisCacheManager.getIfAvailable(), broadcaster.getIfAvailable());
+                redisCacheManager.getIfAvailable(), broadcaster.getIfAvailable(), meters);
     }
 
     @Bean

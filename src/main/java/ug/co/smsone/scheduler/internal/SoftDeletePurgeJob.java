@@ -90,11 +90,14 @@ class SoftDeletePurgeJob {
     private final JdbcTemplate jdbc;
     private final SoftDeleteProperties properties;
     private final Clock clock;
+    private final io.micrometer.core.instrument.MeterRegistry meters;
 
-    SoftDeletePurgeJob(JdbcTemplate jdbc, SoftDeleteProperties properties, Clock clock) {
+    SoftDeletePurgeJob(JdbcTemplate jdbc, SoftDeleteProperties properties, Clock clock,
+            io.micrometer.core.instrument.MeterRegistry meters) {
         this.jdbc = jdbc;
         this.properties = properties;
         this.clock = clock;
+        this.meters = meters;
     }
 
     @Scheduled(cron = "${app.scheduler.soft-delete-purge-cron:0 0 4 * * *}")
@@ -115,6 +118,7 @@ class SoftDeletePurgeJob {
             try {
                 int rows = purgeTable(table, cutoff);
                 total += rows;
+                ug.co.smsone.shared.metrics.PurgeMetrics.purged(meters, "soft-delete-purge", table, rows);
                 if (rows > 0) {
                     purged.put(table, rows);
                 }

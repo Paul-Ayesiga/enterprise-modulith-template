@@ -4,6 +4,7 @@ import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 
@@ -24,16 +25,18 @@ class ExchangeWorker implements SmartLifecycle {
     private final ImportRunner imports;
     private final ExportRunner exports;
     private final ExchangeProperties config;
+    private final ExchangeMetrics metrics;
 
     private volatile boolean running;
     private volatile Thread poller;
 
     ExchangeWorker(ExchangeJobStore store, ImportRunner imports, ExportRunner exports,
-            ExchangeProperties config) {
+            ExchangeProperties config, ExchangeMetrics metrics) {
         this.store = store;
         this.imports = imports;
         this.exports = exports;
         this.config = config;
+        this.metrics = metrics;
     }
 
     @Override
@@ -90,11 +93,25 @@ class ExchangeWorker implements SmartLifecycle {
             return 0;
         }
         ExchangeJob job = claimed.get();
-        if (ExchangeJob.EXPORT.equals(job.jobType())) {
-            exports.run(job);
-        } else {
-            imports.run(job);
+        // MDC, not method arguments: every log line the run produces — handler code included —
+        // carries the tenant and the job without any layer having to pass them along.
+        MDC.put("org_id", job.orgId().toString());
+        MDC.put("exchange_job_id", job.id().toString());
+        MDC.put("exchange_handler", job.handler());
+        try {
+            if (ExchangeJob.EXPORT.equals(job.jobType())) {
+                exports.run(job);
+            } else {
+                imports.run(job);
+            }
+        } finally {
+            MDC.remove("org_id");
+            MDC.remove("exchange_job_id");
+            MDC.remove("exchange_handler");
         }
+        // One read, one call site: the runners already wrote the terminal status, so counting from
+        // the row can never disagree with it (a released-for-retry job is not an outcome yet).
+        store.find(job.id(), job.orgId()).ifPresent(metrics::jobFinished);
         return 1;
     }
 

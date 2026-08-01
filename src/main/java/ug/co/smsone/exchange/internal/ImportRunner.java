@@ -41,9 +41,11 @@ class ImportRunner {
     private final FileStorageProvider storage;
     private final ArtifactStore artifacts;
     private final ExchangeProperties config;
+    private final ExchangeMetrics metrics;
 
     ImportRunner(ExchangeJobStore store, HandlerRegistry handlers, List<FormatCodec> codecs,
-            FileStorageProvider storage, ArtifactStore artifacts, ExchangeProperties config) {
+            FileStorageProvider storage, ArtifactStore artifacts, ExchangeProperties config,
+            ExchangeMetrics metrics) {
         this.store = store;
         this.handlers = handlers;
         this.codecs = codecs.stream()
@@ -51,6 +53,7 @@ class ImportRunner {
         this.storage = storage;
         this.artifacts = artifacts;
         this.config = config;
+        this.metrics = metrics;
     }
 
     void run(ExchangeJob job) {
@@ -123,6 +126,9 @@ class ImportRunner {
                 if (progress == ExchangeJobStore.Progress.LOST_CLAIM) {
                     return; // another claimant owns the job now; it resumes from ITS committed offset
                 }
+                // Counted only after the batch COMMITTED — a replayed batch is never double-counted.
+                metrics.records(job.handler(), "processed", inBatch - errors.size());
+                metrics.records(job.handler(), "failed", errors.size());
                 if (progress == ExchangeJobStore.Progress.CANCEL_REQUESTED) {
                     store.markTerminal(job.id(), job.attempts(), ExchangeJob.CANCELLED, null, null, null);
                     return;

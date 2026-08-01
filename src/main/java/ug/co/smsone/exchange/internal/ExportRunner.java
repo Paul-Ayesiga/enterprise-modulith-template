@@ -34,15 +34,17 @@ class ExportRunner {
     private final Map<String, FormatCodec> codecs;
     private final ArtifactStore artifacts;
     private final ExchangeProperties config;
+    private final ExchangeMetrics metrics;
 
     ExportRunner(ExchangeJobStore store, HandlerRegistry handlers, List<FormatCodec> codecs,
-            ArtifactStore artifacts, ExchangeProperties config) {
+            ArtifactStore artifacts, ExchangeProperties config, ExchangeMetrics metrics) {
         this.store = store;
         this.handlers = handlers;
         this.codecs = codecs.stream()
                 .collect(Collectors.toUnmodifiableMap(FormatCodec::id, Function.identity()));
         this.artifacts = artifacts;
         this.config = config;
+        this.metrics = metrics;
     }
 
     void run(ExchangeJob job) {
@@ -90,6 +92,7 @@ class ExportRunner {
                     == ExchangeJobStore.Progress.LOST_CLAIM) {
                 return; // another claimant re-exports; this artifact stays as an unreferenced document
             }
+            metrics.records(job.handler(), "exported", written.get());
             store.markTerminal(job.id(), job.attempts(), ExchangeJob.COMPLETED, key, null, null);
         } finally {
             Files.deleteIfExists(temp);

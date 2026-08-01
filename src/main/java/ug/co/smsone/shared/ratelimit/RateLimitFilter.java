@@ -1,5 +1,7 @@
 package ug.co.smsone.shared.ratelimit;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -34,14 +36,16 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final DistributedRateLimiter limiter;
     private final RateLimitKeyResolver keyResolver;
     private final EnvelopeErrorWriter errorWriter;
+    private final MeterRegistry meters;
     private final AntPathMatcher pathMatcher = new AntPathMatcher();
 
     public RateLimitFilter(RateLimitProperties properties, DistributedRateLimiter limiter,
-            RateLimitKeyResolver keyResolver, EnvelopeErrorWriter errorWriter) {
+            RateLimitKeyResolver keyResolver, EnvelopeErrorWriter errorWriter, MeterRegistry meters) {
         this.properties = properties;
         this.limiter = limiter;
         this.keyResolver = keyResolver;
         this.errorWriter = errorWriter;
+        this.meters = meters;
     }
 
     @Override
@@ -62,6 +66,11 @@ public class RateLimitFilter extends OncePerRequestFilter {
             chain.doFilter(request, response);
             return;
         }
+        Counter.builder("smsone.ratelimit.denied")
+                .description("Requests refused with 429, by tier")
+                .tag("tier", tier.id())
+                .register(meters)
+                .increment();
         response.setHeader("Retry-After", String.valueOf(verdict.retryAfterSeconds()));
         errorWriter.write(request, response, ErrorCode.RATE_LIMITED,
                 "Rate limit exceeded for '" + tier.id() + "'. Retry after " + verdict.retryAfterSeconds() + "s.",

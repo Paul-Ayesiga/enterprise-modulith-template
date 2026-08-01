@@ -24,11 +24,14 @@ class EventInboxPurgeJob {
     private final EventInbox inbox;
     private final SchedulerRetentionProperties properties;
     private final Clock clock;
+    private final io.micrometer.core.instrument.MeterRegistry meters;
 
-    EventInboxPurgeJob(EventInbox inbox, SchedulerRetentionProperties properties, Clock clock) {
+    EventInboxPurgeJob(EventInbox inbox, SchedulerRetentionProperties properties, Clock clock,
+            io.micrometer.core.instrument.MeterRegistry meters) {
         this.inbox = inbox;
         this.properties = properties;
         this.clock = clock;
+        this.meters = meters;
     }
 
     @Scheduled(cron = "${app.scheduler.event-inbox-purge-cron:0 45 3 * * *}")
@@ -43,6 +46,7 @@ class EventInboxPurgeJob {
                 break;
             }
         }
+        ug.co.smsone.shared.metrics.PurgeMetrics.purged(meters, "event-inbox-purge", "event_inbox", total);
         log.info("Purged {} event-inbox rows older than {}", total, properties.eventInboxRetention());
     }
 }

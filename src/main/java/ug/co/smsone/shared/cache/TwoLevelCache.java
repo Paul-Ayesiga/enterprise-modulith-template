@@ -27,12 +27,29 @@ class TwoLevelCache implements Cache {
     private final Cache l1;
     private final Cache l2;
     private final CacheInvalidationBroadcaster broadcaster;
+    // Pre-registered: get() is on the request hot path, so the counters are looked up once, not per hit.
+    private final io.micrometer.core.instrument.Counter l1Hits;
+    private final io.micrometer.core.instrument.Counter l2Hits;
+    private final io.micrometer.core.instrument.Counter misses;
 
-    TwoLevelCache(String name, Cache l1, Cache l2, CacheInvalidationBroadcaster broadcaster) {
+    TwoLevelCache(String name, Cache l1, Cache l2, CacheInvalidationBroadcaster broadcaster,
+            io.micrometer.core.instrument.MeterRegistry meters) {
         this.name = name;
         this.l1 = l1;
         this.l2 = l2;
         this.broadcaster = broadcaster;
+        this.l1Hits = requestCounter(meters, "l1_hit");
+        this.l2Hits = requestCounter(meters, "l2_hit");
+        this.misses = requestCounter(meters, "miss");
+    }
+
+    private io.micrometer.core.instrument.Counter requestCounter(
+            io.micrometer.core.instrument.MeterRegistry meters, String result) {
+        return io.micrometer.core.instrument.Counter.builder("smsone.cache.requests")
+                .description("Two-level cache lookups by outcome (a degraded L2 read counts as a miss)")
+                .tag("cache", name)
+                .tag("result", result)
+                .register(meters);
     }
 
     @Override
@@ -49,9 +66,11 @@ class TwoLevelCache implements Cache {
     public ValueWrapper get(Object key) {
         ValueWrapper local = l1.get(key);
         if (local != null) {
+            l1Hits.increment();
             return local;
         }
         if (l2 == null) {
+            misses.increment();
             return null;
         }
         try {
@@ -62,11 +81,14 @@ class TwoLevelCache implements Cache {
                 // on this node — one caller's mutation would poison the entry for all later reads.
                 Object value = immutableView(shared.get());
                 l1.put(key, value);
+                l2Hits.increment();
                 return new SimpleValueWrapper(value);
             }
+            misses.increment();
             return null;
         } catch (RuntimeException e) {
             log.warn("L2 cache '{}' get failed, degrading to L1-only: {}", name, e.getMessage());
+            misses.increment();
             return null;
         }
     }

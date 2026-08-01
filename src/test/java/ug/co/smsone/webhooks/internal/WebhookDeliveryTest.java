@@ -36,6 +36,15 @@ class WebhookDeliveryTest extends AbstractIntegrationTest {
     @Autowired
     private JdbcTemplate jdbc;
 
+    @Autowired
+    private io.micrometer.core.instrument.MeterRegistry meters;
+
+    private double deadLettered() {
+        io.micrometer.core.instrument.Counter counter = meters.find("smsone.deliveries.dead_lettered")
+                .tag("queue", "webhook").tag("reason", "exhausted").counter();
+        return counter == null ? 0 : counter.count();
+    }
+
     @Test
     void deliversASignedPayloadAndMarksDelivered() throws Exception {
         AtomicReference<String> body = new AtomicReference<>();
@@ -71,6 +80,7 @@ class WebhookDeliveryTest extends AbstractIntegrationTest {
 
     @Test
     void transientFailureIsRetriedThenDeadLettered() throws Exception {
+        double deadLetteredBefore = deadLettered();
         AtomicInteger hits = new AtomicInteger();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/flaky", exchange -> {
@@ -98,6 +108,8 @@ class WebhookDeliveryTest extends AbstractIntegrationTest {
             assertThat(jdbc.queryForObject(
                     "select response_status from webhook_delivery where subscription_id = ?",
                     Integer.class, subscription.getId())).isEqualTo(503);
+            assertThat(deadLettered()).as("the give-up is counted, not just logged")
+                    .isEqualTo(deadLetteredBefore + 1);
         } finally {
             server.stop(0);
         }

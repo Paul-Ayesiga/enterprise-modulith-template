@@ -79,6 +79,15 @@ class RateLimitIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private JdbcTemplate jdbc;
 
+    @Autowired
+    private io.micrometer.core.instrument.MeterRegistry meters;
+
+    /** Summed across tiers so the assert does not care which tier id the test profile configured. */
+    private double denied() {
+        return meters.find("smsone.ratelimit.denied").counters().stream()
+                .mapToDouble(io.micrometer.core.instrument.Counter::count).sum();
+    }
+
     @Test
     void distributedBucketAllowsUpToCapacityThenDeniesPerKey() {
         String keyA = "rl:test:" + UUID.randomUUID();
@@ -97,6 +106,7 @@ class RateLimitIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void edgeFilterReturns429WithEnvelopeAndHeaders() throws Exception {
+        double deniedBefore = denied();
         RequestPostProcessor acme = jwt()
                 .jwt(builder -> builder.claim("tenant", "acme-" + UUID.randomUUID()))
                 .authorities(new SimpleGrantedAuthority("ROLE_USER"));
@@ -117,6 +127,8 @@ class RateLimitIntegrationTest extends AbstractIntegrationTest {
                 .jwt(builder -> builder.claim("tenant", "other-" + UUID.randomUUID()))
                 .authorities(new SimpleGrantedAuthority("ROLE_USER"));
         mockMvc.perform(get("/api/v1/settings").with(other)).andExpect(status().isOk());
+
+        assertThat(denied()).as("the 429 is counted, not just answered").isEqualTo(deniedBefore + 1);
     }
 
     /**

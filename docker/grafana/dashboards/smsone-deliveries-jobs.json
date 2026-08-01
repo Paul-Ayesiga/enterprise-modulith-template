@@ -1,0 +1,68 @@
+{
+  "uid": "smsone-deliveries-jobs",
+  "title": "SMSOne · Deliveries & Jobs",
+  "tags": ["smsone"],
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Dead-lettered deliveries (rate, 5m)",
+      "description": "Anything above zero is work the platform gave up on — see the queue/channel/reason labels for where.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (queue, channel, reason) (rate(smsone_deliveries_dead_lettered_total[5m]))",
+          "legendFormat": "{{queue}}/{{channel}} ({{reason}})"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Exchange jobs finished (per hour, by outcome)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (handler, outcome) (increase(smsone_exchange_jobs_total[1h]))",
+          "legendFormat": "{{handler}} → {{outcome}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Exchange record throughput (records/s)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (handler, result) (rate(smsone_exchange_records_total[5m]))",
+          "legendFormat": "{{handler}} {{result}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Retention purges (rows removed, 24h windows)",
+      "description": "Every purge job should show activity on its schedule — a flat line across a schedule is the alertable failure.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (job) (increase(smsone_purge_deleted_total[24h]))",
+          "legendFormat": "{{job}}"
+        }
+      ]
+    }
+  ]
+}

@@ -24,8 +24,18 @@ class WebhookRetentionJobTest extends AbstractIntegrationTest {
     @Autowired
     private JdbcTemplate jdbc;
 
+    @Autowired
+    private io.micrometer.core.instrument.MeterRegistry meters;
+
+    private double purged() {
+        io.micrometer.core.instrument.Counter counter = meters.find("smsone.purge.deleted")
+                .tag("job", "webhook-delivery-retention").counter();
+        return counter == null ? 0 : counter.count();
+    }
+
     @Test
     void purgesOldTerminalRowsAndNothingElse() {
+        double purgedBefore = purged();
         UUID orgId = UUID.randomUUID();
         WebhookSubscription subscription = subscriptions.create(orgId,
                 "http://127.0.0.1:1/unreachable", Set.of("org.member.added"));
@@ -40,6 +50,8 @@ class WebhookRetentionJobTest extends AbstractIntegrationTest {
         assertThat(exists(oldFailed)).as("dead-letters age out too — the log is not an archive").isFalse();
         assertThat(exists(oldPending)).as("queued work is never retention's business").isTrue();
         assertThat(exists(youngDelivered)).as("inside the window stays").isTrue();
+        assertThat(purged()).as("the purge reports its work — silence is the alertable failure")
+                .isEqualTo(purgedBefore + 2);
     }
 
     private UUID insert(UUID subscriptionId, UUID orgId, String status, String age) {

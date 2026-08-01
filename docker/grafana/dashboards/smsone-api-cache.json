@@ -1,0 +1,70 @@
+{
+  "uid": "smsone-api-cache",
+  "title": "SMSOne · API & Cache",
+  "tags": ["smsone"],
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "HTTP p95 latency by route (5m)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (http_route, le) (rate(http_server_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{http_route}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Rate-limit denials (per minute, by tier)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (tier) (increase(smsone_ratelimit_denied_total[1m]))",
+          "legendFormat": "{{tier}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Cache hit ratio (5m, by cache)",
+      "description": "Hits (L1 + L2) over all lookups. A falling ratio on org-permissions means authorization is hitting Postgres.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (cache) (rate(smsone_cache_requests_total{result=~\"l1_hit|l2_hit\"}[5m])) / sum by (cache) (rate(smsone_cache_requests_total[5m]))",
+          "legendFormat": "{{cache}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "max": 1 }, "overrides": [] }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Impersonation sessions (per day, by action)",
+      "description": "An oversight trend line — a spike in 'started' is a question for the operators, not the code.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (action) (increase(smsone_impersonation_sessions_total[24h]))",
+          "legendFormat": "{{action}}"
+        }
+      ]
+    }
+  ]
+}

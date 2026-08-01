@@ -16,16 +16,20 @@ class IdempotencyPurgeJob {
 
     private final IdempotencyStore store;
     private final IdempotencyProperties properties;
+    private final io.micrometer.core.instrument.MeterRegistry meters;
 
-    IdempotencyPurgeJob(IdempotencyStore store, IdempotencyProperties properties) {
+    IdempotencyPurgeJob(IdempotencyStore store, IdempotencyProperties properties,
+            io.micrometer.core.instrument.MeterRegistry meters) {
         this.store = store;
         this.properties = properties;
+        this.meters = meters;
     }
 
     @Scheduled(cron = "${app.scheduler.idempotency-purge-cron:0 30 3 * * *}")
     @SchedulerLock(name = "idempotency-key-purge", lockAtMostFor = "PT30M")
     public void purgeExpiredKeys() {
         int purged = store.purgeOlderThan(properties.retention());
+        ug.co.smsone.shared.metrics.PurgeMetrics.purged(meters, "idempotency-key-purge", "idempotency_key", purged);
         log.info("Purged {} idempotency keys older than {}", purged, properties.retention());
     }
 }

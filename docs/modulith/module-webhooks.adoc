@@ -6,9 +6,9 @@
 |* `u.c.s.s.events.EventInbox` (in Shared Kernel)
 * `u.c.s.s.audit.AuditLog` (in Shared Kernel)
 |Events listened to
-|* `u.c.s.o.MembershipRoleChanged` (async) 
+|* `u.c.s.o.OrganizationStatusChanged` (async) 
 * `u.c.s.o.MemberRemoved` (async) 
-* `u.c.s.o.RolePermissionsChanged` (async) 
+* `u.c.s.o.MembershipRoleChanged` (async) 
 * `u.c.s.o.MembershipCreated` (async) 
-* `u.c.s.o.OrganizationStatusChanged` (async) 
+* `u.c.s.o.RolePermissionsChanged` (async) 
 |===

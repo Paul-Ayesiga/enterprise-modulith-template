@@ -1,0 +1,14 @@
+# File-provisions the SMSOne dashboards into the otel-lgtm Grafana — mounted by docker-compose.yml
+# into /otel-lgtm/grafana/conf/provisioning/dashboards/. Edits to the JSON files land on the next
+# updateInterval without restarting the container.
+apiVersion: 1
+
+providers:
+  - name: smsone
+    folder: SMSOne
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards/smsone

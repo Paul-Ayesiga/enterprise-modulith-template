@@ -51,10 +51,12 @@ class ImpersonationService {
     private final TransactionTemplate transactionTemplate;
     private final ImpersonationProperties properties;
     private final Clock clock;
+    private final io.micrometer.core.instrument.MeterRegistry meters;
 
     ImpersonationService(ImpersonationSessionRepository sessions, UserRepository users,
             KeycloakUserAdminGateway keycloak, CurrentUserProvider currentUserProvider, AuditLog auditLog,
-            TransactionTemplate transactionTemplate, ImpersonationProperties properties, Clock clock) {
+            TransactionTemplate transactionTemplate, ImpersonationProperties properties, Clock clock,
+            io.micrometer.core.instrument.MeterRegistry meters) {
         this.sessions = sessions;
         this.users = users;
         this.keycloak = keycloak;
@@ -63,6 +65,16 @@ class ImpersonationService {
         this.transactionTemplate = transactionTemplate;
         this.properties = properties;
         this.clock = clock;
+        this.meters = meters;
+    }
+
+    /** The audit row is the record; this is the trend line ops can alert on. */
+    private void countSession(String action) {
+        io.micrometer.core.instrument.Counter.builder("smsone.impersonation.sessions")
+                .description("Impersonation session lifecycle events")
+                .tag("action", action)
+                .register(meters)
+                .increment();
     }
 
     /**
@@ -150,6 +162,7 @@ class ImpersonationService {
         // Null orgId for the same reason the other two lifecycle rows carry one — see record().
         auditLog.record("platform.impersonation_ended", null, session.getTargetSubject(),
                 "ACTIVE", "session=" + session.getId() + " endedBy=" + caller.subject());
+        countSession("ended");
     }
 
     /**
@@ -177,11 +190,13 @@ class ImpersonationService {
         auditLog.record("platform.impersonation_started", null, target, null,
                 "session=" + session.getId() + " org=" + orgId + " mode=" + mode + " expires=" + expiresAt
                         + " reason=" + reason);
+        countSession("started");
         for (ImpersonationSession superseded : previous) {
             if (superseded.end(actor, now)) {
                 sessions.save(superseded);
                 auditLog.record("platform.impersonation_superseded", null, target, "ACTIVE",
                         "session=" + superseded.getId() + " replacedBy=" + session.getId());
+                countSession("superseded");
             }
         }
         return session;

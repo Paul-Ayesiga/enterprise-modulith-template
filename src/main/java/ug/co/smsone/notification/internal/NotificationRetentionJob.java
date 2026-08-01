@@ -25,11 +25,14 @@ class NotificationRetentionJob {
     private final NotificationDeliveryQueue queue;
     private final NotificationProperties.Delivery config;
     private final Clock clock;
+    private final io.micrometer.core.instrument.MeterRegistry meters;
 
-    NotificationRetentionJob(NotificationDeliveryQueue queue, NotificationProperties properties, Clock clock) {
+    NotificationRetentionJob(NotificationDeliveryQueue queue, NotificationProperties properties, Clock clock,
+            io.micrometer.core.instrument.MeterRegistry meters) {
         this.queue = queue;
         this.config = properties.delivery();
         this.clock = clock;
+        this.meters = meters;
     }
 
     @Scheduled(cron = "${app.scheduler.notification-retention-cron:0 25 4 * * *}")
@@ -44,6 +47,7 @@ class NotificationRetentionJob {
                 break;
             }
         }
+        ug.co.smsone.shared.metrics.PurgeMetrics.purged(meters, "notification-delivery-retention", "notification_delivery", total);
         log.info("Purged {} terminal notification deliveries older than {}", total, config.retention());
     }
 }

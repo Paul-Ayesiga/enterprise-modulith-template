@@ -33,6 +33,7 @@ _Others_
 * `u.c.s.s.security.CurrentUserArgumentResolver`
 * `u.c.s.s.security.CurrentUserProvider`
 * `u.c.s.s.security.KeycloakJwtAuthenticationConverter`
+* `u.c.s.s.security.OrgMdcFilter`
 * `u.c.s.s.security.SecurityConfig`
 * `u.c.s.s.web.ApiMetaFactory`
 * `u.c.s.s.web.CursorPageRequestArgumentResolver`

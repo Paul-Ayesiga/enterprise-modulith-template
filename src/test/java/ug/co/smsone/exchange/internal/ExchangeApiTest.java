@@ -50,6 +50,14 @@ class ExchangeApiTest extends AbstractIntegrationTest {
     @Autowired
     private JdbcTemplate jdbc;
 
+    @Autowired
+    private io.micrometer.core.instrument.MeterRegistry meters;
+
+    private double counter(String name, String... tags) {
+        io.micrometer.core.instrument.Counter counter = meters.find(name).tags(tags).counter();
+        return counter == null ? 0 : counter.count();
+    }
+
     @BeforeEach
     void reset() {
         handler.reset();
@@ -72,6 +80,12 @@ class ExchangeApiTest extends AbstractIntegrationTest {
 
     @Test
     void importLifecycleReportsInvalidRowsByNumberAndFilesItsArtifacts() throws Exception {
+        double jobsBefore = counter("smsone.exchange.jobs",
+                "handler", "test-counter", "outcome", "completed_with_errors");
+        double processedBefore = counter("smsone.exchange.records",
+                "handler", "test-counter", "result", "processed");
+        double failedBefore = counter("smsone.exchange.records",
+                "handler", "test-counter", "result", "failed");
         UUID orgId = UUID.randomUUID();
         seedMember(orgId, "importer-1", "ORG_READ", "MEMBER_READ");
         String source = "key,value\nk1,v1\n,v2\nk3,bad\nk4,v4\n"; // rows 2 and 3 are data errors
@@ -117,6 +131,14 @@ class ExchangeApiTest extends AbstractIntegrationTest {
         assertThat(jdbc.queryForObject(
                 "select count(*) from document where org_id = ? and source = 'EXCHANGE'",
                 Integer.class, orgId)).isEqualTo(2);
+
+        // Throughput is counted, per outcome and per record result.
+        assertThat(counter("smsone.exchange.jobs",
+                "handler", "test-counter", "outcome", "completed_with_errors")).isEqualTo(jobsBefore + 1);
+        assertThat(counter("smsone.exchange.records",
+                "handler", "test-counter", "result", "processed")).isEqualTo(processedBefore + 2);
+        assertThat(counter("smsone.exchange.records",
+                "handler", "test-counter", "result", "failed")).isEqualTo(failedBefore + 2);
     }
 
     @Test

@@ -1275,12 +1275,21 @@ soft-deletable tables all have working retention.
 | NFR-OBS-4 | A 500 SHALL be traceable from the client's request id to exactly one logged stack trace | `GlobalExceptionHandler:119-126` — the only place a stack trace is logged |
 | NFR-OBS-5 | Liveness and readiness SHALL be exposed as Kubernetes-shaped probes without authentication and without leaking component detail | `management.endpoint.health.probes.enabled: true`, `show-details: never` |
 | NFR-OBS-6 | Lock state SHALL be inspectable at runtime without a database session | `GET /api/v1/scheduler/locks` |
+| NFR-OBS-7 | Give-ups, refusals and background work SHALL be countable, not only loggable: custom Micrometer counters increment at each such point (catalogue below), and the dead-letter and 429 counters are asserted through their REAL paths in ITs | the catalogue below; `test:webhooks/internal/WebhookDeliveryTest.transientFailureIsRetriedThenDeadLettered`, `test:shared/ratelimit/RateLimitIntegrationTest.edgeFilterReturns429WithEnvelopeAndHeaders`, `test:exchange/internal/ExchangeApiTest`, `test:webhooks/internal/WebhookRetentionJobTest` |
+| NFR-OBS-8 | Tenant work SHALL be attributable in logs without any layer passing ids along: MDC `org_id` on every org-scoped request (`OrgMdcFilter`) and MDC `org_id`/`exchange_job_id`/`exchange_handler` for the whole of an exchange job run (`ExchangeWorker.drainOnce`) | `main:shared/security/OrgMdcFilter.java`, `main:exchange/internal/ExchangeWorker.java` |
+| NFR-OBS-9 | The metrics SHALL be viewable without assembly: two dashboards are file-provisioned into the dev otel-lgtm Grafana (folder **SMSOne**), with example alert rules documented beside them | `docker/grafana/` (dashboards, provisioning, README with alert expressions), mounted in `docker/docker-compose.yml` |
 
-**Limitation.** There is **no custom instrumentation** — no `MeterRegistry`, `@Timed`, `@Counted` or
-`Observation` anywhere in `src/main`. Everything is framework-produced (`spring-boot-starter-opentelemetry`,
-`spring-modulith-observability`, `micrometer-java21`). No dead-letter, throttle or 429 counter exists;
-the retired backlog listed them as deferred, and they remain open. **No OTLP configuration exists in
-`application.yaml`** — Boot's defaults apply.
+**Custom meter catalogue** (each `smsone.a.b` counter surfaces in Prometheus as `smsone_a_b_total`):
+
+| Meter | Tags | Increments when |
+|---|---|---|
+| `smsone.deliveries.dead_lettered` | `queue` (webhook/notification), `channel`, `reason` | a delivery is given up on — webhook permanent/exhausted; notification no_sender / throttled_too_long / permanent / exhausted |
+| `smsone.ratelimit.denied` | `tier` | the edge filter answers 429 (headers on SUCCESS were already shipped by the remediation) |
+| `smsone.exchange.jobs` | `handler`, `type`, `outcome` | a job reaches a terminal status (counted once, from the row the runners wrote) |
+| `smsone.exchange.records` | `handler`, `result` (processed/failed/exported) | a batch COMMITS — replayed batches are never double-counted |
+| `smsone.cache.requests` | `cache`, `result` (l1_hit/l2_hit/miss) | every two-level cache lookup; a degraded L2 read counts as a miss |
+| `smsone.impersonation.sessions` | `action` (started/ended/superseded) | beside each lifecycle audit row — the trend line over the trail |
+| `smsone.purge.deleted` | `job`, `table` | a retention purge removes rows (zero is not recorded — silence across a schedule is the alertable failure). The event-publication purge is the one uncounted purge: the framework API returns no count |
 
 ### 5.7 Portability (NFR-PORT)
 

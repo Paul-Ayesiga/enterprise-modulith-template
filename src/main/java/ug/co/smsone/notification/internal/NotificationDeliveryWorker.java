@@ -44,6 +44,7 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
     private final ChannelRateLimiter channelRateLimiter;
     private final NotificationProperties.Delivery config;
     private final Clock clock;
+    private final io.micrometer.core.instrument.MeterRegistry meters;
 
     private final Semaphore permits;
 
@@ -52,13 +53,26 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
     private volatile Thread poller;
 
     NotificationDeliveryWorker(NotificationDeliveryQueue queue, ChannelRegistry channels,
-            ChannelRateLimiter channelRateLimiter, NotificationProperties properties, Clock clock) {
+            ChannelRateLimiter channelRateLimiter, NotificationProperties properties, Clock clock,
+            io.micrometer.core.instrument.MeterRegistry meters) {
         this.queue = queue;
         this.channels = channels;
         this.channelRateLimiter = channelRateLimiter;
         this.config = properties.delivery();
         this.clock = clock;
+        this.meters = meters;
         this.permits = new Semaphore(config.concurrency());
+    }
+
+    /** One counter, one place: every give-up increments it, tagged by channel and why. */
+    private void countDeadLetter(Object channel, String reason) {
+        io.micrometer.core.instrument.Counter.builder("smsone.deliveries.dead_lettered")
+                .description("Deliveries given up on, by queue and reason")
+                .tag("queue", "notification")
+                .tag("channel", String.valueOf(channel).toLowerCase())
+                .tag("reason", reason)
+                .register(meters)
+                .increment();
     }
 
     // ---- SmartLifecycle: own the poller thread's lifecycle ----
@@ -184,6 +198,7 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
                     delivery.channel(), delivery.id(), delivery.recipient());
             queue.deadLetter(delivery.id(), "No sender registered for channel " + delivery.channel(),
                     delivery.attempts());
+            countDeadLetter(delivery.channel(), "no_sender");
             return;
         }
         Optional<Duration> defer = channelRateLimiter.check(delivery.channel());
@@ -199,6 +214,7 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
                         delivery.id(), delivery.recipient(), delivery.channel(), config.throttleMaxAge());
                 queue.deadLetter(delivery.id(), "Throttled continuously beyond " + config.throttleMaxAge(),
                         delivery.attempts());
+                countDeadLetter(delivery.channel(), "throttled_too_long");
             } else {
                 queue.rescheduleThrottled(delivery.id(), clock.instant().plus(defer.get()), delivery.attempts());
             }
@@ -213,6 +229,7 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
             boolean permanent = ex instanceof NotificationDeliveryException nde && nde.permanent();
             if (permanent || delivery.attempts() >= delivery.maxAttempts()) {
                 queue.deadLetter(delivery.id(), ex.getMessage(), delivery.attempts());
+                countDeadLetter(delivery.channel(), permanent ? "permanent" : "exhausted");
                 log.warn("Delivery {} to {} via {} dead-lettered after {} attempts ({}): {}",
                         delivery.id(), delivery.recipient(), delivery.channel(), delivery.attempts(),
                         permanent ? "permanent failure" : "attempts exhausted", ex.toString());

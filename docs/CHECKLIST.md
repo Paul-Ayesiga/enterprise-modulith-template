@@ -342,6 +342,34 @@ Slice 3 of [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md).
 - [x] **Gate:** full `./gradlew test` green (13 modules); docs regenerated; DATA_MODEL §4.11 /
       SRS §3.17 + catalogue + traceability updated
 
+## Observability pass ✅ (2026-08-01)
+
+Slice 5 of [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md) — numbers someone can alert on, plus the
+dashboards to see them. (The plan's "RateLimit headers on success" item turned out already shipped
+by the audit remediation; verified, not re-done.)
+
+- [x] Custom Micrometer counters at every give-up/refusal point — the full catalogue with tags and
+      increment sites is SRS §5.6: `smsone.deliveries.dead_lettered` (both workers, all four
+      notification reasons), `smsone.ratelimit.denied`, `smsone.exchange.jobs`/`.records` (records
+      counted only on batch COMMIT — replays never double-count), `smsone.cache.requests`
+      (pre-registered — the lookup is on the request hot path), `smsone.impersonation.sessions`,
+      `smsone.purge.deleted` (job+table; the event-publication purge stays uncounted — the
+      framework API returns void)
+- [x] MDC attribution: `org_id` on every org-scoped request (`OrgMdcFilter`, the request-id
+      filter's pattern applied to WHO); `org_id`/`exchange_job_id`/`exchange_handler` around the
+      whole of an exchange job run
+- [x] Two Grafana dashboards file-provisioned into otel-lgtm (`docker/grafana/`, folder SMSOne):
+      deliveries & jobs (dead-letter rate, exchange outcomes/throughput, purge activity) and
+      API & cache (HTTP p95 by route, 429s by tier, hit ratio, impersonation trend) + example
+      alert rules in `docker/grafana/README.md` (dead-letters, 429 pressure, purge silence,
+      failed jobs, breaker open)
+- [x] **Gate:** counters asserted through their REAL paths — the webhook dead-letter after 5 real
+      503s, the edge-filter 429, the retention purge's row count, and the exchange
+      jobs/records deltas (`WebhookDeliveryTest`, `RateLimitIntegrationTest`,
+      `WebhookRetentionJobTest`, `ExchangeApiTest`)
+- [x] **Gate:** full `./gradlew test` green; SRS §5.6 (NFR-OBS-7..9 + meter catalogue),
+      LOCAL_ACCESS, COMPLETED_MODULES updated
+
 ## Exchange module ✅ (2026-08-01)
 
 Slice 4 of [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md) — the scale-first centerpiece. As-shipped

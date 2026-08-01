@@ -1,5 +1,7 @@
 package ug.co.smsone.webhooks.internal;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
@@ -33,17 +35,19 @@ class WebhookDeliveryWorker implements SmartLifecycle {
     private final WebhookSender sender;
     private final WebhookProperties config;
     private final Clock clock;
+    private final MeterRegistry meters;
 
     private volatile ExecutorService sendExecutor = Executors.newVirtualThreadPerTaskExecutor();
     private volatile boolean running;
     private volatile Thread poller;
 
     WebhookDeliveryWorker(WebhookDeliveryQueue queue, WebhookSender sender, WebhookProperties config,
-            Clock clock) {
+            Clock clock, MeterRegistry meters) {
         this.queue = queue;
         this.sender = sender;
         this.config = config;
         this.clock = clock;
+        this.meters = meters;
     }
 
     @Override
@@ -145,6 +149,13 @@ class WebhookDeliveryWorker implements SmartLifecycle {
             Integer responseStatus = ex instanceof WebhookDeliveryException wde ? wde.responseStatus() : null;
             if (permanent || delivery.attempts() >= delivery.maxAttempts()) {
                 queue.deadLetter(delivery.id(), responseStatus, ex.getMessage(), delivery.attempts());
+                Counter.builder("smsone.deliveries.dead_lettered")
+                        .description("Deliveries given up on, by queue and reason")
+                        .tag("queue", "webhook")
+                        .tag("channel", "http")
+                        .tag("reason", permanent ? "permanent" : "exhausted")
+                        .register(meters)
+                        .increment();
                 log.warn("Webhook delivery {} dead-lettered after {} attempts ({}): {}",
                         delivery.id(), delivery.attempts(), permanent ? "permanent" : "exhausted", ex.getMessage());
             } else {

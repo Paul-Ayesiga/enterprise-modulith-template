@@ -25,11 +25,14 @@ class WebhookRetentionJob {
     private final WebhookDeliveryQueue queue;
     private final WebhookProperties properties;
     private final Clock clock;
+    private final io.micrometer.core.instrument.MeterRegistry meters;
 
-    WebhookRetentionJob(WebhookDeliveryQueue queue, WebhookProperties properties, Clock clock) {
+    WebhookRetentionJob(WebhookDeliveryQueue queue, WebhookProperties properties, Clock clock,
+            io.micrometer.core.instrument.MeterRegistry meters) {
         this.queue = queue;
         this.properties = properties;
         this.clock = clock;
+        this.meters = meters;
     }
 
     @Scheduled(cron = "${app.scheduler.webhook-retention-cron:0 15 4 * * *}")
@@ -44,6 +47,7 @@ class WebhookRetentionJob {
                 break;
             }
         }
+        ug.co.smsone.shared.metrics.PurgeMetrics.purged(meters, "webhook-delivery-retention", "webhook_delivery", total);
         log.info("Purged {} terminal webhook deliveries older than {}", total, properties.retention());
     }
 }

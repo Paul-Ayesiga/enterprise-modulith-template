@@ -13,13 +13,15 @@ public class TwoLevelCacheManager implements CacheManager {
     private final CacheManager l1Manager;
     private final CacheManager l2Manager;
     private final CacheInvalidationBroadcaster broadcaster;
+    private final io.micrometer.core.instrument.MeterRegistry meters;
     private final Map<String, TwoLevelCache> caches = new ConcurrentHashMap<>();
 
     public TwoLevelCacheManager(CacheManager l1Manager, CacheManager l2Manager,
-            CacheInvalidationBroadcaster broadcaster) {
+            CacheInvalidationBroadcaster broadcaster, io.micrometer.core.instrument.MeterRegistry meters) {
         this.l1Manager = l1Manager;
         this.l2Manager = l2Manager;
         this.broadcaster = broadcaster;
+        this.meters = meters;
     }
 
     @Override
@@ -28,7 +30,8 @@ public class TwoLevelCacheManager implements CacheManager {
                 cacheName,
                 l1Manager.getCache(cacheName),
                 l2Manager == null ? null : l2Manager.getCache(cacheName),
-                broadcaster));
+                broadcaster,
+                meters));
     }
 
     @Override

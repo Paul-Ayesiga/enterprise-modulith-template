@@ -60,7 +60,7 @@ console and call with `API_USER=<name> API_PASSWORD=<pass> scripts/api.sh …`.
 | Actuator health | http://localhost:8080/actuator/health · `/actuator/info` | public |
 | **Keycloak** admin console | http://localhost:8081 | `admin` / `admin` (realm **`smsone`**) |
 | Keycloak token endpoint | http://localhost:8081/realms/smsone/protocol/openid-connect/token | client `smsone-web` (public, password grant) |
-| **Grafana** (traces/metrics/logs) | http://localhost:3000 | anonymous admin (no login); fallback `admin` / `admin` |
+| **Grafana** (traces/metrics/logs) | http://localhost:3000 | anonymous admin (no login); fallback `admin` / `admin`. The **SMSOne** folder holds two file-provisioned dashboards (deliveries & jobs, API & cache) — see `docker/grafana/README.md` for what they show and the example alert rules |
 | **Mailpit** (dev email inbox) | http://localhost:8025 | none |
 | **Postgres** (OLTP) | `localhost:5432` db `modulith` | `modulith` / `modulith` |
 | **Valkey** (cache + locks) | `localhost:6379` | none |
