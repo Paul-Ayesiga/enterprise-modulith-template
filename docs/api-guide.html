@@ -50,7 +50,7 @@
   <a href="#ratelimit">Rate limits</a><a href="#idempotency">Idempotency</a><a href="#orgs">Tenant lifecycle</a>
   <a href="#members">Members &amp; roles</a><a href="#subscription">Plans &amp; entitlements</a><a href="#billing">Billing</a>
   <a href="#documents">Documents</a><a href="#search">Search</a><a href="#exchange">Exchange</a>
-  <a href="#webhooks">Webhooks</a><a href="#apikeys">API keys</a><a href="#access">Devices &amp; policy</a><a href="#integrations">Integrations</a><a href="#compliance">Compliance</a><a href="#settings">Settings &amp; i18n</a><a href="#audit">Audit</a>
+  <a href="#webhooks">Webhooks</a><a href="#apikeys">API keys</a><a href="#access">Devices &amp; policy</a><a href="#integrations">Integrations</a><a href="#compliance">Compliance</a><a href="#maintenance">Maintenance</a><a href="#settings">Settings &amp; i18n</a><a href="#audit">Audit</a>
   <a href="#impersonation">Impersonation</a><a href="#errors">Error codes</a><a href="#tips">Tips</a>
 </nav>
 <main>
@@ -335,6 +335,19 @@ DELETE /api/v1/admin/compliance/legal-holds/{id}      # release
 POST   /api/v1/admin/compliance/erasure   {"subject":"kc-7d2e…"}   # REFUSED while held</code></pre>
 <p class="mut">Erasure soft-deletes immediately (invisible at once); hard erasure follows at the retention
 window, which itself skips anything under a legal hold.</p>
+
+<h2 id="maintenance">13f · Maintenance windows</h2>
+<pre><code># platform schedules a window (platform-admin). orgId null = platform-wide.
+POST /api/v1/admin/maintenance
+{"mode":"RESTRICT","message":"Database upgrade","startsAt":"2026-08-02T02:00:00Z","endsAt":"2026-08-02T03:00:00Z"}
+
+# a tenant reads what's in effect, for a banner
+GET /api/v1/orgs/{orgId}/maintenance?active=true</code></pre>
+<p>During a <code>RESTRICT</code> window, this org's <strong>writes</strong> answer 503 (reads pass):</p>
+<pre><code>503 Retry-After: 1800
+{"errors":[{"code":"SERVICE_UNAVAILABLE","detail":"Undergoing maintenance until 2026-08-02T03:00:00Z: Database upgrade."}]}</code></pre>
+<p class="mut"><code>ANNOUNCE</code> windows are banner-only — they never block. This is distinct from suspending a
+tenant (that's the permanent lifecycle; §6).</p>
 
 <h2 id="settings">14 · Settings, flags, translations</h2>
 <pre><code>GET /api/v1/settings?page[size]=20            # any authenticated caller reads

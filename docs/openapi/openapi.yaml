@@ -38,6 +38,11 @@ tags:
     \ state, platform-admin. The same keys are readable by any authenticated caller\
     \ under Shared · Settings & flags — same paths, different method, different authority,\
     \ which is why one controller lands in two groups."
+- name: Platform · Maintenance
+  description: "Scheduling maintenance windows (platform-admin), platform-wide or\
+    \ targeted at one org. RESTRICT pauses org writes for the window; ANNOUNCE is\
+    \ banner-only. Distinct from a tenant's lifecycle (Platform · Organizations) —\
+    \ those are permanent, these are time-boxed."
 - name: Platform · Compliance
   description: "Legal holds and erasure execution. A hold (subject or org) BLOCKS\
     \ the retention purge and any erasure of the held data until released — placing\
@@ -96,6 +101,11 @@ tags:
   description: "An organization's machine credentials (apikey:manage). A key carries\
     \ a SUBSET of its creator's permissions — it can never out-rank them — and authenticates\
     \ as X-Api-Key. The secret shows once, at mint."
+- name: Organization · Maintenance
+  description: "The maintenance windows in effect for this tenant (platform-wide plus\
+    \ its own), read on org:read for a client banner. During a RESTRICT window this\
+    \ org's writes answer 503 + Retry-After; reads pass. Scheduling is Platform ·\
+    \ Maintenance."
 - name: Organization · Integrations
   description: "The organization's provider overrides (org:update) — SMS, email, payment\
     \ gateway. An override wins over the platform default for that capability. Secret\
@@ -2970,6 +2980,53 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/maintenance:
+    get:
+      tags:
+      - Platform · Maintenance
+      summary: List platform-wide maintenance windows
+      operationId: list_11
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceObject"
+    post:
+      tags:
+      - Platform · Maintenance
+      summary: Schedule a maintenance window
+      description: '`orgId` null = platform-wide. RESTRICT pauses org writes (503
+        + Retry-After) for the window; ANNOUNCE is banner-only.'
+      operationId: schedule
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScheduleRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/admin/integrations/{id}/test:
     post:
       tags:
@@ -3007,7 +3064,7 @@ paths:
         \ `actor=<subject>` names another operator's instead and requires platform-admin.\
         \ `active` is computed when the row is read, so a lapsed session reports inactive\
         \ with no sweep job involved."
-      operationId: list_11
+      operationId: list_12
       parameters:
       - name: actor
         in: query
@@ -3174,7 +3231,7 @@ paths:
       tags:
       - Platform · API keys
       summary: List platform API keys
-      operationId: list_12
+      operationId: list_13
       parameters:
       - name: "page[size]"
         in: query
@@ -3318,7 +3375,7 @@ paths:
       description: "The fixed vocabulary the subscription endpoints' `events` array\
         \ accepts. Payloads always carry `event`, `orgId` and `occurredAt`, signed\
         \ HMAC-SHA256 in `X-Webhook-Signature`."
-      operationId: list_13
+      operationId: list_14
       parameters:
       - name: X-Impersonate
         in: header
@@ -3350,7 +3407,7 @@ paths:
       tags:
       - Shared · Reference data
       summary: "List translations, optionally for one locale"
-      operationId: list_14
+      operationId: list_15
       parameters:
       - name: locale
         in: query
@@ -3402,7 +3459,7 @@ paths:
       tags:
       - Shared · Settings & flags
       summary: List platform settings
-      operationId: list_15
+      operationId: list_16
       parameters:
       - name: "page[size]"
         in: query
@@ -3453,7 +3510,7 @@ paths:
         \ held) its lock and until when — the evidence that a job fires once cluster-wide.\
         \ Read-only: there is no endpoint to trigger a job, they are time-driven by\
         \ design."
-      operationId: list_16
+      operationId: list_17
       parameters:
       - name: X-Impersonate
         in: header
@@ -3488,7 +3545,7 @@ paths:
       description: The fixed vocabulary for composing custom roles — the `code` values
         are what the role endpoints accept. The catalog is global and identical for
         every organization.
-      operationId: list_17
+      operationId: list_18
       parameters:
       - name: X-Impersonate
         in: header
@@ -3683,6 +3740,51 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/WindowedResultResourceObject"
+  /api/v1/orgs/{orgId}/maintenance:
+    get:
+      tags:
+      - Organization · Maintenance
+      summary: List maintenance windows affecting the organization
+      description: '`?active=true` narrows to windows in effect right now (for a banner).'
+      operationId: list_19
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: active
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceObject"
   /api/v1/orgs/{orgId}/groups/{id}:
     get:
       tags:
@@ -3767,7 +3869,7 @@ paths:
       tags:
       - Organization · Exchange
       summary: List the organization's exchange jobs
-      operationId: list_18
+      operationId: list_20
       parameters:
       - name: orgId
         in: path
@@ -4142,7 +4244,7 @@ paths:
       tags:
       - Shared · Me & notifications
       summary: List your in-app notifications
-      operationId: list_19
+      operationId: list_21
       parameters:
       - name: "page[size]"
         in: query
@@ -4413,7 +4515,7 @@ paths:
       tags:
       - Shared · Settings & flags
       summary: List feature flags
-      operationId: list_20
+      operationId: list_22
       parameters:
       - name: "page[size]"
         in: query
@@ -4463,7 +4565,7 @@ paths:
       description: "Each handler names the dataset it moves, the permissions its imports\
         \ and exports require, `header` — the exact column order its files use — and\
         \ the current `templateVersion`. Download a ready-to-fill file from `/handlers/{id}/template`."
-      operationId: list_21
+      operationId: list_23
       parameters:
       - name: X-Impersonate
         in: header
@@ -4758,7 +4860,7 @@ paths:
       tags:
       - Platform · Users & impersonation
       summary: List provisioned users across the platform
-      operationId: list_22
+      operationId: list_24
       parameters:
       - name: "page[size]"
         in: query
@@ -4820,7 +4922,7 @@ paths:
       tags:
       - Platform · Users & impersonation
       summary: List a user's devices as the platform
-      operationId: list_23
+      operationId: list_25
       parameters:
       - name: subject
         in: path
@@ -4941,7 +5043,7 @@ paths:
       - Platform · Organizations
       summary: List every organization on the platform
       description: Newest first; narrow with `status` (ACTIVE or SUSPENDED).
-      operationId: list_24
+      operationId: list_26
       parameters:
       - name: status
         in: query
@@ -5400,6 +5502,28 @@ paths:
                 \ ULID)."
               schema:
                 type: string
+  /api/v1/admin/maintenance/{id}:
+    delete:
+      tags:
+      - Platform · Maintenance
+      summary: Cancel a platform maintenance window
+      operationId: cancel_1
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "204":
+          description: No Content
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
   /api/v1/admin/integrations/{id}:
     delete:
       tags:
@@ -5831,6 +5955,21 @@ components:
       type: object
       properties:
         plan:
+          type: string
+    ScheduleRequest:
+      type: object
+      properties:
+        orgId:
+          type: string
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        mode:
+          type: string
+        message:
           type: string
     OpenImpersonationRequest:
       type: object

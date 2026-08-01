@@ -342,6 +342,21 @@ Slice 3 of [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md).
 - [x] **Gate:** full `./gradlew test` green (13 modules); docs regenerated; DATA_MODEL §4.11 /
       SRS §3.17 + catalogue + traceability updated
 
+## P7 — Maintenance windows ✅ (2026-08-01)
+
+Slice 7 of [PLATFORM_EXPANSION_PLAN.md](PLATFORM_EXPANSION_PLAN.md); gates on nothing.
+
+- [x] **V35** maintenance_window (soft-deletable, 19th) — platform-wide (org_id null) or org-scoped;
+      ANNOUNCE (banner) or RESTRICT (org writes → 503 + Retry-After for the time bounds)
+- [x] MaintenanceFilter (@Order 4, after the security-policy filter): a RESTRICT window in effect
+      503s org-scoped WRITES to the covered scope; reads pass; ANNOUNCE never blocks; the window's
+      own controls are exempt (no self-lockout)
+- [x] Platform schedules/cancels/lists (admin/support); tenant reads windows in effect for it
+      (?active=true for a banner). Distinct from tenant lifecycle — time-boxed, not permanent
+- [x] **Gate:** RESTRICT 503s a write with Retry-After while reads pass; ANNOUNCE never blocks;
+      platform-wide window covers every org — MaintenanceTest (3 tests). Two Maintenance tags +
+      map entries (flagged)
+
 ## P6 — Compliance: consent, legal holds, erasure ✅ (2026-08-01)
 
 Slice 6 of [PLATFORM_EXPANSION_PLAN.md](PLATFORM_EXPANSION_PLAN.md) — the one slice that changes an

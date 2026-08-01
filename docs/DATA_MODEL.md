@@ -11,8 +11,8 @@ Schema ownership: Flyway owns every table (`spring.jpa.hibernate.ddl-auto: valid
 `classpath:db/migration`. There is no `schema.sql`, no test-only DDL, and no Hibernate-generated
 schema in any profile. **V1..V26 exist; V20 is the 2026-08-01 audit's index remediation, V21
 localization, V22 search, V23 document, V24 the exchange job queue, V25 the exchange
-guideline completion (templates/schedules), V26 subscriptions, V27 billing, V28 profile, V29 api-keys, V30 groups, V31 devices, V32 security policies, V33 integration hub, V34 compliance; the next free
-number is V35.**
+guideline completion (templates/schedules), V26 subscriptions, V27 billing, V28 profile, V29 api-keys, V30 groups, V31 devices, V32 security policies, V33 integration hub, V34 compliance, V35 maintenance; the next free
+number is V36.**
 
 ---
 
@@ -22,7 +22,7 @@ Four stores, each with a distinct job. Only one of them is a system of record.
 
 | Store | Role | What lives there | Why not Postgres |
 |---|---|---|---|
-| **PostgreSQL 18** | System of record | All 41 tables below: aggregates, work queues, the audit and impersonation trails, and the framework tables (Flyway history, the Modulith event registry, ShedLock) | — |
+| **PostgreSQL 18** | System of record | All 42 tables below: aggregates, work queues, the audit and impersonation trails, and the framework tables (Flyway history, the Modulith event registry, ShedLock) | — |
 | **Valkey 8** | Cache L2 + rate-limit buckets + invalidation bus | Three named caches (`setting-values`, `feature-flags`, `org-permissions`) under key prefix `smsone:cache:`, Bucket4j token buckets under `<app.rate-limit.key-prefix>:<tier-id>:<tenant\|sub\|ip>:<value>`, and the `smsone:cache:invalidations` pub/sub topic | Derived, expendable data. Every value is recomputable from Postgres; an outage degrades to L1-only or fail-open, never to data loss (ADR 0004) |
 | **SeaweedFS (S3 API)** | Object storage | Uploaded file bytes, keyed `u/<subject>/<uuid>/<sanitized-filename>` (`files/internal/FileController.newKey:132-136`) | **No database row describes an uploaded object.** The `files` module owns no table: the key encodes the owner, the object store is the index, and authorization is a namespace prefix check |
 | **DuckDB (embedded)** | OLAP marts | `mart_users_by_status`, `mart_delivery_outcomes` in the DuckDB file at `app.analytics.database-path` (`data/analytics.duckdb`). Parquet export exists as an unwired seam only — see below | Postgres stays OLTP-only. Marts are point-in-time copies rebuilt from Postgres on each report run; the `AnalyticsEngine` seam keeps ClickHouse/Trino a pure implementation swap (ADR 0006) |
@@ -33,7 +33,7 @@ Three consequences worth stating plainly, because each has bitten:
   Postgres, so `@SQLRestriction` does not apply. A report over a soft-deletable table must filter
   `deleted_at is null` itself — `USERS_BY_STATUS` does exactly that
   (`analytics/internal/AnalyticsReport.java:22`) and the enum's javadoc enumerates the
-  eighteen soft-deletable tables so the next report author does the same.
+  nineteen soft-deletable tables so the next report author does the same.
 - **Valkey holds an authorization decision.** `org-permissions` caches the resolved permission set per
   `(orgId, subject)`. Organization status is evaluated *inside* the cached value
   (`organization/internal/PermissionResolver.java:34-41`) so a suspension plus its eviction takes
@@ -1693,6 +1693,16 @@ soft-deletes the subject's owned rows now (invisible immediately) and the nightl
 at retention. `LegalHolds` default-answers FALSE when the module is absent — fail-open so a missing
 compliance module never freezes all purging.
 
+### 4.20 Maintenance module
+
+`V35__maintenance.sql`, one table: **`maintenance_window`** (soft-deletable, NINETEENTH). A
+time-boxed window, platform-wide (`org_id` null) or for one org. `mode` ANNOUNCE = banner metadata
+a client renders; RESTRICT = during `[starts_at, ends_at)`, org-scoped WRITES to the covered scope
+answer 503 + Retry-After (reads always pass), enforced by `MaintenanceFilter` (order 4, after the
+security-policy filter). The window's own management endpoints are never gated — no self-lockout,
+like the policy filter's recovery hatch. Distinct from a tenant's LIFECYCLE (suspend/reactivate/
+delete, §8 / TENANT_LIFECYCLE.md): those are permanent state changes, these are announced pauses.
+
 ## 5. Soft delete
 
 Migration `V17__soft_delete.sql`. Deletion is **recorded, not executed**: the row survives with
@@ -1700,10 +1710,10 @@ Migration `V17__soft_delete.sql`. Deletion is **recorded, not executed**: the ro
 
 ### 5.1 Which tables
 
-**In scope (18).** Every `SoftDeletableEntity` table: `setting`, `feature_flag`, `app_user`,
+**In scope (19).** Every `SoftDeletableEntity` table: `setting`, `feature_flag`, `app_user`,
 `organization`, `org_role`, `membership`, `webhook_subscription` (all wired by `V17:23-29,67-73`),
 plus `translation` (`V21`), `document` (`V23`), `exchange_schedule` (`V25`), `org_subscription`
-(`V26`), `billing_account` (`V27`), `user_profile` (`V28`), `api_key` (`V29`), `org_group` (`V30`), `user_device` (`V31`), `org_security_policy` (`V32`) and `integration` (`V33`), each born soft-deletable. Each gets `deleted_at timestamptz`, a partial
+(`V26`), `billing_account` (`V27`), `user_profile` (`V28`), `api_key` (`V29`), `org_group` (`V30`), `user_device` (`V31`), `org_security_policy` (`V32`), `integration` (`V33`) and `maintenance_window` (`V35`), each born soft-deletable. Each gets `deleted_at timestamptz`, a partial
 retention index, a place in `SoftDeletePurgeJob.PURGE_ORDER`, and its own `@SQLDelete` +
 `@SQLRestriction` pair on the entity.
 
@@ -1925,8 +1935,9 @@ The schema alone reads as if these cascades are live behaviour. They are not, ex
 | `V32__security_policy.sql` | `org_security_policy` — soft-deletable, one live row per org; IP allowlist / require-trusted-device / session-max-age, each field TIGHTENS access, enforced in a filter |
 | `V33__integration_hub.sql` | `integration` (soft-deletable; one live per (scope, kind) via two partial unique indexes — org and platform-default) + `integration_setting` (element rows, cascade FK; secret values AES-GCM encrypted) |
 | `V34__compliance.sql` | `consent_record` (append-only), `legal_hold` (active-until-released — blocks the purge and erasure), `erasure_request`. None soft-deletable — compliance records, like `audit_log` |
+| `V35__maintenance.sql` | `maintenance_window` — soft-deletable; platform-wide or org-scoped; ANNOUNCE (banner) or RESTRICT (org writes → 503) for its time bounds |
 
-**The next free migration number is V35.**
+**The next free migration number is V36.**
 
 ---
 

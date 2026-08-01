@@ -82,6 +82,8 @@ public class OpenApiConfig {
     private static final String TAG_PLATFORM_COMPLIANCE = AXIS_PLATFORM + AXIS_SEPARATOR + "Compliance";
     private static final String TAG_ORG_SECURITY = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Security policy";
     private static final String TAG_ORG_INTEGRATIONS = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Integrations";
+    private static final String TAG_ORG_MAINTENANCE = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Maintenance";
+    private static final String TAG_PLATFORM_MAINTENANCE = AXIS_PLATFORM + AXIS_SEPARATOR + "Maintenance";
     private static final String TAG_PLATFORM_INTEGRATIONS = AXIS_PLATFORM + AXIS_SEPARATOR + "Integrations";
     private static final String TAG_SHARED_ME = AXIS_SHARED + AXIS_SEPARATOR + "Me & notifications";
     private static final String TAG_SHARED_FILES = AXIS_SHARED + AXIS_SEPARATOR + "Files";
@@ -124,6 +126,8 @@ public class OpenApiConfig {
             Map.entry("AdminApiKeyController", "API keys"),
             Map.entry("OrgIntegrationController", "Integrations"),
             Map.entry("AdminIntegrationController", "Integrations"),
+            Map.entry("OrgMaintenanceController", "Maintenance"),
+            Map.entry("AdminMaintenanceController", "Maintenance"),
             Map.entry("WebhookEventTypesController", "Webhook events"),
             Map.entry("MeProfileController", "My profile"),
             Map.entry("MeDeviceController", "My devices"),
@@ -236,6 +240,11 @@ public class OpenApiConfig {
                                 + "platform-admin. The same keys are readable by any authenticated caller "
                                 + "under " + TAG_SHARED_SETTINGS + " — same paths, different method, "
                                 + "different authority, which is why one controller lands in two groups."),
+                        new Tag().name(TAG_PLATFORM_MAINTENANCE).description(
+                                "Scheduling maintenance windows (platform-admin), platform-wide or "
+                                + "targeted at one org. RESTRICT pauses org writes for the window; ANNOUNCE "
+                                + "is banner-only. Distinct from a tenant's lifecycle (" + TAG_PLATFORM_ORGS
+                                + ") — those are permanent, these are time-boxed."),
                         new Tag().name(TAG_PLATFORM_COMPLIANCE).description(
                                 "Legal holds and erasure execution. A hold (subject or org) BLOCKS the "
                                 + "retention purge and any erasure of the held data until released — "
@@ -298,6 +307,11 @@ public class OpenApiConfig {
                                 "An organization's machine credentials (apikey:manage). A key carries a "
                                 + "SUBSET of its creator's permissions — it can never out-rank them — and "
                                 + "authenticates as X-Api-Key. The secret shows once, at mint."),
+                        new Tag().name(TAG_ORG_MAINTENANCE).description(
+                                "The maintenance windows in effect for this tenant (platform-wide plus its "
+                                + "own), read on org:read for a client banner. During a RESTRICT window this "
+                                + "org's writes answer 503 + Retry-After; reads pass. Scheduling is "
+                                + TAG_PLATFORM_MAINTENANCE + "."),
                         new Tag().name(TAG_ORG_INTEGRATIONS).description(
                                 "The organization's provider overrides (org:update) — SMS, email, payment "
                                 + "gateway. An override wins over the platform default for that capability. "

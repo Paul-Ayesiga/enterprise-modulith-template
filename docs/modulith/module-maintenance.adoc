@@ -1,0 +1,9 @@
+[%autowidth.stretch, cols="h,a"]
+|===
+|Base package
+|`ug.co.smsone.maintenance`
+|Bean references
+|* `u.c.s.s.security.CurrentUserProvider` (in Shared Kernel)
+* `u.c.s.s.web.EnvelopeErrorWriter` (in Shared Kernel)
+* `u.c.s.s.audit.AuditLog` (in Shared Kernel)
+|===

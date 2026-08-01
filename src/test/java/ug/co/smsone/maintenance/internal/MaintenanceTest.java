@@ -1,0 +1,132 @@
+package ug.co.smsone.maintenance.internal;
+
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import java.time.Instant;
+import java.util.Map;
+import java.util.UUID;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.test.web.servlet.MockMvc;
+import ug.co.smsone.testsupport.AbstractIntegrationTest;
+
+/**
+ * A RESTRICT window in effect 503s an org write with Retry-After while reads pass; an ANNOUNCE
+ * window never blocks; and a caller can always reach the window's own controls (no self-lockout).
+ */
+@AutoConfigureMockMvc
+class MaintenanceTest extends AbstractIntegrationTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @Autowired
+    private JdbcTemplate jdbc;
+
+    // A platform-wide (org_id null) window 503s EVERY org write across the shared container — these
+    // rows must not outlive the test or they contaminate every other org-write test.
+    @org.junit.jupiter.api.AfterEach
+    void clearWindows() {
+        jdbc.update("delete from maintenance_window");
+    }
+
+    @Test
+    void aRestrictWindowPausesWritesButNotReads() throws Exception {
+        UUID orgId = UUID.randomUUID();
+        seedMember(orgId, "tenant-1", "ORG_READ", "ORG_UPDATE", "MEMBER_READ");
+
+        // An org-scoped RESTRICT window in effect right now.
+        window(orgId, "RESTRICT", Instant.now().minusSeconds(60), Instant.now().plusSeconds(600));
+
+        // A write (PUT the security policy — an ordinary org write) is 503'd with Retry-After.
+        mockMvc.perform(put("/api/v1/orgs/{orgId}/security-policy", orgId)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"requireTrustedDevice\":false}")
+                        .with(member(orgId, "tenant-1")))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().exists("Retry-After"))
+                .andExpect(jsonPath("$.errors[0].code").value("SERVICE_UNAVAILABLE"));
+
+        // A read passes untouched.
+        mockMvc.perform(get("/api/v1/orgs/{orgId}/members", orgId).with(member(orgId, "tenant-1")))
+                .andExpect(status().isOk());
+
+        // The tenant can still SEE the window (a read), for its banner.
+        mockMvc.perform(get("/api/v1/orgs/{orgId}/maintenance?active=true", orgId)
+                        .with(member(orgId, "tenant-1")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].attributes.mode").value("RESTRICT"));
+    }
+
+    @Test
+    void anAnnounceWindowNeverBlocks() throws Exception {
+        UUID orgId = UUID.randomUUID();
+        seedMember(orgId, "tenant-2", "ORG_READ", "ORG_UPDATE");
+        window(orgId, "ANNOUNCE", Instant.now().minusSeconds(60), Instant.now().plusSeconds(600));
+
+        mockMvc.perform(put("/api/v1/orgs/{orgId}/security-policy", orgId)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"requireTrustedDevice\":false}")
+                        .with(member(orgId, "tenant-2")))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void aPlatformWideRestrictWindowCoversEveryOrg() throws Exception {
+        UUID orgId = UUID.randomUUID();
+        seedMember(orgId, "tenant-3", "ORG_READ", "ORG_UPDATE");
+
+        mockMvc.perform(post("/api/v1/admin/maintenance")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"mode\":\"RESTRICT\",\"message\":\"platform upgrade\","
+                                + "\"startsAt\":\"" + Instant.now().minusSeconds(60) + "\","
+                                + "\"endsAt\":\"" + Instant.now().plusSeconds(600) + "\"}")
+                        .with(admin()))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(put("/api/v1/orgs/{orgId}/security-policy", orgId)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"requireTrustedDevice\":false}")
+                        .with(member(orgId, "tenant-3")))
+                .andExpect(status().isServiceUnavailable());
+    }
+
+    private void window(UUID orgId, String mode, Instant starts, Instant ends) {
+        jdbc.update("insert into maintenance_window (id, org_id, starts_at, ends_at, mode, message, version, created_at) "
+                + "values (?, ?, ?, ?, ?, 'scheduled maintenance', 0, now())",
+                UUID.randomUUID(), orgId, java.sql.Timestamp.from(starts), java.sql.Timestamp.from(ends), mode);
+    }
+
+    private static org.springframework.test.web.servlet.request.RequestPostProcessor admin() {
+        return jwt().jwt(t -> t.subject("maint-admin"))
+                .authorities(new SimpleGrantedAuthority("ROLE_platform-admin"));
+    }
+
+    private org.springframework.test.web.servlet.request.RequestPostProcessor member(UUID orgId, String subject) {
+        return jwt().jwt(token -> token.subject(subject)
+                .claim("organization", Map.of("acme", Map.of("id", orgId.toString()))));
+    }
+
+    private void seedMember(UUID orgId, String subject, String... permissions) {
+        jdbc.update("insert into organization (id, kc_org_id, alias, name, status, version, created_at) "
+                        + "values (?, ?, ?, ?, 'ACTIVE', 0, now()) "
+                        + "on conflict (kc_org_id) where deleted_at is null do nothing",
+                UUID.randomUUID(), orgId, "org-" + orgId.toString().substring(0, 13), "Org " + orgId);
+        UUID roleId = UUID.randomUUID();
+        jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
+                + "values (?, ?, ?, 'MaintRole', false, 0, now())", roleId, orgId,
+                "MNT_" + subject.toUpperCase().replace('-', '_'));
+        for (String permission : permissions) {
+            jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleId, permission);
+        }
+        jdbc.update("insert into membership (id, org_id, user_subject, role_id, status, version, created_at) "
+                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, subject, roleId);
+    }
+}

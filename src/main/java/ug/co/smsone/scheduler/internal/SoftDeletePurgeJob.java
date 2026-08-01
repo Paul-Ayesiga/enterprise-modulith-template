@@ -73,7 +73,8 @@ class SoftDeletePurgeJob {
             "api_key",
             "user_device",
             "org_security_policy",
-            "integration");
+            "integration",
+            "maintenance_window");
 
     /**
      * Bounded batch: the inner select is what the {@code idx_<table>_deleted} partial indexes (V17) were

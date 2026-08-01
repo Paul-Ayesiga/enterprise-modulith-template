@@ -37,6 +37,10 @@ include::module-integration.adoc[]
 plantuml::module-localization.puml[,,format=svg]
 include::module-localization.adoc[]
 
+== Maintenance
+plantuml::module-maintenance.puml[,,format=svg]
+include::module-maintenance.adoc[]
+
 == Scheduler
 plantuml::module-scheduler.puml[,,format=svg]
 include::module-scheduler.adoc[]
