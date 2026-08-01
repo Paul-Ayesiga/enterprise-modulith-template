@@ -56,6 +56,7 @@ class SoftDeletePurgeJob {
      * would leak deleted rows forever, and silently.
      */
     static final List<String> PURGE_ORDER = List.of(
+            "org_group",
             "membership",
             "org_role",
             "organization",

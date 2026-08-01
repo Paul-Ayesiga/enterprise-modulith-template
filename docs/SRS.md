@@ -145,7 +145,7 @@ Eighteen modules. Verified from the `package-info.java` files and `docs/modulith
 |---|---|---|---|
 | `shared` | Shared Kernel — **the only `ApplicationModule.Type.OPEN` module** | `idempotency_key`, `event_inbox` | envelope + error types, security (`CurrentUser`, `PlatformRole`, the `OrgAuthorization` and `ImpersonationLookup` ports, `ImpersonatedPrincipal`), persistence bases, `AuditLog` port, `Documents` port (+ `NewDocument`), `EventInbox`, cache, rate limiting, `SafeOutboundUrl` |
 | `identity` | Identity | `app_user`, `impersonation_session` | `UserProvisioning`, `UserDirectory`, `ProvisioningStatus` |
-| `organization` | Organization | `organization`, `org_role`, `role_permission`, `membership` | `Permission`, `OrganizationRegistered`, `OrganizationStatusChanged`, `MembershipCreated`, `MembershipRoleChanged`, `MemberRemoved`, `RolePermissionsChanged` |
+| `organization` | Organization | `organization`, `org_role`, `role_permission`, `membership`, `org_group`, `org_group_member` | `Permission`, `OrganizationRegistered`, `OrganizationStatusChanged`, `MembershipCreated`, `MembershipRoleChanged`, `MemberRemoved`, `RolePermissionsChanged` |
 | `settings` | Settings | `setting`, `feature_flag` | `SettingChanged`, `FeatureFlagChanged` |
 | `localization` | Localization | `translation` | `Messages` port, `TranslationChanged` |
 | `search` | Search | `search_document` | `SearchIndex` port, `SearchDoc` |
@@ -162,7 +162,7 @@ Eighteen modules. Verified from the `package-info.java` files and `docs/modulith
 | `analytics` | Analytics | none in Postgres (DuckDB marts + Parquet) | `AnalyticsEngine`, `AnalyticsException` |
 | `scheduler` | Scheduler | none (consumes `shedlock`) | (none) |
 
-Twenty-nine of the schema's thirty-two tables appear above. The remaining three are **framework-owned and
+Thirty-one of the schema's thirty-four tables appear above. The remaining three are **framework-owned and
 belong to no module**: `event_publication` (Spring Modulith's JDBC registry, `V2`), `shedlock`
 (ShedLock, `V4`) and `flyway_schema_history` (created by Flyway itself, in no migration). They are
 read and written by libraries, not by application code, and `V17` deliberately leaves all three out of
@@ -243,7 +243,7 @@ as they start.
 | Constraint | Source | Consequence |
 |---|---|---|
 | Flyway owns the schema; `spring.jpa.hibernate.ddl-auto: validate` | `application.yaml:27-29` | No DDL outside `db/migration`. There is no `schema.sql` and no test-only DDL anywhere. |
-| Migrations are forward-only and numbered; **V1–V29 exist, next free is V30** | `db/migration/`, `AGENTS.md` §4.5 | V21–V24 are localization/search/document/exchange; V25 completes the exchange guidelines (templates, schedules, org_id tightened NOT NULL); V26 is subscriptions; V27 the Kill Bill billing linkage; V28 user profiles; V29 API keys. Any plan citing an old "next free" number is stale — `AGENTS.md` §4.5 is kept current. |
+| Migrations are forward-only and numbered; **V1–V30 exist, next free is V31** | `db/migration/`, `AGENTS.md` §4.5 | V21–V24 are localization/search/document/exchange; V25 completes the exchange guidelines (templates, schedules, org_id tightened NOT NULL); V26 is subscriptions; V27 the Kill Bill billing linkage; V28 user profiles; V29 API keys; V30 org user groups. Any plan citing an old "next free" number is stale — `AGENTS.md` §4.5 is kept current. |
 | No cross-module foreign keys | `AGENTS.md` §1 | Referential integrity across modules is an application concern; `SoftDeletePurgeJob` states the consequence for purge ordering (`SoftDeletePurgeJob.java:49-53`). |
 | `spring.jpa.open-in-view: false` | `application.yaml:30` | No lazy loading past the service boundary. |
 | No Lombok; records + constructor injection | ADR 0001, `ArchitectureTests.noFieldInjection` | Enforced by ArchUnit. |
@@ -381,7 +381,7 @@ provisioning, and the reserved-code check — none of which is an authorization 
 
 | ID | The system SHALL … | Implementation | Verification |
 |---|---|---|---|
-| FR-ORG-1 | maintain a fixed catalog of exactly 15 permission codes and reject an unknown code on any role write with 422 and `source.pointer = /data/attributes/permissions` | `main:organization/Permission.java:13-30`; `main:organization/internal/RoleService.java:147` | `test:organization/internal/OrgRbacApiTest.unknownPermissionCodeOnRoleCreateIs422` |
+| FR-ORG-1 | maintain a fixed catalog of exactly 18 permission codes and reject an unknown code on any role write with 422 and `source.pointer = /data/attributes/permissions` | `main:organization/Permission.java`; `main:organization/internal/RoleService.java:147` | `test:organization/internal/OrgRbacApiTest.unknownPermissionCodeOnRoleCreateIs422` |
 | FR-ORG-2 | expose the permission catalog read-only at `GET /api/v1/permissions` to any authenticated caller, with no org scope | `main:organization/internal/PermissionCatalogController.java:24-30` | `test:organization/internal/OrgRbacApiTest.permissionCatalogIsReadableByAnyAuthenticatedUser` |
 | FR-ORG-3 | seed exactly one system role per organization — `OWNER`, holding every permission in the catalog | `main:organization/internal/RoleSeeder.java:35-39` | `test:organization/internal/OrgRbacAuthorityTest.aFreshOrganizationHasExactlyOneRole`, `.ownerHasEveryPermissionIncludingOrgDelete` |
 | FR-ORG-4 | treat a role named `ADMIN` or `MEMBER` as an ordinary custom role that an owner may create, rename, re-permission and delete | `V16__org_role_owner_only.sql`; `main:organization/internal/RoleService.java:25-30` | `test:organization/internal/OrgRbacApiTest.aRoleNamedAdminIsJustAnotherCustomRole`; `test:organization/internal/OrgRbacAuthorityTest.seederLeavesFormerSystemRolesAloneAsCustomRoles` |
@@ -412,6 +412,7 @@ provisioning, and the reserved-code check — none of which is an authorization 
 | FR-ORG-29 | reconcile the seeded `OWNER` role's permissions back to the catalog at startup for every existing organization, leaving custom roles untouched | `main:organization/internal/SystemRoleCatalogReconciler.java`; `main:organization/internal/RoleSeeder.java:41-53` | `test:organization/internal/OrgRbacAuthorityTest.seederReconcilesADriftedSystemRoleBackToTheCatalog`, `.seederLeavesFormerSystemRolesAloneAsCustomRoles` |
 | FR-ORG-30 | filter every org-scoped read by the tenant key **in the query**, not after loading | `main:organization/internal/RoleService.java:56-60,111`; `main:organization/internal/MemberService.java:109`; `main:webhooks/internal/WebhookSubscriptionService.java:52-54` | `test:organization/internal/OrgRbacAuthorityTest.permissionsAreScopedToTheOwningOrganization` |
 | FR-ORG-31 | provide an opt-in, off-by-default **organization** dev bootstrap that seeds a first organization with an OWNER at startup so org RBAC is exercisable out of the box; idempotent, and best-effort — a Keycloak outage logs a warning rather than failing startup | `main:organization/internal/OrgDevBootstrap.java:16-42` (`@Component`, `@ConditionalOnProperty(name = "app.organization.dev-bootstrap.enabled", havingValue = "true")`, no `matchIfMissing`; `ApplicationRunner.run` → `OrganizationService.ensureBootstrap`); `main:organization/internal/OrgDevBootstrapProperties.java` | none |
+| FR-ORG-32 | offer org user GROUPS that confer one role to their members, UNIONED with each member's direct membership role by the permission resolver (inside the org-status-gated cached value); a group extends a member, never a way in (adding a non-member 404s; a group role without an active membership grants nothing); creating/re-roling/staffing passes the escalation guard; every group mutation clears the permission cache immediately | `main:organization/internal/{OrgGroup,OrgGroupService,OrgGroupController,PermissionResolver}.java`, `V30` | `test:organization/internal/OrgGroupRbacTest` |
 
 **The organization dev bootstrap creates Keycloak state.** Unlike the identity bootstrap (FR-IDN-14),
 which only projects an account that already exists, FR-ORG-31 goes through
@@ -1066,6 +1067,10 @@ no `@PreAuthorize`. Every endpoint can additionally return 401, 403 `ACCOUNT_NOT
 | PUT | `/api/v1/orgs/{orgId}/members/{subject}/role` | `member:role:assign` | 200 | 403 escalation, 404, **409 last owner** |
 | DELETE | `/api/v1/orgs/{orgId}/members/{subject}` | `member:remove` | **204** | 404, **409 last owner** |
 | GET | `/api/v1/orgs/{orgId}/roles` | `role:read` | 200 (list, un-paged) | — |
+| POST / GET | `/api/v1/orgs/{orgId}/groups` | `member:role:assign` create / `member:read` list | **201** / 200 (paged) | 403 escalation, 404 |
+| PUT | `/api/v1/orgs/{orgId}/groups/{id}/role` | `member:role:assign` | 200 | 403, 404 |
+| POST / DELETE | `/api/v1/orgs/{orgId}/groups/{id}/members[/{subject}]` | `member:role:assign` | 200 | 404 (incl. non-member add) |
+| DELETE | `/api/v1/orgs/{orgId}/groups/{id}` | `member:role:assign` | **204** | 404 |
 | GET | `/api/v1/orgs/{orgId}/roles/{roleId}` | `role:read` | 200 | 404 |
 | POST | `/api/v1/orgs/{orgId}/roles` | `role:create` | **201** | 403 escalation, 409 reserved/duplicate, 422 unknown permission / empty `permissions` / `PLATFORM` prefix / code not matching `^[A-Za-z][A-Za-z0-9_]{1,62}$` |
 | PUT | `/api/v1/orgs/{orgId}/roles/{roleId}` | `role:update` | 200 | 403 escalation / system role, 404, 422 unknown permission / empty `permissions` / blank name |
@@ -1210,7 +1215,7 @@ Authorization has **two disjoint axes**. Nothing bridges them.
 |---|---|---|
 | Subject of the grant | The person, platform-wide | The person **in one organization** |
 | Carrier | Keycloak **realm role** in the token | `membership` row → `org_role` → `role_permission`, in the database |
-| Vocabulary | 3 hierarchical tiers (`platform-superadmin` > `platform-admin` > `platform-support`) | 15 flat permission codes |
+| Vocabulary | 3 hierarchical tiers (`platform-superadmin` > `platform-admin` > `platform-support`) | 18 flat permission codes |
 | Expression | `@PreAuthorize("hasRole('platform-…')")` | `@PreAuthorize("hasPermission(#orgId, 'organization', '<code>')")` |
 | Evaluator | `RoleHierarchy` + `DefaultMethodSecurityExpressionHandler` | `ApiPermissionEvaluator` → `OrgAuthorization` → `PermissionResolver` |
 | Scope | Global | Exactly one organization — the one the token is scoped to |

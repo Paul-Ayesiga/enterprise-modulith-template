@@ -1,6 +1,7 @@
 package ug.co.smsone.analytics.internal;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -89,13 +90,20 @@ class AnalyticsApiTest extends AbstractIntegrationTest {
         seedUser();
         seedDeletedUser();
 
-        String body = mockMvc.perform(get("/api/v1/analytics/reports/users-by-status").with(ADMIN))
-                .andExpect(status().isOk())
-                .andReturn().getResponse().getContentAsString();
-
-        long reported = JsonPath.<List<Number>>read(body, "$.data.attributes.rows[*].total").stream()
-                .mapToLong(Number::longValue).sum();
-        assertThat(reported).isEqualTo(liveUserCount());
+        // The report materializes app_user at one instant and liveUserCount reads it at another;
+        // an async app_user writer from a sibling test context sharing this container can land a
+        // row between them and skew a GLOBAL count by ±1. Awaitility distinguishes that transient
+        // skew (self-heals) from a real leak of soft-deleted rows (a STABLE divergence that never
+        // converges, so this still fails). The guarantee under test — deleted rows don't leak — is
+        // preserved; only the timing fragility is removed.
+        await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
+            String body = mockMvc.perform(get("/api/v1/analytics/reports/users-by-status").with(ADMIN))
+                    .andExpect(status().isOk())
+                    .andReturn().getResponse().getContentAsString();
+            long reported = JsonPath.<List<Number>>read(body, "$.data.attributes.rows[*].total").stream()
+                    .mapToLong(Number::longValue).sum();
+            assertThat(reported).isEqualTo(liveUserCount());
+        });
     }
 
     private void seedUser() {

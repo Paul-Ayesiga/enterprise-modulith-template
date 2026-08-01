@@ -2,7 +2,6 @@ package ug.co.smsone.organization.internal;
 
 import java.util.Set;
 import java.util.UUID;
-import java.util.stream.Collectors;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Component;
 import ug.co.smsone.organization.Permission;
@@ -21,12 +20,14 @@ class PermissionResolver {
     private final OrganizationRepository organizations;
     private final MembershipRepository memberships;
     private final RoleRepository roles;
+    private final OrgGroupRepository groups;
 
     PermissionResolver(OrganizationRepository organizations, MembershipRepository memberships,
-            RoleRepository roles) {
+            RoleRepository roles, OrgGroupRepository groups) {
         this.organizations = organizations;
         this.memberships = memberships;
         this.roles = roles;
+        this.groups = groups;
     }
 
     @Cacheable(cacheNames = CACHE, key = "#organizationId + ':' + #subject")
@@ -39,12 +40,24 @@ class PermissionResolver {
         if (!orgActive) {
             return Set.of();
         }
-        return memberships.findByOrgIdAndUserSubject(organizationId, subject)
+        // Effective permissions = the direct membership role UNION every group role the subject is
+        // in. A group is a named assignment funnel, so its grants add to — never replace — the
+        // member's own role. Group membership without an active org membership grants nothing:
+        // groups extend a member, they are not an alternative door in.
+        Set<String> effective = new java.util.HashSet<>();
+        memberships.findByOrgIdAndUserSubject(organizationId, subject)
                 .filter(membership -> membership.getStatus() == MembershipStatus.ACTIVE)
-                .flatMap(membership -> roles.findById(membership.getRoleId()))
-                .map(role -> role.getPermissions().stream()
-                        .map(Permission::code)
-                        .collect(Collectors.toUnmodifiableSet()))
-                .orElseGet(Set::of);
+                .ifPresent(membership -> {
+                    addRolePermissions(membership.getRoleId(), effective);
+                    for (OrgGroup group : groups.findByOrgIdAndMember(organizationId, subject)) {
+                        addRolePermissions(group.getRoleId(), effective);
+                    }
+                });
+        return Set.copyOf(effective);
+    }
+
+    private void addRolePermissions(UUID roleId, Set<String> into) {
+        roles.findById(roleId).ifPresent(role -> role.getPermissions().stream()
+                .map(Permission::code).forEach(into::add));
     }
 }

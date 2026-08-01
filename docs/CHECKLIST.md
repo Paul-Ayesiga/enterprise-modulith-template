@@ -342,6 +342,23 @@ Slice 3 of [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md).
 - [x] **Gate:** full `./gradlew test` green (13 modules); docs regenerated; DATA_MODEL §4.11 /
       SRS §3.17 + catalogue + traceability updated
 
+## P3 — Org user groups ✅ (2026-08-01)
+
+Slice 3 of [PLATFORM_EXPANSION_PLAN.md](PLATFORM_EXPANSION_PLAN.md); lives entirely in the
+organization module.
+
+- [x] **V30** `org_group` (soft-deletable, FIFTEENTH; purged FIRST in PURGE_ORDER) + `org_group_member`
+      element rows (eighth intra-module FK)
+- [x] `PermissionResolver` UNIONS the direct membership role with every group role the subject is in,
+      inside the same org-status-gated cached value — a group extends a member, never a way in
+      (non-member add 404s; a group role without an active membership grants nothing)
+- [x] Escalation guard on create/re-role/staff (a group can't confer more than its creator holds);
+      every group mutation clears the org-permissions cache directly (no group domain event)
+- [x] Gated on member:role:assign (mutations) / member:read (reads); audited
+- [x] **Gate:** union resolution live through OrgAuthorization (MEMBER ∪ AUDITOR, removal drops it),
+      escalation refusal, non-member add 404 — `OrgGroupRbacTest` (2 tests). Reuses the
+      `Organization · Members` tag (map entry only)
+
 ## P2 — API keys ✅ (2026-08-01)
 
 Slice 2 of [PLATFORM_EXPANSION_PLAN.md](PLATFORM_EXPANSION_PLAN.md).

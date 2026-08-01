@@ -63,6 +63,7 @@ public class OpenApiConfig {
     private static final String TAG_PLATFORM_OPS = AXIS_PLATFORM + AXIS_SEPARATOR + "Ops";
     private static final String TAG_ORG_PROFILE = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Profile";
     private static final String TAG_ORG_MEMBERS = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Members";
+    private static final String TAG_ORG_GROUPS = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Groups";
     private static final String TAG_ORG_ROLES = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Roles";
     private static final String TAG_ORG_WEBHOOKS = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Webhooks";
     private static final String TAG_ORG_AUDIT = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Audit";
@@ -103,6 +104,7 @@ public class OpenApiConfig {
             Map.entry("SchedulerController", "Ops"),
             Map.entry("AnalyticsReportController", "Ops"),
             Map.entry("MemberController", "Members"),
+            Map.entry("OrgGroupController", "Groups"),
             Map.entry("RoleController", "Roles"),
             Map.entry("WebhookController", "Webhooks"),
             Map.entry("ExchangeController", "Exchange"),
@@ -243,6 +245,12 @@ public class OpenApiConfig {
                                 "Who belongs to one tenant and as what: list, invite, re-role, remove. Handing "
                                 + "someone a role IS granting its permissions, so invite and re-role are "
                                 + "additionally refused when they would grant more than the caller holds."),
+                        new Tag().name(TAG_ORG_GROUPS).description(
+                                "Named funnels that confer one role to their members, unioned with each "
+                                + "member's own — the resolver adds the group's permissions, never replaces "
+                                + "them. Managing a group is member:role:assign (a group can't grant more "
+                                + "than its creator holds); reading is member:read. A group extends a "
+                                + "member, it is not a way in."),
                         new Tag().name(TAG_ORG_ROLES).description(
                                 "A tenant's roles — named bundles of permission codes from the fixed catalogue "
                                 + "(" + TAG_SHARED_REFERENCE + "). Role codes are inert: no request path "

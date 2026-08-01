@@ -11,8 +11,8 @@ Schema ownership: Flyway owns every table (`spring.jpa.hibernate.ddl-auto: valid
 `classpath:db/migration`. There is no `schema.sql`, no test-only DDL, and no Hibernate-generated
 schema in any profile. **V1..V26 exist; V20 is the 2026-08-01 audit's index remediation, V21
 localization, V22 search, V23 document, V24 the exchange job queue, V25 the exchange
-guideline completion (templates/schedules), V26 subscriptions, V27 billing, V28 profile, V29 api-keys; the next free
-number is V30.**
+guideline completion (templates/schedules), V26 subscriptions, V27 billing, V28 profile, V29 api-keys, V30 groups; the next free
+number is V31.**
 
 ---
 
@@ -22,7 +22,7 @@ Four stores, each with a distinct job. Only one of them is a system of record.
 
 | Store | Role | What lives there | Why not Postgres |
 |---|---|---|---|
-| **PostgreSQL 18** | System of record | All 32 tables below: aggregates, work queues, the audit and impersonation trails, and the framework tables (Flyway history, the Modulith event registry, ShedLock) | — |
+| **PostgreSQL 18** | System of record | All 34 tables below: aggregates, work queues, the audit and impersonation trails, and the framework tables (Flyway history, the Modulith event registry, ShedLock) | — |
 | **Valkey 8** | Cache L2 + rate-limit buckets + invalidation bus | Three named caches (`setting-values`, `feature-flags`, `org-permissions`) under key prefix `smsone:cache:`, Bucket4j token buckets under `<app.rate-limit.key-prefix>:<tier-id>:<tenant\|sub\|ip>:<value>`, and the `smsone:cache:invalidations` pub/sub topic | Derived, expendable data. Every value is recomputable from Postgres; an outage degrades to L1-only or fail-open, never to data loss (ADR 0004) |
 | **SeaweedFS (S3 API)** | Object storage | Uploaded file bytes, keyed `u/<subject>/<uuid>/<sanitized-filename>` (`files/internal/FileController.newKey:132-136`) | **No database row describes an uploaded object.** The `files` module owns no table: the key encodes the owner, the object store is the index, and authorization is a namespace prefix check |
 | **DuckDB (embedded)** | OLAP marts | `mart_users_by_status`, `mart_delivery_outcomes` in the DuckDB file at `app.analytics.database-path` (`data/analytics.duckdb`). Parquet export exists as an unwired seam only — see below | Postgres stays OLTP-only. Marts are point-in-time copies rebuilt from Postgres on each report run; the `AnalyticsEngine` seam keeps ClickHouse/Trino a pure implementation swap (ADR 0006) |
@@ -33,7 +33,7 @@ Three consequences worth stating plainly, because each has bitten:
   Postgres, so `@SQLRestriction` does not apply. A report over a soft-deletable table must filter
   `deleted_at is null` itself — `USERS_BY_STATUS` does exactly that
   (`analytics/internal/AnalyticsReport.java:22`) and the enum's javadoc enumerates the
-  fourteen soft-deletable tables so the next report author does the same.
+  fifteen soft-deletable tables so the next report author does the same.
 - **Valkey holds an authorization decision.** `org-permissions` caches the resolved permission set per
   `(orgId, subject)`. Organization status is evaluated *inside* the cached value
   (`organization/internal/PermissionResolver.java:34-41`) so a suspension plus its eviction takes
@@ -928,6 +928,18 @@ instead.
 
 ---
 
+### 4.3a Organization user groups (`org_group`)
+
+`V30__org_groups.sql`. `org_group` (soft-deletable, FIFTEENTH; purged FIRST in `PURGE_ORDER`,
+before membership/org_role) confers one `role_id` to its members ON TOP of their direct membership
+role — `PermissionResolver` UNIONS the direct role with every group role the subject is in, inside
+the same cached value org status gates. A group extends a member, it is never an alternative way in
+(adding a non-member 404s; a group role without an active membership grants nothing). Creating,
+re-roling or staffing a group passes the escalation guard (a group can't confer more than its
+creator holds), and every group mutation clears the `org-permissions` cache directly (there is no
+group domain event — the effect must be immediate like a role change). `org_group_member` is an
+`@ElementCollection` (cascade FK).
+
 ### 4.4 Organization module
 
 `org_id` everywhere in this module is the **Keycloak organization UUID** — the tenant key — not
@@ -1645,10 +1657,10 @@ Migration `V17__soft_delete.sql`. Deletion is **recorded, not executed**: the ro
 
 ### 5.1 Which tables
 
-**In scope (14).** Every `SoftDeletableEntity` table: `setting`, `feature_flag`, `app_user`,
+**In scope (15).** Every `SoftDeletableEntity` table: `setting`, `feature_flag`, `app_user`,
 `organization`, `org_role`, `membership`, `webhook_subscription` (all wired by `V17:23-29,67-73`),
 plus `translation` (`V21`), `document` (`V23`), `exchange_schedule` (`V25`), `org_subscription`
-(`V26`), `billing_account` (`V27`), `user_profile` (`V28`) and `api_key` (`V29`), each born soft-deletable. Each gets `deleted_at timestamptz`, a partial
+(`V26`), `billing_account` (`V27`), `user_profile` (`V28`), `api_key` (`V29`) and `org_group` (`V30`), each born soft-deletable. Each gets `deleted_at timestamptz`, a partial
 retention index, a place in `SoftDeletePurgeJob.PURGE_ORDER`, and its own `@SQLDelete` +
 `@SQLRestriction` pair on the entity.
 
@@ -1865,8 +1877,9 @@ The schema alone reads as if these cascades are live behaviour. They are not, ex
 | `V27__billing.sql` | `billing_account` — the org ↔ Kill Bill account linkage projection (soft-deletable; partial unique on live `org_id`; `kb_account_id` lookup index for callback resolution). Kill Bill itself is the billing system of record; nothing financial is stored locally |
 | `V28__profile.sql` | `user_profile` (soft-deletable, partial unique on live `subject`) + `user_contact` (element rows, cascade FK — the seventh intra-module FK) + `user_preference` (composite PK, the idempotency-key species) |
 | `V29__apikeys.sql` | `api_key` — soft-deletable machine credentials; `secret_hash` (SHA-256, not encrypted — we never need the plaintext back); partial unique on live `prefix`; org keys carry a permission subset, platform keys a support tier |
+| `V30__org_groups.sql` | `org_group` (soft-deletable, partial unique on live `(org_id, name)`; `role_id` same-module id ref) + `org_group_member` (element rows, cascade FK — eighth intra-module FK). Groups union their role into a member's permissions |
 
-**The next free migration number is V30.**
+**The next free migration number is V31.**
 
 ---
 

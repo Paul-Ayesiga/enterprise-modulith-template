@@ -144,6 +144,13 @@ POST /api/v1/orgs/{orgId}/members
 # custom role (role:create) — permission NAMES come from the catalog above
 POST /api/v1/orgs/{orgId}/roles
 {"code":"AUDITOR","name":"Auditor","permissions":["org:read","audit:read"]}</code></pre>
+<h3>Groups (bundle a role onto many members)</h3>
+<pre><code># a group confers ITS role to every member, ON TOP of their own (permissions UNION)
+POST /api/v1/orgs/{orgId}/groups            {"name":"Auditors","roleCode":"AUDITOR"}   # member:role:assign
+POST /api/v1/orgs/{orgId}/groups/{id}/members   {"subject":"kc-7d2e…"}                  # must already be a member
+# worker who was MEMBER now resolves MEMBER ∪ AUDITOR — effect is immediate (permission cache cleared)
+DELETE /api/v1/orgs/{orgId}/groups/{id}/members/{subject}   # drops the conferred permissions</code></pre>
+
 <div class="card warn"><strong>The escalation guard.</strong> You can only grant permissions you hold. Inviting
 someone into a role carrying <code>member:remove</code> when you lack it:
 <pre><code>403 {"errors":[{"code":"FORBIDDEN",
