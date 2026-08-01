@@ -5,6 +5,10 @@ plantuml::components.puml[,,format=svg]
 plantuml::module-shared.puml[,,format=svg]
 include::module-shared.adoc[]
 
+== Access
+plantuml::module-access.puml[,,format=svg]
+include::module-access.adoc[]
+
 == Analytics
 plantuml::module-analytics.puml[,,format=svg]
 include::module-analytics.adoc[]

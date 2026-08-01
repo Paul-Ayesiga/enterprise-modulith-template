@@ -77,6 +77,8 @@ public class OpenApiConfig {
     private static final String TAG_SHARED_EXCHANGE = AXIS_SHARED + AXIS_SEPARATOR + "Exchange catalog";
     private static final String TAG_SHARED_WEBHOOK_EVENTS = AXIS_SHARED + AXIS_SEPARATOR + "Webhook events";
     private static final String TAG_SHARED_PROFILE = AXIS_SHARED + AXIS_SEPARATOR + "My profile";
+    private static final String TAG_SHARED_DEVICES = AXIS_SHARED + AXIS_SEPARATOR + "My devices";
+    private static final String TAG_ORG_SECURITY = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Security policy";
     private static final String TAG_SHARED_ME = AXIS_SHARED + AXIS_SEPARATOR + "Me & notifications";
     private static final String TAG_SHARED_FILES = AXIS_SHARED + AXIS_SEPARATOR + "Files";
     private static final String TAG_SHARED_SETTINGS = AXIS_SHARED + AXIS_SEPARATOR + "Settings & flags";
@@ -118,6 +120,9 @@ public class OpenApiConfig {
             Map.entry("AdminApiKeyController", "API keys"),
             Map.entry("WebhookEventTypesController", "Webhook events"),
             Map.entry("MeProfileController", "My profile"),
+            Map.entry("MeDeviceController", "My devices"),
+            Map.entry("OrgSecurityPolicyController", "Security policy"),
+            Map.entry("AdminDeviceController", "Users & impersonation"),
             Map.entry("OrgMembershipsController", "Me & notifications"),
             Map.entry("AdminProfileController", "Users & impersonation"),
             Map.entry("MeController", "Me & notifications"),
@@ -276,6 +281,12 @@ public class OpenApiConfig {
                                 "An organization's machine credentials (apikey:manage). A key carries a "
                                 + "SUBSET of its creator's permissions — it can never out-rank them — and "
                                 + "authenticates as X-Api-Key. The secret shows once, at mint."),
+                        new Tag().name(TAG_ORG_SECURITY).description(
+                                "The organization's security policy (org:update to set, org:read to view): "
+                                + "IP allowlist, require-a-trusted-device, session max age. Every field "
+                                + "TIGHTENS access over the open default; a denial is a 403 naming the "
+                                + "rule, distinct from RBAC. Blessing a member's device as trusted lives "
+                                + "here too — trust is the org's grant, not a self-claim."),
                         new Tag().name(TAG_ORG_BILLING).description(
                                 "The tenant's own money view — invoices, proxied from Kill Bill on "
                                 + "org:read. Plans, balances and billing actions are the platform's "
@@ -313,6 +324,10 @@ public class OpenApiConfig {
                                 + "linked identity providers. No axis owns it: every row answers about "
                                 + "YOU, whichever axis you arrived from. Support's read-only view of a "
                                 + "user's profile is " + TAG_PLATFORM_USERS + "."),
+                        new Tag().name(TAG_SHARED_DEVICES).description(
+                                "The caller's own devices — register (idempotent per X-Device-Id), list, "
+                                + "revoke. Marking one TRUSTED is not here: trust is an organization's "
+                                + "grant (its security policy), not a self-claim."),
                         new Tag().name(TAG_SHARED_WEBHOOK_EVENTS).description(
                                 "The subscribable webhook event vocabulary — the codes the subscription "
                                 + "endpoints' events array accepts, with what each means. Managing "

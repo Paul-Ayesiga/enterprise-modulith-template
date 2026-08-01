@@ -87,6 +87,12 @@ tags:
   description: "An organization's machine credentials (apikey:manage). A key carries\
     \ a SUBSET of its creator's permissions — it can never out-rank them — and authenticates\
     \ as X-Api-Key. The secret shows once, at mint."
+- name: Organization · Security policy
+  description: "The organization's security policy (org:update to set, org:read to\
+    \ view): IP allowlist, require-a-trusted-device, session max age. Every field\
+    \ TIGHTENS access over the open default; a denial is a 403 naming the rule, distinct\
+    \ from RBAC. Blessing a member's device as trusted lives here too — trust is the\
+    \ org's grant, not a self-claim."
 - name: Organization · Billing
   description: "The tenant's own money view — invoices, proxied from Kill Bill on\
     \ org:read. Plans, balances and billing actions are the platform's surface: Platform\
@@ -123,6 +129,10 @@ tags:
     \ linked identity providers. No axis owns it: every row answers about YOU, whichever\
     \ axis you arrived from. Support's read-only view of a user's profile is Platform\
     \ · Users & impersonation."
+- name: Shared · My devices
+  description: "The caller's own devices — register (idempotent per X-Device-Id),\
+    \ list, revoke. Marking one TRUSTED is not here: trust is an organization's grant\
+    \ (its security policy), not a self-claim."
 - name: Shared · Webhook events
   description: "The subscribable webhook event vocabulary — the codes the subscription\
     \ endpoints' events array accepts, with what each means. Managing subscriptions\
@@ -467,12 +477,95 @@ paths:
                 \ ULID)."
               schema:
                 type: string
+  /api/v1/orgs/{orgId}/security-policy:
+    get:
+      tags:
+      - Organization · Security policy
+      summary: Read the organization's security policy
+      description: "Get-or-default: an org that never set one reads the open default,\
+        \ not a 404."
+      operationId: get_3
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+    put:
+      tags:
+      - Organization · Security policy
+      summary: Set the organization's security policy
+      description: Every field TIGHTENS access. `ipAllowlist` is comma-joined CIDRs
+        (blank clears it); `requireTrustedDevice` needs an org-blessed `X-Device-Id`;
+        `sessionMaxAgeSeconds` refuses tokens older than it for this org. A denial
+        is a 403 naming the rule.
+      operationId: set
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PolicyRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/orgs/{orgId}/roles/{roleId}:
     get:
       tags:
       - Organization · Roles
       summary: Get one organization role
-      operationId: get_3
+      operationId: get_4
       parameters:
       - name: orgId
         in: path
@@ -864,7 +957,7 @@ paths:
       tags:
       - Shared · Settings & flags
       summary: Get one feature flag by key
-      operationId: get_4
+      operationId: get_5
       parameters:
       - name: key
         in: path
@@ -901,7 +994,7 @@ paths:
       description: "Upsert: a key that does not exist yet is created rather than rejected,\
         \ so there is no separate create call. Flags are global — there is no per-organization\
         \ override."
-      operationId: set
+      operationId: set_1
       parameters:
       - name: key
         in: path
@@ -942,7 +1035,7 @@ paths:
       tags:
       - Platform · Billing & plans
       summary: Inspect a tenant's subscription as the platform
-      operationId: get_5
+      operationId: get_6
       parameters:
       - name: orgId
         in: path
@@ -1164,6 +1257,50 @@ paths:
         schema:
           type: string
           format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}/security-policy/trusted-devices:
+    post:
+      tags:
+      - Organization · Security policy
+      summary: Bless (or unbless) a member's device as trusted
+      description: "Trust is the org's grant, not a self-claim — that is why it lives\
+        \ here."
+      operationId: trust
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrustRequest"
+        required: true
       responses:
         "200":
           description: OK
@@ -2069,6 +2206,100 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/me/devices:
+    get:
+      tags:
+      - Shared · My devices
+      summary: List your devices
+      operationId: list_7
+      parameters:
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: "page[size]"
+        in: query
+        description: "Items per page, 1–100. Defaults to 20."
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 20
+          maximum: 100
+          minimum: 1
+      - name: "page[after]"
+        in: query
+        description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
+          Omit for the first page.
+        required: false
+        schema:
+          type: string
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/WindowedResultResourceObject"
+    post:
+      tags:
+      - Shared · My devices
+      summary: Register (or update) a device
+      description: Idempotent per `fingerprint` — the same device re-registers rather
+        than duplicating.
+      operationId: register
+      parameters:
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/me/avatar:
     get:
       tags:
@@ -2279,7 +2510,7 @@ paths:
       tags:
       - Shared · Reference data
       summary: List your personal documents
-      operationId: list_7
+      operationId: list_8
       parameters:
       - name: user
         in: query
@@ -2445,7 +2676,7 @@ paths:
         \ `actor=<subject>` names another operator's instead and requires platform-admin.\
         \ `active` is computed when the row is read, so a lapsed session reports inactive\
         \ with no sweep job involved."
-      operationId: list_8
+      operationId: list_9
       parameters:
       - name: actor
         in: query
@@ -2517,7 +2748,7 @@ paths:
       tags:
       - Platform · API keys
       summary: List platform API keys
-      operationId: list_9
+      operationId: list_10
       parameters:
       - name: "page[size]"
         in: query
@@ -2580,7 +2811,7 @@ paths:
       tags:
       - Organization · Profile
       summary: Get an organization
-      operationId: get_6
+      operationId: get_7
       parameters:
       - name: orgId
         in: path
@@ -2661,7 +2892,7 @@ paths:
       description: "The fixed vocabulary the subscription endpoints' `events` array\
         \ accepts. Payloads always carry `event`, `orgId` and `occurredAt`, signed\
         \ HMAC-SHA256 in `X-Webhook-Signature`."
-      operationId: list_10
+      operationId: list_11
       parameters:
       - name: X-Impersonate
         in: header
@@ -2693,7 +2924,7 @@ paths:
       tags:
       - Shared · Reference data
       summary: "List translations, optionally for one locale"
-      operationId: list_11
+      operationId: list_12
       parameters:
       - name: locale
         in: query
@@ -2745,7 +2976,7 @@ paths:
       tags:
       - Shared · Settings & flags
       summary: List platform settings
-      operationId: list_12
+      operationId: list_13
       parameters:
       - name: "page[size]"
         in: query
@@ -2796,7 +3027,7 @@ paths:
         \ held) its lock and until when — the evidence that a job fires once cluster-wide.\
         \ Read-only: there is no endpoint to trigger a job, they are time-driven by\
         \ design."
-      operationId: list_13
+      operationId: list_14
       parameters:
       - name: X-Impersonate
         in: header
@@ -2831,7 +3062,7 @@ paths:
       description: The fixed vocabulary for composing custom roles — the `code` values
         are what the role endpoints accept. The catalog is global and identical for
         every organization.
-      operationId: list_14
+      operationId: list_15
       parameters:
       - name: X-Impersonate
         in: header
@@ -2928,7 +3159,7 @@ paths:
       summary: Read the organization's subscription and entitlements
       description: "No subscription row means the seeded FREE plan. `entitlements`:\
         \ null value = feature on, number = cap, absent key = off/unlimited."
-      operationId: get_7
+      operationId: get_8
       parameters:
       - name: orgId
         in: path
@@ -3031,7 +3262,7 @@ paths:
       tags:
       - Organization · Groups
       summary: Get one group with its members
-      operationId: get_8
+      operationId: get_9
       parameters:
       - name: orgId
         in: path
@@ -3110,7 +3341,7 @@ paths:
       tags:
       - Organization · Exchange
       summary: List the organization's exchange jobs
-      operationId: list_15
+      operationId: list_16
       parameters:
       - name: orgId
         in: path
@@ -3163,7 +3394,7 @@ paths:
       tags:
       - Organization · Exchange
       summary: Get one exchange job with its progress
-      operationId: get_9
+      operationId: get_10
       parameters:
       - name: orgId
         in: path
@@ -3485,7 +3716,7 @@ paths:
       tags:
       - Shared · Me & notifications
       summary: List your in-app notifications
-      operationId: list_16
+      operationId: list_17
       parameters:
       - name: "page[size]"
         in: query
@@ -3719,7 +3950,7 @@ paths:
       tags:
       - Shared · Settings & flags
       summary: List feature flags
-      operationId: list_17
+      operationId: list_18
       parameters:
       - name: "page[size]"
         in: query
@@ -3769,7 +4000,7 @@ paths:
       description: "Each handler names the dataset it moves, the permissions its imports\
         \ and exports require, `header` — the exact column order its files use — and\
         \ the current `templateVersion`. Download a ready-to-fill file from `/handlers/{id}/template`."
-      operationId: list_18
+      operationId: list_19
       parameters:
       - name: X-Impersonate
         in: header
@@ -4064,7 +4295,7 @@ paths:
       tags:
       - Platform · Users & impersonation
       summary: List provisioned users across the platform
-      operationId: list_19
+      operationId: list_20
       parameters:
       - name: "page[size]"
         in: query
@@ -4121,6 +4352,48 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/users/{subject}/devices:
+    get:
+      tags:
+      - Platform · Users & impersonation
+      summary: List a user's devices as the platform
+      operationId: list_21
+      parameters:
+      - name: subject
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: "page[size]"
+        in: query
+        description: "Items per page, 1–100. Defaults to 20."
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 20
+          maximum: 100
+          minimum: 1
+      - name: "page[after]"
+        in: query
+        description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
+          Omit for the first page.
+        required: false
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/WindowedResultResourceObject"
   /api/v1/admin/search:
     get:
       tags:
@@ -4205,7 +4478,7 @@ paths:
       - Platform · Organizations
       summary: List every organization on the platform
       description: Newest first; narrow with `status` (ACTIVE or SUSPENDED).
-      operationId: list_20
+      operationId: list_22
       parameters:
       - name: status
         in: query
@@ -4247,7 +4520,7 @@ paths:
       tags:
       - Platform · Organizations
       summary: Inspect one organization as the platform
-      operationId: get_10
+      operationId: get_11
       parameters:
       - name: orgId
         in: path
@@ -4568,6 +4841,43 @@ paths:
                 \ ULID)."
               schema:
                 type: string
+  /api/v1/me/devices/{id}:
+    delete:
+      tags:
+      - Shared · My devices
+      summary: Revoke a device
+      operationId: revoke_1
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "204":
+          description: No Content
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
   /api/v1/admin/impersonations/{id}:
     delete:
       tags:
@@ -4599,7 +4909,7 @@ paths:
       tags:
       - Platform · API keys
       summary: Revoke a platform API key
-      operationId: revoke_1
+      operationId: revoke_2
       parameters:
       - name: id
         in: path
@@ -4671,6 +4981,16 @@ components:
       required:
       - events
       - url
+    PolicyRequest:
+      type: object
+      properties:
+        ipAllowlist:
+          type: string
+        requireTrustedDevice:
+          type: boolean
+        sessionMaxAgeSeconds:
+          type: integer
+          format: int64
     UpdateRoleRequest:
       type: object
       properties:
@@ -4822,6 +5142,15 @@ components:
       required:
       - events
       - url
+    TrustRequest:
+      type: object
+      properties:
+        subject:
+          type: string
+        deviceId:
+          type: string
+        trusted:
+          type: boolean
     CreateRoleRequest:
       type: object
       properties:
@@ -4881,6 +5210,17 @@ components:
         handler:
           type: string
         format:
+          type: string
+    RegisterRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        kind:
+          type: string
+        fingerprint:
+          type: string
+        pushToken:
           type: string
     PresignRequest:
       type: object

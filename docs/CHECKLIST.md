@@ -342,6 +342,26 @@ Slice 3 of [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md).
 - [x] **Gate:** full `./gradlew test` green (13 modules); docs regenerated; DATA_MODEL §4.11 /
       SRS §3.17 + catalogue + traceability updated
 
+## P4 — Devices + org security policies ✅ (2026-08-01)
+
+Slice 4 of [PLATFORM_EXPANSION_PLAN.md](PLATFORM_EXPANSION_PLAN.md); one `access` module (the
+trusted-device gate is a policy that reads devices, so they live together).
+
+- [x] **V31** `user_device` (soft-deletable, 16th) — self-service, idempotent per (subject,
+      fingerprint = X-Device-Id); push_token forward-looking; last_seen_at stamped throttled
+- [x] **V32** `org_security_policy` (soft-deletable, 17th; one live row per org) — IP allowlist
+      (CidrMatcher, v4+v6), require-trusted-device, session-max-age; every field TIGHTENS access
+- [x] `OrgPolicyEnforcementFilter` (@Order 3, after auth + active-org resolution) enforces on
+      org-scoped calls whose URL org matches the caller's active org; a denial is a DISTINCT,
+      counted (smsone.securitypolicy.denied{rule}), audited 403 NAMING the rule — never RBAC-shaped
+- [x] Recovery hatch: the org's own /security-policy endpoints are exempt from enforcement (design
+      bug the test caught — an allowlist excluding yourself would otherwise lock you out of fixing
+      it); org:update still guards them
+- [x] Trust is the org's grant (org:update), not a self-claim; support reads a user's devices
+- [x] **Gate:** device register-idempotent/list/revoke; all three policy rules each deny with their
+      name, compliant path passes, last_seen stamped — `AccessPolicyTest` (2 tests). Two new tags
+      (Shared My devices, Organization Security policy) + map entries (flagged)
+
 ## P3 — Org user groups ✅ (2026-08-01)
 
 Slice 3 of [PLATFORM_EXPANSION_PLAN.md](PLATFORM_EXPANSION_PLAN.md); lives entirely in the

@@ -1,0 +1,93 @@
+package ug.co.smsone.access.internal;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Table;
+import java.time.Instant;
+import org.hibernate.annotations.SQLDelete;
+import org.hibernate.annotations.SQLRestriction;
+import ug.co.smsone.shared.persistence.SoftDeletableEntity;
+
+/** A device a user signs in from. Revocation is soft-delete: the row stays as the trail. */
+@Entity
+@Table(name = "user_device")
+@SQLDelete(sql = "update user_device set deleted_at = now(), version = version + 1 where id = ? and version = ?")
+@SQLRestriction("deleted_at is null")
+class UserDevice extends SoftDeletableEntity {
+
+    @Column(nullable = false, updatable = false, length = 64)
+    private String subject;
+
+    @Column(nullable = false, length = 100)
+    private String name;
+
+    @Column(nullable = false, length = 10)
+    private String kind;
+
+    @Column(nullable = false, updatable = false, length = 100)
+    private String fingerprint;
+
+    @Column(name = "push_token", length = 300)
+    private String pushToken;
+
+    @Column(nullable = false)
+    private boolean trusted;
+
+    @Column(name = "last_seen_at")
+    private Instant lastSeenAt;
+
+    protected UserDevice() {
+        // JPA
+    }
+
+    static UserDevice register(String subject, String name, String kind, String fingerprint, String pushToken) {
+        UserDevice device = new UserDevice();
+        device.subject = subject;
+        device.name = name;
+        device.kind = kind;
+        device.fingerprint = fingerprint;
+        device.pushToken = pushToken;
+        return device;
+    }
+
+    void update(String name, String pushToken) {
+        this.name = name;
+        this.pushToken = pushToken;
+    }
+
+    void setTrusted(boolean trusted) {
+        this.trusted = trusted;
+    }
+
+    void seenAt(Instant when) {
+        this.lastSeenAt = when;
+    }
+
+    String getSubject() {
+        return subject;
+    }
+
+    String getName() {
+        return name;
+    }
+
+    String getKind() {
+        return kind;
+    }
+
+    String getFingerprint() {
+        return fingerprint;
+    }
+
+    String getPushToken() {
+        return pushToken;
+    }
+
+    boolean isTrusted() {
+        return trusted;
+    }
+
+    Instant getLastSeenAt() {
+        return lastSeenAt;
+    }
+}

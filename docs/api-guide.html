@@ -50,7 +50,7 @@
   <a href="#ratelimit">Rate limits</a><a href="#idempotency">Idempotency</a><a href="#orgs">Tenant lifecycle</a>
   <a href="#members">Members &amp; roles</a><a href="#subscription">Plans &amp; entitlements</a><a href="#billing">Billing</a>
   <a href="#documents">Documents</a><a href="#search">Search</a><a href="#exchange">Exchange</a>
-  <a href="#webhooks">Webhooks</a><a href="#apikeys">API keys</a><a href="#settings">Settings &amp; i18n</a><a href="#audit">Audit</a>
+  <a href="#webhooks">Webhooks</a><a href="#apikeys">API keys</a><a href="#access">Devices &amp; policy</a><a href="#settings">Settings &amp; i18n</a><a href="#audit">Audit</a>
   <a href="#impersonation">Impersonation</a><a href="#errors">Error codes</a><a href="#tips">Tips</a>
 </nav>
 <main>
@@ -283,6 +283,23 @@ curl :8080/api/v1/orgs/{orgId}/members -H "X-Api-Key: sk_9f3c1a2b.6d4e…full…
 DELETE /api/v1/orgs/{orgId}/api-keys/{id}     # revoke — the next call 401s immediately</code></pre>
 <p class="mut">A bad key authenticates nothing (you get a plain 401, never confirmation that a prefix exists).
 Secrets are stored SHA-256-hashed. Platform keys live under <code>/api/v1/admin/api-keys</code>.</p>
+
+<h2 id="access">13c · Devices &amp; security policies</h2>
+<pre><code># register your device (idempotent per fingerprint = the X-Device-Id you'll send on calls)
+POST /api/v1/me/devices   {"name":"Work laptop","kind":"BROWSER","fingerprint":"dev-abc123"}
+GET  /api/v1/me/devices                      # your devices, with last-seen
+DELETE /api/v1/me/devices/{id}               # revoke
+
+# an org tightens how it's reached (org:update). Each field is optional; each TIGHTENS.
+PUT /api/v1/orgs/{orgId}/security-policy
+{"ipAllowlist":"203.0.113.0/24,198.51.100.5/32","requireTrustedDevice":true,"sessionMaxAgeSeconds":3600}
+# bless a member's device (trust is the org's grant, not a self-claim)
+POST /api/v1/orgs/{orgId}/security-policy/trusted-devices   {"subject":"kc-7d2e…","deviceId":"…","trusted":true}</code></pre>
+<p>A blocked request is a <strong>403 that names the rule</strong> — never confusable with RBAC:</p>
+<pre><code>403 {"errors":[{"code":"FORBIDDEN",
+  "detail":"Blocked by your organization's security policy (trusted-device)."}]}</code></pre>
+<p class="mut">Send <code>X-Device-Id: dev-abc123</code> on org calls when a trusted-device policy is set. You can
+never lock yourself out of the policy itself — the <code>/security-policy</code> endpoints are always reachable.</p>
 
 <h2 id="settings">14 · Settings, flags, translations</h2>
 <pre><code>GET /api/v1/settings?page[size]=20            # any authenticated caller reads

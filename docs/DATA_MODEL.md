@@ -11,8 +11,8 @@ Schema ownership: Flyway owns every table (`spring.jpa.hibernate.ddl-auto: valid
 `classpath:db/migration`. There is no `schema.sql`, no test-only DDL, and no Hibernate-generated
 schema in any profile. **V1..V26 exist; V20 is the 2026-08-01 audit's index remediation, V21
 localization, V22 search, V23 document, V24 the exchange job queue, V25 the exchange
-guideline completion (templates/schedules), V26 subscriptions, V27 billing, V28 profile, V29 api-keys, V30 groups; the next free
-number is V31.**
+guideline completion (templates/schedules), V26 subscriptions, V27 billing, V28 profile, V29 api-keys, V30 groups, V31 devices, V32 security policies; the next free
+number is V33.**
 
 ---
 
@@ -22,7 +22,7 @@ Four stores, each with a distinct job. Only one of them is a system of record.
 
 | Store | Role | What lives there | Why not Postgres |
 |---|---|---|---|
-| **PostgreSQL 18** | System of record | All 34 tables below: aggregates, work queues, the audit and impersonation trails, and the framework tables (Flyway history, the Modulith event registry, ShedLock) | — |
+| **PostgreSQL 18** | System of record | All 36 tables below: aggregates, work queues, the audit and impersonation trails, and the framework tables (Flyway history, the Modulith event registry, ShedLock) | — |
 | **Valkey 8** | Cache L2 + rate-limit buckets + invalidation bus | Three named caches (`setting-values`, `feature-flags`, `org-permissions`) under key prefix `smsone:cache:`, Bucket4j token buckets under `<app.rate-limit.key-prefix>:<tier-id>:<tenant\|sub\|ip>:<value>`, and the `smsone:cache:invalidations` pub/sub topic | Derived, expendable data. Every value is recomputable from Postgres; an outage degrades to L1-only or fail-open, never to data loss (ADR 0004) |
 | **SeaweedFS (S3 API)** | Object storage | Uploaded file bytes, keyed `u/<subject>/<uuid>/<sanitized-filename>` (`files/internal/FileController.newKey:132-136`) | **No database row describes an uploaded object.** The `files` module owns no table: the key encodes the owner, the object store is the index, and authorization is a namespace prefix check |
 | **DuckDB (embedded)** | OLAP marts | `mart_users_by_status`, `mart_delivery_outcomes` in the DuckDB file at `app.analytics.database-path` (`data/analytics.duckdb`). Parquet export exists as an unwired seam only — see below | Postgres stays OLTP-only. Marts are point-in-time copies rebuilt from Postgres on each report run; the `AnalyticsEngine` seam keeps ClickHouse/Trino a pure implementation swap (ADR 0006) |
@@ -33,7 +33,7 @@ Three consequences worth stating plainly, because each has bitten:
   Postgres, so `@SQLRestriction` does not apply. A report over a soft-deletable table must filter
   `deleted_at is null` itself — `USERS_BY_STATUS` does exactly that
   (`analytics/internal/AnalyticsReport.java:22`) and the enum's javadoc enumerates the
-  fifteen soft-deletable tables so the next report author does the same.
+  seventeen soft-deletable tables so the next report author does the same.
 - **Valkey holds an authorization decision.** `org-permissions` caches the resolved permission set per
   `(orgId, subject)`. Organization status is evaluated *inside* the cached value
   (`organization/internal/PermissionResolver.java:34-41`) so a suspension plus its eviction takes
@@ -1650,6 +1650,21 @@ filter) and the verifier port (`ApiKeyAuthenticator`) are the `OrgAuthorization`
 authority is enforced by `ApiPermissionEvaluator`'s own key branch (subset ∩ strict org id), never
 by roles. Usage is stamped throttled (≤1/min) off the auth path.
 
+### 4.17 Access module — devices and security policies
+
+`V31__devices.sql`, `V32__security_policy.sql`. **`user_device`** (soft-deletable, SIXTEENTH):
+self-service device registration, idempotent per `(subject, fingerprint)` — the fingerprint is the
+`X-Device-Id` header; `push_token` is forward-looking (a future notification PUSH channel);
+`last_seen_at` is stamped THROTTLED (≤1/min) off the request path by the enforcement filter.
+Trusting a device is the ORG's grant, not a self-claim. **`org_security_policy`** (soft-deletable,
+SEVENTEENTH): one live row per org, every field TIGHTENS access over the open platform default — IP
+allowlist (CIDRs, `CidrMatcher`), require-a-trusted-device, session-max-age (token `iat` vs now).
+Enforced by `OrgPolicyEnforcementFilter` (order 3, after auth + active-org resolution) on
+org-scoped calls whose URL org matches the caller's active org; a denial is a DISTINCT, counted
+(`smsone.securitypolicy.denied{rule}`), audited 403 naming the rule — never mistakable for RBAC.
+Recovery hatch: the org's own `/security-policy` endpoints are exempt from enforcement, so an
+allowlist that excludes you never locks you out of fixing it.
+
 ## 5. Soft delete
 
 Migration `V17__soft_delete.sql`. Deletion is **recorded, not executed**: the row survives with
@@ -1657,10 +1672,10 @@ Migration `V17__soft_delete.sql`. Deletion is **recorded, not executed**: the ro
 
 ### 5.1 Which tables
 
-**In scope (15).** Every `SoftDeletableEntity` table: `setting`, `feature_flag`, `app_user`,
+**In scope (17).** Every `SoftDeletableEntity` table: `setting`, `feature_flag`, `app_user`,
 `organization`, `org_role`, `membership`, `webhook_subscription` (all wired by `V17:23-29,67-73`),
 plus `translation` (`V21`), `document` (`V23`), `exchange_schedule` (`V25`), `org_subscription`
-(`V26`), `billing_account` (`V27`), `user_profile` (`V28`), `api_key` (`V29`) and `org_group` (`V30`), each born soft-deletable. Each gets `deleted_at timestamptz`, a partial
+(`V26`), `billing_account` (`V27`), `user_profile` (`V28`), `api_key` (`V29`), `org_group` (`V30`), `user_device` (`V31`) and `org_security_policy` (`V32`), each born soft-deletable. Each gets `deleted_at timestamptz`, a partial
 retention index, a place in `SoftDeletePurgeJob.PURGE_ORDER`, and its own `@SQLDelete` +
 `@SQLRestriction` pair on the entity.
 
@@ -1878,8 +1893,10 @@ The schema alone reads as if these cascades are live behaviour. They are not, ex
 | `V28__profile.sql` | `user_profile` (soft-deletable, partial unique on live `subject`) + `user_contact` (element rows, cascade FK — the seventh intra-module FK) + `user_preference` (composite PK, the idempotency-key species) |
 | `V29__apikeys.sql` | `api_key` — soft-deletable machine credentials; `secret_hash` (SHA-256, not encrypted — we never need the plaintext back); partial unique on live `prefix`; org keys carry a permission subset, platform keys a support tier |
 | `V30__org_groups.sql` | `org_group` (soft-deletable, partial unique on live `(org_id, name)`; `role_id` same-module id ref) + `org_group_member` (element rows, cascade FK — eighth intra-module FK). Groups union their role into a member's permissions |
+| `V31__devices.sql` | `user_device` — soft-deletable; partial unique on live `(subject, fingerprint)`; `push_token` forward-looking; `last_seen_at` stamped throttled |
+| `V32__security_policy.sql` | `org_security_policy` — soft-deletable, one live row per org; IP allowlist / require-trusted-device / session-max-age, each field TIGHTENS access, enforced in a filter |
 
-**The next free migration number is V31.**
+**The next free migration number is V33.**
 
 ---
 
