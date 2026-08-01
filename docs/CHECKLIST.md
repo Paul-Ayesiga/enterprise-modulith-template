@@ -342,6 +342,28 @@ Slice 3 of [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md).
 - [x] **Gate:** full `./gradlew test` green (13 modules); docs regenerated; DATA_MODEL §4.11 /
       SRS §3.17 + catalogue + traceability updated
 
+## P6 — Compliance: consent, legal holds, erasure ✅ (2026-08-01)
+
+Slice 6 of [PLATFORM_EXPANSION_PLAN.md](PLATFORM_EXPANSION_PLAN.md) — the one slice that changes an
+existing job (the purge must honor holds).
+
+- [x] **V34** consent_record (append-only), legal_hold (active-until-released), erasure_request —
+      NONE soft-deletable (compliance records, like audit_log)
+- [x] `shared.compliance.LegalHolds` kernel port (default-FALSE when compliance absent → fail-open;
+      a missing module never freezes all purging). `LegalHoldsImpl` = indexed existence check
+- [x] **SoftDeletePurgeJob now honors holds**: a per-table owner-column guard (subject-owned:
+      app_user/user_profile/user_device; org-owned by org_id, kc_org_id for organization) excludes
+      rows under an active hold from hard-deletion, however far past retention
+- [x] Erasure: soft-deletes the subject's owned rows now (invisible immediately), hard-erase at
+      retention; REFUSED while a hold is in force. Consent append-only (withdrawal = new row).
+      Self-service data export (portability)
+- [x] Surfaces: /me/consents, /me/data-export, /me/erasure-request; admin legal-holds place/release
+      + erasure execution (platform-admin) / list (platform-support). All audited
+- [x] **Gate:** consent append-only + erasure soft-deletes (ComplianceTest); a HELD subject survives
+      the purge and is cleared once released (LegalHoldPurgeTest, in the scheduler pkg where the
+      purge job is reachable); erasure REFUSED under hold. Two new tags (Shared My privacy,
+      Platform Compliance) + map entries (flagged)
+
 ## P5 — Integration hub ✅ (2026-08-01)
 
 Slice 5 of [PLATFORM_EXPANSION_PLAN.md](PLATFORM_EXPANSION_PLAN.md).

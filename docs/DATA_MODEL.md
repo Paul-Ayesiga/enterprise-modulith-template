@@ -11,8 +11,8 @@ Schema ownership: Flyway owns every table (`spring.jpa.hibernate.ddl-auto: valid
 `classpath:db/migration`. There is no `schema.sql`, no test-only DDL, and no Hibernate-generated
 schema in any profile. **V1..V26 exist; V20 is the 2026-08-01 audit's index remediation, V21
 localization, V22 search, V23 document, V24 the exchange job queue, V25 the exchange
-guideline completion (templates/schedules), V26 subscriptions, V27 billing, V28 profile, V29 api-keys, V30 groups, V31 devices, V32 security policies, V33 integration hub; the next free
-number is V34.**
+guideline completion (templates/schedules), V26 subscriptions, V27 billing, V28 profile, V29 api-keys, V30 groups, V31 devices, V32 security policies, V33 integration hub, V34 compliance; the next free
+number is V35.**
 
 ---
 
@@ -22,7 +22,7 @@ Four stores, each with a distinct job. Only one of them is a system of record.
 
 | Store | Role | What lives there | Why not Postgres |
 |---|---|---|---|
-| **PostgreSQL 18** | System of record | All 38 tables below: aggregates, work queues, the audit and impersonation trails, and the framework tables (Flyway history, the Modulith event registry, ShedLock) | — |
+| **PostgreSQL 18** | System of record | All 41 tables below: aggregates, work queues, the audit and impersonation trails, and the framework tables (Flyway history, the Modulith event registry, ShedLock) | — |
 | **Valkey 8** | Cache L2 + rate-limit buckets + invalidation bus | Three named caches (`setting-values`, `feature-flags`, `org-permissions`) under key prefix `smsone:cache:`, Bucket4j token buckets under `<app.rate-limit.key-prefix>:<tier-id>:<tenant\|sub\|ip>:<value>`, and the `smsone:cache:invalidations` pub/sub topic | Derived, expendable data. Every value is recomputable from Postgres; an outage degrades to L1-only or fail-open, never to data loss (ADR 0004) |
 | **SeaweedFS (S3 API)** | Object storage | Uploaded file bytes, keyed `u/<subject>/<uuid>/<sanitized-filename>` (`files/internal/FileController.newKey:132-136`) | **No database row describes an uploaded object.** The `files` module owns no table: the key encodes the owner, the object store is the index, and authorization is a namespace prefix check |
 | **DuckDB (embedded)** | OLAP marts | `mart_users_by_status`, `mart_delivery_outcomes` in the DuckDB file at `app.analytics.database-path` (`data/analytics.duckdb`). Parquet export exists as an unwired seam only — see below | Postgres stays OLTP-only. Marts are point-in-time copies rebuilt from Postgres on each report run; the `AnalyticsEngine` seam keeps ClickHouse/Trino a pure implementation swap (ADR 0006) |
@@ -1678,6 +1678,21 @@ the webhook cipher's technique with zero blast radius) and MASKED on the REST re
 `Integrations` port returns them DECRYPTED to in-JVM consumers (a notification/billing sender needs
 the creds). The SMS channel sender consults the port for its provider — the demonstration consumer.
 
+### 4.19 Compliance module
+
+`V34__compliance.sql`. Three tables, NONE soft-deletable — like `audit_log`, these are the records
+that must not be quietly removable. **`consent_record`** is APPEND-ONLY: a withdrawal is a new row,
+so the history of what a subject agreed to is intact. **`legal_hold`** (active until `released_at`,
+never deleted) is the load-bearing one — while active, the `shared.compliance.LegalHolds` port
+answers "held", and BOTH the erasure executor (REFUSED) and `SoftDeletePurgeJob` skip that subject's
+or org's rows however far past retention. The purge consults `legal_hold` by raw SQL through a
+per-table owner-column guard (subject-owned: `app_user`/`user_profile`/`user_device`; org-owned: by
+`org_id`, or `kc_org_id` for `organization`), the same cross-cutting reach it already has over every
+module's tables. **`erasure_request`** records a GDPR art. 17 request and its outcome; execution
+soft-deletes the subject's owned rows now (invisible immediately) and the nightly purge hard-deletes
+at retention. `LegalHolds` default-answers FALSE when the module is absent — fail-open so a missing
+compliance module never freezes all purging.
+
 ## 5. Soft delete
 
 Migration `V17__soft_delete.sql`. Deletion is **recorded, not executed**: the row survives with
@@ -1909,8 +1924,9 @@ The schema alone reads as if these cascades are live behaviour. They are not, ex
 | `V31__devices.sql` | `user_device` — soft-deletable; partial unique on live `(subject, fingerprint)`; `push_token` forward-looking; `last_seen_at` stamped throttled |
 | `V32__security_policy.sql` | `org_security_policy` — soft-deletable, one live row per org; IP allowlist / require-trusted-device / session-max-age, each field TIGHTENS access, enforced in a filter |
 | `V33__integration_hub.sql` | `integration` (soft-deletable; one live per (scope, kind) via two partial unique indexes — org and platform-default) + `integration_setting` (element rows, cascade FK; secret values AES-GCM encrypted) |
+| `V34__compliance.sql` | `consent_record` (append-only), `legal_hold` (active-until-released — blocks the purge and erasure), `erasure_request`. None soft-deletable — compliance records, like `audit_log` |
 
-**The next free migration number is V34.**
+**The next free migration number is V35.**
 
 ---
 

@@ -17,6 +17,10 @@ include::module-analytics.adoc[]
 plantuml::module-audit.puml[,,format=svg]
 include::module-audit.adoc[]
 
+== Compliance
+plantuml::module-compliance.puml[,,format=svg]
+include::module-compliance.adoc[]
+
 == Files
 plantuml::module-files.puml[,,format=svg]
 include::module-files.adoc[]

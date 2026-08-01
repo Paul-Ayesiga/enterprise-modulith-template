@@ -1,0 +1,8 @@
+[%autowidth.stretch, cols="h,a"]
+|===
+|Base package
+|`ug.co.smsone.compliance`
+|Bean references
+|* `u.c.s.s.compliance.LegalHolds` (in Shared Kernel)
+* `u.c.s.s.audit.AuditLog` (in Shared Kernel)
+|===

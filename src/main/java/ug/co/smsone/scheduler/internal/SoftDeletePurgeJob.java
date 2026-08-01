@@ -96,6 +96,33 @@ class SoftDeletePurgeJob {
     private static final Map<String, String> GUARDS = Map.of(
             "org_role", " and not exists (select 1 from membership m where m.role_id = org_role.id)");
 
+    /**
+     * LEGAL HOLDS block erasure. A row whose owner (a subject or an org) is under an active hold is
+     * NOT hard-deleted, however old its {@code deleted_at} — the hold outranks retention. Keyed by
+     * the table's owner column; a global table (setting/feature_flag/translation) has no owner and
+     * no hold applies. Table and column are constants from this class — never input. The scheduler
+     * reads {@code legal_hold} by raw SQL, the same cross-module reach the purge already has over
+     * every module's tables (the sanctioned purge exception, AGENTS §7).
+     */
+    private enum Owner { SUBJECT, ORG }
+
+    private static final Map<String, Map.Entry<Owner, String>> HELD_OWNER = Map.ofEntries(
+            Map.entry("app_user", Map.entry(Owner.SUBJECT, "subject")),
+            Map.entry("user_profile", Map.entry(Owner.SUBJECT, "subject")),
+            Map.entry("user_device", Map.entry(Owner.SUBJECT, "subject")),
+            Map.entry("organization", Map.entry(Owner.ORG, "kc_org_id")),
+            Map.entry("membership", Map.entry(Owner.ORG, "org_id")),
+            Map.entry("org_role", Map.entry(Owner.ORG, "org_id")),
+            Map.entry("org_group", Map.entry(Owner.ORG, "org_id")),
+            Map.entry("webhook_subscription", Map.entry(Owner.ORG, "org_id")),
+            Map.entry("document", Map.entry(Owner.ORG, "org_id")),
+            Map.entry("exchange_schedule", Map.entry(Owner.ORG, "org_id")),
+            Map.entry("org_subscription", Map.entry(Owner.ORG, "org_id")),
+            Map.entry("billing_account", Map.entry(Owner.ORG, "org_id")),
+            Map.entry("api_key", Map.entry(Owner.ORG, "org_id")),
+            Map.entry("org_security_policy", Map.entry(Owner.ORG, "org_id")),
+            Map.entry("integration", Map.entry(Owner.ORG, "org_id")));
+
     private final JdbcTemplate jdbc;
     private final SoftDeleteProperties properties;
     private final Clock clock;
@@ -107,6 +134,18 @@ class SoftDeletePurgeJob {
         this.properties = properties;
         this.clock = clock;
         this.meters = meters;
+    }
+
+    /** The active-hold exclusion for a table, or empty when the table has no held owner column. */
+    private static String heldGuard(String table) {
+        Map.Entry<Owner, String> owner = HELD_OWNER.get(table);
+        if (owner == null) {
+            return "";
+        }
+        String column = owner.getValue();
+        String holdColumn = owner.getKey() == Owner.SUBJECT ? "subject" : "org_id";
+        return " and not exists (select 1 from legal_hold h where h.released_at is null and h."
+                + holdColumn + " = " + table + "." + column + ")";
     }
 
     @Scheduled(cron = "${app.scheduler.soft-delete-purge-cron:0 0 4 * * *}")
@@ -179,7 +218,7 @@ class SoftDeletePurgeJob {
     }
 
     private int purgeTable(String table, Instant cutoff) {
-        String sql = DELETE_BATCH.formatted(table, GUARDS.getOrDefault(table, ""));
+        String sql = DELETE_BATCH.formatted(table, GUARDS.getOrDefault(table, "") + heldGuard(table));
         int total = 0;
         for (int batch = 0; batch < properties.maxBatches(); batch++) {
             int rows = jdbc.update(sql, Timestamp.from(cutoff), properties.batchSize());

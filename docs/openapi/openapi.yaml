@@ -38,6 +38,11 @@ tags:
     \ state, platform-admin. The same keys are readable by any authenticated caller\
     \ under Shared · Settings & flags — same paths, different method, different authority,\
     \ which is why one controller lands in two groups."
+- name: Platform · Compliance
+  description: "Legal holds and erasure execution. A hold (subject or org) BLOCKS\
+    \ the retention purge and any erasure of the held data until released — placing\
+    \ is platform-admin, listing platform-support. Erasure soft-deletes now, hard-erases\
+    \ at retention (which honors holds)."
 - name: Platform · Integrations
   description: "The PLATFORM-DEFAULT provider configs (platform-admin) — SMS, email,\
     \ payment gateway — used by any org that has no override of its own. Same encryption\
@@ -142,6 +147,10 @@ tags:
   description: "The caller's own devices — register (idempotent per X-Device-Id),\
     \ list, revoke. Marking one TRUSTED is not here: trust is an organization's grant\
     \ (its security policy), not a self-claim."
+- name: Shared · My privacy
+  description: "Your own compliance controls — consent history (append-only), a data\
+    \ export of your record (portability), and requesting your own erasure (GDPR art.\
+    \ 17; deferred while a legal hold is in force)."
 - name: Shared · Webhook events
   description: "The subscribable webhook event vocabulary — the codes the subscription\
     \ endpoints' events array accepts, with what each means. Managing subscriptions\
@@ -2385,6 +2394,43 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/me/erasure-request:
+    post:
+      tags:
+      - Shared · My privacy
+      summary: Request erasure of your data (GDPR art. 17)
+      description: Soft-deletes your data immediately (invisible at once); hard erasure
+        follows at the retention window. REFUSED while a legal hold is in force.
+      operationId: requestErasure
+      parameters:
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/me/devices:
     get:
       tags:
@@ -2469,6 +2515,84 @@ paths:
       responses:
         "201":
           description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+  /api/v1/me/consents:
+    get:
+      tags:
+      - Shared · My privacy
+      summary: "Your consent history (append-only, newest first)"
+      operationId: consents
+      parameters:
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceObject"
+    post:
+      tags:
+      - Shared · My privacy
+      summary: Record a consent decision
+      description: "A withdrawal is `granted:false` — a new row, never an overwrite."
+      operationId: record
+      parameters:
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConsentRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
           headers:
             X-Request-Id:
               description: "Public request id (accepted inbound, else minted as a\
@@ -2940,6 +3064,101 @@ paths:
       responses:
         "201":
           description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/compliance/legal-holds/subject:
+    post:
+      tags:
+      - Platform · Compliance
+      summary: Place a legal hold on a subject
+      description: "While active, the subject's data cannot be purged or erased."
+      operationId: holdSubject
+      parameters:
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubjectHoldRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/compliance/legal-holds/org:
+    post:
+      tags:
+      - Platform · Compliance
+      summary: Place a legal hold on an organization
+      operationId: holdOrg
+      parameters:
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrgHoldRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/compliance/erasure:
+    post:
+      tags:
+      - Platform · Compliance
+      summary: Execute an erasure on a subject's behalf
+      description: REFUSED while a legal hold is in force for the subject.
+      operationId: erase
+      parameters:
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ErasureRequestBody"
+        required: true
+      responses:
+        "200":
+          description: OK
           headers:
             X-Request-Id:
               description: "Public request id (accepted inbound, else minted as a\
@@ -4078,6 +4297,43 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ResourceObject"
+  /api/v1/me/data-export:
+    get:
+      tags:
+      - Shared · My privacy
+      summary: Export your own data (portability)
+      description: Your profile-linked compliance record — consents and hold status.
+      operationId: export
+      parameters:
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: object
+                additionalProperties: {}
   /api/v1/files/{key}:
     get:
       tags:
@@ -4876,6 +5132,27 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/compliance/legal-holds:
+    get:
+      tags:
+      - Platform · Compliance
+      summary: List active legal holds
+      operationId: holds
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceObject"
   /api/v1/orgs/{orgId}/members/{subject}:
     delete:
       tags:
@@ -5162,6 +5439,33 @@ paths:
         schema:
           type: string
           format: uuid
+      responses:
+        "204":
+          description: No Content
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+  /api/v1/admin/compliance/legal-holds/{id}:
+    delete:
+      tags:
+      - Platform · Compliance
+      summary: Release a legal hold
+      operationId: release
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
       responses:
         "204":
           description: No Content
@@ -5502,6 +5806,15 @@ components:
           type: string
         pushToken:
           type: string
+    ConsentRequest:
+      type: object
+      properties:
+        purpose:
+          type: string
+        granted:
+          type: boolean
+        source:
+          type: string
     PresignRequest:
       type: object
       properties:
@@ -5538,6 +5851,25 @@ components:
       required:
       - reason
       - targetSubject
+    SubjectHoldRequest:
+      type: object
+      properties:
+        subject:
+          type: string
+        reason:
+          type: string
+    OrgHoldRequest:
+      type: object
+      properties:
+        orgId:
+          type: string
+        reason:
+          type: string
+    ErasureRequestBody:
+      type: object
+      properties:
+        subject:
+          type: string
     UpdateOrganizationRequest:
       type: object
       properties:

@@ -139,7 +139,7 @@ step — *which is exactly why the logical boundaries are enforced now*.
 
 ### 2.2 Module map
 
-Twenty modules. Verified from the `package-info.java` files and `docs/modulith/components.puml`.
+Twenty-one modules. Verified from the `package-info.java` files and `docs/modulith/components.puml`.
 
 | Module | Display name | Owns (tables) | Public API package contains |
 |---|---|---|---|
@@ -156,6 +156,7 @@ Twenty modules. Verified from the `package-info.java` files and `docs/modulith/c
 | `apikeys` | API Keys | `api_key` | `ApiKeyAuthenticator` port impl; drives no events |
 | `access` | Access | `user_device`, `org_security_policy` | (none — devices + org security policy enforcement) |
 | `integration` | Integration Hub | `integration`, `integration_setting` | `Integrations` resolution port; drives no events |
+| `compliance` | Compliance | `consent_record`, `legal_hold`, `erasure_request` | `LegalHolds` port impl; drives no events |
 | `exchange` | Exchange | `exchange_job`, `exchange_job_error`, `exchange_schedule` | `ExchangeHandler` (SPI), `ExchangeContext`, `ImportOutcome`, `InvalidRecordException`, `RecordWriter` |
 | `audit` | Audit | `audit_log` | (none — consumed through the `shared.audit.AuditLog` port) |
 | `notification` | Notification | `in_app_notification`, `notification_delivery` | `Notifications`, `NotificationChannelSender` (SPI), `NotificationChannel`, `NotificationMessage`, `NotificationRequest`, `Recipient` |
@@ -164,7 +165,7 @@ Twenty modules. Verified from the `package-info.java` files and `docs/modulith/c
 | `analytics` | Analytics | none in Postgres (DuckDB marts + Parquet) | `AnalyticsEngine`, `AnalyticsException` |
 | `scheduler` | Scheduler | none (consumes `shedlock`) | (none) |
 
-Thirty-five of the schema's thirty-eight tables appear above. The remaining three are **framework-owned and
+Thirty-eight of the schema's forty-one tables appear above. The remaining three are **framework-owned and
 belong to no module**: `event_publication` (Spring Modulith's JDBC registry, `V2`), `shedlock`
 (ShedLock, `V4`) and `flyway_schema_history` (created by Flyway itself, in no migration). They are
 read and written by libraries, not by application code, and `V17` deliberately leaves all three out of
@@ -245,7 +246,7 @@ as they start.
 | Constraint | Source | Consequence |
 |---|---|---|
 | Flyway owns the schema; `spring.jpa.hibernate.ddl-auto: validate` | `application.yaml:27-29` | No DDL outside `db/migration`. There is no `schema.sql` and no test-only DDL anywhere. |
-| Migrations are forward-only and numbered; **V1–V33 exist, next free is V34** | `db/migration/`, `AGENTS.md` §4.5 | V21–V24 are localization/search/document/exchange; V25 completes the exchange guidelines (templates, schedules, org_id tightened NOT NULL); V26 is subscriptions; V27 the Kill Bill billing linkage; V28 user profiles; V29 API keys; V30 org user groups; V31 devices; V32 org security policies; V33 the integration hub. Any plan citing an old "next free" number is stale — `AGENTS.md` §4.5 is kept current. |
+| Migrations are forward-only and numbered; **V1–V34 exist, next free is V35** | `db/migration/`, `AGENTS.md` §4.5 | V21–V24 are localization/search/document/exchange; V25 completes the exchange guidelines (templates, schedules, org_id tightened NOT NULL); V26 is subscriptions; V27 the Kill Bill billing linkage; V28 user profiles; V29 API keys; V30 org user groups; V31 devices; V32 org security policies; V33 the integration hub; V34 compliance. Any plan citing an old "next free" number is stale — `AGENTS.md` §4.5 is kept current. |
 | No cross-module foreign keys | `AGENTS.md` §1 | Referential integrity across modules is an application concern; `SoftDeletePurgeJob` states the consequence for purge ordering (`SoftDeletePurgeJob.java:49-53`). |
 | `spring.jpa.open-in-view: false` | `application.yaml:30` | No lazy loading past the service boundary. |
 | No Lombok; records + constructor injection | ADR 0001, `ArchitectureTests.noFieldInjection` | Enforced by ArchUnit. |
@@ -906,6 +907,17 @@ The system SHALL:
 | FR-INT-2 | encrypt known secret setting values (AES-GCM) at rest and mask them on the REST read, while returning them DECRYPTED through the port to in-JVM consumers | `main:integration/internal/{IntegrationSecretCipher,IntegrationService}` | same test (ciphertext in column, mask on wire, plaintext via port) |
 | FR-INT-3 | validate the kind, offer a completeness test-connection, and be consumed by a real sender (the SMS channel resolves its provider through the port) | `IntegrationService.{upsert,testConnection}`, `notification/internal/SmsChannelSender` | `IntegrationHubTest.kindIsValidatedAndTestReportsCompleteness` |
 
+### 3.25 Compliance — consent, legal holds, erasure (FR-CMP)
+
+The system SHALL:
+
+| ID | Requirement | Where | Verified by |
+|---|---|---|---|
+| FR-CMP-1 | record consent APPEND-ONLY (a withdrawal is a new row) and expose the caller's history | `main:compliance/internal/{ConsentRecord,ComplianceService.recordConsent}` | `test:compliance/internal/ComplianceTest.consentIsAppendOnlyAndErasureSoftDeletes` |
+| FR-CMP-2 | let platform-admin place/release legal holds (subject or org) that, while active, BLOCK the retention purge (a held aged-out row survives; released, it purges) and any erasure of the held data — via the `LegalHolds` kernel port, default-FALSE when compliance is absent (fail-open) | `main:shared/compliance/LegalHolds.java`, `main:compliance/internal/{LegalHold,LegalHoldsImpl}`, `main:scheduler/internal/SoftDeletePurgeJob` (held-owner guard) | `test:scheduler/internal/LegalHoldPurgeTest`, `ComplianceTest.aLegalHoldMakesErasureRefused` |
+| FR-CMP-3 | execute GDPR erasure — soft-delete the subject's owned rows now (invisible immediately), hard-erase at the retention window; REFUSED while a hold is in force | `ComplianceService.requestErasure` | same tests |
+| FR-CMP-4 | give a subject a self-service data export (portability) of their own record | `ComplianceService.dataExport`, `MeComplianceController` | exercised via `/me/data-export` |
+
 ## 4. External interface requirements
 
 ### 4.1 The response envelope
@@ -1151,6 +1163,13 @@ no `@PreAuthorize`. Every endpoint can additionally return 401, 403 `ACCOUNT_NOT
 | GET / PUT | `/api/v1/orgs/{orgId}/security-policy` | `org:read` / `org:update` | 200 (get-or-default open) | 422 bad CIDR |
 | POST | `/api/v1/orgs/{orgId}/security-policy/trusted-devices` | `org:update` | 200 | 404 unknown device |
 | — | (enforcement) org-scoped calls | policy denial | **403** naming the rule (`ip-allowlist` / `session-max-age` / `trusted-device`) | — |
+| GET / POST | `/api/v1/me/consents` | authenticated | 200 (append-only history / record) | 422 |
+| GET | `/api/v1/me/data-export` | authenticated | 200 (your record) | — |
+| POST | `/api/v1/me/erasure-request` | authenticated | 200 (EXECUTED, or REFUSED under hold) | — |
+| GET | `/api/v1/admin/compliance/legal-holds` | `platform-support` | 200 (active holds) | — |
+| POST | `/api/v1/admin/compliance/legal-holds/{subject\|org}` | `platform-admin` | **201** | 422 |
+| DELETE | `/api/v1/admin/compliance/legal-holds/{id}` | `platform-admin` | **204** | 404 |
+| POST | `/api/v1/admin/compliance/erasure` | `platform-admin` | 200 (EXECUTED / REFUSED) | — |
 | POST / GET / DELETE | `/api/v1/orgs/{orgId}/api-keys` | `apikey:manage` | **201** (secret once) / 200 (paged) / **204** | 403 escalation, 404, 422 |
 | POST / GET / DELETE | `/api/v1/admin/api-keys` | `platform-admin` mint/revoke, `platform-support` list | **201** / 200 / **204** | 404, 422 |
 | PUT / GET / DELETE | `/api/v1/orgs/{orgId}/integrations` | `org:update` write / `org:read` list | 200 (secrets masked) / **204** | 409 duplicate, 422 |

@@ -50,7 +50,7 @@
   <a href="#ratelimit">Rate limits</a><a href="#idempotency">Idempotency</a><a href="#orgs">Tenant lifecycle</a>
   <a href="#members">Members &amp; roles</a><a href="#subscription">Plans &amp; entitlements</a><a href="#billing">Billing</a>
   <a href="#documents">Documents</a><a href="#search">Search</a><a href="#exchange">Exchange</a>
-  <a href="#webhooks">Webhooks</a><a href="#apikeys">API keys</a><a href="#access">Devices &amp; policy</a><a href="#integrations">Integrations</a><a href="#settings">Settings &amp; i18n</a><a href="#audit">Audit</a>
+  <a href="#webhooks">Webhooks</a><a href="#apikeys">API keys</a><a href="#access">Devices &amp; policy</a><a href="#integrations">Integrations</a><a href="#compliance">Compliance</a><a href="#settings">Settings &amp; i18n</a><a href="#audit">Audit</a>
   <a href="#impersonation">Impersonation</a><a href="#errors">Error codes</a><a href="#tips">Tips</a>
 </nav>
 <main>
@@ -318,6 +318,23 @@ GET  /api/v1/orgs/{orgId}/integrations          # your configs (secrets masked)
 POST /api/v1/orgs/{orgId}/integrations/{id}/test   # → {"result":"ok"} | "no settings configured" | "disabled"</code></pre>
 <p class="mut">Kinds: <code>SMS_PROVIDER</code>, <code>EMAIL_PROVIDER</code>, <code>PAYMENT_GATEWAY</code>.
 Consumers (the notification senders, billing gateway selection) resolve the effective config at use time.</p>
+
+<h2 id="compliance">13e · Compliance (GDPR)</h2>
+<pre><code># consent is append-only — a withdrawal is a new record, not an overwrite
+GET  /api/v1/me/consents
+POST /api/v1/me/consents   {"purpose":"marketing","granted":true}
+POST /api/v1/me/consents   {"purpose":"marketing","granted":false}   # withdrawal
+
+GET  /api/v1/me/data-export        # your record (consents, hold status) — portability
+POST /api/v1/me/erasure-request    # GDPR art. 17 → {"status":"EXECUTED"} (or REFUSED under a hold)
+
+# platform: legal holds BLOCK the purge and any erasure of the held subject/org until released
+POST   /api/v1/admin/compliance/legal-holds/subject   {"subject":"kc-7d2e…","reason":"litigation #99"}
+GET    /api/v1/admin/compliance/legal-holds
+DELETE /api/v1/admin/compliance/legal-holds/{id}      # release
+POST   /api/v1/admin/compliance/erasure   {"subject":"kc-7d2e…"}   # REFUSED while held</code></pre>
+<p class="mut">Erasure soft-deletes immediately (invisible at once); hard erasure follows at the retention
+window, which itself skips anything under a legal hold.</p>
 
 <h2 id="settings">14 · Settings, flags, translations</h2>
 <pre><code>GET /api/v1/settings?page[size]=20            # any authenticated caller reads

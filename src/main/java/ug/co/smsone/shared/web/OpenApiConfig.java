@@ -78,6 +78,8 @@ public class OpenApiConfig {
     private static final String TAG_SHARED_WEBHOOK_EVENTS = AXIS_SHARED + AXIS_SEPARATOR + "Webhook events";
     private static final String TAG_SHARED_PROFILE = AXIS_SHARED + AXIS_SEPARATOR + "My profile";
     private static final String TAG_SHARED_DEVICES = AXIS_SHARED + AXIS_SEPARATOR + "My devices";
+    private static final String TAG_SHARED_PRIVACY = AXIS_SHARED + AXIS_SEPARATOR + "My privacy";
+    private static final String TAG_PLATFORM_COMPLIANCE = AXIS_PLATFORM + AXIS_SEPARATOR + "Compliance";
     private static final String TAG_ORG_SECURITY = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Security policy";
     private static final String TAG_ORG_INTEGRATIONS = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Integrations";
     private static final String TAG_PLATFORM_INTEGRATIONS = AXIS_PLATFORM + AXIS_SEPARATOR + "Integrations";
@@ -125,6 +127,8 @@ public class OpenApiConfig {
             Map.entry("WebhookEventTypesController", "Webhook events"),
             Map.entry("MeProfileController", "My profile"),
             Map.entry("MeDeviceController", "My devices"),
+            Map.entry("MeComplianceController", "My privacy"),
+            Map.entry("AdminComplianceController", "Compliance"),
             Map.entry("OrgSecurityPolicyController", "Security policy"),
             Map.entry("AdminDeviceController", "Users & impersonation"),
             Map.entry("OrgMembershipsController", "Me & notifications"),
@@ -232,6 +236,11 @@ public class OpenApiConfig {
                                 + "platform-admin. The same keys are readable by any authenticated caller "
                                 + "under " + TAG_SHARED_SETTINGS + " — same paths, different method, "
                                 + "different authority, which is why one controller lands in two groups."),
+                        new Tag().name(TAG_PLATFORM_COMPLIANCE).description(
+                                "Legal holds and erasure execution. A hold (subject or org) BLOCKS the "
+                                + "retention purge and any erasure of the held data until released — "
+                                + "placing is platform-admin, listing platform-support. Erasure "
+                                + "soft-deletes now, hard-erases at retention (which honors holds)."),
                         new Tag().name(TAG_PLATFORM_INTEGRATIONS).description(
                                 "The PLATFORM-DEFAULT provider configs (platform-admin) — SMS, email, "
                                 + "payment gateway — used by any org that has no override of its own. "
@@ -341,6 +350,10 @@ public class OpenApiConfig {
                                 "The caller's own devices — register (idempotent per X-Device-Id), list, "
                                 + "revoke. Marking one TRUSTED is not here: trust is an organization's "
                                 + "grant (its security policy), not a self-claim."),
+                        new Tag().name(TAG_SHARED_PRIVACY).description(
+                                "Your own compliance controls — consent history (append-only), a data "
+                                + "export of your record (portability), and requesting your own erasure "
+                                + "(GDPR art. 17; deferred while a legal hold is in force)."),
                         new Tag().name(TAG_SHARED_WEBHOOK_EVENTS).description(
                                 "The subscribable webhook event vocabulary — the codes the subscription "
                                 + "endpoints' events array accepts, with what each means. Managing "
