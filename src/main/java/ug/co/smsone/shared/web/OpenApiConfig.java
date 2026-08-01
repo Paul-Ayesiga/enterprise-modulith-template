@@ -79,6 +79,8 @@ public class OpenApiConfig {
     private static final String TAG_SHARED_PROFILE = AXIS_SHARED + AXIS_SEPARATOR + "My profile";
     private static final String TAG_SHARED_DEVICES = AXIS_SHARED + AXIS_SEPARATOR + "My devices";
     private static final String TAG_ORG_SECURITY = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Security policy";
+    private static final String TAG_ORG_INTEGRATIONS = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Integrations";
+    private static final String TAG_PLATFORM_INTEGRATIONS = AXIS_PLATFORM + AXIS_SEPARATOR + "Integrations";
     private static final String TAG_SHARED_ME = AXIS_SHARED + AXIS_SEPARATOR + "Me & notifications";
     private static final String TAG_SHARED_FILES = AXIS_SHARED + AXIS_SEPARATOR + "Files";
     private static final String TAG_SHARED_SETTINGS = AXIS_SHARED + AXIS_SEPARATOR + "Settings & flags";
@@ -118,6 +120,8 @@ public class OpenApiConfig {
             Map.entry("OrgBillingController", "Billing"),
             Map.entry("OrgApiKeyController", "API keys"),
             Map.entry("AdminApiKeyController", "API keys"),
+            Map.entry("OrgIntegrationController", "Integrations"),
+            Map.entry("AdminIntegrationController", "Integrations"),
             Map.entry("WebhookEventTypesController", "Webhook events"),
             Map.entry("MeProfileController", "My profile"),
             Map.entry("MeDeviceController", "My devices"),
@@ -228,6 +232,10 @@ public class OpenApiConfig {
                                 + "platform-admin. The same keys are readable by any authenticated caller "
                                 + "under " + TAG_SHARED_SETTINGS + " — same paths, different method, "
                                 + "different authority, which is why one controller lands in two groups."),
+                        new Tag().name(TAG_PLATFORM_INTEGRATIONS).description(
+                                "The PLATFORM-DEFAULT provider configs (platform-admin) — SMS, email, "
+                                + "payment gateway — used by any org that has no override of its own. "
+                                + "Same encryption and masking as the org surface."),
                         new Tag().name(TAG_PLATFORM_API_KEYS).description(
                                 "Platform machine credentials — support-tier keys minted by platform-admin. "
                                 + "They read platform surfaces; they never satisfy a higher tier or carry "
@@ -281,6 +289,11 @@ public class OpenApiConfig {
                                 "An organization's machine credentials (apikey:manage). A key carries a "
                                 + "SUBSET of its creator's permissions — it can never out-rank them — and "
                                 + "authenticates as X-Api-Key. The secret shows once, at mint."),
+                        new Tag().name(TAG_ORG_INTEGRATIONS).description(
+                                "The organization's provider overrides (org:update) — SMS, email, payment "
+                                + "gateway. An override wins over the platform default for that capability. "
+                                + "Secret values are encrypted at rest and masked on read; the platform "
+                                + "defaults are " + TAG_PLATFORM_INTEGRATIONS + "."),
                         new Tag().name(TAG_ORG_SECURITY).description(
                                 "The organization's security policy (org:update to set, org:read to view): "
                                 + "IP allowlist, require-a-trusted-device, session max age. Every field "

@@ -213,6 +213,10 @@ app:
       # In-app targeting resolves the admin's Keycloak subject from this email (identity module) —
       # the default matches the shipped dev realm's admin user so in-app delivery works out of the box.
       - email: ${NOTIFICATION_ADMIN_EMAIL:ayesigapo@gmail.com}
+  integration:
+    # Derives (SHA-256) the AES-256-GCM key that encrypts integration secret values at rest. Dev
+    # default is not sensitive; ALWAYS override in production.
+    secret-encryption-key: ${INTEGRATION_SECRET_KEY:smsone-dev-integration-secret-key}
   billing:
     # Kill Bill is the billing system of record; this app reconciles its events into entitlements.
     base-url: ${KILLBILL_URL:http://localhost:8082}

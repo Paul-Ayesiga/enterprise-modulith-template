@@ -342,6 +342,23 @@ Slice 3 of [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md).
 - [x] **Gate:** full `./gradlew test` green (13 modules); docs regenerated; DATA_MODEL §4.11 /
       SRS §3.17 + catalogue + traceability updated
 
+## P5 — Integration hub ✅ (2026-08-01)
+
+Slice 5 of [PLATFORM_EXPANSION_PLAN.md](PLATFORM_EXPANSION_PLAN.md).
+
+- [x] **V33** `integration` (soft-deletable, 18th) + `integration_setting` (element rows, cascade
+      FK). One live per (scope, kind) via TWO partial unique indexes (org + platform-default —
+      a partial index can't span org_id IS NULL)
+- [x] `Integrations` resolution port: org override → platform default → empty, deterministic. Secret
+      setting values AES-GCM encrypted at rest (IntegrationSecretCipher, module-local key), MASKED
+      on the REST read, DECRYPTED through the port for in-JVM consumers
+- [x] Both surfaces (org override org:update/read, platform default platform-admin/support) +
+      completeness test-connection; kind validated
+- [x] Real consumer edge: SmsChannelSender resolves its provider through the port (notification →
+      integration, clean in ModularityTests)
+- [x] **Gate:** override-wins-over-default, ciphertext-in-column + mask-on-wire + plaintext-via-port,
+      kind 422 — `IntegrationHubTest` (2 tests). Two Integrations tags + map entries (flagged)
+
 ## P4 — Devices + org security policies ✅ (2026-08-01)
 
 Slice 4 of [PLATFORM_EXPANSION_PLAN.md](PLATFORM_EXPANSION_PLAN.md); one `access` module (the

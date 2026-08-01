@@ -1,0 +1,11 @@
+[%autowidth.stretch, cols="h,a"]
+|===
+|Base package
+|`ug.co.smsone.integration`
+|Spring components
+|_Services_
+
+* `u.c.s.i.Integrations` (via `u.c.s.i.internal.IntegrationsImpl`)
+|Bean references
+|* `u.c.s.s.audit.AuditLog` (in Shared Kernel)
+|===

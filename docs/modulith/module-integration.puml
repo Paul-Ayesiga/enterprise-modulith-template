@@ -1,5 +1,5 @@
 @startuml
-title <size:24>Localization</size>
+title <size:24>Integration Hub</size>
 
 set separator none
 top to bottom direction
@@ -17,13 +17,13 @@ top to bottom direction
 
 System_Boundary("Application_boundary", "Application", $tags="") {
   Container_Boundary("Application.Application_boundary", "Application", $tags="") {
-    Component(Application.Application.Localization, "Localization", $techn="Module", $descr="", $tags="", $link="")
     Component(Application.Application.SharedKernel, "Shared Kernel", $techn="Module", $descr="", $tags="", $link="")
+    Component(Application.Application.IntegrationHub, "Integration Hub", $techn="Module", $descr="", $tags="", $link="")
   }
 
 }
 
-Rel(Application.Application.Localization, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.IntegrationHub, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 
 SHOW_LEGEND(true)
 hide stereotypes

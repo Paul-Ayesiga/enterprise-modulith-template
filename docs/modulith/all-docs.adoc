@@ -25,6 +25,10 @@ include::module-files.adoc[]
 plantuml::module-identity.puml[,,format=svg]
 include::module-identity.adoc[]
 
+== Integration Hub
+plantuml::module-integration.puml[,,format=svg]
+include::module-integration.adoc[]
+
 == Localization
 plantuml::module-localization.puml[,,format=svg]
 include::module-localization.adoc[]

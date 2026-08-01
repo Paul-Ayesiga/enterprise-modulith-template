@@ -38,6 +38,10 @@ tags:
     \ state, platform-admin. The same keys are readable by any authenticated caller\
     \ under Shared · Settings & flags — same paths, different method, different authority,\
     \ which is why one controller lands in two groups."
+- name: Platform · Integrations
+  description: "The PLATFORM-DEFAULT provider configs (platform-admin) — SMS, email,\
+    \ payment gateway — used by any org that has no override of its own. Same encryption\
+    \ and masking as the org surface."
 - name: Platform · API keys
   description: Platform machine credentials — support-tier keys minted by platform-admin.
     They read platform surfaces; they never satisfy a higher tier or carry org permissions.
@@ -87,6 +91,11 @@ tags:
   description: "An organization's machine credentials (apikey:manage). A key carries\
     \ a SUBSET of its creator's permissions — it can never out-rank them — and authenticates\
     \ as X-Api-Key. The secret shows once, at mint."
+- name: Organization · Integrations
+  description: "The organization's provider overrides (org:update) — SMS, email, payment\
+    \ gateway. An override wins over the platform default for that capability. Secret\
+    \ values are encrypted at rest and masked on read; the platform defaults are Platform\
+    \ · Integrations."
 - name: Organization · Security policy
   description: "The organization's security policy (org:update to set, org:read to\
     \ view): IP allowlist, require-a-trusted-device, session max age. Every field\
@@ -744,6 +753,87 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}/integrations:
+    get:
+      tags:
+      - Organization · Integrations
+      summary: List the organization's integrations (secrets masked)
+      operationId: list
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceObject"
+    put:
+      tags:
+      - Organization · Integrations
+      summary: Configure an integration for the organization
+      description: Upsert by (kind). Known secret keys (apiKey/apiSecret/authToken/password/secretKey/accessKey)
+        are encrypted at rest and masked on read.
+      operationId: upsert
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/orgs/{orgId}/groups/{id}/role:
     put:
       tags:
@@ -1091,6 +1181,51 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/integrations:
+    get:
+      tags:
+      - Platform · Integrations
+      summary: List platform-default integrations
+      operationId: list_1
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceObject"
+    put:
+      tags:
+      - Platform · Integrations
+      summary: Configure a platform-default integration
+      operationId: upsert_1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/orgs:
     post:
       tags:
@@ -1137,7 +1272,7 @@ paths:
       tags:
       - Organization · Webhooks
       summary: List the organization's webhook subscriptions
-      operationId: list
+      operationId: list_2
       parameters:
       - name: orgId
         in: path
@@ -1319,7 +1454,7 @@ paths:
       tags:
       - Organization · Roles
       summary: List the organization's roles
-      operationId: list_1
+      operationId: list_3
       parameters:
       - name: orgId
         in: path
@@ -1454,7 +1589,7 @@ paths:
       tags:
       - Organization · Members
       summary: List organization members
-      operationId: list_2
+      operationId: list_4
       parameters:
       - name: orgId
         in: path
@@ -1550,12 +1685,56 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}/integrations/{id}/test:
+    post:
+      tags:
+      - Organization · Integrations
+      summary: Test an integration's configuration completeness
+      operationId: test
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
   /api/v1/orgs/{orgId}/groups:
     get:
       tags:
       - Organization · Groups
       summary: List the organization's groups
-      operationId: list_3
+      operationId: list_5
       parameters:
       - name: orgId
         in: path
@@ -1700,7 +1879,7 @@ paths:
       tags:
       - Organization · Exchange schedules
       summary: List the organization's recurring exports
-      operationId: list_4
+      operationId: list_6
       parameters:
       - name: orgId
         in: path
@@ -1969,7 +2148,7 @@ paths:
       tags:
       - Organization · Profile
       summary: List the organization's documents
-      operationId: list_5
+      operationId: list_7
       parameters:
       - name: orgId
         in: path
@@ -2076,7 +2255,7 @@ paths:
       tags:
       - Organization · API keys
       summary: List the organization's API keys (secrets never shown)
-      operationId: list_6
+      operationId: list_8
       parameters:
       - name: orgId
         in: path
@@ -2211,7 +2390,7 @@ paths:
       tags:
       - Shared · My devices
       summary: List your devices
-      operationId: list_7
+      operationId: list_9
       parameters:
       - name: user
         in: query
@@ -2510,7 +2689,7 @@ paths:
       tags:
       - Shared · Reference data
       summary: List your personal documents
-      operationId: list_8
+      operationId: list_10
       parameters:
       - name: user
         in: query
@@ -2667,6 +2846,34 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/integrations/{id}/test:
+    post:
+      tags:
+      - Platform · Integrations
+      summary: Test a platform-default integration
+      operationId: test_1
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
   /api/v1/admin/impersonations:
     get:
       tags:
@@ -2676,7 +2883,7 @@ paths:
         \ `actor=<subject>` names another operator's instead and requires platform-admin.\
         \ `active` is computed when the row is read, so a lapsed session reports inactive\
         \ with no sweep job involved."
-      operationId: list_9
+      operationId: list_11
       parameters:
       - name: actor
         in: query
@@ -2748,7 +2955,7 @@ paths:
       tags:
       - Platform · API keys
       summary: List platform API keys
-      operationId: list_10
+      operationId: list_12
       parameters:
       - name: "page[size]"
         in: query
@@ -2892,7 +3099,7 @@ paths:
       description: "The fixed vocabulary the subscription endpoints' `events` array\
         \ accepts. Payloads always carry `event`, `orgId` and `occurredAt`, signed\
         \ HMAC-SHA256 in `X-Webhook-Signature`."
-      operationId: list_11
+      operationId: list_13
       parameters:
       - name: X-Impersonate
         in: header
@@ -2924,7 +3131,7 @@ paths:
       tags:
       - Shared · Reference data
       summary: "List translations, optionally for one locale"
-      operationId: list_12
+      operationId: list_14
       parameters:
       - name: locale
         in: query
@@ -2976,7 +3183,7 @@ paths:
       tags:
       - Shared · Settings & flags
       summary: List platform settings
-      operationId: list_13
+      operationId: list_15
       parameters:
       - name: "page[size]"
         in: query
@@ -3027,7 +3234,7 @@ paths:
         \ held) its lock and until when — the evidence that a job fires once cluster-wide.\
         \ Read-only: there is no endpoint to trigger a job, they are time-driven by\
         \ design."
-      operationId: list_14
+      operationId: list_16
       parameters:
       - name: X-Impersonate
         in: header
@@ -3062,7 +3269,7 @@ paths:
       description: The fixed vocabulary for composing custom roles — the `code` values
         are what the role endpoints accept. The catalog is global and identical for
         every organization.
-      operationId: list_15
+      operationId: list_17
       parameters:
       - name: X-Impersonate
         in: header
@@ -3341,7 +3548,7 @@ paths:
       tags:
       - Organization · Exchange
       summary: List the organization's exchange jobs
-      operationId: list_16
+      operationId: list_18
       parameters:
       - name: orgId
         in: path
@@ -3716,7 +3923,7 @@ paths:
       tags:
       - Shared · Me & notifications
       summary: List your in-app notifications
-      operationId: list_17
+      operationId: list_19
       parameters:
       - name: "page[size]"
         in: query
@@ -3950,7 +4157,7 @@ paths:
       tags:
       - Shared · Settings & flags
       summary: List feature flags
-      operationId: list_18
+      operationId: list_20
       parameters:
       - name: "page[size]"
         in: query
@@ -4000,7 +4207,7 @@ paths:
       description: "Each handler names the dataset it moves, the permissions its imports\
         \ and exports require, `header` — the exact column order its files use — and\
         \ the current `templateVersion`. Download a ready-to-fill file from `/handlers/{id}/template`."
-      operationId: list_19
+      operationId: list_21
       parameters:
       - name: X-Impersonate
         in: header
@@ -4295,7 +4502,7 @@ paths:
       tags:
       - Platform · Users & impersonation
       summary: List provisioned users across the platform
-      operationId: list_20
+      operationId: list_22
       parameters:
       - name: "page[size]"
         in: query
@@ -4357,7 +4564,7 @@ paths:
       tags:
       - Platform · Users & impersonation
       summary: List a user's devices as the platform
-      operationId: list_21
+      operationId: list_23
       parameters:
       - name: subject
         in: path
@@ -4478,7 +4685,7 @@ paths:
       - Platform · Organizations
       summary: List every organization on the platform
       description: Newest first; narrow with `status` (ACTIVE or SUSPENDED).
-      operationId: list_22
+      operationId: list_24
       parameters:
       - name: status
         in: query
@@ -4710,6 +4917,44 @@ paths:
                 \ ULID)."
               schema:
                 type: string
+  /api/v1/orgs/{orgId}/integrations/{id}:
+    delete:
+      tags:
+      - Organization · Integrations
+      summary: Remove an integration
+      operationId: delete_8
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "204":
+          description: No Content
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
   /api/v1/orgs/{orgId}/groups/{id}/members/{subject}:
     delete:
       tags:
@@ -4764,7 +5009,7 @@ paths:
       summary: Delete a recurring export
       description: "Allowed to its creator, or to anyone holding the handler's export\
         \ permission."
-      operationId: delete_8
+      operationId: delete_9
       parameters:
       - name: orgId
         in: path
@@ -4866,6 +5111,28 @@ paths:
           \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
           \ write is audited against the operator, not the target."
         required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "204":
+          description: No Content
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+  /api/v1/admin/integrations/{id}:
+    delete:
+      tags:
+      - Platform · Integrations
+      summary: Remove a platform-default integration
+      operationId: delete_10
+      parameters:
+      - name: id
+        in: path
+        required: true
         schema:
           type: string
           format: uuid
@@ -5017,6 +5284,19 @@ components:
           minLength: 1
       required:
       - roleCode
+    UpsertRequest:
+      type: object
+      properties:
+        kind:
+          type: string
+        provider:
+          type: string
+        enabled:
+          type: boolean
+        settings:
+          type: object
+          additionalProperties:
+            type: string
     RoleRequest:
       type: object
       properties:

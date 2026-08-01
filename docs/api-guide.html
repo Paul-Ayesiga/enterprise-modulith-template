@@ -50,7 +50,7 @@
   <a href="#ratelimit">Rate limits</a><a href="#idempotency">Idempotency</a><a href="#orgs">Tenant lifecycle</a>
   <a href="#members">Members &amp; roles</a><a href="#subscription">Plans &amp; entitlements</a><a href="#billing">Billing</a>
   <a href="#documents">Documents</a><a href="#search">Search</a><a href="#exchange">Exchange</a>
-  <a href="#webhooks">Webhooks</a><a href="#apikeys">API keys</a><a href="#access">Devices &amp; policy</a><a href="#settings">Settings &amp; i18n</a><a href="#audit">Audit</a>
+  <a href="#webhooks">Webhooks</a><a href="#apikeys">API keys</a><a href="#access">Devices &amp; policy</a><a href="#integrations">Integrations</a><a href="#settings">Settings &amp; i18n</a><a href="#audit">Audit</a>
   <a href="#impersonation">Impersonation</a><a href="#errors">Error codes</a><a href="#tips">Tips</a>
 </nav>
 <main>
@@ -300,6 +300,24 @@ POST /api/v1/orgs/{orgId}/security-policy/trusted-devices   {"subject":"kc-7d2e�
   "detail":"Blocked by your organization's security policy (trusted-device)."}]}</code></pre>
 <p class="mut">Send <code>X-Device-Id: dev-abc123</code> on org calls when a trusted-device policy is set. You can
 never lock yourself out of the policy itself — the <code>/security-policy</code> endpoints are always reachable.</p>
+
+<h2 id="integrations">13d · Integration hub (providers)</h2>
+<p>Configure which external provider serves you for SMS, email, or payments. An org override wins over
+the platform default. Secret values (<code>apiKey</code>, <code>authToken</code>, …) are encrypted at rest
+and masked on read.</p>
+<pre><code># platform default (platform-admin) — used by any org without an override
+PUT /api/v1/admin/integrations
+{"kind":"SMS_PROVIDER","provider":"platform-sms","settings":{"apiKey":"…","sender":"SMSOne"}}
+
+# org override (org:update)
+PUT /api/v1/orgs/{orgId}/integrations
+{"kind":"SMS_PROVIDER","provider":"twilio","settings":{"apiKey":"…","authToken":"…"}}
+# → 200, and every read masks secrets:  "settings":{"apiKey":"••••••","authToken":"••••••"}
+
+GET  /api/v1/orgs/{orgId}/integrations          # your configs (secrets masked)
+POST /api/v1/orgs/{orgId}/integrations/{id}/test   # → {"result":"ok"} | "no settings configured" | "disabled"</code></pre>
+<p class="mut">Kinds: <code>SMS_PROVIDER</code>, <code>EMAIL_PROVIDER</code>, <code>PAYMENT_GATEWAY</code>.
+Consumers (the notification senders, billing gateway selection) resolve the effective config at use time.</p>
 
 <h2 id="settings">14 · Settings, flags, translations</h2>
 <pre><code>GET /api/v1/settings?page[size]=20            # any authenticated caller reads
