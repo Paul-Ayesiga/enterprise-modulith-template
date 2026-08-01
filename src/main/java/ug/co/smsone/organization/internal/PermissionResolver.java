@@ -30,7 +30,7 @@ class PermissionResolver {
         this.groups = groups;
     }
 
-    @Cacheable(cacheNames = CACHE, key = "#organizationId + ':' + #subject")
+    @Cacheable(cacheNames = CACHE, key = "#organizationId + ':' + #subject", sync = true)
     public Set<String> resolve(String subject, UUID organizationId) {
         // A suspended (or locally unknown) org grants nothing to anyone — org status is enforced
         // here, inside the cached value, so a suspension plus its cache eviction is immediate.

@@ -29,7 +29,7 @@ class EntitlementResolver {
         this.plans = plans;
     }
 
-    @Cacheable(cacheNames = CACHE, key = "#orgId.toString()")
+    @Cacheable(cacheNames = CACHE, key = "#orgId.toString()", sync = true)
     @Transactional(readOnly = true)
     public Map<String, Long> resolve(UUID orgId) {
         Plan plan = subscriptions.findByOrgId(orgId)

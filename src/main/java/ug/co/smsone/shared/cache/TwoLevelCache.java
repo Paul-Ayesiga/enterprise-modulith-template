@@ -31,6 +31,9 @@ class TwoLevelCache implements Cache {
     private final io.micrometer.core.instrument.Counter l1Hits;
     private final io.micrometer.core.instrument.Counter l2Hits;
     private final io.micrometer.core.instrument.Counter misses;
+    // Per-key striped locks so @Cacheable(sync=true) loads a cold key ONCE per node, not N times.
+    private static final int LOAD_STRIPES = 256;
+    private final Object[] loadLocks = new Object[LOAD_STRIPES];
 
     TwoLevelCache(String name, Cache l1, Cache l2, CacheInvalidationBroadcaster broadcaster,
             io.micrometer.core.instrument.MeterRegistry meters) {
@@ -41,6 +44,9 @@ class TwoLevelCache implements Cache {
         this.l1Hits = requestCounter(meters, "l1_hit");
         this.l2Hits = requestCounter(meters, "l2_hit");
         this.misses = requestCounter(meters, "miss");
+        for (int i = 0; i < LOAD_STRIPES; i++) {
+            loadLocks[i] = new Object();
+        }
     }
 
     private io.micrometer.core.instrument.Counter requestCounter(
@@ -100,9 +106,11 @@ class TwoLevelCache implements Cache {
     }
 
     /**
-     * Does NOT serialize concurrent loads, so {@code @Cacheable(sync = true)} would compile against
-     * this cache but provide no stampede protection. No caller relies on it today; revisit (delegate
-     * to Caffeine's per-key locking) before one does.
+     * Stampede-protected load for {@code @Cacheable(sync = true)}: a cold key is computed ONCE per
+     * node while concurrent callers wait on a striped lock and then read the freshly-cached value.
+     * Striped (not per-key) so the lock table is bounded — a hash collision only means two unrelated
+     * keys occasionally serialize, never incorrectness. Cross-node, L2 absorbs the rest: the first
+     * node to load publishes to L2, so a peer node's own cold read hits L2 rather than reloading.
      */
     @Override
     @SuppressWarnings("unchecked")
@@ -111,12 +119,21 @@ class TwoLevelCache implements Cache {
         if (wrapper != null) {
             return (T) wrapper.get();
         }
-        try {
-            T value = valueLoader.call();
-            put(key, value);
-            return value;
-        } catch (Exception e) {
-            throw new ValueRetrievalException(key, valueLoader, e);
+        synchronized (loadLocks[Math.floorMod(key.hashCode(), LOAD_STRIPES)]) {
+            // Double-check under the lock: a peer that just held it has populated L1 (put writes L1
+            // synchronously), so we read its value instead of running the loader a second time.
+            ValueWrapper loaded = l1.get(key);
+            if (loaded != null) {
+                l1Hits.increment();
+                return (T) loaded.get();
+            }
+            try {
+                T value = valueLoader.call();
+                put(key, value);
+                return value;
+            } catch (Exception e) {
+                throw new ValueRetrievalException(key, valueLoader, e);
+            }
         }
     }
 
