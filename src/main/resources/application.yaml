@@ -183,6 +183,10 @@ app:
     # The delivery log is a log, not an archive: terminal rows (DELIVERED and FAILED) past this are
     # purged nightly. A dead-letter older than the window is stale noise nobody is coming back for.
     retention: ${WEBHOOKS_RETENTION:P30D}
+    # Derives (SHA-256) the AES-256-GCM key that encrypts signing secrets at rest. Dev default
+    # matches nothing sensitive; ALWAYS override in production — and changing it later requires
+    # re-encrypting stored secrets (the startup migrator only handles the plaintext→encrypted hop).
+    secret-encryption-key: ${WEBHOOKS_SECRET_KEY:smsone-dev-webhook-secret-key}
   notification:
     from: ${NOTIFICATION_FROM:no-reply@smsone.co.ug}
     slack-webhook-url: ${NOTIFICATION_SLACK_WEBHOOK:}
@@ -209,6 +213,26 @@ app:
       # In-app targeting resolves the admin's Keycloak subject from this email (identity module) —
       # the default matches the shipped dev realm's admin user so in-app delivery works out of the box.
       - email: ${NOTIFICATION_ADMIN_EMAIL:ayesigapo@gmail.com}
+  billing:
+    # Kill Bill is the billing system of record; this app reconciles its events into entitlements.
+    base-url: ${KILLBILL_URL:http://localhost:8082}
+    username: ${KILLBILL_USER:admin}
+    # Dev defaults match the stock Kill Bill image; ALWAYS override in production.
+    password: ${KILLBILL_PASSWORD:password}
+    api-key: ${KILLBILL_API_KEY:smsone}
+    api-secret: ${KILLBILL_API_SECRET:smsone-secret}
+    # Authenticates Kill Bill's push notifications (the callback URL carries it); ALWAYS override.
+    callback-token: ${BILLING_CALLBACK_TOKEN:smsone-dev-callback-token}
+    # When set, the dev bootstrap registers push notifications to <url>?token=<callback-token>.
+    callback-url: ${BILLING_CALLBACK_URL:}
+    # Dev opt-in: creates the KB tenant + simple catalog plans so compose bills out of the box.
+    bootstrap: ${BILLING_BOOTSTRAP:false}
+    currency: ${BILLING_CURRENCY:USD}
+    # OUR plan code -> Kill Bill catalog plan name. FREE is deliberately unmapped (no money, no KB
+    # subscription). Production maps to its uploaded catalog.
+    plan-mapping:
+      PRO: ${BILLING_PLAN_PRO:pro-monthly}
+      ENTERPRISE: ${BILLING_PLAN_ENTERPRISE:enterprise-monthly}
   document:
     # Presigned-download lifetime: long enough to follow the 302, short enough not to be a durable
     # capability. Bytes never pass through the API.
@@ -231,6 +255,9 @@ app:
     retry-base-backoff: ${EXCHANGE_RETRY_BASE:PT30S}
     retry-max-backoff: ${EXCHANGE_RETRY_MAX:PT10M}
     schedule-fire-enabled: ${EXCHANGE_SCHEDULE_FIRE:true}
+    # The job log is a log, not an archive: terminal jobs past this purge nightly (error rows
+    # cascade). Artifacts are documents and keep the DOCUMENT lifecycle — deliberately untouched.
+    retention: ${EXCHANGE_RETENTION:P30D}
   localization:
     # The fallback chain's floor: exact tag -> language -> THIS -> the key itself. An unparseable
     # tag fails at startup, not at first resolve.

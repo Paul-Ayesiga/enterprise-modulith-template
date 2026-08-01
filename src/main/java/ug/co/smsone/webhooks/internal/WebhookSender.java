@@ -30,14 +30,17 @@ class WebhookSender {
 
     private final WebhookProperties properties;
 
-    WebhookSender(WebhookProperties properties) {
+    private final SecretCipher cipher;
+
+    WebhookSender(WebhookProperties properties, SecretCipher cipher) {
         this.properties = properties;
+        this.cipher = cipher;
     }
 
     /** @return the receiver's HTTP status on success (2xx); throws {@link WebhookDeliveryException} otherwise */
     int send(ClaimedWebhookDelivery delivery) {
         guardTarget(delivery.url());
-        String signature = WebhookSigner.sign(delivery.secret(), delivery.payload());
+        String signature = WebhookSigner.sign(cipher.decrypt(delivery.secret()), delivery.payload());
         int timeout = properties.timeoutSeconds();
         HttpRequest request = HttpRequest.newBuilder(URI.create(delivery.url()))
                 .timeout(Duration.ofSeconds(timeout))

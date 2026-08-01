@@ -69,8 +69,10 @@ public class OpenApiConfig {
     private static final String TAG_ORG_EXCHANGE = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Exchange";
     private static final String TAG_ORG_EXCHANGE_SCHEDULES =
             AXIS_ORGANIZATION + AXIS_SEPARATOR + "Exchange schedules";
+    private static final String TAG_ORG_BILLING = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Billing";
     private static final String TAG_PLATFORM_BILLING = AXIS_PLATFORM + AXIS_SEPARATOR + "Billing & plans";
     private static final String TAG_SHARED_EXCHANGE = AXIS_SHARED + AXIS_SEPARATOR + "Exchange catalog";
+    private static final String TAG_SHARED_WEBHOOK_EVENTS = AXIS_SHARED + AXIS_SEPARATOR + "Webhook events";
     private static final String TAG_SHARED_ME = AXIS_SHARED + AXIS_SEPARATOR + "Me & notifications";
     private static final String TAG_SHARED_FILES = AXIS_SHARED + AXIS_SEPARATOR + "Files";
     private static final String TAG_SHARED_SETTINGS = AXIS_SHARED + AXIS_SEPARATOR + "Settings & flags";
@@ -105,6 +107,9 @@ public class OpenApiConfig {
             Map.entry("ExchangeHandlersController", "Exchange catalog"),
             Map.entry("AdminOrganizationController", "Organizations"),
             Map.entry("AdminSubscriptionController", "Billing & plans"),
+            Map.entry("AdminBillingController", "Billing & plans"),
+            Map.entry("OrgBillingController", "Billing"),
+            Map.entry("WebhookEventTypesController", "Webhook events"),
             Map.entry("MeController", "Me & notifications"),
             Map.entry("NotificationController", "Me & notifications"),
             Map.entry("FileController", "Files"),
@@ -247,6 +252,10 @@ public class OpenApiConfig {
                                 + "org:read; the artifacts (source, error report, result) answer only to the "
                                 + "requester or a holder of that same handler permission. The handler "
                                 + "catalogue itself is " + TAG_SHARED_EXCHANGE + "."),
+                        new Tag().name(TAG_ORG_BILLING).description(
+                                "The tenant's own money view — invoices, proxied from Kill Bill on "
+                                + "org:read. Plans, balances and billing actions are the platform's "
+                                + "surface: " + TAG_PLATFORM_BILLING + "."),
                         new Tag().name(TAG_ORG_EXCHANGE_SCHEDULES).description(
                                 "Recurring exports on a cron (UTC), firing as their creator — whose export "
                                 + "permission is re-checked at every fire, so a revocation stops the "
@@ -274,7 +283,11 @@ public class OpenApiConfig {
                                 "The exchange handler catalogue and its downloadable templates — which "
                                 + "datasets can move, what each file must look like, which permissions "
                                 + "gate it. Readable by any authenticated caller; running one is "
-                                + TAG_ORG_EXCHANGE + ".")))
+                                + TAG_ORG_EXCHANGE + "."),
+                        new Tag().name(TAG_SHARED_WEBHOOK_EVENTS).description(
+                                "The subscribable webhook event vocabulary — the codes the subscription "
+                                + "endpoints' events array accepts, with what each means. Managing "
+                                + "subscriptions is " + TAG_ORG_WEBHOOKS + ".")))
                 .security(List.of(
                         new SecurityRequirement().addList(BEARER_SCHEME),
                         new SecurityRequirement().addList(OAUTH2_SCHEME)));

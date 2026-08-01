@@ -11,9 +11,13 @@ import ug.co.smsone.shared.audit.AuditLog;
 import ug.co.smsone.shared.error.NotFoundException;
 import ug.co.smsone.subscription.SubscriptionChanged;
 
-/** Assigning plans (platform act, audited) and reading an org's effective commercial state. */
+/**
+ * Assigning plans (platform act, audited) and reading an org's effective commercial state. Also
+ * implements the {@link ug.co.smsone.subscription.Subscriptions} write port — the billing
+ * integration drives plan state through the SAME audited paths the admin surface uses.
+ */
 @Service
-class SubscriptionService {
+class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
 
     private final OrgSubscriptionRepository subscriptions;
     private final PlanRepository plans;
@@ -50,6 +54,13 @@ class SubscriptionService {
                 subscription == null ? null : subscription.getCurrentPeriodEnd(), entitlements);
     }
 
+    /** The port's void form — billing drives the SAME audited path the admin surface returns from. */
+    @Override
+    @Transactional
+    public void assignPlan(UUID organizationId, String planCode) {
+        assign(organizationId, planCode);
+    }
+
     @Transactional
     SubscriptionView assign(UUID orgId, String planCode) {
         String normalized = planCode == null ? "" : planCode.trim().toUpperCase();
@@ -74,5 +85,32 @@ class SubscriptionService {
 
     java.util.List<Plan> catalog() {
         return plans.findAllByOrderByRankAsc();
+    }
+
+    @Override
+    @Transactional
+    public void markStatus(UUID organizationId, String status) {
+        OrgSubscription subscription = subscriptions.findByOrgId(organizationId).orElse(null);
+        if (subscription == null) {
+            // Billing events can race provisioning; standing without a subscription is meaningless.
+            return;
+        }
+        OrgSubscription.Status parsed;
+        try {
+            parsed = OrgSubscription.Status.valueOf(status.trim().toUpperCase());
+        } catch (IllegalArgumentException ex) {
+            return; // an unknown standing from an integration is logged upstream, never a 500 here
+        }
+        if (subscription.getStatus() == parsed) {
+            return;
+        }
+        String before = subscription.getStatus().name();
+        subscription.markStatus(parsed);
+        subscriptions.save(subscription);
+        Plan plan = plans.findById(subscription.getPlanId()).orElse(null);
+        events.publishEvent(new SubscriptionChanged(organizationId,
+                plan == null ? null : plan.getCode(), parsed.name(), Instant.now()));
+        auditLog.record("subscription.status_changed", organizationId, organizationId.toString(),
+                "status=" + before, "status=" + parsed.name());
     }
 }

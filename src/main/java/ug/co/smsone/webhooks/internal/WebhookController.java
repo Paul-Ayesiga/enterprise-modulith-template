@@ -64,8 +64,10 @@ class WebhookController {
     @PreAuthorize("hasPermission(#orgId, 'organization', 'webhook:manage')")
     @ResponseStatus(HttpStatus.CREATED)
     ResourceObject create(@PathVariable UUID orgId, @Valid @RequestBody CreateWebhookRequest request) {
-        WebhookSubscription created = service.create(orgId, request.url(), request.events());
-        return toResource(created, created.getSecret()); // full secret, shown once
+        WebhookSubscriptionService.CreatedSubscription created =
+                service.create(orgId, request.url(), request.events());
+        // Full secret, shown once — from the create result; the ROW only ever holds the ciphertext.
+        return toResource(created.subscription(), created.plainSecret());
     }
 
     @GetMapping
@@ -140,9 +142,10 @@ class WebhookController {
     }
 
     private static String mask(String secret) {
-        // Reveal none of the random secret — only the (non-secret) scheme prefix. The full value is
-        // shown exactly once, at create.
-        return secret != null && secret.startsWith("whsec_") ? "whsec_••••••" : "••••••";
+        // Reveal none of the random secret — only the (non-secret) scheme prefix every minted
+        // secret carries. The stored form is now ciphertext (enc:v1:…), so the mask is a constant
+        // rather than derived: it describes the PLAINTEXT the tenant holds, not the row.
+        return "whsec_••••••";
     }
 
     private static ResourceObject toResource(WebhookSubscription subscription, String secret) {

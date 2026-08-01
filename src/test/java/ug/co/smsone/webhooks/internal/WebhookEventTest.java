@@ -36,7 +36,7 @@ class WebhookEventTest {
     @Test
     void aMemberAddedEventEnqueuesADeliveryForASubscriber(Scenario scenario) {
         UUID orgId = UUID.randomUUID();
-        subscriptions.create(orgId, "https://hooks.example.com/x", Set.of("org.member.added"));
+        subscriptions.create(orgId, "https://hooks.example.com/x", Set.of("org.member.added")).subscription();
 
         scenario.publish(new MembershipCreated(orgId, "kc-" + UUID.randomUUID(), "MEMBER", Instant.now()))
                 .andWaitForStateChange(() -> enqueued(orgId) > 0 ? Boolean.TRUE : null)

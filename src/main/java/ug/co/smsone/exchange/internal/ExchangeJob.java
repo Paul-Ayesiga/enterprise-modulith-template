@@ -19,4 +19,11 @@ record ExchangeJob(UUID id, UUID orgId, String requester, String jobType, String
     static final String COMPLETED_WITH_ERRORS = "COMPLETED_WITH_ERRORS";
     static final String FAILED = "FAILED";
     static final String CANCELLED = "CANCELLED";
+
+    static final java.util.Set<String> TERMINAL =
+            java.util.Set.of(COMPLETED, COMPLETED_WITH_ERRORS, FAILED, CANCELLED);
+
+    boolean terminal() {
+        return TERMINAL.contains(status);
+    }
 }

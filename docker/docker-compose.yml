@@ -60,6 +60,38 @@ services:
       - "${MAILPIT_UI_PORT:-8025}:8025"  # Web UI
       - "${SMTP_PORT:-1025}:1025"        # SMTP sink
 
+  killbill-db:
+    image: killbill/mariadb:0.24
+    environment:
+      - MYSQL_ROOT_PASSWORD=killbill
+    volumes:
+      - killbill-db-data:/var/lib/mysql
+
+  killbill:
+    image: killbill/killbill:0.24.10
+    depends_on:
+      - killbill-db
+    ports:
+      - "${KILLBILL_PORT:-8082}:8080"   # 8080/8081 are taken by the app and Keycloak
+    environment:
+      - KILLBILL_DAO_URL=jdbc:mysql://killbill-db:3306/killbill
+      - KILLBILL_DAO_USER=root
+      - KILLBILL_DAO_PASSWORD=killbill
+      # Test mode enables the simple-plan catalog endpoint the dev bootstrap uses.
+      - KILLBILL_SERVER_TEST_MODE=true
+
+  kaui:
+    image: killbill/kaui:3.0.5
+    depends_on:
+      - killbill
+    ports:
+      - "${KAUI_PORT:-9095}:8080"       # Kill Bill admin UI (login admin/password)
+    environment:
+      - KAUI_CONFIG_DAO_URL=jdbc:mysql://killbill-db:3306/kaui
+      - KAUI_CONFIG_DAO_USER=root
+      - KAUI_CONFIG_DAO_PASSWORD=killbill
+      - KAUI_KILLBILL_URL=http://killbill:8080
+
   otel-lgtm:
     image: grafana/otel-lgtm:0.28.0
     ports:
@@ -75,3 +107,4 @@ volumes:
   postgres-data:
   seaweedfs-data:
   valkey-data:
+  killbill-db-data:

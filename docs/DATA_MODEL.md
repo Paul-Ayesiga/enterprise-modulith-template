@@ -11,7 +11,8 @@ Schema ownership: Flyway owns every table (`spring.jpa.hibernate.ddl-auto: valid
 `classpath:db/migration`. There is no `schema.sql`, no test-only DDL, and no Hibernate-generated
 schema in any profile. **V1..V26 exist; V20 is the 2026-08-01 audit's index remediation, V21
 localization, V22 search, V23 document, V24 the exchange job queue, V25 the exchange
-guideline completion (templates/schedules), V26 subscriptions; the next free number is V27.**
+guideline completion (templates/schedules), V26 subscriptions, V27 billing; the next free
+number is V28.**
 
 ---
 
@@ -21,7 +22,7 @@ Four stores, each with a distinct job. Only one of them is a system of record.
 
 | Store | Role | What lives there | Why not Postgres |
 |---|---|---|---|
-| **PostgreSQL 18** | System of record | All 27 tables below: aggregates, work queues, the audit and impersonation trails, and the framework tables (Flyway history, the Modulith event registry, ShedLock) | — |
+| **PostgreSQL 18** | System of record | All 28 tables below: aggregates, work queues, the audit and impersonation trails, and the framework tables (Flyway history, the Modulith event registry, ShedLock) | — |
 | **Valkey 8** | Cache L2 + rate-limit buckets + invalidation bus | Three named caches (`setting-values`, `feature-flags`, `org-permissions`) under key prefix `smsone:cache:`, Bucket4j token buckets under `<app.rate-limit.key-prefix>:<tier-id>:<tenant\|sub\|ip>:<value>`, and the `smsone:cache:invalidations` pub/sub topic | Derived, expendable data. Every value is recomputable from Postgres; an outage degrades to L1-only or fail-open, never to data loss (ADR 0004) |
 | **SeaweedFS (S3 API)** | Object storage | Uploaded file bytes, keyed `u/<subject>/<uuid>/<sanitized-filename>` (`files/internal/FileController.newKey:132-136`) | **No database row describes an uploaded object.** The `files` module owns no table: the key encodes the owner, the object store is the index, and authorization is a namespace prefix check |
 | **DuckDB (embedded)** | OLAP marts | `mart_users_by_status`, `mart_delivery_outcomes` in the DuckDB file at `app.analytics.database-path` (`data/analytics.duckdb`). Parquet export exists as an unwired seam only — see below | Postgres stays OLTP-only. Marts are point-in-time copies rebuilt from Postgres on each report run; the `AnalyticsEngine` seam keeps ClickHouse/Trino a pure implementation swap (ADR 0006) |
@@ -32,7 +33,7 @@ Three consequences worth stating plainly, because each has bitten:
   Postgres, so `@SQLRestriction` does not apply. A report over a soft-deletable table must filter
   `deleted_at is null` itself — `USERS_BY_STATUS` does exactly that
   (`analytics/internal/AnalyticsReport.java:22`) and the enum's javadoc enumerates the
-  eleven soft-deletable tables so the next report author does the same.
+  twelve soft-deletable tables so the next report author does the same.
 - **Valkey holds an authorization decision.** `org-permissions` caches the resolved permission set per
   `(orgId, subject)`. Organization status is evaluated *inside* the cached value
   (`organization/internal/PermissionResolver.java:34-41`) so a suspension plus its eviction takes
@@ -1600,6 +1601,19 @@ Consumers gate through the `subscription.Entitlements` port: `members.max` at in
 submit/schedule. Payment processing is out of scope by design — this module is the entitlement
 authority; a billing integration drives the same admin endpoint.
 
+### 4.14 Billing module
+
+`V27__billing.sql`, one table: **`billing_account`** — the org ↔ Kill Bill linkage (`externalKey`
+over there = our org id; `kb_account_id` here for callback resolution). Everything financial —
+accounts, subscriptions, invoices, payments — lives in KILL BILL, the billing system of record;
+this module's gateway reads it on demand (timeouts mandatory, remote calls outside transactions)
+and its push notifications reconcile INTO the subscription module through the `Subscriptions`
+port, so a paid plan arrives via the same audited assign path a manual comp does, and a payment
+failure flips standing to `PAST_DUE` without inventing a second entitlement authority. The
+callback endpoint is token-authenticated (Kill Bill cannot do OAuth) and permit-listed in
+`SecurityConfig`; dev bootstrap (`app.billing.bootstrap`) creates the KB tenant + simple catalog
+plans so the compose stack bills out of the box.
+
 ## 5. Soft delete
 
 Migration `V17__soft_delete.sql`. Deletion is **recorded, not executed**: the row survives with
@@ -1607,10 +1621,10 @@ Migration `V17__soft_delete.sql`. Deletion is **recorded, not executed**: the ro
 
 ### 5.1 Which tables
 
-**In scope (11).** Every `SoftDeletableEntity` table: `setting`, `feature_flag`, `app_user`,
+**In scope (12).** Every `SoftDeletableEntity` table: `setting`, `feature_flag`, `app_user`,
 `organization`, `org_role`, `membership`, `webhook_subscription` (all wired by `V17:23-29,67-73`),
-plus `translation` (`V21`), `document` (`V23`), `exchange_schedule` (`V25`) and `org_subscription`
-(`V26`), each born soft-deletable. Each gets `deleted_at timestamptz`, a partial
+plus `translation` (`V21`), `document` (`V23`), `exchange_schedule` (`V25`), `org_subscription`
+(`V26`) and `billing_account` (`V27`), each born soft-deletable. Each gets `deleted_at timestamptz`, a partial
 retention index, a place in `SoftDeletePurgeJob.PURGE_ORDER`, and its own `@SQLDelete` +
 `@SQLRestriction` pair on the entity.
 
@@ -1824,8 +1838,9 @@ The schema alone reads as if these cascades are live behaviour. They are not, ex
 | `V24__exchange.sql` | `exchange_job` (the §7-discipline job queue: fenced `attempts`, `next_offset` resume point, heartbeat `locked_at`, partial claim/terminal indexes) + `exchange_job_error` (durable row errors, PK `(job_id, row_num)`, cascade FK). Neither soft-deletable — queue species |
 | `V25__exchange_platform_completion.sql` | `exchange_job.handler_version` (template versioning); `org_id` tightened to NOT NULL (the V24 relaxation had no submitter and would NPE the worker); `exchange_schedule` — soft-deletable recurring exports with due/org/retention indexes |
 | `V26__subscription.sql` | `plan` (+ unique `code`) and `plan_entitlement` (cascade FK, `@ElementCollection` map; feature-on stored as -1 — Hibernate drops null map values); `org_subscription` — soft-deletable, partial unique on live `org_id`, `plan_id` FK. Brings the schema's FK total to six, all intra-module |
+| `V27__billing.sql` | `billing_account` — the org ↔ Kill Bill account linkage projection (soft-deletable; partial unique on live `org_id`; `kb_account_id` lookup index for callback resolution). Kill Bill itself is the billing system of record; nothing financial is stored locally |
 
-**The next free migration number is V27.**
+**The next free migration number is V28.**
 
 ---
 
@@ -1844,6 +1859,8 @@ so each fires once across the cluster.
 | `EventInboxPurgeJob` | `app.scheduler.event-inbox-purge-cron`, `0 45 3 * * *` | `event-inbox-purge` / PT30M | `event_inbox` rows past the window, batched | `app.scheduler.event-inbox-retention`, `P14D` |
 | `WebhookRetentionJob` (lives in `webhooks` — needs its module-internal queue, the §7.1.1 exception) | `app.scheduler.webhook-retention-cron`, `0 15 4 * * *` | `webhook-delivery-retention` / PT30M | Terminal (`DELIVERED`/`FAILED`) `webhook_delivery` rows, batched | `app.webhooks.retention`, `P30D` |
 | `NotificationRetentionJob` (lives in `notification`, same exception) | `app.scheduler.notification-retention-cron`, `0 25 4 * * *` | `notification-delivery-retention` / PT30M | Terminal (`SENT`/`FAILED`) `notification_delivery` rows, batched | `app.notification.delivery.retention`, `P7D` |
+| `ExchangeRetentionJob` (lives in `exchange`, same exception) | `app.scheduler.exchange-retention-cron`, `0 45 4 * * *` | `exchange-job-retention` / PT30M | Terminal exchange jobs, batched over the V24 partial index; `exchange_job_error` cascades. Artifacts are documents and keep the DOCUMENT lifecycle | `app.exchange.retention`, `P30D` |
+| `ExchangeScheduleFiringJob` (lives in `exchange` — not a purge: submits due recurring exports) | `app.scheduler.exchange-schedule-cron`, `30 * * * * *` | `exchange-schedule-fire` / PT5M | Nothing — it CREATES jobs, re-checking the requester's export permission per fire | `app.exchange.schedule-fire-enabled` |
 
 > The cron keys exist only as `@Scheduled` defaults in the job classes; every **retention window**,
 > by contrast, is declared in `application.yaml` and bound by a validated `@ConfigurationProperties`
@@ -1890,7 +1907,7 @@ removed only `SENT`, never the dead-lettered rows.
 | ~~`event_inbox`~~ | **Fixed 2026-08-01.** `EventInboxPurgeJob` purges rows past `app.scheduler.event-inbox-retention` (P14D — validated ≥ event retention, since dedup must outlive redelivery) | |
 | ~~`notification_delivery`~~ | **Fixed 2026-08-01.** Retention moved out of the worker loop into `NotificationRetentionJob` (nightly, batched, locked) and now covers `SENT` **and** `FAILED` | Dead-lettered rows carried `recipient` + `body` forever — retained message content, not just metadata |
 | `event_publication` — **the incomplete half** | **Unintended.** `EventPublicationPurgeJob` calls `completedPublications.deletePublicationsOlderThan(retention)` (`EventPublicationPurgeJob.java:33`) — `CompletedEventPublications`, so **completed rows only**. A publication whose listener never succeeds keeps `completion_date is null` and has no retention path | `spring.modulith.events.republish-outstanding-events-on-restart: true` (`application.yaml:53-55`) re-publishes those rows on **every** boot but never removes them, so a permanently failing listener accumulates rows *and* replays them forever. No `spring.modulith.events.completion-mode` is configured anywhere, so the framework default applies. Contrast the completed rows, which §7.1 trims at `app.scheduler.event-retention` |
-| `exchange_job` + `exchange_job_error` | No retention job yet (`V24` ships the partial terminal index for one) | Terminal jobs and their error rows accumulate; error rows cascade with their job. Same gap `webhook_delivery` had before 2026-08-01 — the index is waiting for the job |
+| ~~`exchange_job` + `exchange_job_error`~~ | **Fixed.** `ExchangeRetentionJob` purges terminal jobs past `app.exchange.retention` (P30D), nightly, batched, ShedLock-guarded; error rows cascade | The V24 index found its job |
 | `shedlock` | Bounded — one row per job name, reused | Not a growth concern |
 | `flyway_schema_history` | Bounded — one row per migration | |
 

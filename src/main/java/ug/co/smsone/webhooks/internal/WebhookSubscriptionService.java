@@ -40,30 +40,39 @@ class WebhookSubscriptionService {
     private final WebhookProperties properties;
     private final AuditLog auditLog;
     private final ug.co.smsone.subscription.Entitlements entitlements;
+    private final SecretCipher cipher;
 
     WebhookSubscriptionService(WebhookSubscriptionRepository subscriptions,
             WebhookDeliveryRepository deliveries, WebhookDeliveryQueue queue, WebhookProperties properties,
-            AuditLog auditLog, ug.co.smsone.subscription.Entitlements entitlements) {
+            AuditLog auditLog, ug.co.smsone.subscription.Entitlements entitlements, SecretCipher cipher) {
         this.subscriptions = subscriptions;
         this.deliveries = deliveries;
         this.queue = queue;
         this.properties = properties;
         this.auditLog = auditLog;
         this.entitlements = entitlements;
+        this.cipher = cipher;
     }
 
     @Transactional
-    WebhookSubscription create(UUID orgId, String url, Set<String> eventCodes) {
+    CreatedSubscription create(UUID orgId, String url, Set<String> eventCodes) {
         entitlements.requireWithinLimit(orgId,
                 ug.co.smsone.subscription.EntitlementKeys.WEBHOOKS_MAX, subscriptions.countByOrgId(orgId));
         requireSafeUrl(url);
         Set<String> events = requireKnownEvents(eventCodes);
         String secret = "whsec_" + randomHex();
-        WebhookSubscription created = subscriptions.save(WebhookSubscription.create(orgId, url, secret, events));
+        // Encrypted at rest (a DB dump must not yield signing secrets); the PLAINTEXT is what the
+        // tenant needs, exactly once — the controller reads it from the create result, never the row.
+        WebhookSubscription created = subscriptions.save(
+                WebhookSubscription.create(orgId, url, cipher.encrypt(secret), events));
         // The secret is never a state value here — the audit trail records where events go, not what
         // signs them.
         auditLog.record("webhooks.subscription_created", orgId, created.getId().toString(), null, state(created));
-        return created;
+        return new CreatedSubscription(created, secret);
+    }
+
+    /** The one moment the plaintext secret exists outside the cipher: the create response. */
+    record CreatedSubscription(WebhookSubscription subscription, String plainSecret) {
     }
 
     @Transactional(readOnly = true)

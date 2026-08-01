@@ -139,7 +139,7 @@ step — *which is exactly why the logical boundaries are enforced now*.
 
 ### 2.2 Module map
 
-Fifteen modules. Verified from the `package-info.java` files and `docs/modulith/components.puml`.
+Sixteen modules. Verified from the `package-info.java` files and `docs/modulith/components.puml`.
 
 | Module | Display name | Owns (tables) | Public API package contains |
 |---|---|---|---|
@@ -150,7 +150,8 @@ Fifteen modules. Verified from the `package-info.java` files and `docs/modulith/
 | `localization` | Localization | `translation` | `Messages` port, `TranslationChanged` |
 | `search` | Search | `search_document` | `SearchIndex` port, `SearchDoc` |
 | `document` | Document | `document` | `DocumentRegistered` (the `Documents` port + `NewDocument` live in `shared.document` — the `AuditLog` pattern, implemented here, so producers like `exchange` need no compile edge into this module) |
-| `subscription` | Subscription | `plan`, `plan_entitlement`, `org_subscription` | `Entitlements` port, `EntitlementKeys`, `SubscriptionChanged` |
+| `subscription` | Subscription | `plan`, `plan_entitlement`, `org_subscription` | `Entitlements` + `Subscriptions` ports, `EntitlementKeys`, `SubscriptionChanged` |
+| `billing` | Billing | `billing_account` | (none — Kill Bill integration; drives the `Subscriptions` port) |
 | `exchange` | Exchange | `exchange_job`, `exchange_job_error`, `exchange_schedule` | `ExchangeHandler` (SPI), `ExchangeContext`, `ImportOutcome`, `InvalidRecordException`, `RecordWriter` |
 | `audit` | Audit | `audit_log` | (none — consumed through the `shared.audit.AuditLog` port) |
 | `notification` | Notification | `in_app_notification`, `notification_delivery` | `Notifications`, `NotificationChannelSender` (SPI), `NotificationChannel`, `NotificationMessage`, `NotificationRequest`, `Recipient` |
@@ -159,7 +160,7 @@ Fifteen modules. Verified from the `package-info.java` files and `docs/modulith/
 | `analytics` | Analytics | none in Postgres (DuckDB marts + Parquet) | `AnalyticsEngine`, `AnalyticsException` |
 | `scheduler` | Scheduler | none (consumes `shedlock`) | (none) |
 
-Twenty-four of the schema's twenty-seven tables appear above. The remaining three are **framework-owned and
+Twenty-five of the schema's twenty-eight tables appear above. The remaining three are **framework-owned and
 belong to no module**: `event_publication` (Spring Modulith's JDBC registry, `V2`), `shedlock`
 (ShedLock, `V4`) and `flyway_schema_history` (created by Flyway itself, in no migration). They are
 read and written by libraries, not by application code, and `V17` deliberately leaves all three out of
@@ -240,7 +241,7 @@ as they start.
 | Constraint | Source | Consequence |
 |---|---|---|
 | Flyway owns the schema; `spring.jpa.hibernate.ddl-auto: validate` | `application.yaml:27-29` | No DDL outside `db/migration`. There is no `schema.sql` and no test-only DDL anywhere. |
-| Migrations are forward-only and numbered; **V1–V26 exist, next free is V27** | `db/migration/`, `AGENTS.md` §4.5 | V21–V24 are localization/search/document/exchange; V25 completes the exchange guidelines (templates, schedules, org_id tightened NOT NULL); V26 is subscriptions. Any plan citing an old "next free" number is stale — `AGENTS.md` §4.5 is kept current. |
+| Migrations are forward-only and numbered; **V1–V27 exist, next free is V28** | `db/migration/`, `AGENTS.md` §4.5 | V21–V24 are localization/search/document/exchange; V25 completes the exchange guidelines (templates, schedules, org_id tightened NOT NULL); V26 is subscriptions; V27 the Kill Bill billing linkage. Any plan citing an old "next free" number is stale — `AGENTS.md` §4.5 is kept current. |
 | No cross-module foreign keys | `AGENTS.md` §1 | Referential integrity across modules is an application concern; `SoftDeletePurgeJob` states the consequence for purge ordering (`SoftDeletePurgeJob.java:49-53`). |
 | `spring.jpa.open-in-view: false` | `application.yaml:30` | No lazy loading past the service boundary. |
 | No Lombok; records + constructor injection | ADR 0001, `ArchitectureTests.noFieldInjection` | Enforced by ArchUnit. |
@@ -598,11 +599,13 @@ a tenant may subscribe — and the worker will POST to — loopback, RFC-1918, l
 cloud-metadata addresses. It is a single flag that disables the guard for the whole module; the test
 profile sets it to `true` (`test/resources/application-test.yaml:37`).
 
-**Gaps.** The signing secret is stored as plaintext `varchar(200)`. The subscribable event
-vocabulary is published nowhere on the wire — no catalog endpoint, and the OpenAPI spec types
-`events` as a bare string array with no enum. (Two former gaps closed by the 2026-08-01
-remediation: subscription mutations now audit through the `AuditLog` port, and
-`WebhookRetentionJob` purges terminal deliveries past `app.webhooks.retention`.)
+**Former gaps, all closed.** The signing secret is now AES-256-GCM **encrypted at rest**
+(`SecretCipher`; key from `app.webhooks.secret-encryption-key`; a startup migrator rewrites
+pre-encryption rows; the sender decrypts only to sign — encryption, not hashing, because HMAC
+needs the plaintext). The subscribable vocabulary is on the wire at
+`GET /api/v1/webhooks/event-types`. Subscription mutations audit through the `AuditLog` port, and
+`WebhookRetentionJob` purges terminal deliveries past `app.webhooks.retention`. What remains open:
+the OpenAPI spec still types `events` as a bare string array rather than an enum.
 
 ### 3.9 Audit (FR-AUD)
 
@@ -826,6 +829,7 @@ implementation. The system SHALL:
 | FR-EXC-9 | ship four formats through the ONE codec seam — CSV (RFC-4180), JSONL, XLSX (SAX streaming read / SXSSF streaming write — never the whole workbook in memory) and record-oriented XML (StAX, XXE-disabled) — plus the ZIP medium (a zipped source unwraps to its first entry, magic-byte sniffed); adding a format touches no business logic | `main:exchange/internal/{CsvCodec,JsonlCodec,XlsxCodec,XmlCodec}.java`, `ImportRunner.unwrapIfZipped` | `test:exchange/internal/ExchangeCompletionTest` (XLSX/XML/JSONL round trips, ZIP unwrap) |
 | FR-EXC-10 | version templates: handlers declare `templateVersion()`, jobs record the version they were submitted against, and `GET /api/v1/exchange/handlers/{id}/template?format=` serves a ready-to-fill file (an EMPTY export — one code path per format) whose filename carries the version | `main:exchange/ExchangeHandler.templateVersion`, `ExchangeHandlersController.template`, `V25` | catalog + template exercised in `ExchangeApiTest`/`ExchangeCompletionTest` |
 | FR-EXC-11 | schedule recurring EXPORTS on a six-field UTC cron (imports cannot recur — no source to re-read): fired by a ShedLock minute job AS the schedule's requester, whose export permission is re-resolved at every fire — a revocation DISABLES the schedule loudly; capped by the `exchange.schedules.max` entitlement | `main:exchange/internal/{ExchangeSchedule,ExchangeScheduleService,ExchangeScheduleFiringJob,ExchangeScheduleController}.java`, `V25` | `test:exchange/internal/ExchangeScheduleTest` |
+| FR-EXC-13 | purge terminal jobs past `app.exchange.retention` nightly (`ExchangeRetentionJob`, ShedLock, batched over the V24 terminal index; error rows cascade; ARTIFACTS keep the document lifecycle) and publish `JobCompleted` at each terminal — consumed by the notification module (requester told in-app) and the webhooks fan-out | `main:exchange/internal/{ExchangeRetentionJob,ExchangeWorker.recordOutcome}`, `main:notification/internal/ExchangeJobCompletionNotifier.java` | `test:exchange/internal/{ExchangeRetentionJobTest,ExchangeJobCompletedFlowTest}` |
 | FR-EXC-12 | retry with exponential backoff between claim generations (base × 2^(attempts−1), capped; zero base legal for tests), heartbeat the lock MID-BATCH (~staleLock/3) so slow per-record remote work cannot get a healthy claimant double-claimed, cap runaway reclaims at claim time, and write `exchange.job_submitted` / `exchange.job_cancel_requested` / schedule audit rows | `ExchangeJobStore.{releaseForRetry,heartbeat}`, `ImportRunner`, `ExchangeWorker`, `ExchangeService` | `ExchangeCompletionTest.{exhaustedInfrastructureRetries…,aLostClaimIsAnswered…}` |
 
 ### 3.19 Subscriptions and entitlement gating (FR-SUB)
@@ -839,6 +843,20 @@ The system SHALL:
 | FR-SUB-3 | gate real capabilities through the `Entitlements` port with upgrade-shaped 403s, BEFORE side effects: member count at invite (pre-provisioning), webhook count at create, the exchange feature and schedule cap at submit | `organization/internal/MemberService.doInvite`, `webhooks/internal/WebhookSubscriptionService.create`, `exchange/internal/{ExchangeService,ExchangeScheduleService}` | same test (403 details name the upgrade) |
 | FR-SUB-4 | expose the commercial state on both axes: platform assigns (`PUT /api/v1/admin/orgs/{id}/subscription`, `platform-admin`, audited, fans out `org.subscription_changed`) and reads (`GET`, + `GET /api/v1/admin/plans`, `platform-support`); the tenant reads its own (`GET /api/v1/orgs/{orgId}/subscription`, `org:read`) | `subscription/internal/{AdminSubscriptionController,OrgSubscriptionController}.java` | same test |
 | FR-SUB-5 | manage the tenant lifecycle end to end per `docs/TENANT_LIFECYCLE.md`: platform list/get/members views (`platform-support`), and delete only from SUSPENDED (409 otherwise) — soft, audited, `OrganizationDeleted` published (caches evicted, `org.deleted` webhook), Keycloak org deliberately kept | `organization/internal/{AdminOrganizationController,OrganizationService}.java` | `test:organization/internal/AdminOrganizationApiTest` |
+
+### 3.20 Billing and payments — Kill Bill (FR-BIL)
+
+Kill Bill is the billing system of record; the subscription module stays the entitlement
+authority. The system SHALL:
+
+| ID | Requirement | Where | Verified by |
+|---|---|---|---|
+| FR-BIL-1 | link each billed org to ONE Kill Bill account (externalKey = org id; idempotent provisioning that resolves an existing key, races included), recorded in `billing_account` and audited | `main:billing/internal/{KillBillGateway.ensureAccount,BillingService.provision}` | `test:billing/internal/BillingApiTest.provisionSubscribeReconcileAndPaymentOutcomes` |
+| FR-BIL-2 | bridge plans by configuration (`app.billing.plan-mapping`: our code → KB catalog plan; FREE deliberately unmapped — no money, no KB subscription) and reconcile ONE way: Kill Bill's subscription state → `Subscriptions.assignPlan` — the same audited path the admin surface uses; no active billable subscription reconciles to FREE | `BillingService.{subscribe,reconcile}`, `subscription/Subscriptions.java` | same test (entitlements land on PRO through the port) |
+| FR-BIL-3 | react to payment outcomes: `INVOICE_PAYMENT_FAILED` flips standing to `PAST_DUE` (entitlements KEPT — a grace, not a cutoff), `INVOICE_PAYMENT_SUCCESS` restores `ACTIVE`; both audited | `BillingService.onPaymentOutcome`, `SubscriptionService.markStatus` | same test |
+| FR-BIL-4 | accept Kill Bill push notifications on a token-authenticated, permit-listed machine endpoint (constant-time compare; wrong token 401 before any read; unknown event types 200-acknowledged so a KB upgrade never builds a retry storm; transient failures 5xx so Kill Bill retries) | `KillBillNotificationController`, `SecurityConfig` | same test (token paths) |
+| FR-BIL-5 | expose the money on both axes: platform provisions/inspects/subscribes/lists invoices (`/api/v1/admin/orgs/{id}/billing/**`), the tenant reads its own invoices (`GET /api/v1/orgs/{orgId}/billing/invoices`, `org:read`, 404 until provisioned) — all proxied from Kill Bill, nothing financial stored locally | `{AdminBillingController,OrgBillingController}` | `BillingApiTest.invoicesProxyForBothSurfacesAndUnprovisionedIs404` |
+| FR-BIL-6 | speak to a REAL Kill Bill: tenant + simple-plan dev bootstrap, account/subscription/invoice round trips over the wire | `KillBillGateway`, `BillingBootstrap` | `test:billing/internal/KillBillIntegrationTest` (real killbill + mariadb containers) |
 
 ## 4. External interface requirements
 
@@ -1055,6 +1073,7 @@ no `@PreAuthorize`. Every endpoint can additionally return 401, 403 `ACCOUNT_NOT
 | GET / DELETE | `/api/v1/documents/{id}` | owner; `platform-support` reads / `platform-admin` deletes across users | 302 / 204 | 403, 404 |
 | GET | `/api/v1/exchange/handlers` | authenticated | 200 (list, un-paged — the handler catalogue with header templates + versions) | — |
 | GET | `/api/v1/exchange/handlers/{id}/template` | authenticated | 200 (ready-to-fill file in the requested format; filename carries the template version) | 404 unknown handler, 422 bad format |
+| GET | `/api/v1/webhooks/event-types` | authenticated | 200 (list, un-paged — the subscribable vocabulary with descriptions) | — |
 | POST / GET | `/api/v1/orgs/{orgId}/exchange/schedules` | `org:read` **plus the handler's export permission** to create | **201** / 200 (paged) | 403, 404, 422 bad cron |
 | DELETE | `/api/v1/orgs/{orgId}/exchange/schedules/{id}` | creator, or the handler's export permission | **204** | 403, 404 |
 | GET | `/api/v1/admin/orgs` | `platform-support` | 200 (paged; `?status=` filter) | 422 bad status |
@@ -1064,6 +1083,11 @@ no `@PreAuthorize`. Every endpoint can additionally return 401, 403 `ACCOUNT_NOT
 | GET / PUT | `/api/v1/admin/orgs/{orgId}/subscription` | `platform-support` reads / `platform-admin` assigns | 200 | 404 unknown org-plan |
 | GET | `/api/v1/admin/plans` | `platform-support` | 200 (list, un-paged) | — |
 | GET | `/api/v1/orgs/{orgId}/subscription` | `org:read` | 200 (plan + entitlements; no row = FREE) | — |
+| POST | `/api/v1/admin/orgs/{orgId}/billing/account` | `platform-admin` | **201** (idempotent linkage) | — |
+| GET | `/api/v1/admin/orgs/{orgId}/billing` | `platform-support` | 200 (balance + live KB subscriptions) | 404 not provisioned |
+| POST | `/api/v1/admin/orgs/{orgId}/billing/subscription` | `platform-admin` | **202** (KB subscription + immediate reconcile) | 404, 422 unbillable plan |
+| GET | `/api/v1/admin/orgs/{orgId}/billing/invoices` | `platform-support` | 200 (list, un-paged, proxied) | 404 |
+| GET | `/api/v1/orgs/{orgId}/billing/invoices` | `org:read` | 200 (list, un-paged, proxied) | 404 not provisioned |
 | POST | `/api/v1/orgs/{orgId}/exchange/imports` (multipart `file` + `handler`, `format`) | `org:read` **plus the handler's import permission** (checked programmatically) | **202** | 403 missing handler permission, 404 unknown handler, 422 empty file / bad format |
 | POST | `/api/v1/orgs/{orgId}/exchange/exports` | `org:read` **plus the handler's export permission** | **202** | 403, 404, 422 |
 | GET | `/api/v1/orgs/{orgId}/exchange/jobs` | `org:read` | 200 (paged) | — |
@@ -1085,7 +1109,7 @@ no `@PreAuthorize`. Every endpoint can additionally return 401, 403 `ACCOUNT_NOT
 
 **Absent by design or by gap:** no `DELETE /api/v1/settings/{key}`, no
 `DELETE /api/v1/feature-flags/{key}`, no user disable, no soft-delete restore
-endpoint, no webhook event-type catalogue, no job-trigger endpoint. (Organization delete exists
+endpoint, no job-trigger endpoint. (Organization delete exists
 since the tenant-lifecycle work: `DELETE /api/v1/admin/orgs/{id}`, SUSPENDED-only.)
 
 **Unreachable from inside an impersonation session:** every row above whose authority column names a

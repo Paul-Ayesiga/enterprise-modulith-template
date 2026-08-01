@@ -15,7 +15,8 @@ record WebhookProperties(
         Duration retryMaxBackoff,
         Integer timeoutSeconds,
         boolean allowPrivateHosts,
-        Duration retention) {
+        Duration retention,
+        String secretEncryptionKey) {
 
     WebhookProperties {
         if (workerAutoStart == null) {
@@ -44,6 +45,12 @@ record WebhookProperties(
         }
         if (retention == null || retention.isZero() || retention.isNegative()) {
             retention = Duration.ofDays(30); // a zero/negative window would purge the whole delivery log
+        }
+        if (secretEncryptionKey == null || secretEncryptionKey.isBlank()) {
+            // The yaml default supplies a dev key; reaching here means the property was explicitly
+            // blanked, and silently signing with an empty-derived key would be worse than failing.
+            throw new IllegalStateException(
+                    "app.webhooks.secret-encryption-key must not be blank (set WEBHOOKS_SECRET_KEY)");
         }
     }
 }

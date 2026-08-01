@@ -29,6 +29,7 @@ message id from business identity — among the live ones:
 | `ug.co.smsone.organization.OrganizationStatusChanged` | organization | `orgId, status, occurredAt` | an organization is suspended or reactivated |
 | `ug.co.smsone.organization.OrganizationDeleted` | organization | `orgId, occurredAt` | the platform deletes a tenant (soft; published explicitly — a delete fires no `@DomainEvents`) |
 | `ug.co.smsone.subscription.SubscriptionChanged` | subscription | `orgId, planCode, status, occurredAt` | a tenant's plan is assigned or changed |
+| `ug.co.smsone.exchange.JobCompleted` | exchange | `jobId, orgId, requester, handler, jobType, outcome, processed, failed, occurredAt` | an exchange job reaches a terminal state — published explicitly from the worker's terminal read (the job row stays authoritative; a crash between the write and the publish loses only the event) |
 
 Every event carries `occurredAt` except `SettingChanged`, which predates the rule and has no consumer
 to be idempotent for. Where it is present, `occurredAt` lets an idempotent consumer dedupe redelivery
@@ -46,13 +47,15 @@ before giving `SettingChanged` its first listener.
 | `UserProvisioned` | search | Indexes the user (email) platform-wide — visible to admin search only |
 | `OrganizationDeleted` | organization (evictor), webhooks | Clears the permission cache; fans out `org.deleted` — the tenant's last outbound event |
 | `SubscriptionChanged` | subscription (evictor), webhooks | Evicts the `org-entitlements` cache so a plan change bites the next gate; fans out `org.subscription_changed` |
+| `JobCompleted` | notification, webhooks | Tells the REQUESTER in-app that their job finished (idempotent, `exchange-job:<id>@<occurredAt>`); fans out `org.exchange.job_completed` with outcome + counters |
 
 The webhooks consumer maps each organization event to its outbound wire code
 (`webhooks.internal.WebhookEventType`): `MembershipCreated` → `org.member.added`, `MemberRemoved` →
 `org.member.removed`, `MembershipRoleChanged` → `org.member.role_changed`,
 `RolePermissionsChanged` → `org.role.permissions_changed`, `OrganizationStatusChanged` →
 `org.status_changed`, `OrganizationDeleted` → `org.deleted`, `SubscriptionChanged` →
-`org.subscription_changed`.
+`org.subscription_changed`, `JobCompleted` → `org.exchange.job_completed`. The full subscribable
+vocabulary is on the wire at `GET /api/v1/webhooks/event-types`.
 
 Four events currently have **no consumer**: `SettingChanged`, `UserActivated`,
 `TranslationChanged` and `DocumentRegistered`. They are still published through the registry (and appear in the generated
@@ -66,10 +69,9 @@ package: nothing outside `identity` reacts to a session opening, so `Impersonati
 `BaseEntity` rather than an `AggregateRoot` and produces no `event_publication` rows. There is no
 `_expired` action either — expiry is evaluated on read. See `AGENTS.md` §5.5.)_
 
-_(**Exchange publishes no events yet, deliberately.** Job state lives in `exchange_job` and clients
-poll the job resource; nothing consumes a completion today. A `JobCompleted` event is the natural
-trigger for a "your import finished" notification — when that consumer is wanted, the event joins
-this catalog and follows the `EventInbox` rule like every other.)_
+_(**Exchange publishes exactly one event, from the row.** `JobCompleted` repeats what the fenced
+terminal write said — the two can never disagree — and the REST surface never depends on it: the
+job row stays the authoritative, pollable truth.)_
 
 The generated per-module canvases in [modulith/](modulith/) list published/listened events per
 module and are refreshed on every build — treat this file as the narrative companion, and add a row

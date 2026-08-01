@@ -20,5 +20,6 @@ _Others_
 * `u.c.s.s.security.CurrentUserProvider` (in Shared Kernel)
 * `u.c.s.i.UserDirectory` (in Identity)
 |Events listened to
-|* `u.c.s.s.FeatureFlagChanged` (async) 
+|* `u.c.s.e.JobCompleted` (async) 
+* `u.c.s.s.FeatureFlagChanged` (async) 
 |===

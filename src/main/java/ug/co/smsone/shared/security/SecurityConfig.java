@@ -41,6 +41,9 @@ public class SecurityConfig {
                         .requestMatchers("/actuator/health/**", "/actuator/info").permitAll()
                         .requestMatchers("/v3/api-docs", "/v3/api-docs.yaml", "/v3/api-docs/**",
                                 "/swagger-ui/**", "/swagger-ui.html").permitAll()
+                        // Kill Bill's push notifications cannot do OAuth; the endpoint authenticates
+                        // by the shared token in the registered callback URL (constant-time compare).
+                        .requestMatchers("/api/v1/billing/killbill/notifications").permitAll()
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(resourceServer -> resourceServer
                         .authenticationEntryPoint(authenticationEntryPoint)

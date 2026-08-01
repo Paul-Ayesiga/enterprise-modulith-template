@@ -37,6 +37,10 @@ include::module-settings.adoc[]
 plantuml::module-subscription.puml[,,format=svg]
 include::module-subscription.adoc[]
 
+== Billing
+plantuml::module-billing.puml[,,format=svg]
+include::module-billing.adoc[]
+
 == Exchange
 plantuml::module-exchange.puml[,,format=svg]
 include::module-exchange.adoc[]

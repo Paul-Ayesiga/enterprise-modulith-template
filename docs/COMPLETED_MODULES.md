@@ -16,6 +16,7 @@ _Last updated: 2026-08-01._
 | **document** | Managed-file catalog over the files port + `Documents` port | `/api/v1/orgs/{orgId}/documents/**`, `/api/v1/documents/**` | `DocumentRegistered` | ✅ |
 | **exchange** | Data Exchange Platform — durable, resumable import/export jobs behind the `ExchangeHandler` SPI (CSV/JSONL/XLSX/XML + ZIP, templates, recurring schedules) | `/api/v1/orgs/{orgId}/exchange/**`, `/api/v1/exchange/handlers/**` | — (drives domain services through the SPI) | ✅ |
 | **subscription** | Plan catalog + per-org subscription + the `Entitlements` gating port | `/api/v1/admin/orgs/{id}/subscription`, `/api/v1/admin/plans`, `/api/v1/orgs/{orgId}/subscription` | `SubscriptionChanged` | ✅ |
+| **billing** | Kill Bill integration — accounts, billable plans, invoices, payment-state reconciliation into entitlements | `/api/v1/admin/orgs/{id}/billing/**`, `/api/v1/orgs/{orgId}/billing/invoices` | — (drives the `Subscriptions` port) | ✅ |
 | **files** | S3-compatible object storage | `/api/v1/files` | — | ✅ |
 | **scheduler** | Clustered scheduled jobs | `/api/v1/scheduler/locks` | — | ✅ |
 | **analytics** | Embedded OLAP / reporting | `/api/v1/analytics/reports` | — | ✅ |
@@ -54,7 +55,7 @@ Message localization behind the `Messages` port.
 - **Endpoints**: `GET /api/v1/translations[?locale=]` (cursor-paginated), `GET/PUT/DELETE
   /api/v1/translations/{locale}/{key}` — writes `platform-admin`, all changes audited with from→to.
   Locales stored lowercased (tags are case-insensitive); unparseable tags 422.
-- Soft-deletable (`V21`), eighth of eleven in `PURGE_ORDER`; deletes publish `TranslationChanged`
+- Soft-deletable (`V21`), eighth of twelve in `PURGE_ORDER`; deletes publish `TranslationChanged`
   explicitly.
 
 ## search
@@ -108,6 +109,10 @@ its spec): import/export as durable, resumable background jobs — built for sca
   ship; a new format touches no business logic.
 - **Artifacts are documents**: source, error report and export result all register through the
   `Documents` port as `EXCHANGE` provenance — tenants browse their exchange history as documents.
+- **Terminal is an event**: `JobCompleted` (published from the fenced terminal row, so it can never
+  disagree with the API) tells the requester in-app and fans out `org.exchange.job_completed`;
+  `ExchangeRetentionJob` purges terminal jobs past `app.exchange.retention` nightly (artifacts
+  keep the document lifecycle).
 - **Endpoints**: `POST …/exchange/imports|exports` (202 + pollable job), `GET …/jobs[/{id}]`
   (progress), `POST …/{id}/cancel` (batch-boundary, best-effort), `GET …/{id}/report|result`
   (302 presigned), `GET /api/v1/exchange/handlers` (the catalog with header templates).
@@ -124,8 +129,26 @@ The commercial axis of a tenant — plans, subscriptions, and the gates everythi
   tenant's webhooks. Assignments are `platform-admin` and audited.
 - **Lifecycle doc**: [TENANT_LIFECYCLE.md](TENANT_LIFECYCLE.md) — states, transitions, and the
   platform surface (`/api/v1/admin/orgs/**`) that drives them, including SUSPENDED-only delete.
-- Payment processing out of scope BY DESIGN — the module is the entitlement authority; billing
-  integrates through the same admin endpoint.
+- Billing integrates through the `Subscriptions` write port — see the billing module below.
+
+## billing
+Payments and invoicing through **Kill Bill**, the billing system of record — nothing financial is
+stored locally except the account linkage.
+- **Linkage**: one KB account per org (`externalKey` = org id, idempotent provisioning that
+  survives create races), recorded in `billing_account` (soft-deletable projection) and audited.
+- **One write direction**: KB subscription state and payment outcomes reconcile INTO the
+  subscription module through the `Subscriptions` port — a paid plan lands on the SAME audited
+  assign path as a manual comp; `INVOICE_PAYMENT_FAILED` → `PAST_DUE` (grace, entitlements kept),
+  recovery → `ACTIVE`, no billable subscription → FREE.
+- **Callback**: Kill Bill push notifications hit a token-authenticated, `@Hidden` machine endpoint
+  (constant-time compare, 401 before any read; unknown events 200-acknowledged; transient failures
+  5xx so KB retries).
+- **Surfaces**: platform provisions/inspects/subscribes/invoices under
+  `/api/v1/admin/orgs/{id}/billing/**`; the tenant reads its own invoices. Kaui is the back office.
+- **Dev loop**: `docker compose` ships killbill + mariadb + kaui; `BILLING_BOOTSTRAP=true` creates
+  the KB tenant + simple catalog plans (PRO/ENTERPRISE) so the stack bills out of the box.
+- **Verified** against a REAL Kill Bill container (tenant, plans, accounts, subscription →
+  ACTIVE, invoices) plus mocked-gateway flows for reconcile/payment/callback/authz.
 
 ## files
 Object storage behind a single S3 abstraction (AWS SDK v2).
@@ -187,7 +210,7 @@ An append-only trail: **who / when / where / what / from→to** for every state 
 
 ## webhooks
 Per-org **outbound event subscriptions**: tenants register an endpoint + the events they want, and receive **signed, durably-delivered** POSTs.
-- **Subscriptions**: org-scoped CRUD (`webhook:manage` permission). A subscription is a URL + a generated HMAC secret + a set of event codes (`org.member.added`, `org.member.removed`, `org.member.role_changed`, `org.role.permissions_changed`, `org.status_changed`). The secret is returned **once** on create and masked on every later read. The URL is SSRF-guarded at create.
+- **Subscriptions**: org-scoped CRUD (`webhook:manage` permission). A subscription is a URL + a generated HMAC secret + a set of event codes from the on-wire vocabulary (`GET /api/v1/webhooks/event-types` — org member/role/status/deletion events, `org.subscription_changed`, `org.exchange.job_completed`). The secret is returned **once** on create, masked on every later read, and **AES-256-GCM encrypted at rest** (`SecretCipher`, key from `app.webhooks.secret-encryption-key`; a startup migrator rewrote pre-encryption rows; the sender decrypts only to sign — encryption, not hashing, because HMAC needs the plaintext). The URL is SSRF-guarded at create.
 - **Delivery**: an `@ApplicationModuleListener` fans each organization event out to matching active subscriptions and enqueues one durable delivery each (idempotent via `EventInbox`). A background worker claims batches with `SELECT … FOR UPDATE SKIP LOCKED` (joining the subscription for its URL + secret, so the secret never lands in the delivery row), **HMAC-SHA256-signs** the exact JSON body (`X-Webhook-Signature: sha256=…`), POSTs it through the shared **`SafeOutboundUrl`** SSRF guard on **virtual threads** with a whole-exchange timeout, and retries with backoff / dead-letters. Fenced status updates so a re-claimed row can't be corrupted by a stale claimant.
 - **Delivery log**: `GET …/webhooks/{id}/deliveries` (cursor-paginated) — per-attempt status, response code, error.
 - The SSRF guard was promoted to `shared.http.SafeOutboundUrl` and is now shared by the notification webhook/Slack channels and webhooks (one security control, not two). It blocks loopback/private/link-local/CGNAT/ULA/NAT64-embedded/special-purpose targets at create **and** send. **Residual**: it can't close DNS-rebinding on its own (the client re-resolves at connect), so production must also enforce an **egress network policy** denying the workload's egress to link-local/metadata/RFC-1918 — the guard is the first line, not the only one.

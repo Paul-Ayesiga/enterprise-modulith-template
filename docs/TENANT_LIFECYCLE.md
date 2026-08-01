@@ -47,6 +47,10 @@ Orthogonal to the lifecycle status: a tenant is ACTIVE *and* on a plan. The `sub
 count on create, the exchange feature and schedule count on submit. Assigning a plan is a platform
 action: `PUT /api/v1/admin/orgs/{id}/subscription` (`platform-admin`), audited, cache-evicted via
 `SubscriptionChanged`, announced to the tenant's webhooks as `org.subscription_changed`. The tenant
-reads its own state at `GET /api/v1/orgs/{orgId}/subscription`. Payment processing is out of scope
-by design — the module is the ENTITLEMENT authority; a billing integration drives it through the
-same admin endpoint.
+reads its own state at `GET /api/v1/orgs/{orgId}/subscription`. Payments run through **Kill Bill** (the `billing` module): `POST /api/v1/admin/orgs/{id}/billing/account`
+links the KB account (externalKey = org id), `POST …/billing/subscription {plan}` creates the KB
+subscription, and Kill Bill's push notifications reconcile subscription state and payment outcomes
+back through the `Subscriptions` port — a payment failure flips standing to `PAST_DUE` (a grace,
+entitlements kept), recovery restores `ACTIVE`, cancellation reconciles to FREE. Invoices:
+platform at `GET …/billing/invoices`, tenant at `GET /api/v1/orgs/{orgId}/billing/invoices`.
+Kaui (the KB admin UI) is the billing back office.

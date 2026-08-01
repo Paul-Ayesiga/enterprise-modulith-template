@@ -2,7 +2,6 @@ package ug.co.smsone.exchange.internal;
 
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
-import java.util.Set;
 import org.springframework.stereotype.Component;
 
 /**
@@ -13,9 +12,6 @@ import org.springframework.stereotype.Component;
 @Component
 class ExchangeMetrics {
 
-    private static final Set<String> TERMINAL = Set.of(ExchangeJob.COMPLETED,
-            ExchangeJob.COMPLETED_WITH_ERRORS, ExchangeJob.FAILED, ExchangeJob.CANCELLED);
-
     private final MeterRegistry meters;
 
     ExchangeMetrics(MeterRegistry meters) {
@@ -24,7 +20,7 @@ class ExchangeMetrics {
 
     /** Counts a job once, at its terminal status; a released-for-retry job is not an outcome yet. */
     void jobFinished(ExchangeJob job) {
-        if (!TERMINAL.contains(job.status())) {
+        if (!job.terminal()) {
             return;
         }
         Counter.builder("smsone.exchange.jobs")

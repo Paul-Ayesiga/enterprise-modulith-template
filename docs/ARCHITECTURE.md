@@ -20,6 +20,7 @@ flowchart TB
         document["document\nmanaged-file catalog · Documents port"]
         exchange["exchange\nimport/export job platform · ExchangeHandler SPI"]
         subscription["subscription\nplan catalog · Entitlements gating port"]
+        billing["billing\nKill Bill gateway · reconciles into subscription"]
         files["files\nFileStorageProvider → S3"]
         scheduler["scheduler\nShedLock cron jobs\n(+ soft-delete retention purge)"]
         analytics["analytics\nAnalyticsEngine → DuckDB"]
@@ -52,6 +53,8 @@ flowchart TB
     exchange --> shared
     exchange --> files
     subscription --> shared
+    billing --> shared
+    billing --> subscription
     organization --> subscription
     webhooks --> subscription
     exchange --> subscription
@@ -67,6 +70,7 @@ flowchart TB
     valkey[("Valkey 8\nL2 cache + pub/sub")]
     seaweed[("SeaweedFS\nS3 objects")]
     keycloak["Keycloak 26\nOIDC issuer"]
+    killbill["Kill Bill 0.24\nbilling system of record"]
     duckdb[("DuckDB\nembedded, in-process")]
     lgtm["grafana/otel-lgtm\nOTLP sink"]
 
@@ -76,6 +80,7 @@ flowchart TB
     shared --> keycloak
     analytics --> duckdb
     analytics -- "materialize marts" --> postgres
+    billing -- "REST + push notifications" --> killbill
     app -- "traces·metrics·logs" --> lgtm
 ```
 

@@ -342,6 +342,55 @@ Slice 3 of [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md).
 - [x] **Gate:** full `./gradlew test` green (13 modules); docs regenerated; DATA_MODEL §4.11 /
       SRS §3.17 + catalogue + traceability updated
 
+## Billing & payments — Kill Bill ✅ (2026-08-01)
+
+- [x] **V27** `billing_account` — the org ↔ Kill Bill linkage projection (soft-deletable, TWELFTH;
+      partial unique on live org; `kb_account_id` index for callback resolution). Kill Bill is the
+      billing system of record; nothing financial stored locally
+- [x] `KillBillGateway` — timeout-bounded RestClient (basic auth + tenant key headers +
+      `X-Killbill-CreatedBy`), Location-header id idiom, idempotent `ensureAccount` by externalKey
+      (create races resolve to the winner), subscriptions/invoices/balance reads, tenant +
+      simple-plan + callback bootstrap
+- [x] One write direction: KB events → `BillingService.reconcile` → the NEW
+      `subscription.Subscriptions` port (`assignPlan`/`markStatus`) — the same audited paths the
+      admin surface uses; `INVOICE_PAYMENT_FAILED` → `PAST_DUE` (grace, entitlements kept),
+      recovery → `ACTIVE`, no billable subscription → FREE
+- [x] Token-authenticated `@Hidden` callback endpoint (permit-listed; constant-time compare; 401
+      before any read; unknown events acknowledged; transient failures 5xx so KB retries)
+- [x] Surfaces: admin provision/view/subscribe/invoices (`Platform · Billing & plans`), tenant
+      invoices (`Organization · Billing` — one more OpenApiConfig tag, flagged); plan-mapping
+      config (FREE deliberately unmapped)
+- [x] docker-compose: killbill (8082) + killbill-db (mariadb) + kaui (9095); `.env` +
+      LOCAL_ACCESS + TENANT_LIFECYCLE updated; `BILLING_BOOTSTRAP` dev opt-in
+- [x] **Gate:** mocked-gateway flows (`BillingApiTest`: idempotent provision + audit, PRO
+      reconcile through the port, PAST_DUE→ACTIVE flips, bad token 401, invoices both surfaces,
+      FREE unbillable 422) + REAL Kill Bill wire (`KillBillIntegrationTest`: killbill + mariadb
+      containers — tenant, simple plan, account idempotency, ACTIVE subscription, invoices)
+
+## Open-items close-out ✅ (2026-08-01)
+
+The four "deliberately open" items, closed:
+
+- [x] `ExchangeRetentionJob` — terminal jobs past `app.exchange.retention` (P30D) purge nightly,
+      batched over the V24 terminal index, ShedLock `exchange-job-retention`, purge counter;
+      error rows cascade, ARTIFACTS deliberately keep the document lifecycle —
+      `ExchangeRetentionJobTest`
+- [x] `JobCompleted` — published explicitly from the worker's terminal READ (the fenced row is the
+      truth the event repeats; a crash between write and publish loses only the event, never the
+      row), inside a small tx for the registry. Consumers: `ExchangeJobCompletionNotifier`
+      (in-app to the requester, `EventInbox`-idempotent) and the webhooks fan-out
+      (`org.exchange.job_completed` with outcome + counters) — `ExchangeJobCompletedFlowTest`
+- [x] Webhook signing secrets **encrypted at rest** — AES-256-GCM `enc:v1:` via `SecretCipher`
+      (key: `app.webhooks.secret-encryption-key`, SHA-256-derived; dev default in yaml, ALWAYS
+      override in prod), plaintext exists exactly once (the create response), sender decrypts only
+      to sign, startup migrator rewrites pre-encryption rows idempotently. Encryption, NOT
+      hashing — HMAC needs the plaintext, so a hash would break signing —
+      `WebhookSecretEncryptionTest` + the signature-verified delivery test now also proves
+      decrypt-before-sign
+- [x] `GET /api/v1/webhooks/event-types` — the subscribable vocabulary on the wire, with
+      descriptions (enum-backed, so it can never drift from what create/update accept) —
+      `WebhookEventTypesApiTest`
+
 ## Guideline completion + tenant lifecycle + subscriptions ✅ (2026-08-01, overnight)
 
 Zero-deferral order: nothing in `reusable-data-exchange-platform-guidelines.md` left unimplemented,

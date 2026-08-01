@@ -190,6 +190,18 @@ class ExchangeJobStore {
         }
     }
 
+    /** Retention: oldest-first bounded batches over the V24 partial terminal index. */
+    int purgeTerminalBatch(java.time.Instant cutoff, int batchSize) {
+        return jdbc.update("""
+                delete from exchange_job where id in (
+                    select id from exchange_job
+                    where status in ('COMPLETED', 'COMPLETED_WITH_ERRORS', 'FAILED', 'CANCELLED')
+                      and created_at < ?
+                    order by created_at
+                    limit ?)
+                """, Timestamp.from(cutoff), batchSize);
+    }
+
     boolean requestCancel(UUID id, UUID orgId) {
         return jdbc.update("""
                 update exchange_job set cancel_requested = true, updated_at = now()

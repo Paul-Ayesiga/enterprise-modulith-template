@@ -6,6 +6,7 @@
 |_Services_
 
 * `u.c.s.s.Entitlements` (via `u.c.s.s.internal.EntitlementsImpl`)
+* `u.c.s.s.Subscriptions` (via `u.c.s.s.internal.SubscriptionService`)
 |Bean references
 |* `u.c.s.s.audit.AuditLog` (in Shared Kernel)
 |Events listened to

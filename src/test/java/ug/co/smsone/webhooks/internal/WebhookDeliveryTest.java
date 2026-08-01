@@ -61,8 +61,9 @@ class WebhookDeliveryTest extends AbstractIntegrationTest {
         server.start();
         try {
             UUID orgId = UUID.randomUUID();
-            WebhookSubscription subscription = subscriptions.create(orgId,
+            WebhookSubscriptionService.CreatedSubscription created = subscriptions.create(orgId,
                     "http://127.0.0.1:" + server.getAddress().getPort() + "/hook", Set.of("org.member.added"));
+            WebhookSubscription subscription = created.subscription();
 
             dispatcher.dispatch("m-" + UUID.randomUUID(), orgId, "org.member.added",
                     WebhookPayload.of("org.member.added", orgId, Instant.now())
@@ -71,7 +72,10 @@ class WebhookDeliveryTest extends AbstractIntegrationTest {
 
             assertThat(body.get()).contains("org.member.added").contains("kc-newbie").contains("MEMBER");
             assertThat(eventHeader.get()).isEqualTo("org.member.added");
-            assertThat(signature.get()).isEqualTo("sha256=" + WebhookSigner.sign(subscription.getSecret(), body.get()));
+            // Verified with the PLAINTEXT from the create result: the row holds only ciphertext,
+            // and the receiver-side check proves the sender decrypts before signing.
+            assertThat(signature.get()).isEqualTo("sha256=" + WebhookSigner.sign(created.plainSecret(), body.get()));
+            assertThat(subscription.getSecret()).startsWith("enc:v1:");
             assertThat(deliveryStatus(subscription.getId())).isEqualTo("DELIVERED");
         } finally {
             server.stop(0);
@@ -92,7 +96,7 @@ class WebhookDeliveryTest extends AbstractIntegrationTest {
         try {
             UUID orgId = UUID.randomUUID();
             WebhookSubscription subscription = subscriptions.create(orgId,
-                    "http://127.0.0.1:" + server.getAddress().getPort() + "/flaky", Set.of("org.status_changed"));
+                    "http://127.0.0.1:" + server.getAddress().getPort() + "/flaky", Set.of("org.status_changed")).subscription();
 
             dispatcher.dispatch("m-" + UUID.randomUUID(), orgId, "org.status_changed",
                     WebhookPayload.of("org.status_changed", orgId, Instant.now()).with("status", "SUSPENDED"));
@@ -135,7 +139,7 @@ class WebhookDeliveryTest extends AbstractIntegrationTest {
         try {
             UUID orgId = UUID.randomUUID();
             WebhookSubscription subscription = subscriptions.create(orgId,
-                    "http://127.0.0.1:" + server.getAddress().getPort() + "/revoked", Set.of("org.member.added"));
+                    "http://127.0.0.1:" + server.getAddress().getPort() + "/revoked", Set.of("org.member.added")).subscription();
             dispatcher.dispatch("m-" + UUID.randomUUID(), orgId, "org.member.added",
                     WebhookPayload.of("org.member.added", orgId, Instant.now()).with("subject", "kc-newbie"));
 
@@ -161,7 +165,7 @@ class WebhookDeliveryTest extends AbstractIntegrationTest {
     void aPendingDeliveryForADeletedSubscriptionIsNeverClaimed() throws Exception {
         UUID orgId = UUID.randomUUID();
         WebhookSubscription subscription = subscriptions.create(orgId,
-                "http://127.0.0.1:1/unreachable", Set.of("org.member.added"));
+                "http://127.0.0.1:1/unreachable", Set.of("org.member.added")).subscription();
         dispatcher.dispatch("m-" + UUID.randomUUID(), orgId, "org.member.added",
                 WebhookPayload.of("org.member.added", orgId, Instant.now()).with("subject", "kc-newbie"));
         jdbc.update("update webhook_subscription set deleted_at = now() where id = ?", subscription.getId());
@@ -191,7 +195,7 @@ class WebhookDeliveryTest extends AbstractIntegrationTest {
         try {
             UUID orgId = UUID.randomUUID();
             WebhookSubscription subscription = subscriptions.create(orgId,
-                    "http://127.0.0.1:" + server.getAddress().getPort() + "/paused", Set.of("org.member.added"));
+                    "http://127.0.0.1:" + server.getAddress().getPort() + "/paused", Set.of("org.member.added")).subscription();
             dispatcher.dispatch("m-" + UUID.randomUUID(), orgId, "org.member.added",
                     WebhookPayload.of("org.member.added", orgId, Instant.now()).with("subject", "kc-newbie"));
             jdbc.update("update webhook_subscription set status = 'DISABLED' where id = ?", subscription.getId());

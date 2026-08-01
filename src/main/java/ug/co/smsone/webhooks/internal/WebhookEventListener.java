@@ -74,6 +74,21 @@ class WebhookEventListener {
     }
 
     @ApplicationModuleListener
+    void on(ug.co.smsone.exchange.JobCompleted event) {
+        String code = WebhookEventType.EXCHANGE_JOB_COMPLETED.code();
+        dispatcher.dispatch(
+                code + ":" + event.jobId() + ":" + event.outcome() + "@" + event.occurredAt(),
+                event.orgId(), code,
+                WebhookPayload.of(code, event.orgId(), event.occurredAt())
+                        .with("jobId", event.jobId().toString())
+                        .with("handler", event.handler())
+                        .with("jobType", event.jobType())
+                        .with("outcome", event.outcome())
+                        .with("processed", String.valueOf(event.processed()))
+                        .with("failed", String.valueOf(event.failed())));
+    }
+
+    @ApplicationModuleListener
     void on(ug.co.smsone.subscription.SubscriptionChanged event) {
         String code = WebhookEventType.ORG_SUBSCRIPTION_CHANGED.code();
         dispatcher.dispatch(

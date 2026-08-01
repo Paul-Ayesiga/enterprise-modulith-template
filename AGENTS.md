@@ -91,6 +91,7 @@ shared            ──►  nothing in a business module (compile-time)
 | `shared.security.OrgAuthorization` | `shared` | `organization.internal.OrgAuthorizationImpl` | method security lives in `shared`; the RBAC data lives in `organization`. `ApiPermissionEvaluator` resolves it via `ObjectProvider` and **default-denies** when absent |
 | `shared.security.ImpersonationLookup` | `shared` | `identity.internal.ImpersonationLookupImpl` | `ImpersonationFilter` lives in `shared` (it swaps the `SecurityContext` before every other filter); the session table lives in `identity`. Same seam as `OrgAuthorization` — absent impl means the header cannot be authorized, so it is **denied**, never ignored |
 | `shared.audit.AuditLog` | `shared` | `audit.internal.AuditLogImpl` (`@Primary`) | any module must be able to audit without depending on `audit` |
+| `subscription.Subscriptions` | `subscription` (API pkg) | `subscription.internal.SubscriptionService` | billing drives plan/standing changes through the SAME audited paths the admin surface uses — one entitlement authority, two callers |
 | `identity.UserProvisioning` | `identity` (API pkg) | `identity.internal.UserProvisioningService` | `organization` provisions members without touching Keycloak itself |
 | `notification.Notifications` | `notification` | `notification.internal.NotificationService` | fan-out is the notification module's business |
 | `files.FileStorageProvider` | `files` | `files.internal.S3StorageProvider` | S3 SDK types never escape the module |

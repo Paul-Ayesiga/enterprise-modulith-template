@@ -14,7 +14,8 @@ record ExchangeProperties(
         Duration presignTtl,
         Duration retryBaseBackoff,
         Duration retryMaxBackoff,
-        Boolean scheduleFireEnabled) {
+        Boolean scheduleFireEnabled,
+        Duration retention) {
 
     private static final int MAX_BACKOFF_SHIFT = 16;
 
@@ -55,6 +56,9 @@ record ExchangeProperties(
         }
         if (scheduleFireEnabled == null) {
             scheduleFireEnabled = Boolean.TRUE; // absent => on; only an explicit false (tests) disables
+        }
+        if (retention == null || retention.isZero() || retention.isNegative()) {
+            retention = Duration.ofDays(30); // a zero/negative window would purge the whole job log
         }
     }
 }

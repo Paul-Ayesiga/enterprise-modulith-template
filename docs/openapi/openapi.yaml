@@ -74,6 +74,10 @@ tags:
     \ so no annotation can name that gate. Job metadata reads on org:read; the artifacts\
     \ (source, error report, result) answer only to the requester or a holder of that\
     \ same handler permission. The handler catalogue itself is Shared · Exchange catalog."
+- name: Organization · Billing
+  description: "The tenant's own money view — invoices, proxied from Kill Bill on\
+    \ org:read. Plans, balances and billing actions are the platform's surface: Platform\
+    \ · Billing & plans."
 - name: Organization · Exchange schedules
   description: "Recurring exports on a cron (UTC), firing as their creator — whose\
     \ export permission is re-checked at every fire, so a revocation stops the schedule\
@@ -101,6 +105,10 @@ tags:
   description: "The exchange handler catalogue and its downloadable templates — which\
     \ datasets can move, what each file must look like, which permissions gate it.\
     \ Readable by any authenticated caller; running one is Organization · Exchange."
+- name: Shared · Webhook events
+  description: "The subscribable webhook event vocabulary — the codes the subscription\
+    \ endpoints' events array accepts, with what each means. Managing subscriptions\
+    \ is Organization · Webhooks."
 paths:
   /api/v1/translations/{locale}/{key}:
     get:
@@ -1787,6 +1795,71 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/orgs/{orgId}/billing/subscription:
+    post:
+      tags:
+      - Platform · Billing & plans
+      summary: Put a tenant on a billable plan
+      description: Creates the Kill Bill subscription for the mapped catalog plan
+        and reconciles entitlements immediately (the push notification converges the
+        same way). `FREE` is not billable — assign it through the subscription surface
+        instead.
+      operationId: subscribe
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubscribeRequest"
+        required: true
+      responses:
+        "202":
+          description: Accepted
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/orgs/{orgId}/billing/account:
+    post:
+      tags:
+      - Platform · Billing & plans
+      summary: Provision a tenant's Kill Bill account
+      description: Creates (or resolves — idempotent by `externalKey` = org id) the
+        Kill Bill account and records the linkage. A tenant needs one before any billable
+        plan.
+      operationId: provision
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/admin/impersonations:
     get:
       tags:
@@ -1941,12 +2014,47 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/webhooks/event-types:
+    get:
+      tags:
+      - Shared · Webhook events
+      summary: List every subscribable webhook event type
+      description: "The fixed vocabulary the subscription endpoints' `events` array\
+        \ accepts. Payloads always carry `event`, `orgId` and `occurredAt`, signed\
+        \ HMAC-SHA256 in `X-Webhook-Signature`."
+      operationId: list_7
+      parameters:
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceObject"
   /api/v1/translations:
     get:
       tags:
       - Shared · Reference data
       summary: "List translations, optionally for one locale"
-      operationId: list_7
+      operationId: list_8
       parameters:
       - name: locale
         in: query
@@ -1998,7 +2106,7 @@ paths:
       tags:
       - Shared · Settings & flags
       summary: List platform settings
-      operationId: list_8
+      operationId: list_9
       parameters:
       - name: "page[size]"
         in: query
@@ -2049,7 +2157,7 @@ paths:
         \ held) its lock and until when — the evidence that a job fires once cluster-wide.\
         \ Read-only: there is no endpoint to trigger a job, they are time-driven by\
         \ design."
-      operationId: list_9
+      operationId: list_10
       parameters:
       - name: X-Impersonate
         in: header
@@ -2084,7 +2192,7 @@ paths:
       description: The fixed vocabulary for composing custom roles — the `code` values
         are what the role endpoints accept. The catalog is global and identical for
         every organization.
-      operationId: list_10
+      operationId: list_11
       parameters:
       - name: X-Impersonate
         in: header
@@ -2284,7 +2392,7 @@ paths:
       tags:
       - Organization · Exchange
       summary: List the organization's exchange jobs
-      operationId: list_11
+      operationId: list_12
       parameters:
       - name: orgId
         in: path
@@ -2543,6 +2651,46 @@ paths:
                 \ ULID)."
               schema:
                 type: string
+  /api/v1/orgs/{orgId}/billing/invoices:
+    get:
+      tags:
+      - Organization · Billing
+      summary: List the organization's invoices
+      description: "Proxied from Kill Bill, un-paged. 404 until the platform provisions\
+        \ billing."
+      operationId: invoices
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceObject"
   /api/v1/orgs/{orgId}/audit:
     get:
       tags:
@@ -2619,7 +2767,7 @@ paths:
       tags:
       - Shared · Me & notifications
       summary: List your in-app notifications
-      operationId: list_12
+      operationId: list_13
       parameters:
       - name: "page[size]"
         in: query
@@ -2774,7 +2922,7 @@ paths:
       tags:
       - Shared · Settings & flags
       summary: List feature flags
-      operationId: list_13
+      operationId: list_14
       parameters:
       - name: "page[size]"
         in: query
@@ -2824,7 +2972,7 @@ paths:
       description: "Each handler names the dataset it moves, the permissions its imports\
         \ and exports require, `header` — the exact column order its files use — and\
         \ the current `templateVersion`. Download a ready-to-fill file from `/handlers/{id}/template`."
-      operationId: list_14
+      operationId: list_15
       parameters:
       - name: X-Impersonate
         in: header
@@ -3119,7 +3267,7 @@ paths:
       tags:
       - Platform · Users & impersonation
       summary: List provisioned users across the platform
-      operationId: list_15
+      operationId: list_16
       parameters:
       - name: "page[size]"
         in: query
@@ -3235,7 +3383,7 @@ paths:
       - Platform · Organizations
       summary: List every organization on the platform
       description: Newest first; narrow with `status` (ACTIVE or SUSPENDED).
-      operationId: list_16
+      operationId: list_17
       parameters:
       - name: status
         in: query
@@ -3368,6 +3516,64 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/WindowedResultResourceObject"
+  /api/v1/admin/orgs/{orgId}/billing:
+    get:
+      tags:
+      - Platform · Billing & plans
+      summary: Inspect a tenant's billing state
+      description: "Balance and live Kill Bill subscriptions, read straight from Kill\
+        \ Bill."
+      operationId: view
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/orgs/{orgId}/billing/invoices:
+    get:
+      tags:
+      - Platform · Billing & plans
+      summary: List a tenant's invoices
+      description: "Proxied from Kill Bill, un-paged — the billing UI of record is\
+        \ Kaui."
+      operationId: invoices_1
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceObject"
   /api/v1/orgs/{orgId}/members/{subject}:
     delete:
       tags:
@@ -3704,6 +3910,11 @@ components:
           type: string
       required:
       - operation
+    SubscribeRequest:
+      type: object
+      properties:
+        plan:
+          type: string
     OpenImpersonationRequest:
       type: object
       properties:

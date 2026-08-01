@@ -26,17 +26,26 @@ class ExchangeWorker implements SmartLifecycle {
     private final ExportRunner exports;
     private final ExchangeProperties config;
     private final ExchangeMetrics metrics;
+    private final org.springframework.context.ApplicationEventPublisher events;
+    private final org.springframework.transaction.support.TransactionTemplate transactions;
+    private final java.time.Clock clock;
 
     private volatile boolean running;
     private volatile Thread poller;
 
     ExchangeWorker(ExchangeJobStore store, ImportRunner imports, ExportRunner exports,
-            ExchangeProperties config, ExchangeMetrics metrics) {
+            ExchangeProperties config, ExchangeMetrics metrics,
+            org.springframework.context.ApplicationEventPublisher events,
+            org.springframework.transaction.support.TransactionTemplate transactions,
+            java.time.Clock clock) {
         this.store = store;
         this.imports = imports;
         this.exports = exports;
         this.config = config;
         this.metrics = metrics;
+        this.events = events;
+        this.transactions = transactions;
+        this.clock = clock;
     }
 
     @Override
@@ -100,7 +109,7 @@ class ExchangeWorker implements SmartLifecycle {
             store.markTerminal(job.id(), job.attempts(), ExchangeJob.FAILED, null, null,
                     "The job was reclaimed repeatedly without completing and gave up after "
                             + job.attempts() + " attempts. Quote job id " + job.id() + " to support.");
-            store.find(job.id(), job.orgId()).ifPresent(metrics::jobFinished);
+            recordOutcome(job);
             return 1;
         }
         // MDC, not method arguments: every log line the run produces — handler code included —
@@ -117,13 +126,31 @@ class ExchangeWorker implements SmartLifecycle {
             // One read, one call site: the runners already wrote the terminal status, so counting
             // from the row can never disagree with it (a released-for-retry job is not an outcome
             // yet). Inside the MDC scope, so a failure here logs with its job attribution.
-            store.find(job.id(), job.orgId()).ifPresent(metrics::jobFinished);
+            recordOutcome(job);
         } finally {
             MDC.remove("org_id");
             MDC.remove("exchange_job_id");
             MDC.remove("exchange_handler");
         }
         return 1;
+    }
+
+    /**
+     * Terminal bookkeeping from the ROW, not the runner's memory: the counter and the
+     * {@link ug.co.smsone.exchange.JobCompleted} event both repeat what the fenced terminal write
+     * said, so neither can disagree with the API. Published inside a small transaction so the
+     * Modulith registry row commits with it (after-commit delivery to the async consumers).
+     */
+    private void recordOutcome(ExchangeJob claimed) {
+        store.find(claimed.id(), claimed.orgId()).ifPresent(after -> {
+            metrics.jobFinished(after);
+            if (after.terminal()) {
+                transactions.executeWithoutResult(tx -> events.publishEvent(
+                        new ug.co.smsone.exchange.JobCompleted(after.id(), after.orgId(),
+                                after.requester(), after.handler(), after.jobType(), after.status(),
+                                after.processed(), after.failed(), clock.instant())));
+            }
+        });
     }
 
     private void sleepQuietly(long millis) {

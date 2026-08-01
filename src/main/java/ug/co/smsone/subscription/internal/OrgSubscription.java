@@ -50,6 +50,10 @@ class OrgSubscription extends SoftDeletableEntity {
         this.status = Status.ACTIVE; // a fresh assignment always restores good standing
     }
 
+    void markStatus(Status newStatus) {
+        this.status = newStatus;
+    }
+
     UUID getOrgId() {
         return orgId;
     }

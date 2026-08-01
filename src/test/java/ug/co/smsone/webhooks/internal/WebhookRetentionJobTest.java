@@ -38,7 +38,7 @@ class WebhookRetentionJobTest extends AbstractIntegrationTest {
         double purgedBefore = purged();
         UUID orgId = UUID.randomUUID();
         WebhookSubscription subscription = subscriptions.create(orgId,
-                "http://127.0.0.1:1/unreachable", Set.of("org.member.added"));
+                "http://127.0.0.1:1/unreachable", Set.of("org.member.added")).subscription();
         UUID oldDelivered = insert(subscription.getId(), orgId, "DELIVERED", "40 days");
         UUID oldFailed = insert(subscription.getId(), orgId, "FAILED", "40 days");
         UUID oldPending = insert(subscription.getId(), orgId, "PENDING", "40 days");
