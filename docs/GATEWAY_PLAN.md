@@ -29,6 +29,16 @@ Capabilities from the brief map onto the phases like this:
 
 ## Phase 1 — Core Gateway (the first slice)
 
+**Status: shipped 2026-08-02.** Delivered the `gateway:core` + `gateway:app` subprojects; the
+config-driven route/service model with the `RouteSource`/`ServiceRegistry` ports + static-YAML
+adapter; reverse proxy to the modulith; request-id + access-log filters; the `NO_ROUTE` error
+envelope; the hexagon boundary test — gated by `RoutingTest` (all 5 predicate kinds, a 404 envelope,
+request-id mint/honor/propagate) on **Spring Cloud Gateway 5.0.2 / Boot 4.1** (compatibility
+verified). Scope notes vs. the original sketch: the `security`/`platform-adapter`/`admin`/`starter`
+subprojects are created with their phases rather than stubbed empty now; backend health-gating moves
+to Phase 3 (it needs the load balancer); the gateway runs via `bootRun` (the modulith is not
+containerized, so there is no compose service yet — gateway/README.md).
+
 **Focus.** A reactive Spring Cloud Gateway deployable that routes to the modulith by configuration,
 reports health, and stamps a correlation id — with the hexagonal skeleton (ports defined, pipeline
 ordered) in place so later phases slot in without refactoring.
@@ -167,9 +177,10 @@ Phases 1–6 are in production.
   "gateway:starter", "gateway:app")`. The existing modulith becomes (or stays) the root/`:app`
   project — **its build and tests do not change**. Version catalog (`gradle/libs.versions.toml`) gains
   the Spring Cloud BOM + gateway/webflux/lettuce-reactive entries.
-- **Runtime.** `docker-compose` gains a `gateway` service in front of the modulith, sharing the
-  Keycloak realm and the Valkey instance. Ports follow the dev-machine conventions already in
-  `docker/.env`.
+- **Runtime.** The gateway runs via `./gradlew :gateway:app:bootRun` on `:8090`, fronting the modulith
+  on `:8080` (the modulith runs on the host with infra from compose, so there is no containerized
+  `gateway` service yet). When the modulith is containerized, add a `gateway` compose service sharing
+  the Keycloak realm and Valkey; ports follow the `docker/.env` conventions.
 - **Platform side.** A small, versioned **gateway-integration API** on the modulith (key introspection,
   quota lookup, audit ingest), each endpoint backed by an existing port (`ApiKeyAuthenticator`,
   `Entitlements`, `AuditLog`) and covered by a contract test.

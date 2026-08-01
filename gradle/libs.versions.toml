@@ -2,6 +2,7 @@
 # --- Anchors ---
 springBoot = "4.1.0"
 springModulith = "2.1.0"
+springCloud = "2025.1.2"     # gateway subprojects — release train; Boot 4.1 compat verified at boot
 java = "21"
 
 # --- Pinned (NOT managed by any BOM) ---
@@ -21,6 +22,7 @@ resilience4j = "2.4.0"       # -spring-boot4 artifact (verified on repo1; search
 boot-bom            = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "springBoot" }
 spring-modulith-bom = { module = "org.springframework.modulith:spring-modulith-bom", version.ref = "springModulith" }
 awssdk-bom          = { module = "software.amazon.awssdk:bom", version.ref = "awssdk" }
+spring-cloud-bom    = { module = "org.springframework.cloud:spring-cloud-dependencies", version.ref = "springCloud" }
 
 # Spring Boot starters (BOM-managed — no version)
 boot-web            = { module = "org.springframework.boot:spring-boot-starter-web" }
@@ -85,6 +87,9 @@ aspectjweaver = { module = "org.aspectj:aspectjweaver" }  # Boot 4 dropped start
 # Rate limiting (token bucket + Lettuce/Valkey distributed proxy manager)
 bucket4j         = { module = "com.bucket4j:bucket4j_jdk17-core", version.ref = "bucket4j" }
 bucket4j-lettuce = { module = "com.bucket4j:bucket4j_jdk17-lettuce", version.ref = "bucket4j" }
+
+# Gateway (reactive Spring Cloud Gateway — gateway subprojects ONLY, never the modulith)
+gateway-webflux  = { module = "org.springframework.cloud:spring-cloud-starter-gateway-server-webflux" }
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "springBoot" }

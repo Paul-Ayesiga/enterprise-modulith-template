@@ -1,0 +1,63 @@
+package ug.co.smsone.gateway.route;
+
+import java.util.Iterator;
+import java.util.List;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.cloud.gateway.route.RouteLocator;
+import org.springframework.cloud.gateway.route.builder.BooleanSpec;
+import org.springframework.cloud.gateway.route.builder.PredicateSpec;
+import org.springframework.cloud.gateway.route.builder.RouteLocatorBuilder;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import ug.co.smsone.gateway.config.GatewayProperties;
+import ug.co.smsone.gateway.core.route.RouteDefinition;
+import ug.co.smsone.gateway.core.route.RoutePredicate;
+import ug.co.smsone.gateway.core.route.RouteSource;
+import ug.co.smsone.gateway.core.route.ServiceDefinition;
+import ug.co.smsone.gateway.core.route.ServiceRegistry;
+
+/**
+ * The adapter from the core's route MODEL to the Spring Cloud Gateway RUNTIME: it translates each
+ * {@link RouteDefinition} into an SCG route, mapping our predicate kinds onto SCG's predicate
+ * factories. This is the only place the core's model meets the runtime — the core never sees SCG.
+ */
+@Configuration(proxyBeanMethods = false)
+@EnableConfigurationProperties(GatewayProperties.class)
+class GatewayRouteLocator {
+
+    @Bean
+    RouteLocator gatewayRoutes(RouteLocatorBuilder builder, RouteSource routeSource, ServiceRegistry services) {
+        RouteLocatorBuilder.Builder routes = builder.routes();
+        for (RouteDefinition route : routeSource.routes()) {
+            if (route.predicates().isEmpty()) {
+                throw new IllegalStateException("Route '" + route.id() + "' has no predicates");
+            }
+            ServiceDefinition service = services.find(route.serviceId())
+                    .orElseThrow(() -> new IllegalStateException(
+                            "Route '" + route.id() + "' targets unknown service '" + route.serviceId() + "'"));
+            routes.route(route.id(), spec -> match(spec, route.predicates()).uri(service.uri()));
+        }
+        return routes.build();
+    }
+
+    /** Fold our predicate list onto SCG's fluent spec, AND-combining each. */
+    private static BooleanSpec match(PredicateSpec spec, List<RoutePredicate> predicates) {
+        Iterator<RoutePredicate> iterator = predicates.iterator();
+        BooleanSpec combined = apply(spec, iterator.next());
+        while (iterator.hasNext()) {
+            combined = apply(combined.and(), iterator.next());
+        }
+        return combined;
+    }
+
+    private static BooleanSpec apply(PredicateSpec spec, RoutePredicate predicate) {
+        List<String> args = predicate.args();
+        return switch (predicate.kind()) {
+            case PATH -> spec.path(args.toArray(String[]::new));
+            case HOST -> spec.host(args.toArray(String[]::new));
+            case METHOD -> spec.method(args.toArray(String[]::new));
+            case HEADER -> args.size() > 1 ? spec.header(args.get(0), args.get(1)) : spec.header(args.get(0));
+            case QUERY -> args.size() > 1 ? spec.query(args.get(0), args.get(1)) : spec.query(args.get(0));
+        };
+    }
+}

@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: gateway
+
+server:
+  port: ${GATEWAY_PORT:8090}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+# The route/service catalog (config-driven). Today the gateway fronts one backend — the modulith;
+# add services and routes here as the platform splits into more.
+gateway:
+  services:
+    - id: modulith
+      uri: ${MODULITH_URI:http://localhost:8080}
+      health-path: /actuator/health
+  routes:
+    - id: modulith-api
+      order: 0
+      service-id: modulith
+      predicates:
+        - kind: PATH
+          args:
+            - /api/v1/**
+
+logging:
+  level:
+    gateway.access: INFO
