@@ -134,20 +134,30 @@ GC pauses (heap pressure), cache hit-ratio collapse, then CPU saturation on the 
 
 ## Throughput vs enforcement
 
-The edge's per-principal token bucket is a **feature**, not an obstacle — but it means one load box
-can't benchmark raw throughput through the front door. Two honest ways past it:
+The edge's per-principal rate limit (and per-consumer quota) is a **feature**, not an obstacle — but it
+means one load box, hammering as a single principal, is capped no matter how hard it pushes. Everything
+over the limit comes back **429** (the edge shedding), which the scripts now report as
+`edge_rate_limited_429` — distinct from real failures. This is exactly what a naive single-box run runs
+into: a wall of 429s that k6's `http_req_failed` renders as a scary "~88% failed". It is the edge doing
+its job, not the backend falling over.
 
-**Raise the limit for a throughput run** (restart the edge with it lifted):
+**The realistic way — go direct to measure app capacity.** The backend has no such per-caller cap, so a
+throughput run straight at the modulith measures what the application itself sustains:
+
+```bash
+TARGET_URL=http://localhost:28080 perf/run.sh baseline
+```
+
+**Through the edge — raise the limit, then confirm it took.** Restart the edge with the limit lifted:
 
 ```bash
 GATEWAY_RATE_REPLENISH=100000 GATEWAY_RATE_BURST=100000 make gateway
 ```
 
-**Or bypass the edge** and benchmark the app alone (point the throughput scripts straight at the modulith):
-
-```bash
-TARGET_URL=http://localhost:28080 perf/run.sh baseline
-```
+Then run and **watch `edge_rate_limited_429` drop to ~0** — that is your proof the raise took effect. If
+the 429s persist, the limiter isn't honouring the override in your build; fall back to the direct run
+above, or drive genuinely distinct principals (many tokens) so each gets its own bucket, which is how
+production traffic actually spreads.
 
 Leave the limit at its default (20/40) for `edge-enforcement.js` — shedding the excess is the whole point.
 
