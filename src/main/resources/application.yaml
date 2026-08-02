@@ -235,6 +235,10 @@ app:
     callback-url: ${BILLING_CALLBACK_URL:}
     # Dev opt-in: creates the KB tenant + simple catalog plans so compose bills out of the box.
     bootstrap: ${BILLING_BOOTSTRAP:false}
+    # Dev opt-in: when true, a newly registered org auto-provisions a Kill Bill account (one under
+    # the single 'smsone' tenant). Presumes a reachable, bootstrapped Kill Bill; off by default so
+    # environments without billing don't accrue retrying events.
+    auto-provision-accounts: ${BILLING_AUTO_PROVISION:false}
     currency: ${BILLING_CURRENCY:USD}
     # OUR plan code -> Kill Bill catalog plan name. FREE is deliberately unmapped (no money, no KB
     # subscription). Production maps to its uploaded catalog.
