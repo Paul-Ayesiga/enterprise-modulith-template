@@ -1,6 +1,8 @@
 package ug.co.smsone.gateway.security;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import java.nio.charset.StandardCharsets;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -39,20 +41,23 @@ public class GatewaySecurityConfig {
 
     @Bean
     SecurityWebFilterChain gatewaySecurity(ServerHttpSecurity http, ReactiveJwtDecoder jwtDecoder,
-            SecurityProperties properties) {
+            SecurityProperties properties, ObjectProvider<MeterRegistry> meterRegistry) {
         return http
                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
                 .cors(cors -> cors.configurationSource(corsConfigurationSource(properties)))
                 .authorizeExchange(exchange -> exchange.anyExchange().permitAll())
                 .oauth2ResourceServer(oauth2 -> oauth2
-                        .authenticationEntryPoint(unauthorizedEntryPoint())
+                        .authenticationEntryPoint(unauthorizedEntryPoint(meterRegistry.getIfAvailable()))
                         .jwt(jwt -> jwt.jwtDecoder(jwtDecoder)))
                 .build();
     }
 
     /** An invalid/expired bearer token → 401 in the gateway's error envelope, not Security's default. */
-    private static ServerAuthenticationEntryPoint unauthorizedEntryPoint() {
+    private static ServerAuthenticationEntryPoint unauthorizedEntryPoint(MeterRegistry meterRegistry) {
         return (exchange, ex) -> {
+            if (meterRegistry != null) {
+                meterRegistry.counter("gateway.auth.failures", "reason", "invalid_token").increment();
+            }
             exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
             exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
             byte[] body = "{\"errors\":[{\"code\":\"UNAUTHORIZED\",\"detail\":\"A valid token is required.\"}]}"

@@ -1,5 +1,6 @@
 package ug.co.smsone.gateway.security;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.List;
@@ -50,12 +51,14 @@ public class EdgeAuthorizationFilter implements GlobalFilter, Ordered {
     private final String tenantClaim;
     private final ApiKeyIntrospector introspector;
     private final List<SecurityProperties.InternalToken> internalTokens;
+    private final MeterRegistry meterRegistry;
 
     public EdgeAuthorizationFilter(RouteSource routeSource, SecurityProperties properties,
-            ObjectProvider<ApiKeyIntrospector> introspector) {
+            ObjectProvider<ApiKeyIntrospector> introspector, ObjectProvider<MeterRegistry> meterRegistry) {
         this.tenantClaim = properties.tenantClaim();
         this.introspector = introspector.getIfAvailable();
         this.internalTokens = properties.internalTokens();
+        this.meterRegistry = meterRegistry.getIfAvailable();
         this.policies = routeSource.routes().stream()
                 .collect(Collectors.toUnmodifiableMap(RouteDefinition::id, route -> compile(route.auth())));
     }
@@ -71,8 +74,8 @@ public class EdgeAuthorizationFilter implements GlobalFilter, Ordered {
         }
         return resolvePrincipal(exchange)
                 .flatMap(principal -> authorize(exchange, chain, compiled, principal))
-                .switchIfEmpty(Mono.error(
-                        new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required")));
+                .switchIfEmpty(Mono.defer(() ->
+                        deny("unauthorized", HttpStatus.UNAUTHORIZED, "Authentication required")));
     }
 
     /** Precedence: a trusted internal-service token, then an API key (if an introspector exists), then the JWT. */
@@ -110,13 +113,13 @@ public class EdgeAuthorizationFilter implements GlobalFilter, Ordered {
             CompiledPolicy compiled, EdgePrincipal principal) {
         for (String required : compiled.policy().requiredScopes()) {
             if (!principal.hasScope(required)) {
-                return Mono.error(new ResponseStatusException(HttpStatus.FORBIDDEN, "Missing scope: " + required));
+                return deny("forbidden_scope", HttpStatus.FORBIDDEN, "Missing scope: " + required);
             }
         }
         if (compiled.tenantPattern() != null && !principal.internal()) {
             String pathTenant = extractTenant(compiled.tenantPattern(), exchange);
             if (pathTenant != null && !pathTenant.equals(principal.tenant())) {
-                return Mono.error(new ResponseStatusException(HttpStatus.FORBIDDEN, "Tenant mismatch"));
+                return deny("forbidden_tenant", HttpStatus.FORBIDDEN, "Tenant mismatch");
             }
         }
         GatewayAttributes.putPrincipal(exchange, principal);
@@ -164,6 +167,14 @@ public class EdgeAuthorizationFilter implements GlobalFilter, Ordered {
         PathPattern pattern = policy.enforcesTenant()
                 ? PathPatternParser.defaultInstance.parse(policy.tenantPathTemplate()) : null;
         return new CompiledPolicy(policy, pattern);
+    }
+
+    /** Deny with a status, counting the failure by reason for {@code gateway.auth.failures}. */
+    private <T> Mono<T> deny(String reason, HttpStatus status, String message) {
+        if (meterRegistry != null) {
+            meterRegistry.counter("gateway.auth.failures", "reason", reason).increment();
+        }
+        return Mono.error(new ResponseStatusException(status, message));
     }
 
     @Override

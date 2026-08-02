@@ -25,6 +25,8 @@ dependencies {
     implementation(libs.boot.oauth2.rs)
     // The runtime types the coarse-authZ GlobalFilter binds to (GlobalFilter, ServerWebExchangeUtils, Route).
     implementation(libs.gateway.webflux)
+    // Meter the edge's authN/authZ failures (a MeterRegistry is optional at runtime — no-op if absent).
+    implementation("io.micrometer:micrometer-core")
 
     testImplementation(libs.boot.test)
     testImplementation("io.projectreactor:reactor-test")

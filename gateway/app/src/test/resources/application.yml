@@ -8,6 +8,12 @@ server:
     mime-types: application/json,text/plain
     min-response-size: 1024
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+
 # One backend stub (its uri + the JWKS uri are set per-run to the test server's random port), plus
 # routes for the predicate tests (Phase 1) and the auth-policy tests (Phase 2).
 gateway:

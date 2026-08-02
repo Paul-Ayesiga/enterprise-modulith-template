@@ -37,6 +37,8 @@ dependencies {
     // (resolve lb://service across its instances).
     implementation("com.github.ben-manes.caffeine:caffeine")
     implementation("org.springframework.cloud:spring-cloud-starter-loadbalancer")
+    // Phase 4 — observability: Prometheus registry for the gateway's metrics (scraped at /actuator/prometheus).
+    implementation("io.micrometer:micrometer-registry-prometheus")
 
     testImplementation(libs.boot.test)
     testImplementation(libs.testcontainers.junit)
