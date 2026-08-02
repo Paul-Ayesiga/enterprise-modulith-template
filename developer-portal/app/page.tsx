@@ -1,7 +1,7 @@
 import { Catalog } from "./components/Catalog";
 import { Header } from "./components/Header";
 import { EmptyState, ErrorState } from "./components/States";
-import { adminBaseUrl, fetchCatalog, openApiUrl, routeTableUrl, totalRoutes } from "./lib/gateway";
+import { adminBaseUrl, apiBaseUrl, fetchCatalog, openApiUrl, routeTableUrl, totalRoutes } from "./lib/gateway";
 
 // Read the live catalog from the gateway on every request.
 export const dynamic = "force-dynamic";
@@ -37,7 +37,7 @@ export default async function Home() {
         ) : products.length === 0 ? (
           <EmptyState />
         ) : (
-          <Catalog products={products} />
+          <Catalog products={products} apiBaseUrl={apiBaseUrl()} />
         )}
       </main>
 

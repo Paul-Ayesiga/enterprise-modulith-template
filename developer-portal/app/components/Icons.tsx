@@ -88,3 +88,20 @@ export function PlugIcon({ className }: IconProps) {
     </svg>
   );
 }
+
+export function CopyIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)} width={13} height={13}>
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M5 15V5a2 2 0 0 1 2-2h8" />
+    </svg>
+  );
+}
+
+export function CheckIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)} width={13} height={13}>
+      <path d="m5 12 4.5 4.5L19 7" />
+    </svg>
+  );
+}

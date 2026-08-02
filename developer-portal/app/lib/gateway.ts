@@ -27,6 +27,11 @@ export function adminBaseUrl(): string {
   return process.env.GATEWAY_ADMIN_URL ?? "http://localhost:29090";
 }
 
+/** The gateway's public API base URL — the front door a caller actually hits (curl examples use it). */
+export function apiBaseUrl(): string {
+  return process.env.GATEWAY_API_URL ?? "http://localhost:28090";
+}
+
 export function openApiUrl(): string {
   return `${adminBaseUrl()}/actuator/gatewayopenapi`;
 }

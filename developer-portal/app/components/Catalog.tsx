@@ -2,9 +2,9 @@
 
 import { useId, useMemo, useState } from "react";
 import type { Product, RouteSummary } from "../lib/gateway";
-import { GlobeIcon, LockIcon, SearchIcon } from "./Icons";
+import { CheckIcon, CopyIcon, GlobeIcon, LockIcon, SearchIcon } from "./Icons";
 
-export function Catalog({ products }: { products: Product[] }) {
+export function Catalog({ products, apiBaseUrl }: { products: Product[]; apiBaseUrl: string }) {
   const [query, setQuery] = useState("");
   const searchId = useId();
 
@@ -47,7 +47,7 @@ export function Catalog({ products }: { products: Product[] }) {
         <ul className="catalog" role="list">
           {filtered.map((product) => (
             <li key={product.id}>
-              <ProductSection product={product} />
+              <ProductSection product={product} apiBaseUrl={apiBaseUrl} />
             </li>
           ))}
         </ul>
@@ -56,7 +56,7 @@ export function Catalog({ products }: { products: Product[] }) {
   );
 }
 
-function ProductSection({ product }: { product: Product }) {
+function ProductSection({ product, apiBaseUrl }: { product: Product; apiBaseUrl: string }) {
   const headingId = `product-${product.id}`;
   return (
     <section className="product" aria-labelledby={headingId}>
@@ -72,7 +72,7 @@ function ProductSection({ product }: { product: Product }) {
       <ul className="routes" role="list">
         {product.routes.map((route) => (
           <li key={route.id}>
-            <RouteRow route={route} />
+            <RouteRow route={route} apiBaseUrl={apiBaseUrl} />
           </li>
         ))}
       </ul>
@@ -80,7 +80,7 @@ function ProductSection({ product }: { product: Product }) {
   );
 }
 
-function RouteRow({ route }: { route: RouteSummary }) {
+function RouteRow({ route, apiBaseUrl }: { route: RouteSummary; apiBaseUrl: string }) {
   return (
     <div className="route">
       <div className="route__main">
@@ -90,8 +90,53 @@ function RouteRow({ route }: { route: RouteSummary }) {
       <div className="route__meta">
         <AccessBadge authenticated={route.authenticated} />
         <LifecycleBadge lifecycle={route.lifecycle} />
+        <CopyCurlButton command={curlFor(route, apiBaseUrl)} label={route.paths[0] ?? route.id} />
       </div>
     </div>
+  );
+}
+
+/** A route's pattern turned into a concrete example path (drop the trailing glob). */
+function toExamplePath(pattern: string): string {
+  return pattern.replace(/\/\*\*$/, "").replace(/\/\*$/, "") || "/";
+}
+
+/** A ready-to-run curl for a route: bearer header only when the route needs a token. */
+function curlFor(route: RouteSummary, apiBaseUrl: string): string {
+  const path = toExamplePath(route.paths[0] ?? "/");
+  const parts = ["curl"];
+  if (route.authenticated) {
+    parts.push('-H "Authorization: Bearer $TOKEN"');
+  }
+  parts.push('-H "Accept: application/json"');
+  parts.push(`${apiBaseUrl}${path}`);
+  return parts.join(" ");
+}
+
+function CopyCurlButton({ command, label }: { command: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(command);
+    } catch {
+      return; // clipboard blocked (non-secure context) — nothing better to offer here
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  }
+
+  return (
+    <button
+      type="button"
+      className={`curl-btn${copied ? " curl-btn--copied" : ""}`}
+      onClick={copy}
+      title={command}
+      aria-label={copied ? "curl command copied to clipboard" : `Copy curl command for ${label}`}
+    >
+      {copied ? <CheckIcon /> : <CopyIcon />}
+      <span aria-hidden="true">{copied ? "Copied" : "curl"}</span>
+    </button>
   );
 }
 
