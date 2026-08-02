@@ -188,6 +188,7 @@ public class OpenApiConfig {
     @Bean
     OpenAPI apiDefinition(
             @Value("${spring.security.oauth2.resourceserver.jwt.issuer-uri}") String issuerUri,
+            @Value("${OPENAPI_GATEWAY_URL:http://localhost:8090}") String gatewayUrl,
             @Value("${OPENAPI_LOCAL_URL:http://localhost:8080}") String localUrl,
             @Value("${OPENAPI_STAGING_URL:https://staging-api.smsone.co.ug}") String stagingUrl,
             @Value("${OPENAPI_PROD_URL:https://api.smsone.co.ug}") String prodUrl) {
@@ -206,10 +207,14 @@ public class OpenApiConfig {
                                 authenticated caller) — and it is read from the code that enforces it, \
                                 so a group name cannot promise access the API will refuse.""")
                         .contact(new Contact().name("SMSOne").email("ayesigapo@gmail.com")))
+                // The API gateway is the default target: it fronts /api/v1/** and applies the edge
+                // (auth, quotas, tracing). Staging/Production URLs are the gateway too. The direct
+                // service port is kept for local debugging, clearly labelled as bypassing the edge.
                 .servers(List.of(
-                        new Server().url(localUrl).description("Local"),
-                        new Server().url(stagingUrl).description("Staging"),
-                        new Server().url(prodUrl).description("Production")))
+                        new Server().url(gatewayUrl).description("Local via the API gateway (recommended)"),
+                        new Server().url(localUrl).description("Local, direct to the service (bypasses the gateway)"),
+                        new Server().url(stagingUrl).description("Staging (via the gateway)"),
+                        new Server().url(prodUrl).description("Production (via the gateway)")))
                 .components(new Components()
                         .addSecuritySchemes(BEARER_SCHEME, new SecurityScheme()
                                 .type(SecurityScheme.Type.HTTP)

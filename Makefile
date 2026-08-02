@@ -27,8 +27,20 @@ RUN_ENV = set -a; . $(ENV_FILE); set +a; \
 	S3_ENDPOINT=http://localhost:$${S3_PORT:-8333} \
 	SMTP_HOST=localhost SMTP_PORT=$${SMTP_PORT:-1025}
 
+# Gateway env: the edge fronts the modulith (SERVER_PORT), validates JWTs against Keycloak's JWKS
+# (KEYCLOAK_PORT), and shares Valkey (VALKEY_PORT) for rate-limit + quota counting. Sourced from
+# docker/.env so the mapped ports match the running stack. Run `make run` first (modulith + infra),
+# then `make gateway` in a second terminal.
+GATEWAY_RUN_ENV = set -a; . $(ENV_FILE); set +a; \
+	VALKEY_HOST=localhost VALKEY_PORT=$${VALKEY_PORT:-6379} \
+	MODULITH_URI=http://localhost:$${SERVER_PORT:-8080} \
+	GATEWAY_INTROSPECTION_URI=http://localhost:$${SERVER_PORT:-8080}/internal/gateway/api-key/introspect \
+	GATEWAY_AUDIT_URI=http://localhost:$${SERVER_PORT:-8080}/internal/gateway/audit \
+	GATEWAY_QUOTA_URI=http://localhost:$${SERVER_PORT:-8080}/internal/gateway/quota \
+	KEYCLOAK_JWKS=http://localhost:$${KEYCLOAK_PORT:-8081}/realms/smsone/protocol/openid-connect/certs
+
 .DEFAULT_GOAL := help
-.PHONY: help env pull up down restart ps logs run seed token build test openapi nuke clean fresh
+.PHONY: help env pull up down restart ps logs run seed gateway gateway-build gateway-test token build test openapi nuke clean fresh
 
 help: ## List available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -61,6 +73,15 @@ run: env ## Run the app + auto-started stack (Ctrl-C stops both); seeds the plat
 
 seed: env ## Like `run`, but also seeds the demo org (acme, owner paul) at startup
 	@$(RUN_ENV) ORG_DEV_BOOTSTRAP_ENABLED=true ./gradlew bootRun
+
+gateway: env ## Run the API gateway (:8090, admin :9090) fronting the modulith — `make run` first, this in a 2nd terminal
+	@$(GATEWAY_RUN_ENV) ./gradlew :gateway:app:bootRun
+
+gateway-build: ## Compile + assemble the gateway (skips tests)
+	./gradlew :gateway:app:build -x test
+
+gateway-test: ## Run the gateway test suite (real Valkey Testcontainer)
+	./gradlew :gateway:app:test :gateway:core:test
 
 token: ## Print a dev access token for the platform admin — `make token U=<user>` for another user
 	@scripts/token.sh $(U)
