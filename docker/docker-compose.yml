@@ -91,6 +91,14 @@ services:
       - KAUI_CONFIG_DAO_USER=root
       - KAUI_CONFIG_DAO_PASSWORD=killbill
       - KAUI_KILLBILL_URL=http://killbill:8080
+      # Kaui 3.x is Rails 7 running in 'production', which aborts on boot without a secret_key_base
+      # (it signs the admin UI's session cookies). A dev default is baked in so `make run` just works;
+      # override per-machine with KAUI_SECRET_KEY_BASE in docker/.env — generate one with `openssl rand -hex 64`.
+      - SECRET_KEY_BASE=${KAUI_SECRET_KEY_BASE:-e50f45d81c557432df35f9c8f094070473dac79805ebc26729796ea3b322f6d08aeb57d3a269935e97c6e7912078c1e96902b93ac4f2f3d66437a2f11eaa52e5}
+      # Point Kaui at the same KB tenant the app bootstraps (BILLING_BOOTSTRAP), reading the very vars
+      # the app reads — so the UI opens on that tenant's accounts/invoices, not an empty login.
+      - KAUI_KILLBILL_API_KEY=${KILLBILL_API_KEY:-smsone}
+      - KAUI_KILLBILL_API_SECRET=${KILLBILL_API_SECRET:-smsone-secret}
 
   otel-lgtm:
     image: grafana/otel-lgtm:0.28.0
