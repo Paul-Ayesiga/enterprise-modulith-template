@@ -1,0 +1,32 @@
+import type { Metadata, Viewport } from "next";
+import type { ReactNode } from "react";
+import "./globals.css";
+
+export const metadata: Metadata = {
+  title: "SMSOne Gateway — Admin",
+  description: "Inspect and manage the SMSOne gateway's routes, services, and API catalog, live."
+};
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f5f7f7" },
+    { media: "(prefers-color-scheme: dark)", color: "#090c0c" }
+  ]
+};
+
+// Runs before paint so the first frame is already in the right theme (no flash).
+const themeScript = `(function(){try{var s=localStorage.getItem('theme');var d=s?s==='dark':window.matchMedia('(prefers-color-scheme:dark)').matches;document.documentElement.setAttribute('data-theme',d?'dark':'light');}catch(e){}})();`;
+
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en" suppressHydrationWarning>
+      <body>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+        <a className="skip-link" href="#main">
+          Skip to content
+        </a>
+        {children}
+      </body>
+    </html>
+  );
+}
