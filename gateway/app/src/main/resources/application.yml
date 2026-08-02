@@ -54,26 +54,131 @@ gateway:
     rate-limit:
       replenish-rate: ${GATEWAY_RATE_REPLENISH:20}    # tokens/sec
       burst-capacity: ${GATEWAY_RATE_BURST:40}
+  # Named, reusable policies attached to routes by `policy-ref` (a route's own inline auth/traffic still
+  # wins per aspect). `edge-api` is the shared API policy: a token at the edge + protect-the-backend limits.
+  policies:
+    edge-api:
+      auth:
+        # The API requires a valid token at the edge; the modulith still runs its own fine-grained checks.
+        authenticated: true
+      traffic:
+        # Fail a slow backend fast, cap the body, rate-limit per caller (the shared token bucket above).
+        response-timeout-ms: 15000
+        max-request-bytes: 10485760   # 10 MB
+        rate-limited: true
+  # API products — how the route surface is grouped for the developer portal / onboarding. A route joins
+  # a product by its `product:` label; the name/description below are what the catalog (and portal) show.
+  products:
+    identity:
+      name: Identity & Access
+      description: The current user, the permission catalog, and platform-operator administration — users, impersonation, and search.
+    organizations:
+      name: Organizations
+      description: Tenant lifecycle and org-scoped RBAC — members, roles, documents, search, audit, and webhooks under an organization.
+    configuration:
+      name: Configuration
+      description: Platform settings, feature flags, and localized translations.
+    content:
+      name: Files & Documents
+      description: Personal and organization file storage, and the document catalogs.
+    notifications:
+      name: Notifications
+      description: The current user's in-app notification feed.
+    audit:
+      name: Audit
+      description: The platform-wide audit trail.
+    operations:
+      name: Operations
+      description: Operational surface — scheduler lock observability and the analytics report catalog.
+    platform:
+      name: Platform (catch-all)
+      description: Any /api/v1 path not yet grouped into a product still routes to the backend here.
   services:
     - id: modulith
       uri: ${MODULITH_URI:http://localhost:8080}
       health-path: /actuator/health
+  # One route per API product (all fronting the modulith today; they split cleanly when it does). Each
+  # matches its product's path prefixes and shares the `edge-api` policy. A request takes the most specific
+  # route by `order`; the `platform-api` catch-all (highest order) keeps any ungrouped path working.
   routes:
-    - id: modulith-api
-      order: 0
+    - id: identity-api
+      order: 10
       service-id: modulith
+      product: identity
+      policy-ref: edge-api
+      predicates:
+        - kind: PATH
+          args:
+            - /api/v1/me
+            - /api/v1/permissions
+            - /api/v1/admin/**
+    - id: organizations-api
+      order: 20
+      service-id: modulith
+      product: organizations
+      policy-ref: edge-api
+      predicates:
+        - kind: PATH
+          args:
+            - /api/v1/orgs/**
+    - id: configuration-api
+      order: 30
+      service-id: modulith
+      product: configuration
+      policy-ref: edge-api
+      predicates:
+        - kind: PATH
+          args:
+            - /api/v1/settings/**
+            - /api/v1/feature-flags/**
+            - /api/v1/translations/**
+    - id: content-api
+      order: 40
+      service-id: modulith
+      product: content
+      policy-ref: edge-api
+      predicates:
+        - kind: PATH
+          args:
+            - /api/v1/files/**
+            - /api/v1/documents/**
+    - id: notifications-api
+      order: 50
+      service-id: modulith
+      product: notifications
+      policy-ref: edge-api
+      predicates:
+        - kind: PATH
+          args:
+            - /api/v1/notifications/**
+    - id: audit-api
+      order: 60
+      service-id: modulith
+      product: audit
+      policy-ref: edge-api
+      predicates:
+        - kind: PATH
+          args:
+            - /api/v1/audit/**
+    - id: operations-api
+      order: 70
+      service-id: modulith
+      product: operations
+      policy-ref: edge-api
+      predicates:
+        - kind: PATH
+          args:
+            - /api/v1/scheduler/**
+            - /api/v1/analytics/**
+    - id: platform-api
+      order: 100
+      service-id: modulith
+      product: platform
+      policy-ref: edge-api
       predicates:
         - kind: PATH
           args:
             - /api/v1/**
-      # The API requires a valid token at the edge; the modulith still runs its own fine-grained checks.
-      auth:
-        authenticated: true
-      # Protect the backend: fail a slow response fast, cap the body, rate-limit per caller.
-      traffic:
-        response-timeout-ms: 15000
-        max-request-bytes: 10485760   # 10 MB
-        rate-limited: true
 
 logging:
   # Separable observability streams — route each to its own appender/file in your logback config.

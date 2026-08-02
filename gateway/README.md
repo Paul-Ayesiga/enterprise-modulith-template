@@ -35,14 +35,25 @@ gateway:
     - id: modulith
       uri: http://localhost:8080
       health-path: /actuator/health
+  # Reusable policies (attach with policy-ref); products group routes for the catalog / dev portal.
+  policies:
+    edge-api: { auth: { authenticated: true }, traffic: { rate-limited: true, response-timeout-ms: 15000 } }
+  products:
+    identity: { name: Identity & Access, description: The current user, permissions, and operator admin. }
   routes:
-    - id: modulith-api
-      order: 0
+    - id: identity-api
+      order: 10
       service-id: modulith
+      product: identity        # groups this route under the 'identity' product in the catalog
+      policy-ref: edge-api     # inherit the shared policy (a route's own inline auth/traffic still wins)
       predicates:
-        - kind: PATH        # PATH | HOST | HEADER | METHOD | QUERY
-          args: [/api/v1/**]
+        - kind: PATH           # PATH | HOST | HEADER | METHOD | QUERY
+          args: [/api/v1/me, /api/v1/permissions, /api/v1/admin/**]   # multiple patterns = OR
 ```
+
+The shipped config carves `/api/v1/**` into eight products (identity, organizations, configuration,
+files & documents, notifications, audit, operations, and a `platform` catch-all) — a request takes the
+most specific route by `order`, and `/actuator/gatewaycatalog` groups them for the developer portal.
 
 ## Edge security (`gateway.security.*`, Phase 2a)
 
