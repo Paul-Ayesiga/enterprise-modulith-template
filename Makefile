@@ -25,6 +25,7 @@ RUN_ENV = set -a; . $(ENV_FILE); set +a; \
 	KEYCLOAK_ISSUER_URI=http://localhost:$${KEYCLOAK_PORT:-8081}/realms/smsone \
 	KEYCLOAK_URL=http://localhost:$${KEYCLOAK_PORT:-8081} \
 	S3_ENDPOINT=http://localhost:$${S3_PORT:-8333} \
+	KILLBILL_URL=http://localhost:$${KILLBILL_PORT:-8082} \
 	SMTP_HOST=localhost SMTP_PORT=$${SMTP_PORT:-1025}
 
 # Gateway env: the edge fronts the modulith and shares its infra. Sourced from docker/.env so the
