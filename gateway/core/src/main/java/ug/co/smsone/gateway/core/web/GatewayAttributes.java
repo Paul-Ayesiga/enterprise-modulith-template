@@ -13,6 +13,7 @@ public final class GatewayAttributes {
 
     public static final String REQUEST_ID = "gw.requestId";
     public static final String CORRELATION_ID = "gw.correlationId";
+    public static final String TRACE_ID = "gw.traceId";
     public static final String TENANT = "gw.tenant";
     public static final String PRINCIPAL = "gw.principal";
 
@@ -48,5 +49,13 @@ public final class GatewayAttributes {
 
     public static void putCorrelationId(ServerWebExchange exchange, String correlationId) {
         exchange.getAttributes().put(CORRELATION_ID, correlationId);
+    }
+
+    public static String traceId(ServerWebExchange exchange) {
+        return (String) exchange.getAttributes().get(TRACE_ID);
+    }
+
+    public static void putTraceId(ServerWebExchange exchange, String traceId) {
+        exchange.getAttributes().put(TRACE_ID, traceId);
     }
 }

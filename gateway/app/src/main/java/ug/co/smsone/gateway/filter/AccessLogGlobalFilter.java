@@ -25,17 +25,18 @@ public class AccessLogGlobalFilter implements GlobalFilter, Ordered {
         long startNanos = System.nanoTime();
         return chain.filter(exchange).doFinally(signal -> {
             long millis = (System.nanoTime() - startNanos) / 1_000_000;
-            log.info("{} {} -> {} {}ms rid={}",
+            log.info("{} {} -> {} {}ms rid={} trace={}",
                     exchange.getRequest().getMethod(),
                     exchange.getRequest().getURI().getRawPath(),
                     exchange.getResponse().getStatusCode(),
                     millis,
-                    GatewayAttributes.requestId(exchange));
+                    GatewayAttributes.requestId(exchange),
+                    GatewayAttributes.traceId(exchange));
         });
     }
 
     @Override
     public int getOrder() {
-        return Ordered.HIGHEST_PRECEDENCE + 1;
+        return Ordered.HIGHEST_PRECEDENCE + 2; // after request-id (+0) and trace-context (+1)
     }
 }
