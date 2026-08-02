@@ -5,462 +5,442 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SMSOne Platform — API Guide for Testers</title>
 <style>
-  :root { --ink:#1a2332; --mut:#5a6b85; --line:#dde4ee; --bg:#f7f9fc; --code:#0e1626; --codeink:#d8e2f3;
-          --ok:#0a7d43; --warn:#a05a00; --bad:#b3261e; --brand:#1d4ed8; }
+  :root { --ink:#14202e; --mut:#586a82; --faint:#8996a8; --line:#dbe3ee; --bg:#f6f8fc; --panel:#ffffff;
+          --code:#0d1626; --codeink:#d6e1f4; --brand:#1d4ed8; --brand-soft:#e7edfd;
+          --ok:#0a7d43; --ok-soft:#e3f4ea; --warn:#a05a00; --warn-soft:#fbefda; --bad:#b3261e; --bad-soft:#fbe7e5;
+          --plat:#6b21a8; --plat-soft:#f2e9fb; --org:#0e7490; --org-soft:#e0f2f6; --any:#475569; --any-soft:#eef1f5; }
   * { box-sizing:border-box; }
-  body { margin:0; font:15px/1.6 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); background:var(--bg); }
-  header { background:var(--code); color:#fff; padding:2.2rem 2rem 1.6rem; }
-  header h1 { margin:0 0 .3rem; font-size:1.7rem; }
-  header p { margin:0; color:#9fb2d4; max-width:64rem; }
-  nav { background:#fff; border-bottom:1px solid var(--line); padding:.7rem 2rem; position:sticky; top:0; z-index:5;
-        display:flex; flex-wrap:wrap; gap:.35rem .9rem; font-size:.86rem; }
+  body { margin:0; font:15px/1.62 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); background:var(--bg); }
+  a { color:var(--brand); }
+  header.top { background:var(--code); color:#fff; padding:2.4rem 2rem 1.8rem; }
+  header.top h1 { margin:0 0 .35rem; font-size:1.75rem; letter-spacing:-.01em; }
+  header.top p { margin:.2rem 0 0; color:#9fb2d4; max-width:66rem; }
+  header.top code { background:#1c2b41; color:#cfe0fb; }
+  nav { background:var(--panel); border-bottom:1px solid var(--line); padding:.7rem 2rem; position:sticky; top:0; z-index:5;
+        display:flex; flex-wrap:wrap; gap:.3rem 1rem; font-size:.84rem; }
+  nav strong { color:var(--faint); text-transform:uppercase; letter-spacing:.05em; font-size:.72rem; font-weight:700; align-self:center; }
   nav a { color:var(--brand); text-decoration:none; }
   nav a:hover { text-decoration:underline; }
-  main { max-width:66rem; margin:0 auto; padding:1.6rem 2rem 4rem; }
-  h2 { margin:2.6rem 0 .6rem; font-size:1.35rem; border-bottom:2px solid var(--line); padding-bottom:.35rem; }
-  h3 { margin:1.6rem 0 .4rem; font-size:1.05rem; }
+  main { max-width:70rem; margin:0 auto; padding:1.4rem 2rem 4rem; }
+  .part { margin:3rem 0 1rem; padding:.9rem 1.1rem; border-radius:10px; background:var(--brand-soft);
+          border:1px solid #cddafc; }
+  .part h2 { margin:0; font-size:1.3rem; border:0; padding:0; }
+  .part p { margin:.3rem 0 0; color:var(--mut); font-size:.92rem; }
+  h2 { margin:2.2rem 0 .5rem; font-size:1.22rem; border-bottom:2px solid var(--line); padding-bottom:.3rem; letter-spacing:-.01em; }
+  h3 { margin:1.5rem 0 .4rem; font-size:1.02rem; }
   p, li { color:var(--ink); }
   .mut { color:var(--mut); }
-  code { background:#e9eef7; padding:.1rem .35rem; border-radius:4px; font-size:.86em; }
-  pre { background:var(--code); color:var(--codeink); padding: .9rem 1.1rem; border-radius:8px;
-        overflow-x:auto; font-size:.83rem; line-height:1.5; }
+  code { background:#e9eef7; padding:.08rem .34rem; border-radius:4px; font-size:.85em; }
+  pre { background:var(--code); color:var(--codeink); padding:.85rem 1.05rem; border-radius:8px;
+        overflow-x:auto; font-size:.82rem; line-height:1.55; margin:.5rem 0 .9rem; }
   pre code { background:none; padding:0; color:inherit; }
-  table { border-collapse:collapse; width:100%; margin: .6rem 0 1rem; font-size:.88rem; background:#fff; }
-  th, td { border:1px solid var(--line); padding:.45rem .6rem; text-align:left; vertical-align:top; }
-  th { background:#eef2f9; }
-  .card { background:#fff; border:1px solid var(--line); border-radius:8px; padding:1rem 1.2rem; margin:.8rem 0; }
-  .tip { border-left:4px solid var(--ok); }
-  .warn { border-left:4px solid var(--warn); }
-  .method { display:inline-block; min-width:3.4rem; text-align:center; font-weight:700; font-size:.74rem;
-            border-radius:4px; padding:.12rem .4rem; color:#fff; margin-right:.4rem; }
-  .GET{background:#0a7d43}.POST{background:#1d4ed8}.PUT{background:#a05a00}.DELETE{background:#b3261e}.PATCH{background:#6b21a8}
-  .ep { font-family:ui-monospace,Menlo,monospace; font-size:.86rem; }
-  footer { text-align:center; color:var(--mut); font-size:.8rem; padding:2rem; }
+  table { border-collapse:collapse; width:100%; margin:.5rem 0 1rem; font-size:.87rem; background:var(--panel); }
+  th, td { border:1px solid var(--line); padding:.42rem .6rem; text-align:left; vertical-align:top; }
+  th { background:#eef2f9; font-size:.82rem; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:.85rem 1.1rem; margin:.8rem 0; }
+  .tip { border-left:4px solid var(--ok); background:linear-gradient(90deg,var(--ok-soft),var(--panel) 22%); }
+  .warn { border-left:4px solid var(--warn); background:linear-gradient(90deg,var(--warn-soft),var(--panel) 22%); }
+  /* endpoint block */
+  .ep { background:var(--panel); border:1px solid var(--line); border-radius:9px; margin:.7rem 0; overflow:hidden; }
+  .ep-head { display:flex; align-items:center; gap:.55rem; flex-wrap:wrap; padding:.6rem .85rem; background:#fbfcfe; border-bottom:1px solid var(--line); }
+  .ep-body { padding:.7rem .85rem; }
+  .ep-body > p:first-child { margin-top:0; }
+  .ep-body pre { margin-bottom:.3rem; }
+  .method { display:inline-block; min-width:3.4rem; text-align:center; font-weight:700; font-size:.72rem;
+            border-radius:5px; padding:.16rem .45rem; color:#fff; letter-spacing:.02em; }
+  .GET{background:#0a7d43}.POST{background:#1d4ed8}.PUT{background:#a05a00}.PATCH{background:#6b21a8}.DELETE{background:#b3261e}
+  .path { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.85rem; color:var(--ink); word-break:break-all; }
+  .perm { margin-left:auto; font-size:.7rem; font-weight:700; padding:.15rem .5rem; border-radius:999px; white-space:nowrap; }
+  .perm.plat { color:var(--plat); background:var(--plat-soft); }
+  .perm.org  { color:var(--org);  background:var(--org-soft); }
+  .perm.any  { color:var(--any);  background:var(--any-soft); }
+  .legend { display:flex; gap:1.2rem; flex-wrap:wrap; font-size:.85rem; }
+  .legend .perm { margin:0; }
+  .params th:first-child, .params td:first-child { font-family:ui-monospace,Menlo,monospace; white-space:nowrap; }
+  .params td:nth-child(2), .params td:nth-child(3) { white-space:nowrap; color:var(--mut); }
+  footer { text-align:center; color:var(--mut); font-size:.8rem; padding:2.2rem; border-top:1px solid var(--line); }
+  @media (max-width:640px){ main,nav,header.top{padding-left:1rem;padding-right:1rem;} .perm{margin-left:0;} }
 </style>
 </head>
 <body>
-<header>
+<header class="top">
   <h1>SMSOne Platform — API Guide for Testers</h1>
-  <p>Hands-on walkthroughs with sample data for every surface. The exhaustive reference is Swagger UI at
-     <code>http://localhost:8080/swagger-ui/index.html</code>; the machine spec (<code>/v3/api-docs</code>) imports
-     straight into Postman. All sample IDs below are illustrative.</p>
+  <p>The whole API told as a journey: what any signed-in user can do, what a <em>platform operator</em> does, and
+  what happens <em>inside an organization</em>. The exhaustive per-field reference is Swagger UI
+  (<code>/swagger-ui/index.html</code>); the machine spec (<code>/v3/api-docs</code>) imports straight into Postman.
+  Sample IDs are illustrative; <code>$BASE</code> is your API base — the gateway front door.</p>
 </header>
+
 <nav>
-  <a href="#auth">Auth</a><a href="#envelope">Envelope &amp; errors</a><a href="#pagination">Pagination</a>
-  <a href="#ratelimit">Rate limits</a><a href="#idempotency">Idempotency</a><a href="#orgs">Tenant lifecycle</a>
-  <a href="#members">Members &amp; roles</a><a href="#subscription">Plans &amp; entitlements</a><a href="#billing">Billing</a>
-  <a href="#documents">Documents</a><a href="#search">Search</a><a href="#exchange">Exchange</a>
-  <a href="#webhooks">Webhooks</a><a href="#apikeys">API keys</a><a href="#access">Devices &amp; policy</a><a href="#integrations">Integrations</a><a href="#compliance">Compliance</a><a href="#maintenance">Maintenance</a><a href="#support">Support</a><a href="#settings">Settings &amp; i18n</a><a href="#audit">Audit</a>
-  <a href="#impersonation">Impersonation</a><a href="#errors">Error codes</a><a href="#tips">Tips</a>
+  <strong>Start</strong>
+  <a href="#auth">Auth</a><a href="#envelope">Envelope</a><a href="#paging">Paging</a><a href="#limits">Limits</a><a href="#idem">Idempotency</a>
+  <strong>You</strong>
+  <a href="#me">/me</a><a href="#profile">Profile</a><a href="#privacy">Privacy</a><a href="#myfiles">Files</a>
+  <strong>Platform</strong>
+  <a href="#tenants">Tenants</a><a href="#users">Users</a><a href="#plans">Plans</a><a href="#platsupport">Support</a><a href="#platcfg">Config</a>
+  <strong>Org</strong>
+  <a href="#members">Members</a><a href="#orgkeys">API keys</a><a href="#webhooks">Webhooks</a><a href="#exchange">Exchange</a><a href="#orgbilling">Billing</a><a href="#security">Security</a><a href="#orgmisc">Docs·Support·Audit</a>
+  <strong>Ref</strong>
+  <a href="#errors">Errors</a><a href="#tips">Tips</a>
 </nav>
+
 <main>
 
-<h2 id="auth">1 · Authentication</h2>
-<p>Every call carries a Keycloak bearer token minted <em>for this API</em> (audience <code>smsone-api</code>).
-Dev shortcut: <code>make token</code> or <code>scripts/api.sh</code>. Raw flow (password grant, dev realm):</p>
-<pre><code>curl -s http://localhost:8081/realms/smsone/protocol/openid-connect/token \
-  -d grant_type=password -d client_id=smsone-web \
-  -d username=paul -d password=Paul123 | jq -r .access_token</code></pre>
-<div class="card tip"><strong>Two disjoint authority axes.</strong> Platform realm roles
-(<code>platform-support</code> → <code>platform-admin</code> → <code>platform-superadmin</code>) reach platform
-surfaces; <strong>org permissions</strong> (like <code>member:invite</code>) reach tenant surfaces. A platform role
-grants <em>zero</em> org permissions — crossing over is <a href="#impersonation">impersonation's</a> job.</div>
-<div class="card"><strong>Org-scoped tokens &amp; switching orgs.</strong> Tenant calls need the token's Keycloak
-<code>organization</code> claim to name the org in the path — a token scoped to org A gets <code>403</code> on org B
-even if the user is a member of both. A dual member "switches" by requesting a token scoped to the other org;
-the server never trusts a client-asserted active org.</div>
-<p>No-JIT: a valid JWT alone is not access — the subject also needs a provisioned <code>app_user</code> row
-(<code>403 ACCOUNT_NOT_PROVISIONED</code> otherwise). <code>GET /api/v1/me</code> is the one gate exception.</p>
+<div class="card">
+  <p style="margin:0 0 .5rem"><strong>How to read this.</strong> Every endpoint is one block: the method, the path,
+  and — on the right — <em>who can call it</em>. Access runs on <strong>two disjoint axes</strong>, so the chip tells you
+  which one and never mixes them:</p>
+  <div class="legend">
+    <span><span class="perm any">any caller</span> — any signed-in user, for their own data (the <em>Shared</em> axis)</span>
+    <span><span class="perm plat">platform-admin</span> — a Keycloak <em>realm role</em> (support → admin → superadmin)</span>
+    <span><span class="perm org">member:invite</span> — an <em>organization permission</em>, inside one tenant</span>
+  </div>
+  <p style="margin:.6rem 0 0" class="mut">A platform role grants <strong>zero</strong> org permissions and vice-versa —
+  the only sanctioned crossing is <a href="#users">impersonation</a>. Paths use <code>{orgId}</code> for the tenant id.</p>
+</div>
 
-<h2 id="envelope">2 · The envelope, request ids, localized errors</h2>
-<p>Every JSON response is one envelope: <code>data</code> XOR <code>errors</code>, always <code>meta.requestId</code>
-(also the <code>X-Request-Id</code> header — quote it in bug reports).</p>
-<pre><code>{ "data": { "id": "org.example", "type": "setting",
-            "attributes": { "key": "org.example", "value": "42" } },
-  "meta": { "requestId": "01J4X9GVJ4C1T4V0V3S8B7NQZD" } }</code></pre>
-<pre><code>{ "errors": [ { "id": "01J4X9…-1", "status": "422", "code": "VALIDATION_FAILED",
-                "title": "Validation failed", "detail": "cron must be a valid six-field Spring cron expression (e.g. '0 0 2 * * *').",
-                "source": { "pointer": "/data/attributes/cron" } } ],
+<!-- ============================ PART A ============================ -->
+<div class="part" id="start"><h2>A · Before you call anything</h2>
+  <p>The five things true of every request: how you authenticate, the shape you always get back, how lists page,
+  how you get rate-limited, and how to make writes safely retryable.</p></div>
+
+<h2 id="auth">A1 · Authentication &amp; the two axes</h2>
+<p>Every call carries a Keycloak bearer token minted <em>for this API</em> (audience <code>smsone-api</code>).
+Dev shortcut: <code>make token</code> or <code>scripts/api.sh</code> (which also encodes <code>page[...]</code> for you).</p>
+<pre><code># raw password grant (dev realm) → an access token
+curl -s $BASE/realms/smsone/protocol/openid-connect/token \
+  -d grant_type=password -d client_id=smsone-web \
+  -d username=paul -d password=Paul123 | jq -r .access_token
+
+# then send it on every call
+curl $BASE/api/v1/me -H "Authorization: Bearer $TOKEN"</code></pre>
+<div class="card tip"><strong>Machine access</strong> uses <code>X-Api-Key: &lt;prefix&gt;.&lt;secret&gt;</code> instead of a bearer
+(see <a href="#orgkeys">Org API keys</a>). <strong>Impersonation</strong> adds <code>X-Impersonate: &lt;sessionId&gt;</code> to a
+tenant call (see <a href="#users">Users &amp; impersonation</a>). Never combine axes in one credential.</div>
+<div class="card"><strong>Org-scoped tokens.</strong> Tenant calls need the token's Keycloak <code>organization</code> claim to
+name the org in the path — a token scoped to org A gets <code>403</code> on org B even if you belong to both. Switching
+orgs = requesting a new token scoped to the other; the server never trusts a client-asserted active org.</div>
+<p><strong>No-JIT:</strong> a valid JWT alone is not access — the subject also needs a provisioned <code>app_user</code>
+row, or you get <code>403 ACCOUNT_NOT_PROVISIONED</code>. <code>GET /api/v1/me</code> is the one gate exception (so you can
+see your own onboarding status).</p>
+
+<h2 id="envelope">A2 · The response envelope &amp; errors</h2>
+<p>Every JSON response is one envelope — <code>data</code> <em>xor</em> <code>errors</code>, always <code>meta.requestId</code>
+(also the <code>X-Request-Id</code> header; quote it in bug reports).</p>
+<pre><code>{ "data": { "id": "org.example", "type": "setting", "attributes": { "key":"org.example", "value":"42" } },
+  "meta": { "requestId": "01J4X9GVJ4C1T4V0V3S8B7NQZD" } }
+
+{ "errors": [ { "status":"422", "code":"VALIDATION_FAILED", "title":"Validation failed",
+                "detail":"cron must be a valid six-field Spring cron expression.",
+                "source": { "pointer":"/data/attributes/cron" } } ],
   "meta": { "requestId": "01J4X9…" } }</code></pre>
 <ul>
   <li>Prefer RFC 9457? Send <code>Accept: application/problem+json</code> — same data, standard shape.</li>
-  <li><strong>Localized details:</strong> send <code>Accept-Language: fr</code>; when the translation catalog holds
-      <code>error.&lt;code&gt;</code> (e.g. <code>error.resource_not_found</code>) the detail localizes; otherwise you get the English original.</li>
-  <li>Stack traces never reach the wire. A 500's detail is generic; the trace lives in the server log under your request id.</li>
+  <li>Localized details: send <code>Accept-Language: fr</code>; when the catalog holds <code>error.&lt;code&gt;</code> the
+      detail localizes, else you get the English original.</li>
+  <li>Stack traces never reach the wire — a 500's detail is generic; the trace lives in the server log under your request id.</li>
 </ul>
 
-<h2 id="pagination">3 · Cursor pagination</h2>
-<p>Collections page by <strong>keyset cursor</strong> — no page numbers, no totals (by design).
-Parameters are literally <code>page[size]</code> and <code>page[after]</code> (encode the brackets or use
-<code>scripts/api.sh</code>, which does).</p>
-<pre><code>GET /api/v1/orgs/6a1f…/exchange/jobs?page[size]=2
+<h2 id="paging">A3 · Cursor pagination</h2>
+<p>Collections page by <strong>keyset cursor</strong> — no page numbers, no totals (by design). Parameters are literally
+<code>page[size]</code> and <code>page[after]</code> (encode the brackets, or let <code>scripts/api.sh</code> do it).</p>
+<table class="params">
+  <tr><th>Param</th><th>In</th><th>Req</th><th>Description</th></tr>
+  <tr><td>page[size]</td><td>query</td><td>no</td><td>Rows per page (default 20). No total count is ever returned.</td></tr>
+  <tr><td>page[after]</td><td>query</td><td>no</td><td>Opaque cursor from a previous page's <code>meta.page.nextCursor</code> / <code>links.next</code>.</td></tr>
+</table>
+<pre><code>GET /api/v1/orgs/{orgId}/exchange/jobs?page[size]=2
+  "meta": { "page": { "size":2, "count":2, "hasMore":true, "nextCursor":"Y3JlYXRlZEF0P…" } },
+  "links": { "next": "…?page[size]=2&page[after]=Y3JlYXRlZEF0…" }</code></pre>
+<p class="mut">Follow <code>links.next</code> until <code>hasMore</code> is false. Cursors are opaque and collection-specific —
+replaying one against another collection is a <code>422</code>, not a 500.</p>
 
-{ "data": [ { "id": "…", "type": "exchange-job", "attributes": { … } },
-            { "id": "…", "type": "exchange-job", "attributes": { … } } ],
-  "meta": { "requestId": "…",
-            "page": { "size": 2, "count": 2, "hasMore": true,
-                      "nextCursor": "Y3JlYXRlZEF0PXQ6MjAyNi0wOC0wMVQwNzoxNTo0Mlp8aWQ9dTo…" } },
-  "links": { "next": "…?page[size]=2&page[after]=Y3JlYXRlZEF0…" } }</code></pre>
-<p>Follow <code>links.next</code> until <code>hasMore</code> is false. Cursors are opaque and collection-specific —
-replaying one against another collection is a 422, not a 500.</p>
+<h2 id="limits">A4 · Rate limits &amp; plan quotas</h2>
+<p>Two different ceilings, both answering <code>429</code> — do not confuse them:</p>
+<ul>
+  <li><strong>Rate limit</strong> — a per-caller token bucket at the edge (writes 60/min, reads 600/min by default). Bursting
+      trips it; back off. Every response carries the draft-IETF <code>RateLimit</code> headers and a denial adds <code>Retry-After</code>.</li>
+  <li><strong>Plan quota</strong> — your organization's plan ceiling (e.g. <code>api.requests.per_minute</code>). A different limit,
+      raised by upgrading the plan (see <a href="#plans">Plans</a>).</li>
+</ul>
+<pre><code>RateLimit-Policy: "read";q=600;w=60      ·      429 RATE_LIMITED  +  Retry-After: 30</code></pre>
 
-<h2 id="ratelimit">4 · Rate limits</h2>
-<p>Tenant-keyed token buckets on <code>/api/**</code> (writes 60/min, reads 600/min by default). Every response
-carries the draft-IETF headers; a denial is <code>429 RATE_LIMITED</code> with <code>Retry-After</code>:</p>
-<pre><code>RateLimit-Policy: "read";q=600;w=60
-RateLimit: "read";r=597;t=60
-X-RateLimit-Remaining: 597</code></pre>
+<h2 id="idem">A5 · Idempotency keys</h2>
+<p>Any unsafe request may carry <code>Idempotency-Key: &lt;your-uuid&gt;</code>. Same principal + same key + same body ⇒ the
+stored response replays; same key with a <em>different</em> body ⇒ <code>409</code>. Keys live 24h.</p>
 
-<h2 id="idempotency">5 · Idempotency keys</h2>
-<p>Any unsafe request may carry <code>Idempotency-Key: &lt;your-uuid&gt;</code>. Same principal + same key + same
-body ⇒ the stored response replays; same key with a <em>different</em> body ⇒ <code>409</code>. Keys live 24h.</p>
+<!-- ============================ PART B ============================ -->
+<div class="part" id="you"><h2>B · You — anything a signed-in user does for themselves</h2>
+  <p>The <strong>Shared</strong> axis: no platform role, no org permission — just <span class="perm any">any caller</span>
+  acting on their own account. This is where every tester starts.</p></div>
 
-<h2 id="orgs">6 · Tenant lifecycle (platform axis)</h2>
-<p>Full story: <code>docs/TENANT_LIFECYCLE.md</code>. The operator flow:</p>
-<pre><code># create (platform-admin) — provisions Keycloak org + first OWNER (invite email via Mailpit :8025)
-curl -X POST :8080/api/v1/orgs -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"alias":"acme","name":"Acme Ltd","ownerEmail":"owner@acme.test","ownerFirstName":"Ada","ownerLastName":"Owner"}'
-# → 201 {"data":{"id":"6a1f22b0-…","type":"organization","attributes":{"alias":"acme","status":"ACTIVE",…}}}
+<h2 id="me">B1 · Who am I</h2>
+<div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/me</span><span class="perm any">any caller</span></div>
+  <div class="ep-body"><p>Your identity, effective roles (already tier-expanded), active org, and provisioning status. The one call
+  that works while <code>INVITED</code> — so you can see your own onboarding.</p>
+  <pre><code>{ "data": { "id":"5862…", "type":"user", "attributes": {
+    "email":"you@acme.test", "roles":["platform-admin","USER","platform-support","platform-superadmin"],
+    "activeOrgId":"6a1f…", "activeOrgAlias":"acme", "provisioningStatus":"ACTIVE" } } }</code></pre>
+  <p class="mut">Four roles from two grants: <code>platform-superadmin</code> + <code>USER</code> — the hierarchy expands
+  superadmin → admin → support. It shows your <em>effective</em> tiers, not four separate grants.</p></div></div>
 
-# observe the fleet (platform-support)
-GET /api/v1/admin/orgs?status=active&amp;page[size]=20
-GET /api/v1/admin/orgs/{orgId}            # one record
-GET /api/v1/admin/orgs/{orgId}/members    # read-only roster (subjects + role codes)
+<h2 id="profile">B2 · Profile, preferences &amp; notifications</h2>
+<div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/me/profile</span><span class="perm any">any caller</span></div>
+  <div class="ep-body"><p>Read your profile; <code>PUT</code> the same path to update display name, locale, timezone, avatar reference.</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method PUT">PUT</span><span class="path">/api/v1/me/preferences</span><span class="perm any">any caller</span></div>
+  <div class="ep-body"><p>Your notification + UI preferences (e.g. which events email you). <code>GET</code> to read.</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/me/notifications</span><span class="perm any">any caller</span></div>
+  <div class="ep-body"><p>Your in-app notification feed (cursor-paginated). Mark one read with
+  <code>POST /api/v1/me/notifications/{id}/read</code>. Background events (an import finishing, a ticket reply) land here.</p></div></div>
 
-# lifecycle (platform-admin)
-POST   /api/v1/orgs/{orgId}/suspend       # reversible; every member's access dies immediately
-POST   /api/v1/orgs/{orgId}/reactivate
-DELETE /api/v1/admin/orgs/{orgId}         # ONLY from SUSPENDED (409 otherwise); soft + audited,
-                                          # fans out the org.deleted webhook</code></pre>
+<h2 id="privacy">B3 · Privacy, consents &amp; devices (GDPR, self-service)</h2>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/me/consents</span><span class="perm any">any caller</span></div>
+  <div class="ep-body"><p>Record a consent decision. <strong>Append-only</strong> — a withdrawal is a new record, never an overwrite.</p>
+  <table class="params"><tr><th>Field</th><th>Type</th><th>Req</th><th>Description</th></tr>
+    <tr><td>purpose</td><td>string</td><td>yes</td><td>What you're consenting to, e.g. <code>marketing</code> (≤60 chars).</td></tr>
+    <tr><td>granted</td><td>bool</td><td>yes</td><td><code>true</code> grants, <code>false</code> withdraws.</td></tr></table>
+  <pre><code>POST /api/v1/me/consents  {"purpose":"marketing","granted":true}
+POST /api/v1/me/consents  {"purpose":"marketing","granted":false}   # withdrawal — a new row
+GET  /api/v1/me/consents                                            # full history</code></pre></div></div>
+<div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/me/data-export</span><span class="perm any">any caller</span></div>
+  <div class="ep-body"><p>Your portable record — consents + legal-hold status.</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/me/erasure-request</span><span class="perm any">any caller</span></div>
+  <div class="ep-body"><p>GDPR art. 17. Soft-deletes your data immediately (invisible at once); hard erasure follows at the retention
+  window. <strong>Terminal — there is no un-erase.</strong> Afterwards every call answers <code>403 ACCOUNT_DISABLED</code>.</p>
+  <pre><code>POST /api/v1/me/erasure-request   → 200 {"attributes":{"status":"EXECUTED"}}
+# REFUSED if a legal hold is in force, OR if you are the platform's LAST super-admin
+#   → {"status":"REFUSED","detail":"…last platform super-admin; grant that role to another account first."}</code></pre></div></div>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/me/devices</span><span class="perm any">any caller</span></div>
+  <div class="ep-body"><p>Register a device (idempotent per <code>fingerprint</code> — the <code>X-Device-Id</code> you'll send when an org sets a
+  trusted-device policy). <code>GET</code> lists yours with last-seen; <code>DELETE …/{id}</code> revokes.</p>
+  <pre><code>POST /api/v1/me/devices  {"name":"Work laptop","kind":"BROWSER","fingerprint":"dev-abc123"}</code></pre></div></div>
 
-<h2 id="members">7 · Members, roles, permissions (tenant axis)</h2>
-<pre><code># the fixed permission vocabulary (any authenticated caller)
-GET /api/v1/permissions        # → [{"id":"member:invite","type":"permission",…}, …]
+<h2 id="myfiles">B4 · Files, documents &amp; reference data</h2>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/files</span><span class="perm any">any caller</span></div>
+  <div class="ep-body"><p>Raw object storage, namespaced to you. Multipart field <code>file</code>. <code>GET …/{key}</code> 302s to a short-lived
+  presigned URL; <code>POST /api/v1/files/presign</code> mints a presigned <code>PUT</code>/<code>GET</code> without proxying bytes.</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/documents</span><span class="perm any">any caller</span></div>
+  <div class="ep-body"><p>Your personal document catalog (support may read others', admin may delete). The org-scoped equivalent is
+  <a href="#orgmisc">under <code>/orgs/{orgId}/documents</code></a>.</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/permissions</span><span class="perm any">any caller</span></div>
+  <div class="ep-body"><p>The fixed permission vocabulary — the exact strings you name when building a role or an API key.</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/settings</span> · <span class="path">/api/v1/feature-flags</span> · <span class="path">/api/v1/translations</span><span class="perm any">any caller</span></div>
+  <div class="ep-body"><p>Platform reference data is world-readable (writing needs <a href="#platcfg">platform-admin</a>). Unknown flags read as
+  <em>OFF</em>, never an error. Translations power <code>Accept-Language</code> error details.</p></div></div>
 
-# invite (member:invite) — idempotent re-invites return the existing membership
-POST /api/v1/orgs/{orgId}/members
-{"email":"jo@acme.test","firstName":"Jo","lastName":"Kintu","roleCode":"MEMBER"}
+<!-- ============================ PART C ============================ -->
+<div class="part" id="platform"><h2>C · Operating the platform</h2>
+  <p>The <strong>Platform</strong> axis — a Keycloak realm role, hierarchical: <code>platform-support</code> (read) →
+  <code>platform-admin</code> (change) → <code>platform-superadmin</code> (escalate). These surfaces manage tenants and the
+  platform itself, never a tenant's data directly (that's <a href="#users">impersonation</a>).</p></div>
 
-# custom role (role:create) — permission NAMES come from the catalog above
-POST /api/v1/orgs/{orgId}/roles
-{"code":"AUDITOR","name":"Auditor","permissions":["org:read","audit:read"]}</code></pre>
-<h3>Groups (bundle a role onto many members)</h3>
-<pre><code># a group confers ITS role to every member, ON TOP of their own (permissions UNION)
-POST /api/v1/orgs/{orgId}/groups            {"name":"Auditors","roleCode":"AUDITOR"}   # member:role:assign
-POST /api/v1/orgs/{orgId}/groups/{id}/members   {"subject":"kc-7d2e…"}                  # must already be a member
-# worker who was MEMBER now resolves MEMBER ∪ AUDITOR — effect is immediate (permission cache cleared)
-DELETE /api/v1/orgs/{orgId}/groups/{id}/members/{subject}   # drops the conferred permissions</code></pre>
+<h2 id="tenants">C1 · Tenants — the org lifecycle</h2>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs</span><span class="perm plat">platform-admin</span></div>
+  <div class="ep-body"><p>Create a tenant + provision its Keycloak org and first <code>OWNER</code> (invite email lands in Mailpit).</p>
+  <table class="params"><tr><th>Field</th><th>Type</th><th>Req</th><th>Description</th></tr>
+    <tr><td>alias</td><td>string</td><td>yes</td><td>URL-safe short name, unique. Duplicate ⇒ <code>409</code>.</td></tr>
+    <tr><td>name</td><td>string</td><td>yes</td><td>Display name.</td></tr>
+    <tr><td>ownerEmail</td><td>string</td><td>yes</td><td>First owner — invited + emailed credentials.</td></tr>
+    <tr><td>ownerFirstName / ownerLastName</td><td>string</td><td>no</td><td>Owner's name on the invite.</td></tr></table>
+  <pre><code>curl -X POST $BASE/api/v1/orgs -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"alias":"acme","name":"Acme Ltd","ownerEmail":"owner@acme.test","ownerFirstName":"Ada"}'
+# → 201 {"data":{"id":"6a1f22b0-…","type":"organization","attributes":{"alias":"acme","status":"ACTIVE"}}}</code></pre></div></div>
+<div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/admin/orgs</span><span class="perm plat">platform-support</span></div>
+  <div class="ep-body"><p>Observe the fleet. <code>?status=active</code> filters; <code>…/{orgId}</code> reads one; <code>…/{orgId}/members</code> is the
+  read-only roster (subjects + role codes).</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/suspend</span> · <span class="path">/reactivate</span><span class="perm plat">platform-admin</span></div>
+  <div class="ep-body"><p>Reversible. Suspending kills every member's access immediately (zero permissions resolve while suspended).</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method DELETE">DELETE</span><span class="path">/api/v1/admin/orgs/{orgId}</span><span class="perm plat">platform-admin</span></div>
+  <div class="ep-body"><p>Only from <code>SUSPENDED</code> (<code>409</code> otherwise). Soft + audited; fans out the <code>org.deleted</code> webhook.</p></div></div>
 
-<div class="card warn"><strong>The escalation guard.</strong> You can only grant permissions you hold. Inviting
-someone into a role carrying <code>member:remove</code> when you lack it:
-<pre><code>403 {"errors":[{"code":"FORBIDDEN",
-  "detail":"You cannot grant permissions you do not hold: member:remove"}]}</code></pre>
-The same rule guards exchange imports — evaluated against the <em>requester</em> at processing time.</div>
+<h2 id="users">C2 · Users &amp; impersonation</h2>
+<div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/admin/users</span><span class="perm plat">platform-support</span></div>
+  <div class="ep-body"><p>Every identity across every tenant (cursor-paginated); <code>…/{subject}/profile</code> reads one. Note email is
+  <strong>not</strong> unique here — identity keys on the Keycloak <em>subject</em>, so two accounts can share an email.</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/admin/impersonations</span><span class="perm plat">platform-support</span></div>
+  <div class="ep-body"><p>The <strong>only</strong> sanctioned bridge from an operator to tenant data — and it's audited. Open a session, then
+  repeat your <em>own</em> tenant call with <code>X-Impersonate: &lt;id&gt;</code>. <code>mode:WRITE</code> needs <code>platform-admin</code>.</p>
+  <table class="params"><tr><th>Field</th><th>Type</th><th>Req</th><th>Description</th></tr>
+    <tr><td>targetSubject</td><td>string</td><td>yes</td><td>The account to wear.</td></tr>
+    <tr><td>orgId</td><td>uuid</td><td>no</td><td>Scope the session to one org.</td></tr>
+    <tr><td>reason</td><td>string</td><td>yes</td><td>≥8 chars — written to the audit trail.</td></tr>
+    <tr><td>mode</td><td>enum</td><td>no</td><td><code>READ</code> (default) or <code>WRITE</code> (needs platform-admin).</td></tr>
+    <tr><td>ttl</td><td>duration</td><td>no</td><td>e.g. <code>PT15M</code>; hard cap 30 min.</td></tr></table>
+  <pre><code>POST /api/v1/admin/impersonations {"targetSubject":"kc-7d2e…","orgId":"6a1f…","reason":"Ticket 4812 — cannot see docs"}
+GET  /api/v1/orgs/6a1f…/documents        with header  X-Impersonate: 3e7a…    # now their permissions
+DELETE /api/v1/admin/impersonations/3e7a…                                     # end early (expiry also ends it)</code></pre>
+  <p class="mut">A session carries <strong>no</strong> authority of its own — platform routes 403 while impersonating, and audit
+  rows name the <em>operator</em> as actor with <code>onBehalfOf</code> = the worn identity. Re-checked every request.</p></div></div>
 
-<h2 id="subscription">8 · Plans &amp; entitlements</h2>
-<pre><code>GET /api/v1/admin/plans                      # seeded catalog (support)
-# → FREE / PRO / ENTERPRISE; entitlements: null value = feature on, number = cap, absent = off/unlimited
+<h2 id="plans">C3 · Plans, entitlements, trials &amp; billing</h2>
+<div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/admin/plans</span><span class="perm plat">platform-support</span></div>
+  <div class="ep-body"><p>The plan catalog, rank-ordered. Entitlement encoding: <code>-1</code> = feature on, a positive number = a cap, an
+  absent key = off / unlimited.</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/admin/plans</span> · <span class="method PUT">PUT</span> <span class="path">…/{code}</span> · <span class="method DELETE">DELETE</span> <span class="path">…/{code}</span><span class="perm plat">platform-admin</span></div>
+  <div class="ep-body"><p>Full catalog CRUD. Create/update take <code>{code,name,rank,entitlements}</code>; send <code>null</code> (or <code>-1</code>) for
+  feature-on, a number for a cap, omit for off. Deleting <code>FREE</code> or an in-use plan ⇒ <code>409</code>.</p>
+  <pre><code>POST /api/v1/admin/plans {"code":"scale","name":"Scale","rank":5,"entitlements":{"exchange.enabled":null,"members.max":500}}</code></pre></div></div>
+<div class="ep"><div class="ep-head"><span class="method PUT">PUT</span><span class="path">/api/v1/admin/orgs/{orgId}/subscription</span><span class="perm plat">platform-admin</span></div>
+  <div class="ep-body"><p>Assign a tenant's plan (audited). Bites the <em>next</em> request (cache evicted) and fans out
+  <code>org.subscription_changed</code>. A trial: <code>POST …/subscription/trial {"plan":"PRO","days":14}</code>.</p>
+  <pre><code>PUT …/subscription {"plan":"PRO"}   # gate refusals are UPGRADE-shaped, before side effects:
+403 {"detail":"Your plan allows 25 for 'members.max' and that limit is reached. Upgrade the plan to add more."}</code></pre>
+  <p class="mut">Standings: <code>ACTIVE</code>/<code>TRIALING</code> = full access · <code>PAST_DUE</code> = grace (entitlements kept) ·
+  <code>PAUSED</code> = READ-ONLY (org writes answer <code>402 SUBSCRIPTION_PAUSED</code>). A lapsed trial pauses automatically.</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/admin/orgs/{orgId}/billing/…</span><span class="perm plat">platform-admin</span></div>
+  <div class="ep-body"><p>Kill Bill (billing system of record) — link an account, drive a KB subscription, read balance + methods. Entitlements
+  above stay the single authority; billing events reconcile into them. Raw card data never touches this API.</p></div></div>
 
-PUT /api/v1/admin/orgs/{orgId}/subscription  # assign (platform-admin, audited)
-{"plan":"PRO"}
+<h2 id="platsupport">C4 · Support queue, SLA, compliance &amp; retention</h2>
+<div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/admin/tickets</span><span class="perm plat">platform-support</span></div>
+  <div class="ep-body"><p>The cross-tenant support queue. Assign (<code>…/{id}/assignment</code>), reply public or <code>internal:true</code>
+  (<code>…/{id}/messages</code>), set status (<code>PUT …/{id}/status</code>). SLA breaches auto-escalate + fire
+  <code>org.ticket.escalated</code>. Per-priority SLA overrides live at <code>…/admin/orgs/{orgId}/sla/{P1..P4}</code>.</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/admin/compliance/legal-holds/subject</span><span class="perm plat">platform-admin</span></div>
+  <div class="ep-body"><p>A legal hold BLOCKS the purge and any erasure of the held subject/org until released
+  (<code>DELETE …/legal-holds/{id}</code>). <code>POST …/compliance/erasure {"subject":"…"}</code> erases on behalf of a subject —
+  <code>REFUSED</code> under a hold or for the last super-admin.</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method PUT">PUT</span><span class="path">/api/v1/admin/orgs/{orgId}/retention/{scope}</span><span class="perm plat">platform-admin</span></div>
+  <div class="ep-body"><p>Keep one org's log rows on a different schedule than the default. <code>{scope}</code> ∈
+  <code>webhook-delivery</code>, <code>exchange-job</code> (the only org-scoped logs). <code>{"days":365}</code>; <code>DELETE</code> reverts to default.</p></div></div>
 
-GET /api/v1/orgs/{orgId}/subscription        # the tenant's own view (org:read)
-# → {"attributes":{"planCode":"PRO","status":"ACTIVE",
-#     "entitlements":{"exchange.enabled":null,"members.max":250,"webhooks.max":50,"exchange.schedules.max":25}}}</code></pre>
-<p>Gates fire with <em>upgrade-shaped</em> 403s, before side effects:</p>
-<pre><code>403 {"errors":[{"code":"FORBIDDEN",
-  "detail":"Your organization's plan allows 25 for 'members.max' and that limit is reached. Upgrade the plan to add more."}]}</code></pre>
-<p>A plan change bites the <em>next</em> request (cache evicted through <code>SubscriptionChanged</code>) and fans out
-the <code>org.subscription_changed</code> webhook.</p>
-<h3>Trials &amp; pause-to-read-only</h3>
-<pre><code>POST /api/v1/admin/orgs/{orgId}/subscription/trial   # platform-admin
-{"plan":"PRO","days":14}          # → 201 status:TRIALING, trialEndsAt set; FREE → 422
+<h2 id="platcfg">C5 · Platform config — integrations, settings, maintenance, ops</h2>
+<div class="ep"><div class="ep-head"><span class="method PUT">PUT</span><span class="path">/api/v1/admin/integrations</span><span class="perm plat">platform-admin</span></div>
+  <div class="ep-body"><p>The platform-default provider for a <code>kind</code> (<code>SMS_PROVIDER</code>, <code>EMAIL_PROVIDER</code>,
+  <code>PAYMENT_GATEWAY</code>) — used by any org without its own override. Secret settings are encrypted + masked on read.</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method PUT">PUT</span><span class="path">/api/v1/settings/{key}</span> · <span class="path">/api/v1/feature-flags/{key}</span> · <span class="path">/api/v1/translations/{locale}/{key}</span><span class="perm plat">platform-admin</span></div>
+  <div class="ep-body"><p>Write platform reference data (any caller reads it — B4). Translations power <code>Accept-Language</code> error details.</p>
+  <pre><code>PUT /api/v1/settings/branding.name          {"value":"SMSOne"}
+PUT /api/v1/translations/fr/error.forbidden {"value":"Accès refusé."}</code></pre></div></div>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/admin/maintenance</span><span class="perm plat">platform-admin</span></div>
+  <div class="ep-body"><p>Schedule a window (<code>orgId:null</code> = platform-wide). In a <code>RESTRICT</code> window an org's <em>writes</em> answer
+  <code>503 Retry-After</code> (reads pass); <code>ANNOUNCE</code> is banner-only. Distinct from suspending a tenant (that's permanent).</p>
+  <pre><code>POST /api/v1/admin/maintenance {"mode":"RESTRICT","message":"DB upgrade","startsAt":"…","endsAt":"…"}</code></pre></div></div>
+<div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/admin/scheduler/locks</span> · <span class="path">/api/v1/analytics/reports</span><span class="perm plat">platform-support</span></div>
+  <div class="ep-body"><p>Ops observability — clustered-job lock rows, and the curated analytics report catalog (run one:
+  <code>…/reports/{code}</code>). Platform API keys (support-tier, read-only) live at <code>/api/v1/admin/api-keys</code>.</p></div></div>
 
-# During the trial the org has FULL access. When it lapses unpaid, the hourly job PAUSES it:
-GET /api/v1/orgs/{orgId}/subscription    # → status:"PAUSED"
+<!-- ============================ PART D ============================ -->
+<div class="part" id="org"><h2>D · Inside an organization</h2>
+  <p>The <strong>Organization</strong> axis — a permission the token carries <em>for this tenant</em> (<code>member:invite</code>,
+  <code>webhook:manage</code>, …). Every path is under <code>/api/v1/orgs/{orgId}/…</code> and needs the token scoped to that org.</p></div>
 
-# A PAUSED org is READ-ONLY — org-scoped writes are refused, reads still pass:
-POST /api/v1/orgs/{orgId}/anything       # → 402 {"errors":[{"code":"SUBSCRIPTION_PAUSED", ...}]}
-GET  /api/v1/orgs/{orgId}/anything       # → 200
+<h2 id="members">D1 · Members, roles &amp; groups</h2>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/members</span><span class="perm org">member:invite</span></div>
+  <div class="ep-body"><p>Invite someone (provisions identity + temp creds, emailed). Idempotent re-invites return the existing membership.</p>
+  <table class="params"><tr><th>Field</th><th>Type</th><th>Req</th><th>Description</th></tr>
+    <tr><td>email</td><td>string</td><td>yes</td><td>Invitee. Reused if a Keycloak account already has it.</td></tr>
+    <tr><td>firstName / lastName</td><td>string</td><td>no</td><td>On the invite.</td></tr>
+    <tr><td>roleCode</td><td>string</td><td>yes</td><td>A role that exists in this org (mint it first — unknown ⇒ <code>404</code>).</td></tr></table>
+  <pre><code>POST /api/v1/orgs/{orgId}/members {"email":"jo@acme.test","firstName":"Jo","roleCode":"MEMBER"}</code></pre></div></div>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/roles</span><span class="perm org">role:create</span></div>
+  <div class="ep-body"><p>A custom role; <code>permissions</code> are exact names from <a href="#myfiles">the catalog</a>. Reassign a member with
+  <code>PUT …/members/{subject}/role</code>; remove with <code>DELETE …/members/{subject}</code> (last-owner protected ⇒ <code>409</code>).</p>
+  <pre><code>POST /api/v1/orgs/{orgId}/roles {"code":"AUDITOR","name":"Auditor","permissions":["org:read","audit:read"]}</code></pre></div></div>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/groups</span><span class="perm org">member:role:assign</span></div>
+  <div class="ep-body"><p>A group confers ITS role to every member on top of their own (permissions UNION); add members
+  (<code>…/{id}/members {"subject":"…"}</code>), remove to drop the conferred permissions. Effect is immediate.</p></div></div>
+<div class="card warn"><strong>The escalation guard.</strong> You can only grant permissions you hold. Inviting into a role
+carrying <code>member:remove</code> when you lack it ⇒ <code>403 "You cannot grant permissions you do not hold: member:remove"</code>.
+The same rule guards exchange imports, evaluated against the <em>requester</em> at processing time.</div>
 
-# Recover: the org's own /billing surface stays open (add a payment method), or the platform
-# (re)assigns a plan — either lifts the pause and clears the trial.
-PUT /api/v1/admin/orgs/{orgId}/subscription   {"plan":"PRO"}   # → status:"ACTIVE", writes flow again</code></pre>
-<p class="mut">Only <code>PAUSED</code> is read-only. <code>TRIALING</code> and <code>ACTIVE</code> have full
-access; <code>PAST_DUE</code> (a payment slipped) keeps entitlements as a grace — it is a billing standing,
-not a lockout.</p>
+<h2 id="orgkeys">D2 · API keys (machine access)</h2>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/api-keys</span><span class="perm org">apikey:manage</span></div>
+  <div class="ep-body"><p>Mint a machine key carrying a <strong>subset</strong> of your permissions (never more). The full secret is shown
+  <strong>once</strong>. Use it as <code>X-Api-Key: &lt;prefix&gt;.&lt;secret&gt;</code> instead of a bearer. <code>DELETE …/{id}</code> revokes
+  (next call 401s); <code>POST …/{id}/rotate</code> replaces it atomically.</p>
+  <pre><code>POST /api/v1/orgs/{orgId}/api-keys {"name":"ci-bot","permissions":["org:read","member:read"]}
+# → 201 {"attributes":{"prefix":"sk_9f3c1a2b","secret":"sk_9f3c1a2b.6d4e…full…"}}   ← store it NOW
+curl $BASE/api/v1/orgs/{orgId}/members -H "X-Api-Key: sk_9f3c1a2b.6d4e…full…"</code></pre></div></div>
 
-<h2 id="billing">9 · Billing (Kill Bill)</h2>
-<p>Kill Bill (<code>:8082</code>, Kaui UI <code>:9095</code>) is the billing system of record; entitlements above stay
-the single authority — billing events reconcile into them. Set <code>BILLING_BOOTSTRAP=true</code> for the dev
-tenant + catalog.</p>
-<pre><code>POST /api/v1/admin/orgs/{orgId}/billing/account        # link (platform-admin, idempotent)
-POST /api/v1/admin/orgs/{orgId}/billing/subscription   # {"plan":"PRO"} → 202; entitlements reconcile
-GET  /api/v1/admin/orgs/{orgId}/billing                # balance + live KB subscriptions + payment methods
-GET  /api/v1/orgs/{orgId}/billing/invoices             # the tenant's invoices (org:read)
-# → [{"id":"8c0e…","type":"invoice","attributes":{"invoiceNumber":"1001","amount":49.00,
-#      "balance":0.00,"currency":"USD","invoiceDate":"2026-08-01","status":"COMMITTED"}}]
+<h2 id="webhooks">D3 · Webhooks (outbound events)</h2>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/webhooks</span><span class="perm org">webhook:manage</span></div>
+  <div class="ep-body"><p>Subscribe a URL to events (browse the vocabulary at <code>GET /api/v1/webhooks/event-types</code>). The signing
+  <code>secret</code> is shown <strong>once</strong>. Delivery is at-least-once with backoff → dead-letter after 5 tries; per-subscription
+  log at <code>…/webhooks/{id}/deliveries</code>.</p>
+  <pre><code>POST /api/v1/orgs/{orgId}/webhooks {"url":"https://hooks.acme.test/smsone","events":["org.member.added"]}
+# each delivery: header  X-Webhook-Signature: sha256=88e2c4…  — HMAC-SHA256 over the EXACT raw body with your secret
+echo -n "$RAW_BODY" | openssl dgst -sha256 -hmac "$WHSEC" -hex   # must equal the header</code></pre></div></div>
 
-# Payment methods — the tenant's own surface (also the pay-to-recover path out of a pause):
-GET    /api/v1/orgs/{orgId}/billing/payment-methods              # list (org:read)
-POST   /api/v1/orgs/{orgId}/billing/payment-methods              # add (org:update) → 201
-{"pluginName":"stripe","isDefault":true,"pluginProperties":{"token":"tok_from_hosted_page"}}
-PUT    /api/v1/orgs/{orgId}/billing/payment-methods/{id}/default # make default (org:update)
-DELETE /api/v1/orgs/{orgId}/billing/payment-methods/{id}         # remove (org:update) → 204</code></pre>
-<p class="mut">Payment failure → subscription standing flips to <code>PAST_DUE</code> (entitlements kept — a grace);
-recovery → <code>ACTIVE</code>; cancellation reconciles to FREE. Payment methods attach through a Kill Bill
-payment PLUGIN — <strong>raw card data never touches this API</strong>; <code>pluginProperties</code> carries only
-what a hosted page / plugin tokenized (the card-capture UI is the plugin's job).</p>
+<h2 id="exchange">D4 · Exchange — imports &amp; exports at scale</h2>
+<p>Import/export is <strong>jobs, never long requests</strong> (CSV/JSONL/XLSX/XML). Submitting needs the handler's own
+permission (e.g. <code>org-members</code> import needs <code>member:invite</code>).</p>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/exchange/imports?handler=&amp;format=</span><span class="perm org">handler's permission</span></div>
+  <div class="ep-body"><p>Discover handlers + template, then submit (multipart <code>file</code>) → <code>202</code> with a job id. Poll the job; a
+  crashed run <em>resumes</em> from its last committed batch (at-least-once into idempotent handlers).</p>
+  <pre><code>GET  /api/v1/exchange/handlers                                   # importPermission, header, formats
+GET  /api/v1/exchange/handlers/org-members/template?format=CSV  # ready-to-fill
+curl -X POST "$BASE/api/v1/orgs/{orgId}/exchange/imports?handler=org-members&format=CSV" -F file=@members.csv
+# → 202 job; then:
+GET  /api/v1/orgs/{orgId}/exchange/jobs/{jobId}          # {"status":"COMPLETED_WITH_ERRORS","processed":2,"failed":1}
+GET  /api/v1/orgs/{orgId}/exchange/jobs/{jobId}/report   # 302 → row-addressed CSV: row_number,error
+GET  /api/v1/orgs/{orgId}/exchange/jobs/{jobId}/result   # 302 → the output file (exports)</code></pre></div></div>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/exchange/schedules</span><span class="perm org">handler's permission</span></div>
+  <div class="ep-body"><p>A recurring export (six-field Spring cron, UTC) — fires AS you; revoking your permission disables it.</p>
+  <pre><code>POST …/exchange/schedules {"handler":"org-members","format":"CSV","cron":"0 0 2 * * *"}</code></pre></div></div>
 
-<h2 id="documents">10 · Documents &amp; files</h2>
-<pre><code># upload into the org (document:manage; multipart field "file")
-curl -X POST :8080/api/v1/orgs/{orgId}/documents -H "Authorization: Bearer $TOKEN" -F file=@board-report.pdf
-# → 201 {"attributes":{"name":"board-report.pdf","source":"UPLOAD","sizeBytes":48211,…}}
+<h2 id="orgbilling">D5 · Org self-service billing</h2>
+<div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/orgs/{orgId}/billing/invoices</span> · <span class="path">/payment-methods</span><span class="perm org">org:read</span></div>
+  <div class="ep-body"><p>The tenant's own invoices + subscription view. Add a payment method (<code>POST …/payment-methods</code>,
+  <code>org:update</code>) — also the pay-to-recover path out of a <code>PAUSED</code> standing. Raw card data never touches this
+  API; <code>pluginProperties</code> carries only what a hosted page tokenized.</p></div></div>
 
-GET    /api/v1/orgs/{orgId}/documents          # paged catalog (document:read)
-GET    /api/v1/orgs/{orgId}/documents/{id}     # 302 → short-lived presigned URL; follow it for bytes
-DELETE /api/v1/orgs/{orgId}/documents/{id}     # bytes now, metadata row soft-remains (the trail)</code></pre>
-<p class="mut">Personal equivalents under <code>/api/v1/documents</code> (owner-scoped; support may read, admin may
-delete). Raw object storage lives under <code>/api/v1/files</code>. Exchange artifacts appear in this catalog with
-<code>source: "EXCHANGE"</code>.</p>
+<h2 id="security">D6 · Security policy &amp; integrations</h2>
+<div class="ep"><div class="ep-head"><span class="method PUT">PUT</span><span class="path">/api/v1/orgs/{orgId}/security-policy</span><span class="perm org">org:update</span></div>
+  <div class="ep-body"><p>Tighten how the org is reached — each field optional, each <em>tightens</em>. A block is a <code>403</code> that <em>names the
+  rule</em> ("Blocked by your organization's security policy (trusted-device)."), never confusable with RBAC. You can never
+  lock yourself out of <code>/security-policy</code> itself.</p>
+  <pre><code>PUT …/security-policy {"ipAllowlist":"203.0.113.0/24","requireTrustedDevice":true,"sessionMaxAgeSeconds":3600}
+POST …/security-policy/trusted-devices {"subject":"kc-7d2e…","deviceId":"…","trusted":true}   # trust is the org's grant</code></pre></div></div>
+<div class="ep"><div class="ep-head"><span class="method PUT">PUT</span><span class="path">/api/v1/orgs/{orgId}/integrations</span><span class="perm org">org:update</span></div>
+  <div class="ep-body"><p>An org override for a provider <code>kind</code> — wins over the platform default (C5). Secrets encrypted + masked;
+  <code>POST …/integrations/{id}/test</code> probes it.</p></div></div>
 
-<h2 id="search">11 · Search</h2>
-<pre><code>GET /api/v1/orgs/{orgId}/search?q=board+report&amp;page[size]=10       # org:read; tenant cut inside the SQL
-GET /api/v1/admin/search?q=ada&amp;org={orgId}                          # platform-support; org filter optional
-# hit → {"id":"…","type":"search-hit","attributes":{"entityType":"document","title":"board-report.pdf","rank":0.60}}</code></pre>
-<p class="mut">Full-text first (<code>websearch_to_tsquery</code>), trigram fallback for prefixes/typos — so
-<code>q=repor</code> still finds the report. Measured gate: p50 ~20ms / p95 ~35ms over 100k documents.</p>
+<h2 id="orgmisc">D7 · Documents, search, support, audit &amp; maintenance</h2>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/documents</span><span class="perm org">document:manage</span></div>
+  <div class="ep-body"><p>Org document catalog (multipart <code>file</code>). <code>GET …/{id}</code> 302s to a presigned URL; <code>DELETE</code> drops the bytes
+  but the metadata row soft-remains (the trail). Exchange artifacts appear here with <code>source:"EXCHANGE"</code>.</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/orgs/{orgId}/search?q=</span><span class="perm org">org:read</span></div>
+  <div class="ep-body"><p>Ranked full-text (with trigram fallback for typos), tenant cut inside the SQL. Platform-wide search is
+  <code>/api/v1/admin/search</code> (<code>platform-support</code>).</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/tickets</span><span class="perm org">org:read</span></div>
+  <div class="ep-body"><p>Open + converse on your support tickets (<code>…/{id}/messages</code> — public messages only; internal notes hidden).
+  The platform side is C4.</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/orgs/{orgId}/audit</span><span class="perm org">audit:read</span></div>
+  <div class="ep-body"><p>Your tenant's own trail; filter <code>action</code>/<code>from</code>/<code>to</code>. Rows written during an impersonation name the
+  <em>operator</em> as actor with <code>onBehalfOf</code>. Read the maintenance banner at <code>GET …/maintenance?active=true</code>.</p></div></div>
 
-<h2 id="exchange">12 · Exchange — imports &amp; exports at scale</h2>
-<p>Import/export is <strong>jobs, never long requests</strong>. Formats: CSV, JSONL, XLSX, XML (+ zipped sources).
-Submitting needs the handler's own permission (e.g. <code>org-members</code> imports need <code>member:invite</code>).</p>
-<h3>Walkthrough: bulk member import</h3>
-<pre><code># 1 — discover handlers &amp; download the template
-GET /api/v1/exchange/handlers
-# → {"id":"org-members","attributes":{"importPermission":"member:invite","exportPermission":"member:read",
-#     "header":["email","firstName","lastName","roleCode"],"templateVersion":1,"formats":["CSV","JSONL","XLSX","XML"]}}
-GET /api/v1/exchange/handlers/org-members/template?format=CSV   # ready-to-fill file
+<!-- ============================ PART E ============================ -->
+<div class="part" id="ref"><h2>E · Reference</h2></div>
 
-# 2 — fill it
-cat members.csv
-email,firstName,lastName,roleCode
-jo@acme.test,Jo,Kintu,MEMBER
-bad-address,Bad,Row,MEMBER
-amina@acme.test,Amina,Okello,ADMIN
-
-# 3 — submit (202: it's a background job)
-curl -X POST ":8080/api/v1/orgs/{orgId}/exchange/imports?handler=org-members&amp;format=CSV" \
-  -H "Authorization: Bearer $TOKEN" -F file=@members.csv
-# → 202 {"data":{"id":"9f6c818b-…","type":"exchange-job","attributes":{"status":"PENDING",…}}}
-
-# 4 — poll
-GET /api/v1/orgs/{orgId}/exchange/jobs/{jobId}
-# → {"attributes":{"status":"COMPLETED_WITH_ERRORS","processed":2,"failed":1,
-#     "handler":"org-members","handlerVersion":1,…}}
-
-# 5 — the row-addressed error report (302 → CSV)
-GET /api/v1/orgs/{orgId}/exchange/jobs/{jobId}/report
-row_number,error
-2,email is not a valid address: bad-address</code></pre>
-<p><code>row_number</code> counts data records from 1 (header excluded). The requester also gets an in-app
-"your import finished" notification, and subscribed webhooks receive <code>org.exchange.job_completed</code>.</p>
-<h3>Exports &amp; schedules</h3>
-<pre><code>POST /api/v1/orgs/{orgId}/exchange/exports   {"handler":"org-members","format":"XLSX"}   # → 202
-GET  /api/v1/orgs/{orgId}/exchange/jobs/{id}/result                                      # 302 → the file
-
-# recurring export (cron is six-field Spring cron, UTC); fires AS you — revoking your permission disables it
-POST /api/v1/orgs/{orgId}/exchange/schedules {"handler":"org-members","format":"CSV","cron":"0 0 2 * * *"}
-POST /api/v1/orgs/{orgId}/exchange/jobs/{id}/cancel     # best-effort, batch-boundary</code></pre>
-<div class="card tip"><strong>Scale semantics worth testing:</strong> a crashed/reclaimed import <em>resumes</em>
-from its last committed batch (at-least-once delivery into idempotent handlers — the suite proves 100k rows
-with a mid-run kill produce exactly 100k effects); data errors never burn retries; infra errors retry with
-backoff then FAIL with a curated message.</div>
-
-<h2 id="webhooks">13 · Webhooks (outbound)</h2>
-<pre><code>GET /api/v1/webhooks/event-types      # the subscribable vocabulary, with descriptions
-
-POST /api/v1/orgs/{orgId}/webhooks    # webhook:manage
-{"url":"https://hooks.acme.test/smsone","events":["org.member.added","org.exchange.job_completed"]}
-# → 201 {"attributes":{"secret":"whsec_9f3c1a…full-secret-shown-ONCE…",…}}   ← store it now; reads mask it</code></pre>
-<h3>Verifying a delivery</h3>
-<pre><code>POST https://hooks.acme.test/smsone
-X-Webhook-Event: org.member.added
-X-Webhook-Signature: sha256=88e2c4…
-
-{"event":"org.member.added","orgId":"6a1f…","occurredAt":"2026-08-01T07:15:42Z",
- "subject":"kc-7d2e…","role":"MEMBER"}
-
-# verify: HMAC-SHA256 over the EXACT raw body with your secret
-echo -n "$RAW_BODY" | openssl dgst -sha256 -hmac "$WHSEC" -hex   # must equal the header after "sha256="</code></pre>
-<p class="mut">Delivery is at-least-once with backoff → dead-letter after 5 attempts; secrets are AES-GCM
-encrypted at rest; per-subscription delivery log at <code>…/webhooks/{id}/deliveries</code>.</p>
-
-<h2 id="apikeys">13b · API keys (machine access)</h2>
-<p>Call the API without a human token. An org key carries a <strong>subset</strong> of your permissions
-(never more); a platform key is support-tier and read-only.</p>
-<pre><code># mint (apikey:manage) — secret shown ONCE
-POST /api/v1/orgs/{orgId}/api-keys   {"name":"ci-bot","permissions":["org:read","member:read"]}
-# → 201 {"attributes":{"prefix":"sk_9f3c1a2b","secret":"sk_9f3c1a2b.6d4e…full…","permissions":["org:read","member:read"]}}
-
-# use it — instead of the bearer token
-curl :8080/api/v1/orgs/{orgId}/members -H "X-Api-Key: sk_9f3c1a2b.6d4e…full…"
-
-DELETE /api/v1/orgs/{orgId}/api-keys/{id}     # revoke — the next call 401s immediately</code></pre>
-<p class="mut">A bad key authenticates nothing (you get a plain 401, never confirmation that a prefix exists).
-Secrets are stored SHA-256-hashed. Platform keys live under <code>/api/v1/admin/api-keys</code>.</p>
-
-<h2 id="access">13c · Devices &amp; security policies</h2>
-<pre><code># register your device (idempotent per fingerprint = the X-Device-Id you'll send on calls)
-POST /api/v1/me/devices   {"name":"Work laptop","kind":"BROWSER","fingerprint":"dev-abc123"}
-GET  /api/v1/me/devices                      # your devices, with last-seen
-DELETE /api/v1/me/devices/{id}               # revoke
-
-# an org tightens how it's reached (org:update). Each field is optional; each TIGHTENS.
-PUT /api/v1/orgs/{orgId}/security-policy
-{"ipAllowlist":"203.0.113.0/24,198.51.100.5/32","requireTrustedDevice":true,"sessionMaxAgeSeconds":3600}
-# bless a member's device (trust is the org's grant, not a self-claim)
-POST /api/v1/orgs/{orgId}/security-policy/trusted-devices   {"subject":"kc-7d2e…","deviceId":"…","trusted":true}</code></pre>
-<p>A blocked request is a <strong>403 that names the rule</strong> — never confusable with RBAC:</p>
-<pre><code>403 {"errors":[{"code":"FORBIDDEN",
-  "detail":"Blocked by your organization's security policy (trusted-device)."}]}</code></pre>
-<p class="mut">Send <code>X-Device-Id: dev-abc123</code> on org calls when a trusted-device policy is set. You can
-never lock yourself out of the policy itself — the <code>/security-policy</code> endpoints are always reachable.</p>
-
-<h2 id="integrations">13d · Integration hub (providers)</h2>
-<p>Configure which external provider serves you for SMS, email, or payments. An org override wins over
-the platform default. Secret values (<code>apiKey</code>, <code>authToken</code>, …) are encrypted at rest
-and masked on read.</p>
-<pre><code># platform default (platform-admin) — used by any org without an override
-PUT /api/v1/admin/integrations
-{"kind":"SMS_PROVIDER","provider":"platform-sms","settings":{"apiKey":"…","sender":"SMSOne"}}
-
-# org override (org:update)
-PUT /api/v1/orgs/{orgId}/integrations
-{"kind":"SMS_PROVIDER","provider":"twilio","settings":{"apiKey":"…","authToken":"…"}}
-# → 200, and every read masks secrets:  "settings":{"apiKey":"••••••","authToken":"••••••"}
-
-GET  /api/v1/orgs/{orgId}/integrations          # your configs (secrets masked)
-POST /api/v1/orgs/{orgId}/integrations/{id}/test   # → {"result":"ok"} | "no settings configured" | "disabled"</code></pre>
-<p class="mut">Kinds: <code>SMS_PROVIDER</code>, <code>EMAIL_PROVIDER</code>, <code>PAYMENT_GATEWAY</code>.
-Consumers (the notification senders, billing gateway selection) resolve the effective config at use time.</p>
-
-<h2 id="compliance">13e · Compliance (GDPR)</h2>
-<pre><code># consent is append-only — a withdrawal is a new record, not an overwrite
-GET  /api/v1/me/consents
-POST /api/v1/me/consents   {"purpose":"marketing","granted":true}
-POST /api/v1/me/consents   {"purpose":"marketing","granted":false}   # withdrawal
-
-GET  /api/v1/me/data-export        # your record (consents, hold status) — portability
-POST /api/v1/me/erasure-request    # GDPR art. 17 → {"status":"EXECUTED"} (or REFUSED under a hold)
-
-# platform: legal holds BLOCK the purge and any erasure of the held subject/org until released
-POST   /api/v1/admin/compliance/legal-holds/subject   {"subject":"kc-7d2e…","reason":"litigation #99"}
-GET    /api/v1/admin/compliance/legal-holds
-DELETE /api/v1/admin/compliance/legal-holds/{id}      # release
-POST   /api/v1/admin/compliance/erasure   {"subject":"kc-7d2e…"}   # REFUSED while held</code></pre>
-<p class="mut">Erasure soft-deletes immediately (invisible at once); hard erasure follows at the retention
-window, which itself skips anything under a legal hold.</p>
-<h3>Per-org retention overrides</h3>
-<pre><code># platform keeps (or drops) ONE org's log rows on a different schedule than the platform default
-PUT    /api/v1/admin/orgs/{orgId}/retention/webhook-delivery   {"days":365}   # platform-admin
-PUT    /api/v1/admin/orgs/{orgId}/retention/exchange-job       {"days":30}
-GET    /api/v1/admin/orgs/{orgId}/retention                    # the org's overrides (platform-support)
-DELETE /api/v1/admin/orgs/{orgId}/retention/exchange-job       # clear → back to the platform default</code></pre>
-<p class="mut">Scopes are the ORG-scoped logs only — <code>webhook-delivery</code> and <code>exchange-job</code>.
-Notification deliveries are keyed by recipient (email / phone / user), not by org, so a per-org retention
-has no meaning there. The nightly retention jobs purge non-overridden orgs at the default, then each
-overridden org at its own cutoff.</p>
-
-<h2 id="maintenance">13f · Maintenance windows</h2>
-<pre><code># platform schedules a window (platform-admin). orgId null = platform-wide.
-POST /api/v1/admin/maintenance
-{"mode":"RESTRICT","message":"Database upgrade","startsAt":"2026-08-02T02:00:00Z","endsAt":"2026-08-02T03:00:00Z"}
-
-# a tenant reads what's in effect, for a banner
-GET /api/v1/orgs/{orgId}/maintenance?active=true</code></pre>
-<p>During a <code>RESTRICT</code> window, this org's <strong>writes</strong> answer 503 (reads pass):</p>
-<pre><code>503 Retry-After: 1800
-{"errors":[{"code":"SERVICE_UNAVAILABLE","detail":"Undergoing maintenance until 2026-08-02T03:00:00Z: Database upgrade."}]}</code></pre>
-<p class="mut"><code>ANNOUNCE</code> windows are banner-only — they never block. This is distinct from suspending a
-tenant (that's the permanent lifecycle; §6).</p>
-
-<h2 id="support">13g · Customer support</h2>
-<pre><code># a tenant opens and converses on its tickets (org:read)
-POST /api/v1/orgs/{orgId}/tickets        {"subject":"Cannot see documents","priority":"P2"}
-GET  /api/v1/orgs/{orgId}/tickets/{id}/messages    # public messages only — internal notes hidden
-POST /api/v1/orgs/{orgId}/tickets/{id}/messages    {"body":"still not working"}
-
-# platform support works the cross-tenant queue (platform-support)
-GET  /api/v1/admin/tickets?status=OPEN
-POST /api/v1/admin/tickets/{id}/assignment   {"assignee":"support-1"}
-POST /api/v1/admin/tickets/{id}/messages     {"body":"Fixed — try now","internal":false}   # public reply → opener notified
-POST /api/v1/admin/tickets/{id}/messages     {"body":"checked their perms","internal":true} # internal note (tenant never sees)
-PUT  /api/v1/admin/tickets/{id}/status       {"status":"RESOLVED"}
-
-# per-org SLA overrides — tighter/looser targets than the seeded default (platform-admin writes)
-GET    /api/v1/admin/orgs/{orgId}/sla                 # the org's overrides (platform-support)
-PUT    /api/v1/admin/orgs/{orgId}/sla/P1              {"firstResponseMinutes":15,"resolutionMinutes":120}
-DELETE /api/v1/admin/orgs/{orgId}/sla/P1              # clear → falls back to the seeded P1 default</code></pre>
-<p class="mut">SLAs are per-priority (P1 tightest); an org can carry its own override, consulted at open. A breach
-escalates automatically — a minute job bumps the priority, notifies support, and fires the
-<code>org.ticket.escalated</code> webhook. A public reply pings the opener in-app.</p>
-
-<h2 id="settings">14 · Settings, flags, translations</h2>
-<pre><code>GET /api/v1/settings?page[size]=20            # any authenticated caller reads
-PUT /api/v1/settings/branding.name            # platform-admin writes
-{"value":"SMSOne"}
-GET /api/v1/feature-flags/new-dashboard       # unknown flags read as OFF, never an error
-PUT /api/v1/translations/fr/error.forbidden   # platform-admin; powers Accept-Language error details
-{"value":"Accès refusé."}</code></pre>
-
-<h2 id="audit">15 · Audit</h2>
-<pre><code>GET /api/v1/orgs/{orgId}/audit?from=2026-08-01T00:00:00Z&amp;page[size]=20    # audit:read (tenant's own trail)
-GET /api/v1/audit?org={orgId}                                              # platform-support, cross-tenant
-# row → {"attributes":{"action":"organization.member_added","actor":"kc-1f9a…","target":"kc-7d2e…",
-#         "fromState":null,"toState":"role=MEMBER","occurredAt":"2026-08-01T07:15:41Z"}}</code></pre>
-<p class="mut">Rows written during an impersonation session name the <em>operator</em> as actor and carry
-<code>onBehalfOf</code> — the one place those deliberately differ.</p>
-
-<h2 id="impersonation">16 · Impersonation (the audited bridge)</h2>
-<pre><code>POST /api/v1/admin/impersonations       # platform-support; WRITE mode needs platform-admin
-{"targetSubject":"kc-7d2e…","orgId":"6a1f…","reason":"Ticket #4812 — member cannot see documents","ttl":"PT15M"}
-# → 201 {"data":{"id":"3e7a…","type":"impersonation-session",…}}
-
-# wear it: add the header to any TENANT call (platform routes refuse it — a session carries no platform authority)
-GET /api/v1/orgs/6a1f…/documents
-X-Impersonate: 3e7a…
-
-DELETE /api/v1/admin/impersonations/3e7a…    # end early; expiry also ends it — re-checked EVERY request</code></pre>
-
-<h2 id="errors">17 · Error codes</h2>
+<h2 id="errors">E1 · Error codes</h2>
 <table>
 <tr><th>HTTP</th><th>code</th><th>When</th></tr>
-<tr><td>400</td><td><code>BAD_REQUEST</code></td><td>Malformed JSON / unreadable request</td></tr>
-<tr><td>401</td><td><code>UNAUTHORIZED</code></td><td>Missing/expired/foreign-audience token</td></tr>
-<tr><td>403</td><td><code>FORBIDDEN</code></td><td>RBAC, escalation guard, entitlement gates (upgrade-shaped detail), policy denials</td></tr>
-<tr><td>403</td><td><code>ACCOUNT_NOT_PROVISIONED</code> / <code>ACCOUNT_DISABLED</code></td><td>No-JIT gate</td></tr>
+<tr><td>400</td><td><code>BAD_REQUEST</code></td><td>Malformed / unreadable request</td></tr>
+<tr><td>401</td><td><code>UNAUTHORIZED</code></td><td>Missing / expired / foreign-audience token, or a bad API key</td></tr>
+<tr><td>402</td><td><code>SUBSCRIPTION_PAUSED</code></td><td>Org write while the plan is <code>PAUSED</code> (reads still pass)</td></tr>
+<tr><td>403</td><td><code>FORBIDDEN</code></td><td>RBAC, escalation guard, entitlement gates (upgrade-shaped), policy denials</td></tr>
+<tr><td>403</td><td><code>ACCOUNT_NOT_PROVISIONED</code> / <code>ACCOUNT_DISABLED</code></td><td>No-JIT gate / a disabled or erased account</td></tr>
 <tr><td>404</td><td><code>RESOURCE_NOT_FOUND</code></td><td>Unknown id — including another org's id (never a 403 oracle)</td></tr>
-<tr><td>409</td><td><code>CONFLICT</code></td><td>Duplicate alias, last-owner, idempotency body mismatch, delete-before-suspend, cancel-after-finish</td></tr>
-<tr><td>413/422</td><td><code>PAYLOAD_TOO_LARGE</code> / <code>VALIDATION_FAILED</code></td><td>Body cap / field problems with <code>source.pointer|parameter</code></td></tr>
-<tr><td>429</td><td><code>RATE_LIMITED</code></td><td>Bucket empty — honor <code>Retry-After</code></td></tr>
-<tr><td>503</td><td><code>SERVICE_UNAVAILABLE</code></td><td>Dependency breaker open — retry later</td></tr>
+<tr><td>409</td><td><code>CONFLICT</code></td><td>Duplicate alias, last-owner, last-super-admin, idempotency body mismatch, delete-before-suspend</td></tr>
+<tr><td>413 / 422</td><td><code>PAYLOAD_TOO_LARGE</code> / <code>VALIDATION_FAILED</code></td><td>Body cap / field problems with <code>source.pointer|parameter</code></td></tr>
+<tr><td>429</td><td><code>RATE_LIMITED</code></td><td>Bucket empty (or plan quota) — honor <code>Retry-After</code></td></tr>
+<tr><td>503</td><td><code>SERVICE_UNAVAILABLE</code></td><td>Maintenance window, or a dependency breaker open — retry later</td></tr>
 </table>
 
-<h2 id="tips">18 · Tester tips</h2>
+<h2 id="tips">E2 · Tester tips</h2>
 <ul>
-<li><code>make run</code> boots app + full stack; <code>make seed</code> adds the <code>acme</code> demo org. Mailpit
-(<code>:8025</code>) catches invite emails; Grafana (<code>:3000</code>, folder <em>SMSOne</em>) shows the platform's own
-counters — dead-letters, 429s, exchange throughput.</li>
-<li>Async assertions: submits answer <code>202</code>; poll the job resource rather than sleeping. Webhook/notification
-deliveries are background workers — the delivery log endpoints are your observability.</li>
-<li>Repro reports: include <code>meta.requestId</code>, and for exchange the job id — every server log line for the
-run carries both (plus <code>org_id</code>).</li>
-<li>The whole test suite runs on real containers (<code>./gradlew test</code>) — Postgres, Keycloak, SeaweedFS, Valkey,
-Kill Bill. No mocks of infrastructure, so what passes here behaves the same against the compose stack.</li>
+<li><code>make run</code> boots app + full stack; <code>make seed</code> adds the <code>acme</code> demo org. Mailpit (<code>:8025</code>)
+catches invite emails; Grafana (<code>:3000</code>, folder <em>SMSOne</em>) shows the platform's own counters.</li>
+<li><strong>Async:</strong> submits answer <code>202</code> — poll the job resource, don't sleep. Webhook / notification deliveries
+are background workers; the delivery-log endpoints are your observability.</li>
+<li><strong>Repro reports:</strong> always include <code>meta.requestId</code> (and, for exchange, the job id) — every server log line
+for the run carries both, plus <code>org_id</code>.</li>
+<li>The whole suite runs on real containers (<code>./gradlew test</code>) — Postgres, Keycloak, SeaweedFS, Valkey, Kill Bill.
+What passes there behaves the same against the compose stack.</li>
 </ul>
 
 </main>
-<footer>SMSOne Platform · docs/api-guide.html · generated alongside the code — when they disagree, the code and
-Swagger UI win; file it as doc drift.</footer>
+<footer>SMSOne Platform · <code>docs/api-guide.html</code> · when this and the code disagree, the code and Swagger UI win — file it as doc drift.</footer>
 </body>
 </html>
