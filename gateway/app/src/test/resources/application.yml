@@ -204,6 +204,41 @@ gateway:
       predicates:
         - kind: PATH
           args: [/disc/**]
+    - id: deprecated-route
+      order: 41
+      service-id: backend
+      predicates:
+        - kind: PATH
+          args: [/dep/**]
+      lifecycle:
+        status: deprecated
+        sunset: "Wed, 31 Dec 2025 23:59:59 GMT"
+    - id: retired-route
+      order: 42
+      service-id: backend
+      predicates:
+        - kind: PATH
+          args: [/gone/**]
+      lifecycle:
+        status: retired
+    - id: v1-route                            # versioning by header; v1 is deprecated
+      order: 43
+      service-id: backend
+      predicates:
+        - kind: PATH
+          args: [/versioned/**]
+        - kind: HEADER
+          args: [X-API-Version, v1]
+      lifecycle:
+        status: deprecated
+    - id: v2-route                            # v2 is the current version
+      order: 44
+      service-id: backend
+      predicates:
+        - kind: PATH
+          args: [/versioned/**]
+        - kind: HEADER
+          args: [X-API-Version, v2]
     - id: pa-route                            # shares the named open-headers policy
       order: 30
       service-id: backend

@@ -8,6 +8,7 @@ import org.springframework.boot.actuate.endpoint.annotation.ReadOperation;
 import org.springframework.boot.actuate.endpoint.annotation.Selector;
 import org.springframework.boot.actuate.endpoint.annotation.WriteOperation;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.gateway.core.lifecycle.LifecyclePolicy;
 import ug.co.smsone.gateway.core.route.RouteDefinition;
 import ug.co.smsone.gateway.core.route.RoutePredicate;
 import ug.co.smsone.gateway.core.route.RouteRegistrar;
@@ -57,7 +58,8 @@ public class GatewayRoutesEndpoint {
         }
         registrar.register(new RouteDefinition(id, 1000,
                 List.of(new RoutePredicate(RoutePredicate.Kind.PATH, List.of(path))),
-                serviceId, AuthPolicy.OPEN, TrafficPolicy.NONE, TransformPolicy.NONE, Map.of()));
+                serviceId, AuthPolicy.OPEN, TrafficPolicy.NONE, TransformPolicy.NONE,
+                LifecyclePolicy.PUBLISHED, Map.of()));
         return Map.of("status", "registered", "id", id);
     }
 

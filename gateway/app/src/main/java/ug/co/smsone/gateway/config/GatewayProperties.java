@@ -4,6 +4,7 @@ import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import ug.co.smsone.gateway.core.lifecycle.RouteLifecycle;
 import ug.co.smsone.gateway.core.route.RoutePredicate;
 
 /**
@@ -45,10 +46,15 @@ public record GatewayProperties(List<ServiceProps> services, List<RouteProps> ro
      * config overrides the referenced policy per aspect (route's own {@code auth} wins over the policy's).
      */
     public record RouteProps(String id, int order, String serviceId, List<PredicateProps> predicates,
-            AuthProps auth, TrafficProps traffic, TransformProps transform, String policyRef) {
+            AuthProps auth, TrafficProps traffic, TransformProps transform, String policyRef,
+            LifecycleProps lifecycle) {
         public RouteProps {
             predicates = predicates == null ? List.of() : predicates;
         }
+    }
+
+    /** A route's lifecycle: {@code status} (published/deprecated/retired) and an optional {@code sunset} date. */
+    public record LifecycleProps(RouteLifecycle status, String sunset) {
     }
 
     /** A named, reusable policy — auth/traffic/transform composed once and attached to routes by {@code policy-ref}. */

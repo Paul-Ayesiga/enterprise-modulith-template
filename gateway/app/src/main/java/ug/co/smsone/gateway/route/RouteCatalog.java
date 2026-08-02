@@ -11,6 +11,7 @@ import org.springframework.cloud.gateway.event.RefreshRoutesEvent;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import ug.co.smsone.gateway.config.GatewayProperties;
+import ug.co.smsone.gateway.core.lifecycle.LifecyclePolicy;
 import ug.co.smsone.gateway.core.route.RouteDefinition;
 import ug.co.smsone.gateway.core.route.RoutePredicate;
 import ug.co.smsone.gateway.core.route.RouteRegistrar;
@@ -100,7 +101,12 @@ class RouteCatalog implements RouteSource, ServiceRegistry, RouteRegistrar, Serv
                         .map(predicate -> new RoutePredicate(predicate.kind(), predicate.args()))
                         .toList(),
                 route.serviceId(), toAuthPolicy(auth), toTrafficPolicy(traffic),
-                toTransformPolicy(transform), Map.of());
+                toTransformPolicy(transform), toLifecyclePolicy(route.lifecycle()), Map.of());
+    }
+
+    private static LifecyclePolicy toLifecyclePolicy(GatewayProperties.LifecycleProps lifecycle) {
+        return lifecycle == null ? LifecyclePolicy.PUBLISHED
+                : new LifecyclePolicy(lifecycle.status(), lifecycle.sunset());
     }
 
     private static GatewayProperties.PolicyProps resolvePolicy(String ref,

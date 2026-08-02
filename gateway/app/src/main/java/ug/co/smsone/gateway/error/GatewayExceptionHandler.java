@@ -56,6 +56,7 @@ public class GatewayExceptionHandler implements WebExceptionHandler {
                 case 401 -> GatewayErrorCode.UNAUTHORIZED;
                 case 403 -> GatewayErrorCode.FORBIDDEN;
                 case 404 -> GatewayErrorCode.NO_ROUTE;
+                case 410 -> GatewayErrorCode.GONE;
                 case 413 -> GatewayErrorCode.PAYLOAD_TOO_LARGE;
                 case 429 -> GatewayErrorCode.RATE_LIMITED;
                 case 503 -> GatewayErrorCode.SERVICE_UNAVAILABLE;

@@ -18,6 +18,7 @@ import reactor.core.publisher.Mono;
 import reactor.netty.DisposableServer;
 import reactor.netty.http.client.HttpClient;
 import reactor.netty.http.server.HttpServer;
+import ug.co.smsone.gateway.core.lifecycle.LifecyclePolicy;
 import ug.co.smsone.gateway.core.route.RouteDefinition;
 import ug.co.smsone.gateway.core.route.RoutePredicate;
 import ug.co.smsone.gateway.core.route.RouteRegistrar;
@@ -69,7 +70,8 @@ class DynamicRouteTest {
 
         registrar.register(new RouteDefinition("dyn-route", 100,
                 List.of(new RoutePredicate(RoutePredicate.Kind.PATH, List.of("/dynamic/**"))),
-                "backend", AuthPolicy.OPEN, TrafficPolicy.NONE, TransformPolicy.NONE, Map.of()));
+                "backend", AuthPolicy.OPEN, TrafficPolicy.NONE, TransformPolicy.NONE,
+                LifecyclePolicy.PUBLISHED, Map.of()));
 
         assertThat(awaitStatus("/dynamic/x", 200)).as("the added route now routes").isTrue();
     }
@@ -78,7 +80,8 @@ class DynamicRouteTest {
     void addedAuthenticatedRouteIsEnforced() {
         registrar.register(new RouteDefinition("dynsec-route", 101,
                 List.of(new RoutePredicate(RoutePredicate.Kind.PATH, List.of("/dynsec/**"))),
-                "backend", new AuthPolicy(true, Set.of(), null), TrafficPolicy.NONE, TransformPolicy.NONE, Map.of()));
+                "backend", new AuthPolicy(true, Set.of(), null), TrafficPolicy.NONE, TransformPolicy.NONE,
+                LifecyclePolicy.PUBLISHED, Map.of()));
 
         // The route exists AND the refreshed policy enforces it: no token → 401 (not 200, not 404).
         assertThat(awaitStatus("/dynsec/x", 401)).as("the added authenticated route is enforced").isTrue();

@@ -12,6 +12,7 @@ public enum GatewayErrorCode {
     NO_ROUTE(HttpStatus.NOT_FOUND),
     UNAUTHORIZED(HttpStatus.UNAUTHORIZED),
     FORBIDDEN(HttpStatus.FORBIDDEN),
+    GONE(HttpStatus.GONE),
     PAYLOAD_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE),
     RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS),
     BAD_GATEWAY(HttpStatus.BAD_GATEWAY),
