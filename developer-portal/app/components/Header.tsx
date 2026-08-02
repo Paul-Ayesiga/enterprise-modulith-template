@@ -25,6 +25,9 @@ export function Header({ openApiUrl, routeTableUrl }: HeaderProps) {
           <Link className="site-nav__link" href="/">
             APIs
           </Link>
+          <Link className="site-nav__link" href="/reference">
+            Reference
+          </Link>
           <Link className="site-nav__link" href="/try">
             Try it
           </Link>

@@ -82,3 +82,95 @@ export async function fetchCatalog(): Promise<CatalogResult> {
 export function totalRoutes(products: Product[]): number {
   return products.reduce((n, p) => n + p.routes.length, 0);
 }
+
+// ---- OpenAPI (the modulith's full spec, for the API reference) ----
+
+export type OpenApiParam = {
+  name: string;
+  in: string;
+  required?: boolean;
+  description?: string;
+  type?: string;
+};
+export type OpenApiOperation = {
+  method: string;
+  path: string;
+  tag: string;
+  summary?: string;
+  description?: string;
+  operationId?: string;
+  deprecated: boolean;
+  parameters: OpenApiParam[];
+  requestContentTypes: string[];
+  responses: { status: string; description?: string }[];
+};
+export type OpenApiDoc = { title: string; version: string; tags: string[]; operations: OpenApiOperation[] };
+
+type RawParam = { name?: string; in?: string; required?: boolean; description?: string; schema?: { type?: string } };
+type RawOp = {
+  tags?: string[];
+  summary?: string;
+  description?: string;
+  operationId?: string;
+  deprecated?: boolean;
+  parameters?: RawParam[];
+  requestBody?: { content?: Record<string, unknown> };
+  responses?: Record<string, { description?: string }>;
+};
+type RawSpec = {
+  info?: { title?: string; version?: string };
+  paths?: Record<string, Record<string, RawOp>>;
+};
+
+const HTTP_METHODS = ["get", "post", "put", "patch", "delete", "head", "options"];
+
+/** Fetch the modulith's full OpenAPI and flatten it into a tag-grouped operation list. Never throws. */
+export async function fetchOpenApi(): Promise<{ doc: OpenApiDoc | null; error: string | null }> {
+  try {
+    const res = await fetch(`${docsBaseUrl()}/v3/api-docs`, {
+      cache: "no-store",
+      headers: { accept: "application/json" }
+    });
+    if (!res.ok) {
+      return { doc: null, error: `OpenAPI responded ${res.status} ${res.statusText}` };
+    }
+    return { doc: flatten((await res.json()) as RawSpec), error: null };
+  } catch (e) {
+    return { doc: null, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+function flatten(raw: RawSpec): OpenApiDoc {
+  const operations: OpenApiOperation[] = [];
+  for (const [path, methods] of Object.entries(raw.paths ?? {})) {
+    for (const [method, op] of Object.entries(methods)) {
+      if (!HTTP_METHODS.includes(method)) continue;
+      operations.push({
+        method: method.toUpperCase(),
+        path,
+        tag: op.tags?.[0] ?? "Other",
+        summary: op.summary,
+        description: op.description,
+        operationId: op.operationId,
+        deprecated: Boolean(op.deprecated),
+        parameters: (op.parameters ?? []).map((p) => ({
+          name: p.name ?? "",
+          in: p.in ?? "",
+          required: p.required,
+          description: p.description,
+          type: p.schema?.type
+        })),
+        requestContentTypes: op.requestBody?.content ? Object.keys(op.requestBody.content) : [],
+        responses: Object.entries(op.responses ?? {}).map(([status, r]) => ({ status, description: r?.description }))
+      });
+    }
+  }
+  operations.sort((a, b) => a.tag.localeCompare(b.tag) || a.path.localeCompare(b.path));
+  const tags = [...new Set(operations.map((o) => o.tag))].sort();
+  return {
+    title: raw.info?.title ?? "API",
+    version: raw.info?.version ?? "",
+    tags,
+    operations
+  };
+}
