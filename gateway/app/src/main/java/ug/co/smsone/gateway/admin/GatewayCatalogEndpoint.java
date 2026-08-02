@@ -1,6 +1,7 @@
 package ug.co.smsone.gateway.admin;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -13,6 +14,7 @@ import ug.co.smsone.gateway.config.GatewayProperties;
 import ug.co.smsone.gateway.core.route.RouteDefinition;
 import ug.co.smsone.gateway.core.route.RoutePredicate;
 import ug.co.smsone.gateway.core.route.RouteSource;
+import ug.co.smsone.gateway.core.traffic.TrafficPolicy;
 
 /**
  * The API-product catalog — a management {@link Endpoint} (id {@code gatewaycatalog}) on the admin port,
@@ -62,11 +64,39 @@ public class GatewayCatalogEndpoint {
     }
 
     private static List<Map<String, Object>> summaries(List<RouteDefinition> routes) {
-        return routes.stream().map(route -> Map.<String, Object>of(
-                "id", route.id(),
-                "paths", pathsOf(route),
-                "lifecycle", route.lifecycle().status().name(),
-                "authenticated", route.auth().requiresToken())).toList();
+        return routes.stream().map(route -> {
+            Map<String, Object> summary = new LinkedHashMap<>();
+            summary.put("id", route.id());
+            summary.put("paths", pathsOf(route));
+            summary.put("lifecycle", route.lifecycle().status().name());
+            if (route.lifecycle().sunset() != null) {
+                summary.put("sunset", route.lifecycle().sunset()); // HTTP-date advertised to deprecated callers
+            }
+            summary.put("authenticated", route.auth().requiresToken());
+            summary.put("scopes", List.copyOf(route.auth().requiredScopes()));
+            summary.put("traffic", trafficOf(route.traffic()));
+            return summary;
+        }).toList();
+    }
+
+    /** The route's traffic protections, so the portal can show what the edge enforces per route. */
+    private static Map<String, Object> trafficOf(TrafficPolicy traffic) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("rateLimited", traffic.rateLimited());
+        out.put("circuitBreaker", traffic.circuitBreaker());
+        if (traffic.hasTimeout()) {
+            out.put("responseTimeoutMs", traffic.responseTimeoutMs());
+        }
+        if (traffic.hasMaxRequestBytes()) {
+            out.put("maxRequestBytes", traffic.maxRequestBytes());
+        }
+        if (traffic.retries() > 0) {
+            out.put("retries", traffic.retries());
+        }
+        if (traffic.hasCache()) {
+            out.put("cacheTtlSeconds", traffic.cacheTtlSeconds());
+        }
+        return out;
     }
 
     static List<String> pathsOf(RouteDefinition route) {

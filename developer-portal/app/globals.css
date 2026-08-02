@@ -347,6 +347,53 @@ code {
 .status-pill--warn { color: var(--warn); background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 34%, transparent); }
 .status-pill--err { color: var(--danger); background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 34%, transparent); }
 
+/* ---- sections ---- */
+.section { margin-top: 30px; }
+.section__title { font-size: 1.05rem; font-weight: 650; letter-spacing: -0.01em; margin-bottom: 12px; }
+
+/* ---- product link + breadcrumb ---- */
+.product__link { color: inherit; }
+.product__link:hover { color: var(--accent); text-decoration: none; }
+.crumbs { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; color: var(--text-muted); margin-bottom: 14px; }
+.crumbs__sep { color: var(--text-faint); }
+
+/* ---- route detail (product page) ---- */
+.route-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.route-detail { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; box-shadow: var(--shadow); }
+.route-detail__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.route-detail__id { font-size: 0.98rem; font-weight: 650; font-family: var(--font-mono); }
+.route-detail__paths { margin-top: 8px; }
+
+/* ---- policy list ---- */
+.policy { margin: 14px 0 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px 20px; }
+.policy__row { display: flex; flex-direction: column; gap: 1px; border-top: 1px solid var(--border); padding-top: 8px; }
+.policy__key { font-size: 0.72rem; font-weight: 600; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.04em; }
+.policy__val { font-size: 0.86rem; color: var(--text); }
+
+/* ---- changelog ---- */
+.changelog { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 18px; }
+.changelog__item { display: grid; grid-template-columns: 120px 1fr; gap: 18px; }
+.changelog__when { color: var(--text-faint); font-size: 0.8rem; font-family: var(--font-mono); padding-top: 2px; }
+.changelog__body { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; box-shadow: var(--shadow); }
+.changelog__title { font-size: 0.98rem; font-weight: 650; }
+.changelog__points { margin: 8px 0 0; padding-left: 18px; color: var(--text-muted); font-size: 0.88rem; display: flex; flex-direction: column; gap: 5px; }
+.changelog__points code { font-family: var(--font-mono); font-size: 0.9em; background: var(--surface-2); padding: 1px 5px; border-radius: 5px; }
+
+/* ---- support resources + FAQ ---- */
+.resource-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+.resource { display: flex; flex-direction: column; gap: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow); transition: border-color 0.15s var(--ease); }
+.resource:hover { border-color: var(--border-strong); text-decoration: none; }
+.resource__label { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--accent); font-size: 0.9rem; }
+.resource__note { color: var(--text-muted); font-size: 0.82rem; }
+.faq { display: flex; flex-direction: column; gap: 8px; }
+.faq__item { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 4px 18px; box-shadow: var(--shadow); }
+.faq__q { cursor: pointer; font-weight: 600; font-size: 0.92rem; padding: 12px 0; list-style: none; }
+.faq__q::-webkit-details-marker { display: none; }
+.faq__q::before { content: "+"; display: inline-block; width: 1em; color: var(--accent); font-weight: 700; }
+.faq__item[open] .faq__q::before { content: "\2212"; }
+.faq__a { padding: 0 0 14px 1em; color: var(--text-muted); font-size: 0.88rem; }
+.faq__a code, .changelog__points code { font-family: var(--font-mono); }
+
 /* ---- responsive ---- */
 @media (max-width: 560px) {
   .main { padding-top: 28px; }
@@ -355,4 +402,5 @@ code {
   .route { flex-direction: column; align-items: flex-start; gap: 8px; }
   .route__meta { align-self: flex-start; flex-wrap: wrap; }
   .console__line { flex-direction: column; align-items: stretch; }
+  .changelog__item { grid-template-columns: 1fr; gap: 6px; }
 }

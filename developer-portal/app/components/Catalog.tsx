@@ -63,7 +63,9 @@ function ProductSection({ product, apiBaseUrl }: { product: Product; apiBaseUrl:
     <section className="product" aria-labelledby={headingId}>
       <div className="product__head">
         <h2 className="product__name" id={headingId}>
-          {product.name}
+          <Link className="product__link" href={`/products/${encodeURIComponent(product.id)}`}>
+            {product.name}
+          </Link>
         </h2>
         <span className="product__count">
           {product.routes.length} route{product.routes.length === 1 ? "" : "s"}

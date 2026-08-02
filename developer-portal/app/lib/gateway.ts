@@ -3,11 +3,24 @@
 
 export type Lifecycle = "PUBLISHED" | "DEPRECATED" | "RETIRED";
 
+/** A route's edge traffic protections. All fields optional — an older gateway may not report them. */
+export type TrafficInfo = {
+  rateLimited?: boolean;
+  circuitBreaker?: boolean;
+  responseTimeoutMs?: number;
+  maxRequestBytes?: number;
+  retries?: number;
+  cacheTtlSeconds?: number;
+};
+
 export type RouteSummary = {
   id: string;
   paths: string[];
   lifecycle: Lifecycle | string;
   authenticated: boolean;
+  scopes?: string[];
+  sunset?: string | null;
+  traffic?: TrafficInfo;
 };
 
 export type Product = {
@@ -30,6 +43,11 @@ export function adminBaseUrl(): string {
 /** The gateway's public API base URL — the front door a caller actually hits (curl examples use it). */
 export function apiBaseUrl(): string {
   return process.env.GATEWAY_API_URL ?? "http://localhost:28090";
+}
+
+/** The modulith's own base URL — where the full Swagger UI + OpenAPI + actuator health live (direct). */
+export function docsBaseUrl(): string {
+  return process.env.MODULITH_DOCS_URL ?? "http://localhost:28080";
 }
 
 export function openApiUrl(): string {
