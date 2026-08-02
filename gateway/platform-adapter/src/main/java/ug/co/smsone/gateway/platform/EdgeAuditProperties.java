@@ -8,5 +8,5 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * records denials locally.
  */
 @ConfigurationProperties("gateway.platform.audit")
-public record EdgeAuditProperties(String uri, String secret) {
+public record EdgeAuditProperties(String uri) {
 }

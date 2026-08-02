@@ -64,7 +64,7 @@ class ApiKeyAuthTest {
     static void wire(DynamicPropertyRegistry registry) {
         registry.add("backend.uri", () -> "http://localhost:" + SERVER.port());
         registry.add("gateway.platform.introspection.uri", () -> "http://localhost:" + SERVER.port() + "/introspect");
-        registry.add("gateway.platform.introspection.secret", () -> GATEWAY_SECRET);
+        registry.add("gateway.platform.secret", () -> GATEWAY_SECRET);
     }
 
     @AfterAll

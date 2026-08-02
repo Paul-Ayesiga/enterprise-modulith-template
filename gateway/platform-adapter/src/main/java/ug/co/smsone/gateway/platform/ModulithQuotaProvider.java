@@ -23,9 +23,9 @@ class ModulithQuotaProvider implements QuotaProvider {
             .maximumSize(10_000)
             .build();
 
-    ModulithQuotaProvider(EdgeQuotaProperties properties) {
-        this.webClient = WebClient.create(properties.uri());
-        this.secret = properties.secret();
+    ModulithQuotaProvider(String uri, String secret) {
+        this.webClient = WebClient.create(uri);
+        this.secret = secret;
     }
 
     @Override

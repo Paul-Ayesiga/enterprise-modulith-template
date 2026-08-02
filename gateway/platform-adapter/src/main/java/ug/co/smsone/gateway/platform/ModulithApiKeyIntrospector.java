@@ -19,9 +19,9 @@ class ModulithApiKeyIntrospector implements ApiKeyIntrospector {
     private final WebClient webClient;
     private final String secret;
 
-    ModulithApiKeyIntrospector(IntrospectionProperties properties) {
-        this.webClient = WebClient.create(properties.uri());
-        this.secret = properties.secret();
+    ModulithApiKeyIntrospector(String uri, String secret) {
+        this.webClient = WebClient.create(uri);
+        this.secret = secret;
     }
 
     @Override

@@ -1,16 +1,14 @@
 package ug.co.smsone.apikeys.internal;
 
 import io.swagger.v3.oas.annotations.Hidden;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.Set;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import ug.co.smsone.shared.error.UnauthorizedException;
 import ug.co.smsone.shared.security.ApiKeyAuthenticator;
+import ug.co.smsone.shared.security.GatewaySecretVerifier;
 
 /**
  * The API gateway's key-introspection seam — a MACHINE endpoint ({@code @Hidden}: it belongs in no
@@ -26,11 +24,11 @@ import ug.co.smsone.shared.security.ApiKeyAuthenticator;
 class GatewayIntrospectionController {
 
     private final ApiKeyAuthenticator authenticator;
-    private final GatewayIntrospectionProperties properties;
+    private final GatewaySecretVerifier secretVerifier;
 
-    GatewayIntrospectionController(ApiKeyAuthenticator authenticator, GatewayIntrospectionProperties properties) {
+    GatewayIntrospectionController(ApiKeyAuthenticator authenticator, GatewaySecretVerifier secretVerifier) {
         this.authenticator = authenticator;
-        this.properties = properties;
+        this.secretVerifier = secretVerifier;
     }
 
     record IntrospectionRequest(String apiKey) {
@@ -43,7 +41,7 @@ class GatewayIntrospectionController {
     IntrospectionResponse introspect(
             @RequestHeader(name = "X-Gateway-Secret", required = false) String presentedSecret,
             @RequestBody IntrospectionRequest request) {
-        requireGatewaySecret(presentedSecret);
+        secretVerifier.verify(presentedSecret);
         if (request.apiKey() == null || request.apiKey().isBlank()) {
             return inactive();
         }
@@ -52,15 +50,6 @@ class GatewayIntrospectionController {
                         principal.orgId() == null ? null : principal.orgId().toString(),
                         principal.permissions()))
                 .orElseGet(GatewayIntrospectionController::inactive);
-    }
-
-    private void requireGatewaySecret(String presented) {
-        String expected = properties.introspectionSecret();
-        if (expected == null || expected.isBlank() || presented == null
-                || !MessageDigest.isEqual(presented.getBytes(StandardCharsets.UTF_8),
-                        expected.getBytes(StandardCharsets.UTF_8))) {
-            throw new UnauthorizedException("Invalid gateway secret.");
-        }
     }
 
     private static IntrospectionResponse inactive() {

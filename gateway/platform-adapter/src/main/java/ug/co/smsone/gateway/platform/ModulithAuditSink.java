@@ -20,9 +20,9 @@ class ModulithAuditSink implements AuditSink {
     private final WebClient webClient;
     private final String secret;
 
-    ModulithAuditSink(EdgeAuditProperties properties) {
-        this.webClient = WebClient.create(properties.uri());
-        this.secret = properties.secret();
+    ModulithAuditSink(String uri, String secret) {
+        this.webClient = WebClient.create(uri);
+        this.secret = secret;
     }
 
     @Override

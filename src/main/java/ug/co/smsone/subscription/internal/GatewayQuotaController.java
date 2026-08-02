@@ -1,15 +1,13 @@
 package ug.co.smsone.subscription.internal;
 
 import io.swagger.v3.oas.annotations.Hidden;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.UUID;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import ug.co.smsone.shared.error.UnauthorizedException;
+import ug.co.smsone.shared.security.GatewaySecretVerifier;
 import ug.co.smsone.subscription.EntitlementKeys;
 import ug.co.smsone.subscription.Entitlements;
 
@@ -26,11 +24,11 @@ import ug.co.smsone.subscription.Entitlements;
 class GatewayQuotaController {
 
     private final Entitlements entitlements;
-    private final GatewayQuotaProperties properties;
+    private final GatewaySecretVerifier secretVerifier;
 
-    GatewayQuotaController(Entitlements entitlements, GatewayQuotaProperties properties) {
+    GatewayQuotaController(Entitlements entitlements, GatewaySecretVerifier secretVerifier) {
         this.entitlements = entitlements;
-        this.properties = properties;
+        this.secretVerifier = secretVerifier;
     }
 
     record QuotaResponse(long limit, long windowSeconds) {
@@ -39,7 +37,7 @@ class GatewayQuotaController {
     @GetMapping
     QuotaResponse quota(@RequestHeader(name = "X-Gateway-Secret", required = false) String presentedSecret,
             @RequestParam String consumer) {
-        requireGatewaySecret(presentedSecret);
+        secretVerifier.verify(presentedSecret);
         UUID orgId = parseOrg(consumer);
         Long limit = orgId == null ? null : entitlements.limitOf(orgId, EntitlementKeys.API_REQUESTS_PER_MINUTE);
         return limit == null ? new QuotaResponse(-1, 0) : new QuotaResponse(limit, 60);
@@ -56,12 +54,4 @@ class GatewayQuotaController {
         }
     }
 
-    private void requireGatewaySecret(String presented) {
-        String expected = properties.quotaSecret();
-        if (expected == null || expected.isBlank() || presented == null
-                || !MessageDigest.isEqual(presented.getBytes(StandardCharsets.UTF_8),
-                        expected.getBytes(StandardCharsets.UTF_8))) {
-            throw new UnauthorizedException("Invalid gateway secret.");
-        }
-    }
 }

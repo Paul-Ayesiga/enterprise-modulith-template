@@ -8,5 +8,5 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * API-key authentication is simply unavailable at the edge (the bearer path still works).
  */
 @ConfigurationProperties("gateway.platform.introspection")
-public record IntrospectionProperties(String uri, String secret) {
+public record IntrospectionProperties(String uri) {
 }

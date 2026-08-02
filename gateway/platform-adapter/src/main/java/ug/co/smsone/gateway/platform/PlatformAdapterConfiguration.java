@@ -15,24 +15,25 @@ import ug.co.smsone.gateway.core.security.ApiKeyIntrospector;
  * the quota provider needs {@code gateway.platform.quota.uri}.
  */
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties({IntrospectionProperties.class, EdgeAuditProperties.class, EdgeQuotaProperties.class})
+@EnableConfigurationProperties({PlatformProperties.class, IntrospectionProperties.class,
+        EdgeAuditProperties.class, EdgeQuotaProperties.class})
 class PlatformAdapterConfiguration {
 
     @Bean
     @ConditionalOnProperty("gateway.platform.introspection.uri")
-    ApiKeyIntrospector modulithApiKeyIntrospector(IntrospectionProperties properties) {
-        return new ModulithApiKeyIntrospector(properties);
+    ApiKeyIntrospector modulithApiKeyIntrospector(IntrospectionProperties properties, PlatformProperties platform) {
+        return new ModulithApiKeyIntrospector(properties.uri(), platform.secret());
     }
 
     @Bean
     @ConditionalOnProperty("gateway.platform.audit.uri")
-    AuditSink modulithAuditSink(EdgeAuditProperties properties) {
-        return new ModulithAuditSink(properties);
+    AuditSink modulithAuditSink(EdgeAuditProperties properties, PlatformProperties platform) {
+        return new ModulithAuditSink(properties.uri(), platform.secret());
     }
 
     @Bean
     @ConditionalOnProperty("gateway.platform.quota.uri")
-    QuotaProvider modulithQuotaProvider(EdgeQuotaProperties properties) {
-        return new ModulithQuotaProvider(properties);
+    QuotaProvider modulithQuotaProvider(EdgeQuotaProperties properties, PlatformProperties platform) {
+        return new ModulithQuotaProvider(properties.uri(), platform.secret());
     }
 }

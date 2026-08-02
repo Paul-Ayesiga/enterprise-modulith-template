@@ -35,19 +35,19 @@ gateway:
   # The platform seam: resolve an X-Api-Key by calling the modulith's introspection endpoint with the
   # shared secret. Unset the uri to turn API-key auth off (the bearer path still works).
   platform:
+    # One shared secret the gateway presents on every seam below — must match the modulith's
+    # app.gateway.secret. ALWAYS override in production.
+    secret: ${GATEWAY_SECRET:dev-gateway-secret}
     introspection:
       uri: ${GATEWAY_INTROSPECTION_URI:http://localhost:8080/internal/gateway/api-key/introspect}
-      secret: ${GATEWAY_INTROSPECTION_SECRET:dev-gateway-secret}
     # Publish edge audit events (access denials) to the platform. Unset the uri to turn edge auditing
     # off (denials are still recorded in the local gateway.security log).
     audit:
       uri: ${GATEWAY_AUDIT_URI:http://localhost:8080/internal/gateway/audit}
-      secret: ${GATEWAY_AUDIT_SECRET:dev-gateway-secret}
     # Enforce each consumer's plan quota, fetched from the platform's subscription entitlements. Unset
     # the uri to turn quota enforcement off.
     quota:
       uri: ${GATEWAY_QUOTA_URI:http://localhost:8080/internal/gateway/quota}
-      secret: ${GATEWAY_QUOTA_SECRET:dev-gateway-secret}
   # Traffic management: the shared token-bucket rate (per caller — principal, else tenant, else IP),
   # the default for any route with rate-limited:true.
   traffic:

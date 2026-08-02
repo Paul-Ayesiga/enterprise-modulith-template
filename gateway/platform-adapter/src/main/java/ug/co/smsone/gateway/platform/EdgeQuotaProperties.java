@@ -7,5 +7,5 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * uri} is unset the provider is not created and quotas are simply not enforced at the edge.
  */
 @ConfigurationProperties("gateway.platform.quota")
-public record EdgeQuotaProperties(String uri, String secret) {
+public record EdgeQuotaProperties(String uri) {
 }

@@ -1,8 +1,6 @@
 package ug.co.smsone.audit.internal;
 
 import io.swagger.v3.oas.annotations.Hidden;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.UUID;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -11,7 +9,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import ug.co.smsone.shared.audit.AuditLog;
-import ug.co.smsone.shared.error.UnauthorizedException;
+import ug.co.smsone.shared.security.GatewaySecretVerifier;
 
 /**
  * The API gateway's edge-audit seam — a MACHINE endpoint ({@code @Hidden}: it belongs in no tag),
@@ -27,11 +25,11 @@ import ug.co.smsone.shared.error.UnauthorizedException;
 class GatewayAuditController {
 
     private final AuditLog auditLog;
-    private final GatewayAuditProperties properties;
+    private final GatewaySecretVerifier secretVerifier;
 
-    GatewayAuditController(AuditLog auditLog, GatewayAuditProperties properties) {
+    GatewayAuditController(AuditLog auditLog, GatewaySecretVerifier secretVerifier) {
         this.auditLog = auditLog;
-        this.properties = properties;
+        this.secretVerifier = secretVerifier;
     }
 
     record EdgeAuditRequest(String action, String subject, String tenant, String method, String path,
@@ -42,7 +40,7 @@ class GatewayAuditController {
     @Transactional
     void record(@RequestHeader(name = "X-Gateway-Secret", required = false) String presentedSecret,
             @RequestBody EdgeAuditRequest request) {
-        requireGatewaySecret(presentedSecret);
+        secretVerifier.verify(presentedSecret);
         auditLog.recordExternal(
                 request.action() == null || request.action().isBlank() ? "gateway.event" : request.action(),
                 parseOrg(request.tenant()),
@@ -65,12 +63,4 @@ class GatewayAuditController {
         }
     }
 
-    private void requireGatewaySecret(String presented) {
-        String expected = properties.auditSecret();
-        if (expected == null || expected.isBlank() || presented == null
-                || !MessageDigest.isEqual(presented.getBytes(StandardCharsets.UTF_8),
-                        expected.getBytes(StandardCharsets.UTF_8))) {
-            throw new UnauthorizedException("Invalid gateway secret.");
-        }
-    }
 }
