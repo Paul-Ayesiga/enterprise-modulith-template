@@ -25,6 +25,24 @@ perf/run.sh overhead     # gateway vs direct latency
 args pass through to k6 as `--env`, e.g. `perf/run.sh baseline RATE=200 HOLD=5m`. You can also run a
 script directly: `k6 run perf/scenarios/spike.js`.
 
+## Save a run for comparison
+
+k6 prints a summary to the terminal. To keep a machine-readable copy — so you can diff a later run
+against a baseline and catch p95/p99 or error-rate regressions — set `SAVE`:
+
+```bash
+SAVE=1 perf/run.sh baseline                       # → perf/out/baseline-<timestamp>.json
+SAVE=perf/out/before.json perf/run.sh overhead    # ...or name it yourself
+```
+
+Or drive k6 directly for full control of its flags:
+
+```bash
+k6 run --summary-export perf/out/baseline.json perf/scenarios/baseline.js
+```
+
+`perf/out/` is gitignored — the scripts are committed, their results are yours.
+
 ## The rate-limit caveat
 
 The default `/api/v1/**` route is rate-limited to **20 req/s per principal** (burst 40). One k6 box is

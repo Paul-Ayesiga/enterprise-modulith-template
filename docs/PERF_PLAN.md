@@ -161,9 +161,10 @@ perf/run.sh overhead
 
 `run.sh` sources `docker/.env`, so it targets your `2xxxx` ports automatically. Trailing `KEY=VALUE`
 args pass straight through to k6, e.g. `perf/run.sh baseline RATE=200 HOLD=5m`. Save a machine-readable
-run for diffing later:
+run for diffing later with `SAVE` (or drive k6 directly):
 
 ```bash
+SAVE=1 perf/run.sh baseline                                                    # → perf/out/baseline-<timestamp>.json
 k6 run --summary-export perf/out/baseline-$(date +%F).json perf/scenarios/baseline.js
 ```
 
