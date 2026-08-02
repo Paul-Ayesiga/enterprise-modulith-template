@@ -114,8 +114,10 @@ server's view for the *why*:
   circuit-breaker state, per-route latency, JVM heap/GC.
 - **Modulith metrics** — `http://localhost:28080/actuator/prometheus`. HTTP server timings, **Hikari
   pool** (`hikaricp_connections_pending`, `_active`, `_timeout`), cache hit ratios, JVM.
-- **Grafana** — `http://localhost:23000` (anonymous admin), **SMSOne** folder. Two provisioned
-  dashboards: *deliveries & jobs* and *API & cache*. Traces/metrics/logs land via OTLP.
+- **Grafana** — `http://localhost:23000` (anonymous admin), **SMSOne** folder. Three provisioned
+  dashboards: *deliveries & jobs*, *API & cache*, and ***k6 Load*** — the last shows the load run
+  itself (latency percentiles, gateway-vs-direct overhead, status/429 split, checks, VUs), live when
+  you run with `OTEL=1` (below). Traces/metrics/logs land via OTLP.
 - **Valkey** — the rate-limit token buckets and L2 cache live here; watch it stays healthy under the flood.
 
 The signals that explain a latency knee, in order of likelihood: Hikari pending > 0 (pool starvation),
@@ -160,11 +162,12 @@ perf/run.sh overhead
 ```
 
 `run.sh` sources `docker/.env`, so it targets your `2xxxx` ports automatically. Trailing `KEY=VALUE`
-args pass straight through to k6, e.g. `perf/run.sh baseline RATE=200 HOLD=5m`. Save a machine-readable
-run for diffing later with `SAVE` (or drive k6 directly):
+args pass straight through to k6, e.g. `perf/run.sh baseline RATE=200 HOLD=5m`. `SAVE` keeps a
+machine-readable summary for diffing; `OTEL` streams live metrics to Grafana (both compose):
 
 ```bash
 SAVE=1 perf/run.sh baseline                                                    # → perf/out/baseline-<timestamp>.json
+OTEL=1 perf/run.sh baseline                                                    # → live in Grafana's "SMSOne · k6 Load"
 k6 run --summary-export perf/out/baseline-$(date +%F).json perf/scenarios/baseline.js
 ```
 

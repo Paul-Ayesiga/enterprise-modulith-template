@@ -43,6 +43,20 @@ k6 run --summary-export perf/out/baseline.json perf/scenarios/baseline.js
 
 `perf/out/` is gitignored — the scripts are committed, their results are yours.
 
+## Live in Grafana
+
+Add `OTEL=1` to stream k6's metrics to the `otel-lgtm` stack (the same one the app uses) while a
+scenario runs. The **SMSOne · k6 Load** dashboard then updates live at `http://localhost:23000`
+(folder SMSOne):
+
+```bash
+OTEL=1 perf/run.sh baseline
+```
+
+It shows latency percentiles, gateway-vs-direct overhead, the status/429 breakdown, checks, and VUs —
+filterable by scenario. Metrics travel over OTLP (gRPC `:24317`) into the `prometheus` datasource with
+a `k6_` prefix. Combine with `SAVE=1` to keep a summary file too. The stack must be up.
+
 ## The rate-limit caveat
 
 The default `/api/v1/**` route is rate-limited to **20 req/s per principal** (burst 40). One k6 box is

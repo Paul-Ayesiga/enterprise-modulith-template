@@ -1,0 +1,113 @@
+{
+  "uid": "smsone-k6",
+  "title": "SMSOne · k6 Load",
+  "tags": ["smsone", "k6", "load-test"],
+  "schemaVersion": 39,
+  "refresh": "10s",
+  "time": { "from": "now-15m", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "scenario",
+        "label": "Scenario",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(k6_http_reqs_total, scenario)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": ["All"], "value": ["$__all"] }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Request latency percentiles (1m)",
+      "description": "k6's http_req_duration over OTLP. p50/p95/p99 across all requests in the selected scenario(s) — the SLO gates live on p95/p99.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum by (le) (rate(k6_http_req_duration_milliseconds_bucket{scenario=~\"$scenario\"}[1m])))", "legendFormat": "p50" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum by (le) (rate(k6_http_req_duration_milliseconds_bucket{scenario=~\"$scenario\"}[1m])))", "legendFormat": "p95" },
+        { "refId": "C", "expr": "histogram_quantile(0.99, sum by (le) (rate(k6_http_req_duration_milliseconds_bucket{scenario=~\"$scenario\"}[1m])))", "legendFormat": "p99" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "p95 latency by route — gateway vs direct (1m)",
+      "description": "The gap between the two lines is the edge's per-request cost. Only the gateway-vs-direct and smoke scenarios tag both routes; others show one line.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.95, sum by (route, le) (rate(k6_http_req_duration_milliseconds_bucket{scenario=~\"$scenario\", route=~\"gateway|direct\"}[1m])))", "legendFormat": "{{route}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "HTTP requests by status (1m)",
+      "description": "Request rate split by response status. Under the edge-enforcement flood this is where the 429 shedding shows — and any 5xx would stand out.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "sum by (status) (rate(k6_http_reqs_total{scenario=~\"$scenario\"}[1m]))", "legendFormat": "{{status}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Failed-response ratio (1m)",
+      "description": "Fraction of requests k6 marked failed (status >= 400 by default). Note a 429 counts as failed here — the status panel to the left disambiguates shedding from real errors.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "(sum(rate(k6_http_req_failed_total{condition=\"true\", scenario=~\"$scenario\"}[1m])) or vector(0)) / sum(rate(k6_http_reqs_total{scenario=~\"$scenario\"}[1m]))", "legendFormat": "failed" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Virtual users",
+      "description": "Active VUs and the pool ceiling. For arrival-rate scenarios this shows how many VUs the target rate actually needed.",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "max(k6_vus)", "legendFormat": "active" },
+        { "refId": "B", "expr": "max(k6_vus_max)", "legendFormat": "max" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Checks — pass vs fail (1m)",
+      "description": "k6 check() outcomes. condition=true is a passing assertion; any sustained false line means responses aren't what the script expects.",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "sum by (condition) (rate(k6_checks_total{scenario=~\"$scenario\"}[1m]))", "legendFormat": "{{condition}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Data throughput (1m)",
+      "description": "Bytes received and sent by the load generator — a sanity check on payload sizes and total bandwidth.",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "rate(k6_data_received_bytes_total{scenario=~\"$scenario\"}[1m])", "legendFormat": "received" },
+        { "refId": "B", "expr": "rate(k6_data_sent_bytes_total{scenario=~\"$scenario\"}[1m])", "legendFormat": "sent" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "Bps" }, "overrides": [] }
+    }
+  ]
+}

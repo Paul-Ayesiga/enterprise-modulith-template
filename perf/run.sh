@@ -10,6 +10,7 @@
 #   perf/run.sh overhead              # gateway vs direct latency
 #   perf/run.sh baseline RATE=200 HOLD=5m   # trailing KEY=VALUE become k6 --env overrides
 #   SAVE=1 perf/run.sh baseline             # also export a summary to perf/out/ for diffing runs
+#   OTEL=1 perf/run.sh baseline             # also stream live metrics to Grafana (otel-lgtm) via OTLP
 #
 # Throughput scenarios (baseline/spike/soak) are capped by the edge's 20 req/s-per-principal limit.
 # To benchmark past it, restart the gateway with the limit raised:
@@ -49,7 +50,20 @@ if [ -n "${SAVE:-}" ]; then
   out_args+=(--summary-export "$out_file")
 fi
 
+# OTEL=1 also streams k6's metrics to the otel-lgtm stack over OTLP, so Grafana's "SMSOne · k6 Load"
+# dashboard lights up live (metrics land in the `prometheus` datasource with a k6_ prefix).
+otel_args=()
+if [ -n "${OTEL:-}" ]; then
+  export K6_OTEL_EXPORTER_PROTOCOL="${K6_OTEL_EXPORTER_PROTOCOL:-grpc}"
+  export K6_OTEL_GRPC_EXPORTER_ENDPOINT="${K6_OTEL_GRPC_EXPORTER_ENDPOINT:-localhost:${OTLP_GRPC_PORT:-24317}}"
+  export K6_OTEL_GRPC_EXPORTER_INSECURE="${K6_OTEL_GRPC_EXPORTER_INSECURE:-true}"
+  export K6_OTEL_METRIC_PREFIX="${K6_OTEL_METRIC_PREFIX:-k6_}"
+  export K6_OTEL_SERVICE_NAME="${K6_OTEL_SERVICE_NAME:-k6-$name}"
+  otel_args+=(-o opentelemetry)
+fi
+
 echo "→ k6 run ${script#"$root"/}   gateway=$GATEWAY_URL  modulith=$MODULITH_URL"
 [ -n "${SAVE:-}" ] && echo "  summary → ${out_file#"$root"/}"
+[ -n "${OTEL:-}" ] && echo "  streaming OTLP → ${K6_OTEL_GRPC_EXPORTER_ENDPOINT} (Grafana: SMSOne · k6 Load)"
 # ${arr[@]+…} guards the empty-array expansion under `set -u` on bash 3.2 (macOS default).
-exec k6 run ${env_args[@]+"${env_args[@]}"} ${out_args[@]+"${out_args[@]}"} "$script"
+exec k6 run ${env_args[@]+"${env_args[@]}"} ${out_args[@]+"${out_args[@]}"} ${otel_args[@]+"${otel_args[@]}"} "$script"
