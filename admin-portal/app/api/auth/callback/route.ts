@@ -5,11 +5,9 @@ import { COOKIES, OIDC, cookieOpts, redirectUri, safePath, tokenUrl } from "../.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Keycloak redirects back here with ?code&state. Verify state, exchange the code (+ PKCE verifier) for
-// tokens, and store the access token in an httpOnly cookie.
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const back = new URL("/credentials", OIDC.portalUrl);
+  const back = new URL("/", OIDC.portalUrl);
 
   const err = url.searchParams.get("error");
   if (err) {
@@ -55,7 +53,6 @@ export async function GET(req: Request) {
   const res = NextResponse.redirect(new URL(dest, OIDC.portalUrl).toString());
   res.cookies.set(COOKIES.session, tokens.access_token, cookieOpts(tokens.expires_in ?? 300));
   if (tokens.refresh_token) {
-    // The cookie can outlive the access token; the refresh token's real validity is Keycloak-side.
     res.cookies.set(COOKIES.refresh, tokens.refresh_token, cookieOpts(28800));
   }
   if (tokens.id_token) {

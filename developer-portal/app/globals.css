@@ -35,7 +35,7 @@
   --radius: 10px;
   --radius-sm: 7px;
   --radius-pill: 999px;
-  --container: 940px;
+  --container: 1024px;
   --ease: cubic-bezier(0.2, 0, 0, 1);
 }
 
@@ -165,14 +165,20 @@ code {
 .brand__name { font-weight: 700; letter-spacing: -0.01em; }
 .brand__sub { font-size: 0.75rem; color: var(--text-muted); }
 
-.site-nav { display: flex; align-items: center; gap: 6px; }
+.site-nav { display: flex; align-items: center; gap: 3px; }
 .site-nav__link {
-  display: inline-flex; align-items: center; gap: 5px;
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
   color: var(--text-muted); font-size: 0.84rem; font-weight: 500;
-  padding: 7px 10px; border-radius: var(--radius-sm);
+  padding: 7px 9px; border-radius: var(--radius-sm);
   transition: color 0.15s var(--ease), background 0.15s var(--ease);
 }
 .site-nav__link:hover { color: var(--text); background: var(--surface-2); }
+.site-nav__signout {
+  margin-left: 6px; padding: 6px 11px; white-space: nowrap; font-size: 0.8rem; font-weight: 550;
+  color: var(--text-muted); border: 1px solid var(--border); border-radius: var(--radius-pill);
+  transition: color 0.15s var(--ease), border-color 0.15s var(--ease), background 0.15s var(--ease);
+}
+.site-nav__signout:hover { color: var(--text); border-color: var(--border-strong); background: var(--surface-2); text-decoration: none; }
 
 .icon-button {
   display: grid; place-items: center; width: 34px; height: 34px;

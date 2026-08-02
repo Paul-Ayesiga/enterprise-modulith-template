@@ -4,8 +4,6 @@ import { COOKIES, OIDC, authorizeUrl, cookieOpts, pkce, randomState, redirectUri
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Start the Authorization Code + PKCE flow: stash the verifier + state (and where the user was headed)
-// in short-lived httpOnly cookies, then redirect to Keycloak.
 export async function GET(req: Request) {
   const from = new URL(req.url).searchParams.get("from") ?? "/";
   const { verifier, challenge } = pkce();

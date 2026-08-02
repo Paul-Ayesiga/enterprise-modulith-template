@@ -5,9 +5,8 @@ import { COOKIES, OIDC, cookieOpts, endSessionUrl } from "../../../lib/auth";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// End the Keycloak SSO session (so re-login needs credentials, not a silent redirect) and clear the
-// portal cookies. post_logout_redirect_uri returns the user here; Keycloak needs it registered on the
-// client (see the realm export) — if it isn't, Keycloak shows its own logged-out page, which is fine.
+// End the Keycloak SSO session and clear the portal cookies. post_logout_redirect_uri returns the user
+// here; if it isn't registered on the client, Keycloak shows its own logged-out page, which is fine.
 export async function GET() {
   const idToken = cookies().get(COOKIES.idToken)?.value;
 

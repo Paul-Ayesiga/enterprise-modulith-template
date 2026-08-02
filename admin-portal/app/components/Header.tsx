@@ -1,8 +1,19 @@
+import { getSession } from "../lib/auth";
 import { ChartIcon, ExternalIcon, GatewayMark } from "./Icons";
 import { ThemeToggle } from "./ThemeToggle";
 
-export function Header({ health, grafanaUrl, routesUrl }: { health: string; grafanaUrl: string; routesUrl: string }) {
+export async function Header({
+  health,
+  grafanaUrl,
+  routesUrl
+}: {
+  health: string;
+  grafanaUrl: string;
+  routesUrl: string;
+}) {
   const up = health.toUpperCase() === "UP";
+  const session = getSession();
+
   return (
     <header className="site-header">
       <div className="site-header__inner">
@@ -26,7 +37,7 @@ export function Header({ health, grafanaUrl, routesUrl }: { health: string; graf
 
         <span className="site-header__spacer" />
 
-        <nav className="site-nav" aria-label="External tools">
+        <nav className="site-nav" aria-label="Tools">
           <a className="site-nav__link" href={grafanaUrl} target="_blank" rel="noreferrer">
             <ChartIcon /> Grafana <ExternalIcon />
           </a>
@@ -35,6 +46,15 @@ export function Header({ health, grafanaUrl, routesUrl }: { health: string; graf
           </a>
         </nav>
         <ThemeToggle />
+        {session && (
+          <a
+            className="site-nav__signout"
+            href="/api/auth/logout"
+            title={`Signed in as ${session.name ?? session.email ?? session.sub}`}
+          >
+            Sign out
+          </a>
+        )}
       </div>
     </header>
   );
