@@ -3,30 +3,58 @@
 Everything you need to run and poke at the app locally. **All credentials here are dev-only** (they
 live in `docker/.env.example` and the Keycloak realm export — never used in staging/prod).
 
-> Ports below are the **shipped defaults**. This machine's gitignored `docker/.env` overrides them
-> (the defaults were taken here): app `18080`, Keycloak `18081`, Postgres `15432`, Valkey `16379`,
-> SeaweedFS S3 `18333` / Filer `18888` / Master `19333`, Mailpit UI `18025` / SMTP `11025`.
+> The URLs below use **this machine's** local ports — its gitignored `docker/.env` maps every service to
+> a **`2xxxx` prefix** to dodge conflicts. The shipped defaults (a clean machine) drop the `2`: app
+> `8080`, gateway `8090` / admin `9090`, Keycloak `8081`, Postgres `5432`, Valkey `6379`, and so on — see
+> `docker/.env.example`.
 
 ---
 
 ## Run it
 
-`make run` starts the app, which **auto-starts the whole Compose stack** for you. `make` (no target)
-lists every target:
+The system runs as **two processes in two terminals**: the **modulith** (which auto-starts the whole
+Compose stack — Postgres, Keycloak, Valkey, …) and the **gateway** (the edge in front of it). Choose the
+modulith command by whether you want the `acme` demo org seeded.
+
+**First time only** — create the local env file:
+
+```bash
+make env         # writes docker/.env from the example (tweak ports if any clash)
+```
+
+**Without the org seed** — just the platform admin `paul`:
+
+```bash
+make run         # terminal A — modulith on :28080 + the whole stack (Ctrl-C stops both)
+make gateway     # terminal B — the edge on :28090 (admin :29090), proxying :28080
+```
+
+**With the org seed** — also seeds the `acme` demo org (owner `paul`):
+
+```bash
+make seed        # terminal A — exactly like `make run`, plus the acme demo org at startup
+make gateway     # terminal B — the edge (identical either way)
+```
+
+`make run` / `seed` are the **modulith only** (root-scoped `:bootRun`); `make gateway` is the only thing
+that starts the edge. Reach the API directly at `:28080/api/v1/…`, or through the edge (auth, quotas,
+tracing) at `:28090/api/v1/…`. `make` (no target) lists every target:
 
 | Target | What it does |
 |---|---|
-| `make run` | App + auto-started stack (Ctrl-C stops both); provisions the platform admin `paul` |
+| `make run` | Modulith + auto-started stack (Ctrl-C stops both); provisions the platform admin `paul` |
 | `make seed` | Like `run`, plus seeds the `acme` demo org (owner `paul`) at startup |
-| `make up` · `down` · `restart` | Infra stack only — e.g. to run the app from your IDE |
+| `make gateway` | The API gateway (`:28090`, admin `:29090`) fronting the modulith — start `make run` first, this in a 2nd terminal |
+| `make gateway-build` · `gateway-test` | Build · test the gateway subprojects alone |
+| `make up` · `down` · `restart` | Infra stack only — e.g. to run the modulith from your IDE |
 | `make ps` · `logs S=keycloak` | Stack status · tail one service's logs |
 | `make env` | Create `docker/.env` from the example (one-time) |
 | `make pull` | Pre-pull images (Colima pull-storm workaround, one-time) |
 | `make token` | Print a dev access token for `paul` (`U=<user>` for one you added) |
-| `make build` · `test` · `openapi` | Build (no tests) · full suite · regenerate the OpenAPI spec |
+| `make build` · `test` · `openapi` | Modulith: build (no tests) · full suite · regenerate the OpenAPI spec |
 | `make nuke` | `down -v` — wipe data volumes for a clean slate |
 | `make clean` | Stop Gradle daemons and drop `build/`, `.gradle/`, `data/` (keeps downloaded deps and images) |
-| `make fresh` | **The one command after a bad state**: clean + nuke + up + wait for Keycloak + run |
+| `make fresh` | **The one command after a bad state**: clean + nuke + up + wait for Keycloak + run (modulith) |
 
 ---
 
@@ -54,23 +82,25 @@ console and call with `API_USER=<name> API_PASSWORD=<pass> scripts/api.sh …`.
 
 | Service | URL | Credentials |
 |---|---|---|
-| **App API** | http://localhost:8080 | Bearer JWT (see above) |
-| **Swagger UI** | http://localhost:8080/swagger-ui/index.html | Authorize → paste token, or use the Keycloak OAuth2 flow |
-| OpenAPI spec | http://localhost:8080/v3/api-docs · `/v3/api-docs.yaml` | public |
-| Actuator health | http://localhost:8080/actuator/health · `/actuator/info` | public |
-| **Keycloak** admin console | http://localhost:8081 | `admin` / `admin` (realm **`smsone`**) |
-| Keycloak token endpoint | http://localhost:8081/realms/smsone/protocol/openid-connect/token | client `smsone-web` (public, password grant) |
-| **Kill Bill** (billing API) | http://localhost:8082 | basic `admin` / `password`; tenant key `smsone` / `smsone-secret` (dev bootstrap creates it when `BILLING_BOOTSTRAP=true`) |
-| **Kaui** (Kill Bill admin UI) | http://localhost:9095 | `admin` / `password` |
-| **Grafana** (traces/metrics/logs) | http://localhost:3000 | anonymous admin (no login); fallback `admin` / `admin`. The **SMSOne** folder holds two file-provisioned dashboards (deliveries & jobs, API & cache) — see `docker/grafana/README.md` for what they show and the example alert rules |
-| **Mailpit** (dev email inbox) | http://localhost:8025 | none |
-| **Postgres** (OLTP) | `localhost:5432` db `modulith` | `modulith` / `modulith` |
-| **Valkey** (cache + locks) | `localhost:6379` | none |
-| **SeaweedFS** S3 API | http://localhost:8333 | access `smsone` / secret `smsone-secret`, bucket `smsone` (SigV4-signed only — a browser hitting it gets `403 AccessDenied`, which is normal) |
-| SeaweedFS **Filer UI** | http://localhost:8888 | none — browse uploaded objects under **`/buckets/smsone/`** |
-| SeaweedFS **Master UI** | http://localhost:9333 | none — cluster status / topology |
-| SMTP sink (Mailpit) | `localhost:1025` | none |
-| OTLP ingest | `localhost:4317` (gRPC) · `localhost:4318` (HTTP) | none |
+| **API gateway** — the front door | http://localhost:28090/api/v1/… | Bearer JWT; the edge validates it, applies quotas/tracing, then proxies to the modulith |
+| Gateway **admin** (separate port) | http://localhost:29090/actuator/{gatewayroutes,gatewaycatalog,gatewayopenapi,prometheus} | route table · product catalog · OpenAPI · metrics — keep off the public network |
+| **App API** — direct (bypasses the edge) | http://localhost:28080 | Bearer JWT (see above) |
+| **Swagger UI** | http://localhost:28080/swagger-ui/index.html | Authorize → paste token, or use the Keycloak OAuth2 flow |
+| OpenAPI spec | http://localhost:28080/v3/api-docs · `/v3/api-docs.yaml` | public (its default server is the gateway) |
+| Actuator health | http://localhost:28080/actuator/health · `/actuator/info` | public |
+| **Keycloak** admin console | http://localhost:28081 | `admin` / `admin` (realm **`smsone`**) |
+| Keycloak token endpoint | http://localhost:28081/realms/smsone/protocol/openid-connect/token | client `smsone-web` (public, password grant) |
+| **Kill Bill** (billing API) | http://localhost:28082 | basic `admin` / `password`; tenant key `smsone` / `smsone-secret` (dev bootstrap creates it when `BILLING_BOOTSTRAP=true`) |
+| **Kaui** (Kill Bill admin UI) | http://localhost:29095 | `admin` / `password` |
+| **Grafana** (traces/metrics/logs) | http://localhost:23000 | anonymous admin (no login); fallback `admin` / `admin`. The **SMSOne** folder holds two file-provisioned dashboards (deliveries & jobs, API & cache) — see `docker/grafana/README.md` for what they show and the example alert rules |
+| **Mailpit** (dev email inbox) | http://localhost:28025 | none |
+| **Postgres** (OLTP) | `localhost:25432` db `modulith` | `modulith` / `modulith` |
+| **Valkey** (cache + locks) | `localhost:26379` | none |
+| **SeaweedFS** S3 API | http://localhost:28333 | access `smsone` / secret `smsone-secret`, bucket `smsone` (SigV4-signed only — a browser hitting it gets `403 AccessDenied`, which is normal) |
+| SeaweedFS **Filer UI** | http://localhost:28888 | none — browse uploaded objects under **`/buckets/smsone/`** |
+| SeaweedFS **Master UI** | http://localhost:29333 | none — cluster status / topology |
+| SMTP sink (Mailpit) | `localhost:21025` | none |
+| OTLP ingest | `localhost:24317` (gRPC) · `localhost:24318` (HTTP) | none |
 
 ## Dev users (Keycloak realm `smsone`)
 

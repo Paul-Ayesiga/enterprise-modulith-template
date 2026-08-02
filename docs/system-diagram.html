@@ -150,7 +150,7 @@
     <div class="meta">
       <span class="stat"><b>23</b> modulith modules</span>
       <span class="stat"><b>7</b> gateway phases shipped</span>
-      <span class="stat">edge <b>:8090</b> · admin <b>:9090</b> · api <b>:8080</b></span>
+      <span class="stat">edge <b>:28090</b> · admin <b>:29090</b> · api <b>:28080</b></span>
       <span class="stat">hexagonal · ports &amp; adapters</span>
     </div>
   </header>
@@ -180,7 +180,7 @@ flowchart TB
     pipe["Pipeline: request-id → trace → access-log → lifecycle → auth → quota → plugins → routing"]
     traffic["Traffic: rate-limit · timeout · circuit-breaker · retries · cache · load-balance · compress"]
     xform["Transform + Security: rewrite · strip Authorization · JWT/JWKS · API-key introspection · internal tokens"]
-    adm["Admin @ :9090: route table · product catalog · OpenAPI · Prometheus"]
+    adm["Admin @ :29090: route table · product catalog · OpenAPI · Prometheus"]
     pipe --- traffic --- xform --- adm
   end
 
@@ -265,10 +265,10 @@ flowchart TB
 sequenceDiagram
   autonumber
   actor C as Client
-  participant G as Gateway :8090
+  participant G as Gateway :28090
   participant K as Keycloak
   participant V as Valkey
-  participant M as Modulith :8080
+  participant M as Modulith :28080
   participant D as Postgres
   C->>G: GET /api/v1/orgs/{id}/…  (Bearer JWT)
   Note over G: mint request-id + W3C traceparent
