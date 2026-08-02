@@ -1,6 +1,6 @@
 # ADR 0007 — API Gateway: a reactive Spring Cloud Gateway as a hexagonal platform product
 
-- **Status:** Accepted · **Date:** 2026-08-02
+- **Status:** Accepted · Implemented (all 7 phases shipped) · **Date:** 2026-08-02
 
 ## Decision
 The platform's front door is a **separate, stateless, reactive Spring Cloud Gateway** (WebFlux)
@@ -49,3 +49,16 @@ systems to reconcile). Hexagonal ports-and-adapters is the third path that avoid
   `hasPermission` checks — the gateway is defense in depth at the edge, never the only gate.
 - **Hard rules:** the gateway MUST NOT touch a business database, run domain workflows, persist
   business entities, or hold per-request tenant state. Violations turn the edge into an app.
+
+## Implementation (2026-08-02)
+All seven phases shipped — Core, Security, Traffic, Observability, Extensibility, Administration, and the
+gateway-side of Enterprise (lifecycle/versioning, products/catalog/OpenAPI). The realized subproject
+layout is `gateway:core`, `gateway:security`, `gateway:platform-adapter`, `gateway:app`: `admin` and
+`starter` (see Consequences) were **folded into `app`** — admin surfaces as actuator management endpoints
+on a separate port, and components are scanned, so no separate starter was needed. The modulith grew the
+predicted thin integration surface as three `@Hidden`, gateway-secret-authed endpoints, each backed by an
+existing port: key introspection (`ApiKeyAuthenticator`), audit ingest (`AuditLog.recordExternal`), quota
+lookup (`Entitlements.limitOf`). The hexagonal boundary — the core depending on neither Spring Cloud
+Gateway nor any platform module — is enforced by an ArchUnit test that ships with `gateway:core`. Enterprise
+deliverables that are separate deployables/infra (a developer-portal UI, multi-region failover) are out of
+the gateway codebase by design, flagged not dropped. Per-phase detail: [../GATEWAY_PLAN.md](../GATEWAY_PLAN.md).

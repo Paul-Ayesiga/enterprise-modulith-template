@@ -7,6 +7,12 @@ is [adr/0007-api-gateway.md](adr/0007-api-gateway.md).
 > One line: a **stateless, reactive Spring Cloud Gateway**, built **hexagonally** — a generic core of
 > edge concepts that depends only on **ports**, with the platform plugging in through **adapters**.
 
+> **Status (2026-08-02): implemented — all 7 phases shipped.** The subprojects that shipped are
+> `gateway:core`, `gateway:security`, `gateway:platform-adapter`, `gateway:app`; the `admin` and `starter`
+> subprojects in §5 were folded into `app` (admin as management endpoints on a separate port; components
+> scanned, no separate starter). This document remains the north star (*what the gateway is and the rules
+> it obeys*); the per-phase shipped state is in [GATEWAY_PLAN.md](GATEWAY_PLAN.md).
+
 ---
 
 ## 1. Objective and non-goals
