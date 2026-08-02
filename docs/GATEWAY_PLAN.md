@@ -146,6 +146,17 @@ Valkey Testcontainer; a chaos test kills the backend mid-flight and the circuit 
 
 ## Phase 4 — Observability
 
+**Status: COMPLETE 2026-08-02 — no deferred items.** (4a) Micrometer + Prometheus at
+`/actuator/prometheus`: SCG's per-route request timer plus a `gateway.auth.failures{reason}` counter
+for denials that short-circuit before the metrics filter. (4b) W3C trace-context propagation
+(`TraceContextGlobalFilter`): adopt a caller's `traceparent` or mint one, forward it downstream so one
+trace id spans gateway → backend, echo `X-Trace-Id`. (4c) Separable log streams on distinct loggers —
+`gateway.access` (per request), `gateway.security` (authN/authZ denials), `gateway.error` (5xx faults).
+(4d) The **`AuditSink`** seam: a denial publishes an `EdgeAuditEvent` (best-effort, non-blocking) that
+`ModulithAuditSink` POSTs to the modulith's `/internal/gateway/audit`, recorded via a new
+`AuditLog.recordExternal` with the edge principal as the actor. Tests: `MetricsTest`, `TracingTest` (2),
+`LoggingTest` (2), `EdgeAuditTest` (2) in `gateway:app`; `GatewayAuditTest` (2, real-DB) in the modulith.
+
 **Focus.** Every request is measured, traced, and logged — separably.
 
 **Deliverables** — structured logs split into access / security / audit / gateway / system (never
