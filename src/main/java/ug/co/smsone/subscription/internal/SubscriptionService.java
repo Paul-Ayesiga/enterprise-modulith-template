@@ -87,6 +87,16 @@ class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
         beginTrial(organizationId, planCode, trialDays);
     }
 
+    /** Port form — the trial-on-signup listener drives this; an org already on a plan is left alone. */
+    @Override
+    @Transactional
+    public void startTrialForNewOrg(UUID organizationId, String planCode, int trialDays) {
+        if (subscriptions.findByOrgId(organizationId).isPresent()) {
+            return; // already on a plan (e.g. a straight-to-paid assignment) — do not override it
+        }
+        beginTrial(organizationId, planCode, trialDays);
+    }
+
     @Transactional
     SubscriptionView assign(UUID orgId, String planCode) {
         String normalized = planCode == null ? "" : planCode.trim().toUpperCase();

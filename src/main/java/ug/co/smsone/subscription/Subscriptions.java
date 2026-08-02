@@ -21,6 +21,13 @@ public interface Subscriptions {
     void startTrial(UUID organizationId, String planCode, int trialDays);
 
     /**
+     * Start a signup trial for a newly registered org — {@code planCode} for {@code trialDays} — but a
+     * NO-OP when the org already has a subscription, so a straight-to-paid assignment made at creation
+     * is never overridden. Idempotent; the plan must be paid (FREE is rejected, as with startTrial).
+     */
+    void startTrialForNewOrg(UUID organizationId, String planCode, int trialDays);
+
+    /**
      * Flip the standing without touching the plan — {@code ACTIVE} | {@code PAST_DUE} |
      * {@code CANCELLED} (payment outcomes). Unknown org: a no-op with a log line, not an error —
      * billing events can race provisioning.

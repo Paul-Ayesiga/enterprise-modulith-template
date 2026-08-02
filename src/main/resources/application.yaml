@@ -239,6 +239,13 @@ app:
     # the single 'smsone' tenant). Presumes a reachable, bootstrapped Kill Bill; off by default so
     # environments without billing don't accrue retrying events.
     auto-provision-accounts: ${BILLING_AUTO_PROVISION:false}
+    # Opt-in: a newly registered org auto-starts a TRIALING trial of `plan` for `days` — unless it
+    # already has a subscription (a straight-to-paid assignment wins). Entitlement-only (no invoice
+    # until it converts); the TrialExpiryJob pauses it read-only if it lapses. The plan must be PAID.
+    trial-on-signup:
+      enabled: ${TRIAL_ON_SIGNUP:false}
+      plan: ${TRIAL_ON_SIGNUP_PLAN:PRO}
+      days: ${TRIAL_ON_SIGNUP_DAYS:30}
     currency: ${BILLING_CURRENCY:USD}
     # OUR plan code -> Kill Bill catalog plan name. FREE is deliberately unmapped (no money, no KB
     # subscription). Production maps to its uploaded catalog.
