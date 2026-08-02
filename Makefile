@@ -27,16 +27,20 @@ RUN_ENV = set -a; . $(ENV_FILE); set +a; \
 	S3_ENDPOINT=http://localhost:$${S3_PORT:-8333} \
 	SMTP_HOST=localhost SMTP_PORT=$${SMTP_PORT:-1025}
 
-# Gateway env: the edge fronts the modulith (SERVER_PORT), validates JWTs against Keycloak's JWKS
-# (KEYCLOAK_PORT), and shares Valkey (VALKEY_PORT) for rate-limit + quota counting. Sourced from
-# docker/.env so the mapped ports match the running stack. Run `make run` first (modulith + infra),
-# then `make gateway` in a second terminal.
+# Gateway env: the edge fronts the modulith and shares its infra. Sourced from docker/.env so the
+# mapped ports match the running stack. SERVER_PORT in docker/.env is the MODULITH's port, and Spring
+# maps SERVER_PORT -> server.port, so we FIRST capture it as MODULITH_PORT (for the proxy target +
+# seam URIs), THEN rebind SERVER_PORT/MANAGEMENT_SERVER_PORT to the gateway's own ports — otherwise the
+# gateway would try to bind the modulith's port. Run `make run` first, then `make gateway` in a 2nd terminal.
 GATEWAY_RUN_ENV = set -a; . $(ENV_FILE); set +a; \
+	MODULITH_PORT=$${SERVER_PORT:-8080}; \
+	SERVER_PORT=$${GATEWAY_PORT:-8090} \
+	MANAGEMENT_SERVER_PORT=$${GATEWAY_ADMIN_PORT:-9090} \
 	VALKEY_HOST=localhost VALKEY_PORT=$${VALKEY_PORT:-6379} \
-	MODULITH_URI=http://localhost:$${SERVER_PORT:-8080} \
-	GATEWAY_INTROSPECTION_URI=http://localhost:$${SERVER_PORT:-8080}/internal/gateway/api-key/introspect \
-	GATEWAY_AUDIT_URI=http://localhost:$${SERVER_PORT:-8080}/internal/gateway/audit \
-	GATEWAY_QUOTA_URI=http://localhost:$${SERVER_PORT:-8080}/internal/gateway/quota \
+	MODULITH_URI=http://localhost:$$MODULITH_PORT \
+	GATEWAY_INTROSPECTION_URI=http://localhost:$$MODULITH_PORT/internal/gateway/api-key/introspect \
+	GATEWAY_AUDIT_URI=http://localhost:$$MODULITH_PORT/internal/gateway/audit \
+	GATEWAY_QUOTA_URI=http://localhost:$$MODULITH_PORT/internal/gateway/quota \
 	KEYCLOAK_JWKS=http://localhost:$${KEYCLOAK_PORT:-8081}/realms/smsone/protocol/openid-connect/certs
 
 .DEFAULT_GOAL := help
@@ -69,10 +73,10 @@ logs: ## Tail stack logs — `make logs S=keycloak` for a single service
 	$(COMPOSE) logs -f $(S)
 
 run: env ## Run the app + auto-started stack (Ctrl-C stops both); seeds the platform admin
-	@$(RUN_ENV) ./gradlew bootRun
+	@$(RUN_ENV) ./gradlew :bootRun
 
 seed: env ## Like `run`, but also seeds the demo org (acme, owner paul) at startup
-	@$(RUN_ENV) ORG_DEV_BOOTSTRAP_ENABLED=true ./gradlew bootRun
+	@$(RUN_ENV) ORG_DEV_BOOTSTRAP_ENABLED=true ./gradlew :bootRun
 
 gateway: env ## Run the API gateway (:8090, admin :9090) fronting the modulith — `make run` first, this in a 2nd terminal
 	@$(GATEWAY_RUN_ENV) ./gradlew :gateway:app:bootRun
@@ -86,14 +90,14 @@ gateway-test: ## Run the gateway test suite (real Valkey Testcontainer)
 token: ## Print a dev access token for the platform admin — `make token U=<user>` for another user
 	@scripts/token.sh $(U)
 
-build: ## Compile + assemble the app (skips tests)
-	./gradlew build -x test
+build: ## Compile + assemble the app (skips tests) — modulith only; `gateway-build` for the edge
+	./gradlew :build -x test
 
-test: ## Run the full test suite (real Testcontainers)
-	./gradlew test
+test: ## Run the modulith test suite (real Testcontainers) — `gateway-test` for the edge
+	./gradlew :test
 
 openapi: ## Regenerate docs/openapi/*.{yaml,json} from the running app
-	./gradlew exportOpenApi
+	./gradlew :exportOpenApi
 
 clean: ## Drop local build caches (keeps downloaded deps and Docker images — both slow to refetch)
 	@./gradlew --stop >/dev/null 2>&1 || true
