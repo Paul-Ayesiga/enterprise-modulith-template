@@ -90,6 +90,7 @@ app:
   gateway:
     introspection-secret: ${GATEWAY_INTROSPECTION_SECRET:dev-gateway-secret}
     audit-secret: ${GATEWAY_AUDIT_SECRET:dev-gateway-secret}
+    quota-secret: ${GATEWAY_QUOTA_SECRET:dev-gateway-secret}
   keycloak-admin:
     base-url: ${KEYCLOAK_URL:http://localhost:8081}
     realm: ${KEYCLOAK_REALM:smsone}

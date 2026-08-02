@@ -14,6 +14,8 @@ public final class EntitlementKeys {
     public static final String EXCHANGE_ENABLED = "exchange.enabled";
     /** Cap on recurring exchange schedules per organization. */
     public static final String EXCHANGE_SCHEDULES_MAX = "exchange.schedules.max";
+    /** The edge gateway's quota: API requests allowed per minute for the organization (its plan ceiling). */
+    public static final String API_REQUESTS_PER_MINUTE = "api.requests.per_minute";
 
     private EntitlementKeys() {
     }

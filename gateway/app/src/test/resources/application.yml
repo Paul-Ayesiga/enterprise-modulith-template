@@ -192,6 +192,12 @@ gateway:
       predicates:
         - kind: PATH
           args: [/ws/**]
+    - id: quota-route
+      order: 29
+      service-id: backend
+      predicates:
+        - kind: PATH
+          args: [/quota/**]
     - id: pa-route                            # shares the named open-headers policy
       order: 30
       service-id: backend

@@ -24,6 +24,8 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-autoconfigure")
     // Best-effort audit publishing logs its own failures (to the gateway.error stream).
     implementation("org.slf4j:slf4j-api")
+    // Cache the per-consumer quota briefly so the plan lookup isn't a per-request round-trip.
+    implementation("com.github.ben-manes.caffeine:caffeine")
 
     testImplementation(libs.boot.test)
     testImplementation("io.projectreactor:reactor-test")

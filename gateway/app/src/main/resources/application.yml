@@ -43,6 +43,11 @@ gateway:
     audit:
       uri: ${GATEWAY_AUDIT_URI:http://localhost:8080/internal/gateway/audit}
       secret: ${GATEWAY_AUDIT_SECRET:dev-gateway-secret}
+    # Enforce each consumer's plan quota, fetched from the platform's subscription entitlements. Unset
+    # the uri to turn quota enforcement off.
+    quota:
+      uri: ${GATEWAY_QUOTA_URI:http://localhost:8080/internal/gateway/quota}
+      secret: ${GATEWAY_QUOTA_SECRET:dev-gateway-secret}
   # Traffic management: the shared token-bucket rate (per caller — principal, else tenant, else IP),
   # the default for any route with rate-limited:true.
   traffic:

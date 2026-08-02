@@ -30,15 +30,16 @@ class PlanSeeder implements ApplicationRunner {
     @Override
     @Transactional
     public void run(ApplicationArguments args) {
-        seed("FREE", "Free", 0, entitlements(25L, 10L, 5L));
-        seed("PRO", "Pro", 1, entitlements(250L, 50L, 25L));
-        seed("ENTERPRISE", "Enterprise", 2, entitlements(null, null, null));
+        seed("FREE", "Free", 0, entitlements(25L, 10L, 5L, 60L));
+        seed("PRO", "Pro", 1, entitlements(250L, 50L, 25L, 600L));
+        seed("ENTERPRISE", "Enterprise", 2, entitlements(null, null, null, null));
     }
 
     /** Feature-on marker in STORAGE. Not null: Hibernate silently drops null-valued map entries on load. */
     static final long FEATURE_ON = -1L;
 
-    private static Map<String, Long> entitlements(Long membersMax, Long webhooksMax, Long schedulesMax) {
+    private static Map<String, Long> entitlements(Long membersMax, Long webhooksMax, Long schedulesMax,
+            Long apiPerMinute) {
         Map<String, Long> map = new LinkedHashMap<>();
         map.put(EntitlementKeys.EXCHANGE_ENABLED, FEATURE_ON); // present = on, for every tier
         if (membersMax != null) {
@@ -49,6 +50,9 @@ class PlanSeeder implements ApplicationRunner {
         }
         if (schedulesMax != null) {
             map.put(EntitlementKeys.EXCHANGE_SCHEDULES_MAX, schedulesMax);
+        }
+        if (apiPerMinute != null) {
+            map.put(EntitlementKeys.API_REQUESTS_PER_MINUTE, apiPerMinute);
         }
         return map;
     }
