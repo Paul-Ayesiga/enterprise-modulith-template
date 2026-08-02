@@ -202,6 +202,20 @@ without restart.
 
 ## Phase 6 — Administration
 
+**Status: COMPLETE 2026-08-02 — no deferred items.** (6a) A route-admin `@Endpoint` (`gatewayroutes`) on
+the **management port** (`management.server.port`), so with a separate admin port/network the edge never
+exposes it — list/create/delete routes via the `RouteRegistrar` (config reload). (6b) Per-consumer
+**quotas from the subscription plan**: core `ConsumerResolver` + `QuotaProvider` ports; a `QuotaFilter`
+counts a consumer's calls in a fixed window on **Valkey** and 429s over the ceiling; `ModulithQuotaProvider`
+(cached, fail-open) fetches it from a new `/internal/gateway/quota` that reads the org's plan via
+`Entitlements.limitOf` on a new `api.requests.per_minute` entitlement (seeded FREE 60 / PRO 600 /
+ENTERPRISE unlimited). (6c) **API-key rotation**: `ApiKeyService.rotateOrgKey` (mint replacement + revoke
+old, atomically) + `POST …/{id}/rotate`; the edge honors it via introspection — the old key goes inactive,
+the new one active. (6d) **Service discovery**: core `ServiceRegistrar` + `ServiceResolver`; a mutable
+service registry + a `DiscoveryRegistrar` that auto-registers discovered backends at startup, and the
+locator skips a route until its service is registered. Tests: `AdminApiTest` (3), `QuotaTest` (Valkey),
+`GatewayQuotaTest` + `GatewayKeyRotationTest` (modulith real-DB), `ServiceDiscoveryTest`.
+
 **Focus.** Operate the gateway; make consumers first-class.
 
 **Deliverables** — admin REST APIs (routes, services, policies, plugins, rate limits, consumers, API
