@@ -15,10 +15,14 @@ server:
     min-response-size: 1024
 
 management:
+  # Bind the management/admin endpoints to a SEPARATE port (and ideally a private network) from public
+  # traffic — set management.server.port so the admin API (gatewayroutes) is unreachable from the edge.
+  server:
+    port: ${GATEWAY_ADMIN_PORT:9090}
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus,metrics   # /actuator/prometheus scrapes the gateway's metrics
+        include: health,info,prometheus,metrics,gatewayroutes   # gatewayroutes = the route-admin API
 
 # The route/service catalog (config-driven). Today the gateway fronts one backend — the modulith;
 # add services and routes here as the platform splits into more.
