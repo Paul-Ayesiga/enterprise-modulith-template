@@ -37,6 +37,9 @@ export function Header({ openApiUrl, routeTableUrl }: HeaderProps) {
           <Link className="site-nav__link" href="/support">
             Support
           </Link>
+          <Link className="site-nav__link" href="/credentials">
+            Credentials
+          </Link>
           <span className="site-nav__sep" aria-hidden="true" />
           <a className="site-nav__link" href={openApiUrl} target="_blank" rel="noreferrer">
             OpenAPI
