@@ -1,29 +1,37 @@
 package ug.co.smsone.subscription.internal;
 
 import io.swagger.v3.oas.annotations.Operation;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.Size;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import ug.co.smsone.shared.web.ResourceObject;
 
 /**
- * The platform's commercial controls: read a tenant's subscription, assign its plan, browse the
- * catalog. Assigning is {@code platform-admin} — it changes what a tenant may do — and audited.
- * Class-level {@code /api/v1/admin} mapping keeps the surface out of the X-Impersonate docs.
+ * The platform's commercial controls: read a tenant's subscription, assign its plan, run a trial, and
+ * manage the plan catalog itself (create / update / delete). Reads are {@code platform-support};
+ * anything that changes what a tenant may do is {@code platform-admin} and audited. Class-level
+ * {@code /api/v1/admin} mapping keeps the surface out of the X-Impersonate docs.
  */
 @RestController
 @RequestMapping("/api/v1/admin")
 class AdminSubscriptionController {
+
+    private static final String PLAN_TYPE = "plan"; // wire contract — renaming breaks clients
 
     private final SubscriptionService subscriptions;
 
@@ -38,6 +46,14 @@ class AdminSubscriptionController {
     }
 
     record PlanAttributes(String code, String name, int rank, Map<String, Long> entitlements) {
+    }
+
+    record CreatePlanRequest(@NotBlank @Size(max = 30) String code, @NotBlank @Size(max = 100) String name,
+            @PositiveOrZero int rank, Map<String, Long> entitlements) {
+    }
+
+    record UpdatePlanRequest(@NotBlank @Size(max = 100) String name, @PositiveOrZero int rank,
+            Map<String, Long> entitlements) {
     }
 
     @GetMapping("/orgs/{orgId}/subscription")
@@ -76,14 +92,53 @@ class AdminSubscriptionController {
 
     @GetMapping("/plans")
     @Operation(summary = "List the plan catalog",
-            description = "Seeded vocabulary, rank-ordered. `entitlements` uses the module's encoding: "
-                    + "null value = feature on, number = cap, absent key = off/unlimited.")
+            description = "Rank-ordered. `entitlements` encoding: `-1` = feature on, a positive number = a "
+                    + "cap, an absent key = off / unlimited.")
     @PreAuthorize("hasRole('platform-support')")
     List<ResourceObject> plans() {
-        return subscriptions.catalog().stream()
-                .map(plan -> new ResourceObject(plan.getCode(), "plan",
-                        new PlanAttributes(plan.getCode(), plan.getName(), plan.getRank(),
-                                plan.getEntitlements())))
-                .toList();
+        return subscriptions.catalog().stream().map(AdminSubscriptionController::toPlanResource).toList();
+    }
+
+    @PostMapping("/plans")
+    @Operation(summary = "Create a plan",
+            description = "Adds a plan to the catalog. `entitlements`: send `null` (or `-1`) for feature-on, a "
+                    + "positive number for a cap, omit the key for off / unlimited; unknown keys are refused. "
+                    + "platform-admin; audited.")
+    @PreAuthorize("hasRole('platform-admin')")
+    @ResponseStatus(HttpStatus.CREATED)
+    ResourceObject createPlan(@Valid @RequestBody CreatePlanRequest request) {
+        return toPlanResource(
+                subscriptions.createPlan(request.code(), request.name(), request.rank(), request.entitlements()));
+    }
+
+    @PutMapping("/plans/{code}")
+    @Operation(summary = "Update a plan",
+            description = "Replaces the name, rank, and entitlements of an existing plan (its `code` is the "
+                    + "identity and cannot change). Editing entitlements re-gates every org on the plan on "
+                    + "the next check. platform-admin; audited.")
+    @PreAuthorize("hasRole('platform-admin')")
+    ResourceObject updatePlan(@PathVariable String code, @Valid @RequestBody UpdatePlanRequest request) {
+        return toPlanResource(
+                subscriptions.updatePlan(code, request.name(), request.rank(), request.entitlements()));
+    }
+
+    @DeleteMapping("/plans/{code}")
+    @Operation(summary = "Delete a plan",
+            description = "Removes a plan from the catalog. Refused (409) for the FREE fallback or a plan "
+                    + "assigned to any organization. platform-admin; audited.")
+    @PreAuthorize("hasRole('platform-admin')")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    void deletePlan(@PathVariable String code) {
+        subscriptions.deletePlan(code);
+    }
+
+    /**
+     * Map a plan to the wire. Feature-on reads as its stored {@code -1} sentinel: a translated {@code null}
+     * would be dropped by the {@code non_null} serializer, hiding an enabled feature. A positive number is a
+     * cap; an absent key is off / unlimited.
+     */
+    private static ResourceObject toPlanResource(Plan plan) {
+        return new ResourceObject(plan.getCode(), PLAN_TYPE,
+                new PlanAttributes(plan.getCode(), plan.getName(), plan.getRank(), plan.getEntitlements()));
     }
 }

@@ -1228,6 +1228,62 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/plans/{code}:
+    put:
+      tags:
+      - Platform · Billing & plans
+      summary: Update a plan
+      description: "Replaces the name, rank, and entitlements of an existing plan\
+        \ (its `code` is the identity and cannot change). Editing entitlements re-gates\
+        \ every org on the plan on the next check. platform-admin; audited."
+      operationId: updatePlan
+      parameters:
+      - name: code
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePlanRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+    delete:
+      tags:
+      - Platform · Billing & plans
+      summary: Delete a plan
+      description: Removes a plan from the catalog. Refused (409) for the FREE fallback
+        or a plan assigned to any organization. platform-admin; audited.
+      operationId: deletePlan
+      parameters:
+      - name: code
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: No Content
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
   /api/v1/admin/orgs/{orgId}/subscription:
     get:
       tags:
@@ -3558,6 +3614,56 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/plans:
+    get:
+      tags:
+      - Platform · Billing & plans
+      summary: List the plan catalog
+      description: "Rank-ordered. `entitlements` encoding: `-1` = feature on, a positive\
+        \ number = a cap, an absent key = off / unlimited."
+      operationId: plans
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceObject"
+    post:
+      tags:
+      - Platform · Billing & plans
+      summary: Create a plan
+      description: "Adds a plan to the catalog. `entitlements`: send `null` (or `-1`)\
+        \ for feature-on, a positive number for a cap, omit the key for off / unlimited;\
+        \ unknown keys are refused. platform-admin; audited."
+      operationId: createPlan
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePlanRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/admin/orgs/{orgId}/subscription/trial:
     post:
       tags:
@@ -5805,29 +5911,6 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/WindowedResultResourceObject"
-  /api/v1/admin/plans:
-    get:
-      tags:
-      - Platform · Billing & plans
-      summary: List the plan catalog
-      description: "Seeded vocabulary, rank-ordered. `entitlements` uses the module's\
-        \ encoding: null value = feature on, number = cap, absent key = off/unlimited."
-      operationId: plans
-      responses:
-        "200":
-          description: OK
-          headers:
-            X-Request-Id:
-              description: "Public request id (accepted inbound, else minted as a\
-                \ ULID)."
-              schema:
-                type: string
-          content:
-            '*/*':
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/ResourceObject"
   /api/v1/admin/orgs:
     get:
       tags:
@@ -6689,6 +6772,23 @@ components:
       properties:
         status:
           type: string
+    UpdatePlanRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 100
+          minLength: 0
+        rank:
+          type: integer
+          format: int32
+        entitlements:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+      required:
+      - name
     AssignRequest:
       type: object
       properties:
@@ -6884,6 +6984,28 @@ components:
           type: string
       required:
       - operation
+    CreatePlanRequest:
+      type: object
+      properties:
+        code:
+          type: string
+          maxLength: 30
+          minLength: 0
+        name:
+          type: string
+          maxLength: 100
+          minLength: 0
+        rank:
+          type: integer
+          format: int32
+        entitlements:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+      required:
+      - code
+      - name
     TrialRequest:
       type: object
       properties:
