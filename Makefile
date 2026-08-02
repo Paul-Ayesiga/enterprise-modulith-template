@@ -76,8 +76,8 @@ logs: ## Tail stack logs — `make logs S=keycloak` for a single service
 run: env ## Run the app + auto-started stack (Ctrl-C stops both); seeds the platform admin
 	@$(RUN_ENV) ./gradlew :bootRun
 
-seed: env ## Like `run`, but also seeds the demo org (acme, owner paul) at startup
-	@$(RUN_ENV) ORG_DEV_BOOTSTRAP_ENABLED=true ./gradlew :bootRun
+seed: env ## Like `run`, but also seeds the demo org (acme, owner paul) + Kill Bill tenant & catalog
+	@$(RUN_ENV) ORG_DEV_BOOTSTRAP_ENABLED=true BILLING_BOOTSTRAP=true ./gradlew :bootRun
 
 gateway: env ## Run the API gateway (:8090, admin :9090) fronting the modulith — `make run` first, this in a 2nd terminal
 	@$(GATEWAY_RUN_ENV) ./gradlew :gateway:app:bootRun
