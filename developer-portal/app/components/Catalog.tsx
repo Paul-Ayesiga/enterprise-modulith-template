@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useId, useMemo, useState } from "react";
 import type { Product, RouteSummary } from "../lib/gateway";
 import { CheckIcon, CopyIcon, GlobeIcon, LockIcon, SearchIcon } from "./Icons";
@@ -90,6 +91,12 @@ function RouteRow({ route, apiBaseUrl }: { route: RouteSummary; apiBaseUrl: stri
       <div className="route__meta">
         <AccessBadge authenticated={route.authenticated} />
         <LifecycleBadge lifecycle={route.lifecycle} />
+        <Link
+          className="route-try"
+          href={`/try?path=${encodeURIComponent(toExamplePath(route.paths[0] ?? "/"))}&method=GET`}
+        >
+          Try
+        </Link>
         <CopyCurlButton command={curlFor(route, apiBaseUrl)} label={route.paths[0] ?? route.id} />
       </div>
     </div>

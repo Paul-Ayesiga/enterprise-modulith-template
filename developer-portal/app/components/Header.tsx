@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { ExternalIcon, GatewayMark } from "./Icons";
 import { ThemeToggle } from "./ThemeToggle";
 
@@ -10,7 +11,7 @@ export function Header({ openApiUrl, routeTableUrl }: HeaderProps) {
   return (
     <header className="site-header">
       <div className="site-header__inner">
-        <a className="brand" href="#main" aria-label="SMSOne Developer Portal, home">
+        <Link className="brand" href="/" aria-label="SMSOne Developer Portal, home">
           <span className="brand__mark">
             <GatewayMark />
           </span>
@@ -18,9 +19,16 @@ export function Header({ openApiUrl, routeTableUrl }: HeaderProps) {
             <span className="brand__name">SMSOne</span>
             <span className="brand__sub">Developer Portal</span>
           </span>
-        </a>
+        </Link>
 
-        <nav className="site-nav" aria-label="Reference documents">
+        <nav className="site-nav" aria-label="Portal">
+          <Link className="site-nav__link" href="/">
+            APIs
+          </Link>
+          <Link className="site-nav__link" href="/try">
+            Try it
+          </Link>
+          <span className="site-nav__sep" aria-hidden="true" />
           <a className="site-nav__link" href={openApiUrl} target="_blank" rel="noreferrer">
             OpenAPI
             <ExternalIcon />
