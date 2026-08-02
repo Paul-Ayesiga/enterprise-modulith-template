@@ -10,10 +10,12 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.cloud.gateway.event.RefreshRoutesEvent;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.cloud.gateway.route.Route;
 import org.springframework.cloud.gateway.support.ServerWebExchangeUtils;
+import org.springframework.context.ApplicationListener;
 import org.springframework.core.Ordered;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.PathContainer;
@@ -46,14 +48,15 @@ import ug.co.smsone.gateway.core.web.GatewayAttributes;
  * routing/proxy filter, so a denial never reaches a backend.
  */
 @Component
-public class EdgeAuthorizationFilter implements GlobalFilter, Ordered {
+public class EdgeAuthorizationFilter implements GlobalFilter, Ordered, ApplicationListener<RefreshRoutesEvent> {
 
     private static final String API_KEY_HEADER = "X-Api-Key";
     private static final String INTERNAL_TOKEN_HEADER = "X-Internal-Token";
     /** The security stream — authN/authZ decisions, separable from access/error/system logs. */
     private static final Logger securityLog = LoggerFactory.getLogger("gateway.security");
 
-    private final Map<String, CompiledPolicy> policies;
+    private final RouteSource routeSource;
+    private volatile Map<String, CompiledPolicy> policies;
     private final String tenantClaim;
     private final ApiKeyIntrospector introspector;
     private final List<SecurityProperties.InternalToken> internalTokens;
@@ -63,12 +66,23 @@ public class EdgeAuthorizationFilter implements GlobalFilter, Ordered {
     public EdgeAuthorizationFilter(RouteSource routeSource, SecurityProperties properties,
             ObjectProvider<ApiKeyIntrospector> introspector, ObjectProvider<MeterRegistry> meterRegistry,
             ObjectProvider<AuditSink> auditSink) {
+        this.routeSource = routeSource;
         this.tenantClaim = properties.tenantClaim();
         this.introspector = introspector.getIfAvailable();
         this.internalTokens = properties.internalTokens();
         this.meterRegistry = meterRegistry.getIfAvailable();
         this.auditSink = auditSink.getIfAvailable();
-        this.policies = routeSource.routes().stream()
+        this.policies = buildPolicies();
+    }
+
+    /** Rebuild the coarse-policy map when routes change at runtime, so dynamic routes are still enforced. */
+    @Override
+    public void onApplicationEvent(RefreshRoutesEvent event) {
+        this.policies = buildPolicies();
+    }
+
+    private Map<String, CompiledPolicy> buildPolicies() {
+        return routeSource.routes().stream()
                 .collect(Collectors.toUnmodifiableMap(RouteDefinition::id, route -> compile(route.auth())));
     }
 

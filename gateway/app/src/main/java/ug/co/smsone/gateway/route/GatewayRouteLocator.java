@@ -39,6 +39,13 @@ class GatewayRouteLocator {
     @Bean
     RouteLocator gatewayRoutes(RouteLocatorBuilder builder, RouteSource routeSource, ServiceRegistry services,
             RedisRateLimiter rateLimiter, KeyResolver keyResolver) {
+        // Re-read the mutable route source on each getRoutes(): a RefreshRoutesEvent (fired by the
+        // RouteRegistrar) makes SCG's caching locator rebuild, so a runtime route change takes effect.
+        return () -> buildRoutes(builder, routeSource, services, rateLimiter, keyResolver).getRoutes();
+    }
+
+    private static RouteLocator buildRoutes(RouteLocatorBuilder builder, RouteSource routeSource,
+            ServiceRegistry services, RedisRateLimiter rateLimiter, KeyResolver keyResolver) {
         RouteLocatorBuilder.Builder routes = builder.routes();
         for (RouteDefinition route : routeSource.routes()) {
             if (route.predicates().isEmpty()) {
