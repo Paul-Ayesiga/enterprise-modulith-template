@@ -8,26 +8,62 @@
   :root { --ink:#14202e; --mut:#586a82; --faint:#8996a8; --line:#dbe3ee; --bg:#f6f8fc; --panel:#ffffff;
           --code:#0d1626; --codeink:#d6e1f4; --brand:#1d4ed8; --brand-soft:#e7edfd;
           --ok:#0a7d43; --ok-soft:#e3f4ea; --warn:#a05a00; --warn-soft:#fbefda; --bad:#b3261e; --bad-soft:#fbe7e5;
-          --plat:#6b21a8; --plat-soft:#f2e9fb; --org:#0e7490; --org-soft:#e0f2f6; --any:#475569; --any-soft:#eef1f5; }
+          --plat:#6b21a8; --plat-soft:#f2e9fb; --org:#0e7490; --org-soft:#e0f2f6; --any:#475569; --any-soft:#eef1f5;
+          --topbar-h:52px; }
   * { box-sizing:border-box; }
+  html { scroll-behavior:smooth; }
+  @media (prefers-reduced-motion:reduce){ html { scroll-behavior:auto; } }
   body { margin:0; font:15px/1.62 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); background:var(--bg); }
   a { color:var(--brand); }
-  header.top { background:var(--code); color:#fff; padding:2.4rem 2rem 1.8rem; }
-  header.top h1 { margin:0 0 .35rem; font-size:1.75rem; letter-spacing:-.01em; }
-  header.top p { margin:.2rem 0 0; color:#9fb2d4; max-width:66rem; }
-  header.top code { background:#1c2b41; color:#cfe0fb; }
-  nav { background:var(--panel); border-bottom:1px solid var(--line); padding:.7rem 2rem; position:sticky; top:0; z-index:5;
-        display:flex; flex-wrap:wrap; gap:.3rem 1rem; font-size:.84rem; }
-  nav strong { color:var(--faint); text-transform:uppercase; letter-spacing:.05em; font-size:.72rem; font-weight:700; align-self:center; }
-  nav a { color:var(--brand); text-decoration:none; }
-  nav a:hover { text-decoration:underline; }
-  main { max-width:70rem; margin:0 auto; padding:1.4rem 2rem 4rem; }
-  .part { margin:3rem 0 1rem; padding:.9rem 1.1rem; border-radius:10px; background:var(--brand-soft);
-          border:1px solid #cddafc; }
-  .part h2 { margin:0; font-size:1.3rem; border:0; padding:0; }
+
+  /* ---- top bar ---- */
+  .topbar { position:sticky; top:0; z-index:30; height:var(--topbar-h); display:flex; align-items:center;
+            gap:.7rem; padding:0 1.1rem; background:var(--code); color:#fff; }
+  .topbar .brand { font-weight:700; font-size:.98rem; letter-spacing:-.01em; white-space:nowrap; }
+  .topbar .brand em { color:#9fb2d4; font-style:normal; font-weight:500; }
+  .topbar .links { margin-left:auto; display:flex; gap:1.1rem; align-items:center; }
+  .topbar a { color:#9fb2d4; text-decoration:none; font-size:.83rem; white-space:nowrap; }
+  .topbar a:hover { color:#fff; }
+  .topbar code { background:#1c2b41; color:#cfe0fb; }
+  .menu-btn { display:none; background:none; border:0; color:#fff; font-size:1.3rem; cursor:pointer; padding:.1rem .3rem; line-height:1; }
+
+  /* ---- three-pane layout ---- */
+  .layout { display:grid; grid-template-columns:16rem minmax(0,1fr) 15rem; max-width:90rem; margin:0 auto; align-items:start; }
+
+  .sidebar { position:sticky; top:var(--topbar-h); height:calc(100vh - var(--topbar-h)); overflow-y:auto;
+             padding:1.2rem .7rem 3rem; border-right:1px solid var(--line); background:var(--bg); }
+  #nav .nav-part { margin:1.2rem 0 .25rem; padding:0 .55rem; font-size:.68rem; font-weight:700; text-transform:uppercase;
+                   letter-spacing:.07em; color:var(--faint); }
+  #nav .nav-part:first-child { margin-top:0; }
+  #nav a { display:block; padding:.26rem .55rem; margin:1px 0; border-radius:6px; font-size:.845rem; line-height:1.35;
+           color:var(--mut); text-decoration:none; border-left:2px solid transparent; }
+  #nav a:hover { background:var(--brand-soft); color:var(--ink); }
+  #nav a.active { color:var(--brand); background:var(--brand-soft); border-left-color:var(--brand); font-weight:600; }
+
+  .content { min-width:0; padding:1.6rem 2.4rem 6rem; max-width:54rem; }
+  .content > *:first-child { margin-top:0; }
+
+  .toc { position:sticky; top:var(--topbar-h); height:calc(100vh - var(--topbar-h)); overflow-y:auto; padding:1.7rem 1rem 3rem; }
+  .toc-label { font-size:.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.07em; color:var(--faint); margin-bottom:.55rem; }
+  #toc a { display:block; text-decoration:none; border-left:2px solid var(--line); }
+  #toc a.sec-link { padding:.22rem .6rem; font-size:.8rem; color:var(--mut); }
+  #toc a.sec-link.active { color:var(--ink); border-left-color:var(--brand); font-weight:600; }
+  #toc a.ep-link { padding:.16rem .6rem .16rem 1rem; font-size:.735rem; font-family:ui-monospace,Menlo,Consolas,monospace;
+                   color:var(--mut); border-left-color:transparent; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #toc a.ep-link:hover { color:var(--ink); }
+  #toc a.ep-link.active { color:var(--brand); font-weight:600; }
+  #toc .m { font-weight:700; font-size:.66rem; margin-right:.25rem; }
+  #toc .m.GET{color:var(--ok)}#toc .m.POST{color:var(--brand)}#toc .m.PUT{color:var(--warn)}#toc .m.PATCH{color:var(--plat)}#toc .m.DELETE{color:var(--bad)}
+
+  .backdrop { display:none; position:fixed; inset:var(--topbar-h) 0 0 0; background:rgba(10,18,30,.45); z-index:24; }
+  .backdrop.show { display:block; }
+
+  /* ---- content elements ---- */
+  h2 { margin:2.4rem 0 .5rem; font-size:1.22rem; border-bottom:2px solid var(--line); padding-bottom:.3rem; letter-spacing:-.01em; scroll-margin-top:calc(var(--topbar-h) + 12px); }
+  .part { margin:2.4rem 0 1rem; padding:.9rem 1.1rem; border-radius:10px; background:var(--brand-soft); border:1px solid #cddafc; scroll-margin-top:calc(var(--topbar-h) + 12px); }
+  .content > .part:first-of-type { margin-top:.4rem; }
+  .part h2 { margin:0; font-size:1.28rem; border:0; padding:0; scroll-margin-top:0; }
   .part p { margin:.3rem 0 0; color:var(--mut); font-size:.92rem; }
-  h2 { margin:2.2rem 0 .5rem; font-size:1.22rem; border-bottom:2px solid var(--line); padding-bottom:.3rem; letter-spacing:-.01em; }
-  h3 { margin:1.5rem 0 .4rem; font-size:1.02rem; }
   p, li { color:var(--ink); }
   .mut { color:var(--mut); }
   code { background:#e9eef7; padding:.08rem .34rem; border-radius:4px; font-size:.85em; }
@@ -37,11 +73,12 @@
   table { border-collapse:collapse; width:100%; margin:.5rem 0 1rem; font-size:.87rem; background:var(--panel); }
   th, td { border:1px solid var(--line); padding:.42rem .6rem; text-align:left; vertical-align:top; }
   th { background:#eef2f9; font-size:.82rem; }
+  .params th:first-child, .params td:first-child { font-family:ui-monospace,Menlo,monospace; white-space:nowrap; }
+  .params td:nth-child(2), .params td:nth-child(3) { white-space:nowrap; color:var(--mut); }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:.85rem 1.1rem; margin:.8rem 0; }
   .tip { border-left:4px solid var(--ok); background:linear-gradient(90deg,var(--ok-soft),var(--panel) 22%); }
   .warn { border-left:4px solid var(--warn); background:linear-gradient(90deg,var(--warn-soft),var(--panel) 22%); }
-  /* endpoint block */
-  .ep { background:var(--panel); border:1px solid var(--line); border-radius:9px; margin:.7rem 0; overflow:hidden; }
+  .ep { background:var(--panel); border:1px solid var(--line); border-radius:9px; margin:.7rem 0; overflow:hidden; scroll-margin-top:calc(var(--topbar-h) + 12px); }
   .ep-head { display:flex; align-items:center; gap:.55rem; flex-wrap:wrap; padding:.6rem .85rem; background:#fbfcfe; border-bottom:1px solid var(--line); }
   .ep-body { padding:.7rem .85rem; }
   .ep-body > p:first-child { margin-top:0; }
@@ -56,35 +93,33 @@
   .perm.any  { color:var(--any);  background:var(--any-soft); }
   .legend { display:flex; gap:1.2rem; flex-wrap:wrap; font-size:.85rem; }
   .legend .perm { margin:0; }
-  .params th:first-child, .params td:first-child { font-family:ui-monospace,Menlo,monospace; white-space:nowrap; }
-  .params td:nth-child(2), .params td:nth-child(3) { white-space:nowrap; color:var(--mut); }
-  footer { text-align:center; color:var(--mut); font-size:.8rem; padding:2.2rem; border-top:1px solid var(--line); }
-  @media (max-width:640px){ main,nav,header.top{padding-left:1rem;padding-right:1rem;} .perm{margin-left:0;} }
+  footer { color:var(--mut); font-size:.8rem; padding:1.6rem 2.4rem 3rem; border-top:1px solid var(--line); max-width:90rem; margin:0 auto; }
+
+  /* ---- responsive ---- */
+  @media (max-width:1180px){ .layout { grid-template-columns:15rem minmax(0,1fr); } .toc { display:none; } }
+  @media (max-width:820px){
+    .layout { grid-template-columns:minmax(0,1fr); }
+    .menu-btn { display:block; }
+    .sidebar { position:fixed; top:var(--topbar-h); left:0; bottom:0; width:16rem; z-index:25;
+               transform:translateX(-100%); transition:transform .2s ease; box-shadow:2px 0 12px rgba(10,18,30,.12); }
+    .sidebar.open { transform:none; }
+    .content { padding:1.3rem 1.2rem 5rem; }
+  }
+  @media (prefers-reduced-motion:reduce){ .sidebar { transition:none; } }
 </style>
 </head>
 <body>
-<header class="top">
-  <h1>SMSOne Platform — API Guide for Testers</h1>
-  <p>The whole API told as a journey: what any signed-in user can do, what a <em>platform operator</em> does, and
-  what happens <em>inside an organization</em>. The exhaustive per-field reference is Swagger UI
-  (<code>/swagger-ui/index.html</code>); the machine spec (<code>/v3/api-docs</code>) imports straight into Postman.
-  Sample IDs are illustrative; <code>$BASE</code> is your API base — the gateway front door.</p>
-</header>
-
-<nav>
-  <strong>Start</strong>
-  <a href="#auth">Auth</a><a href="#envelope">Envelope</a><a href="#paging">Paging</a><a href="#limits">Limits</a><a href="#idem">Idempotency</a>
-  <strong>You</strong>
-  <a href="#me">/me</a><a href="#profile">Profile</a><a href="#privacy">Privacy</a><a href="#myfiles">Files</a>
-  <strong>Platform</strong>
-  <a href="#tenants">Tenants</a><a href="#users">Users</a><a href="#plans">Plans</a><a href="#platsupport">Support</a><a href="#platcfg">Config</a>
-  <strong>Org</strong>
-  <a href="#members">Members</a><a href="#orgkeys">API keys</a><a href="#webhooks">Webhooks</a><a href="#exchange">Exchange</a><a href="#orgbilling">Billing</a><a href="#security">Security</a><a href="#orgmisc">Docs·Support·Audit</a>
-  <strong>Ref</strong>
-  <a href="#errors">Errors</a><a href="#tips">Tips</a>
-</nav>
-
-<main>
+<div class="topbar">
+  <button class="menu-btn" id="menuBtn" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+  <div class="brand">SMSOne <em>· API Guide for Testers</em></div>
+  <div class="links">
+    <a href="http://localhost:8080/swagger-ui/index.html">Swagger UI</a>
+    <a href="http://localhost:8080/v3/api-docs">OpenAPI</a>
+  </div>
+</div>
+<div class="layout">
+  <aside class="sidebar" id="sidebar"><nav id="nav" aria-label="Guide sections"></nav></aside>
+  <main class="content" id="content">
 
 <div class="card">
   <p style="margin:0 0 .5rem"><strong>How to read this.</strong> Every endpoint is one block: the method, the path,
@@ -290,6 +325,21 @@ DELETE /api/v1/admin/impersonations/3e7a…                                     
 <div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/admin/orgs/{orgId}/billing/…</span><span class="perm plat">platform-admin</span></div>
   <div class="ep-body"><p>Kill Bill (billing system of record) — link an account, drive a KB subscription, read balance + methods. Entitlements
   above stay the single authority; billing events reconcile into them. Raw card data never touches this API.</p></div></div>
+<div class="card tip"><strong>How billing connects — the platform-manages-tenant model.</strong>
+Kill Bill's own <em>tenant</em> is the whole platform: one shared tenant, the <code>smsone</code> api-key/secret that
+both the app and Kaui authenticate with. Each of <em>your</em> orgs is a Kill Bill <strong>account</strong> inside that
+one tenant — so the platform runs a single KB tenant and manages every org as an account under it. To make data appear
+(e.g. in Kaui):
+<ol style="margin:.45rem 0 0 1.2rem; padding:0">
+  <li>Boot with <code>BILLING_BOOTSTRAP=true</code> — the app runs <code>ensureTenant()</code> and uploads the plan
+      catalog (<code>pro-monthly</code>, <code>enterprise-monthly</code>).</li>
+  <li><code>POST /api/v1/admin/orgs/{orgId}/billing/account</code> — create that org's KB account (idempotent).</li>
+  <li><code>POST /api/v1/admin/orgs/{orgId}/billing/subscription</code> <code>{"plan":"PRO"}</code> — KB starts the
+      subscription and cuts the first invoice.</li>
+  <li>See it in Kaui (<em>Accounts → the org</em>) or via <code>GET /api/v1/orgs/{orgId}/billing/invoices</code>. Set
+      <code>BILLING_CALLBACK_URL</code> so KB pushes invoice/payment events back and the standing reconciles
+      (<code>PAST_DUE</code> ↔ <code>ACTIVE</code>).</li>
+</ol></div>
 
 <h2 id="platsupport">C4 · Support queue, SLA, compliance &amp; retention</h2>
 <div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/admin/tickets</span><span class="perm plat">platform-support</span></div>
@@ -440,7 +490,113 @@ for the run carries both, plus <code>org_id</code>.</li>
 What passes there behaves the same against the compose stack.</li>
 </ul>
 
-</main>
+  </main>
+  <aside class="toc"><div class="toc-label">On this page</div><div id="toc"></div></aside>
+</div>
+<div class="backdrop" id="backdrop"></div>
 <footer>SMSOne Platform · <code>docs/api-guide.html</code> · when this and the code disagree, the code and Swagger UI win — file it as doc drift.</footer>
+<script>
+(function () {
+  var content = document.getElementById('content');
+  var navEl = document.getElementById('nav');
+  var tocEl = document.getElementById('toc');
+  var OFFSET = 72; // px below the sticky top bar where "active" flips
+
+  function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  function slug(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''); }
+  function shortPath(p) {
+    return p.replace(/^\/api\/v1\//, '').replace(/\/orgs\/\{orgId\}\//, '…/').replace(/^orgs\/\{orgId\}\//, '…/');
+  }
+
+  // 1) Walk the content into parts -> sections -> endpoints, giving each endpoint a stable id.
+  var parts = [], sections = [], curPart = null, curSec = null, used = {};
+  Array.prototype.forEach.call(content.children, function (node) {
+    if (node.classList.contains('part')) {
+      var ph = node.querySelector('h2');
+      curPart = { id: node.id, label: ph ? ph.textContent.trim() : '', sections: [] };
+      parts.push(curPart); curSec = null;
+    } else if (node.tagName === 'H2' && node.id) {
+      curSec = { id: node.id, title: node.textContent.trim(), el: node, eps: [], part: curPart };
+      sections.push(curSec);
+      if (curPart) curPart.sections.push(curSec);
+    } else if (node.classList.contains('ep') && curSec) {
+      var mEl = node.querySelector('.method'), pEl = node.querySelector('.path');
+      var method = mEl ? mEl.textContent.trim() : '', path = pEl ? pEl.textContent.trim() : '';
+      var base = 'ep-' + (slug(method + '-' + path) || 'x'), id = base, n = 2;
+      while (used[id]) id = base + '-' + (n++);
+      used[id] = 1; node.id = id;
+      curSec.eps.push({ id: id, method: method, path: path, el: node });
+    }
+  });
+
+  // 2) Left sidebar: every section, grouped by part.
+  var navHtml = '';
+  parts.forEach(function (part) {
+    navHtml += '<div class="nav-part">' + esc(part.label) + '</div>';
+    part.sections.forEach(function (sec) {
+      navHtml += '<a href="#' + sec.id + '" data-sec="' + sec.id + '">' + esc(sec.title) + '</a>';
+    });
+  });
+  navEl.innerHTML = navHtml;
+  var navLinks = {};
+  Array.prototype.forEach.call(navEl.querySelectorAll('a'), function (a) { navLinks[a.getAttribute('data-sec')] = a; });
+
+  // 3) Right rail: the current part's sections, endpoints nested under the active one.
+  var tocFor = null;
+  function renderToc(sec) {
+    if (!sec || tocFor === sec.id) return;
+    tocFor = sec.id;
+    var list = sec.part ? sec.part.sections : [sec], html = '';
+    list.forEach(function (s) {
+      var on = s === sec;
+      html += '<a class="sec-link' + (on ? ' active' : '') + '" href="#' + s.id + '">' + esc(s.title) + '</a>';
+      if (on) s.eps.forEach(function (ep) {
+        html += '<a class="ep-link" data-ep="' + ep.id + '" href="#' + ep.id + '">'
+              + '<span class="m ' + ep.method + '">' + esc(ep.method) + '</span>' + esc(shortPath(ep.path)) + '</a>';
+      });
+    });
+    tocEl.innerHTML = html;
+  }
+
+  // 4) Scrollspy: the last section (and endpoint) whose top has crossed the offset line is active.
+  var lastSec = null, lastEpId = null, ticking = false;
+  function spy() {
+    ticking = false;
+    if (!sections.length) return;
+    var sec = sections[0];
+    for (var i = 0; i < sections.length; i++) {
+      if (sections[i].el.getBoundingClientRect().top - OFFSET <= 0) sec = sections[i]; else break;
+    }
+    var epId = null;
+    for (var j = 0; j < sec.eps.length; j++) {
+      if (sec.eps[j].el.getBoundingClientRect().top - OFFSET <= 0) epId = sec.eps[j].id; else break;
+    }
+    if (sec !== lastSec) {
+      if (lastSec && navLinks[lastSec.id]) navLinks[lastSec.id].classList.remove('active');
+      if (navLinks[sec.id]) { navLinks[sec.id].classList.add('active'); navLinks[sec.id].scrollIntoView({ block: 'nearest' }); }
+      renderToc(sec);
+      lastSec = sec; lastEpId = null;
+    }
+    if (epId !== lastEpId) {
+      var prev = tocEl.querySelector('.ep-link.active'); if (prev) prev.classList.remove('active');
+      if (epId) { var cur = tocEl.querySelector('.ep-link[data-ep="' + epId + '"]'); if (cur) cur.classList.add('active'); }
+      lastEpId = epId;
+    }
+  }
+  function onScroll() { if (!ticking) { ticking = true; requestAnimationFrame(spy); } }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', onScroll);
+  spy();
+
+  // 5) Mobile: the sidebar becomes a drawer.
+  var sidebar = document.getElementById('sidebar'), backdrop = document.getElementById('backdrop'), menuBtn = document.getElementById('menuBtn');
+  function closeNav() { sidebar.classList.remove('open'); backdrop.classList.remove('show'); menuBtn.setAttribute('aria-expanded', 'false'); }
+  menuBtn.addEventListener('click', function () {
+    var open = sidebar.classList.toggle('open'); backdrop.classList.toggle('show', open); menuBtn.setAttribute('aria-expanded', String(open));
+  });
+  backdrop.addEventListener('click', closeNav);
+  navEl.addEventListener('click', function (e) { if (e.target.closest('a')) closeNav(); });
+})();
+</script>
 </body>
 </html>
