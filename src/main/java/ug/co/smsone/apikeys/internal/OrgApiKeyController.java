@@ -63,4 +63,16 @@ class OrgApiKeyController {
     void revoke(@PathVariable UUID orgId, @PathVariable UUID id) {
         service.revokeOrgKey(orgId, id);
     }
+
+    @PostMapping("/{id}/rotate")
+    @Operation(summary = "Rotate an API key",
+            description = """
+                    Mints a replacement with the same name/permissions/expiry and revokes this one, \
+                    atomically. The new `secret` is returned in full exactly ONCE, here; the old key \
+                    401s on its next call.""")
+    @PreAuthorize("hasPermission(#orgId, 'organization', 'apikey:manage')")
+    @ResponseStatus(HttpStatus.CREATED)
+    ResourceObject rotate(@PathVariable UUID orgId, @PathVariable UUID id) {
+        return ApiKeyResources.toCreated(service.rotateOrgKey(orgId, id));
+    }
 }

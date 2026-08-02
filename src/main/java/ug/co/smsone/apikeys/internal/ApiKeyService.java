@@ -104,6 +104,24 @@ class ApiKeyService {
         auditLog.record("apikeys.key_revoked", orgId, id.toString(), "prefix=" + key.getPrefix(), null);
     }
 
+    /**
+     * Rotate a key: mint a replacement carrying the same name/permissions/expiry, then revoke the old
+     * one — atomically. No re-escalation check (the permission set was already vetted at the original
+     * mint). The new secret is returned once, exactly like {@link #createOrgKey}.
+     */
+    @Transactional
+    Minted rotateOrgKey(UUID orgId, UUID id) {
+        ApiKey existing = keys.findByIdAndOrgId(id, orgId)
+                .orElseThrow(() -> new NotFoundException("API key not found."));
+        ApiKeyHashing.Minted minted = ApiKeyHashing.mint();
+        ApiKey replacement = keys.save(ApiKey.orgKey(orgId, existing.getName(), minted.prefix(),
+                minted.secretHash(), existing.getPermissions(), existing.getExpiresAt()));
+        keys.delete(existing);
+        auditLog.record("apikeys.key_rotated", orgId, id.toString(),
+                "prefix=" + existing.getPrefix(), "newPrefix=" + minted.prefix());
+        return new Minted(replacement, minted.presented());
+    }
+
     @Transactional
     void revokePlatformKey(UUID id) {
         ApiKey key = keys.findByIdAndOrgIdIsNull(id)
