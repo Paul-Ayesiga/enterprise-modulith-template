@@ -6,6 +6,7 @@ import java.util.Map;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -13,6 +14,7 @@ import ug.co.smsone.shared.audit.AuditLog;
 import ug.co.smsone.shared.compliance.LegalHolds;
 import ug.co.smsone.shared.error.NotFoundException;
 import ug.co.smsone.shared.error.ValidationException;
+import ug.co.smsone.shared.security.PlatformAdmins;
 import ug.co.smsone.shared.web.ApiSource;
 
 /**
@@ -33,17 +35,20 @@ class ComplianceService {
     private final LegalHoldRepository holds;
     private final ErasureRequestRepository erasures;
     private final LegalHolds legalHolds;
+    private final ObjectProvider<PlatformAdmins> platformAdmins;
     private final JdbcTemplate jdbc;
     private final AuditLog auditLog;
     private final Clock clock;
 
     ComplianceService(ConsentRepository consents, LegalHoldRepository holds,
-            ErasureRequestRepository erasures, LegalHolds legalHolds, JdbcTemplate jdbc,
+            ErasureRequestRepository erasures, LegalHolds legalHolds,
+            ObjectProvider<PlatformAdmins> platformAdmins, JdbcTemplate jdbc,
             AuditLog auditLog, Clock clock) {
         this.consents = consents;
         this.holds = holds;
         this.erasures = erasures;
         this.legalHolds = legalHolds;
+        this.platformAdmins = platformAdmins;
         this.jdbc = jdbc;
         this.auditLog = auditLog;
         this.clock = clock;
@@ -112,6 +117,16 @@ class ComplianceService {
                     clock.instant());
             erasures.save(request);
             auditLog.record("compliance.erasure_refused", null, subject, null, "reason=legal-hold");
+            return request;
+        }
+        // Never erase the platform's last super-admin — it would lock out role administration until the
+        // bootstrap re-seeds one on the next restart. Grant the role elsewhere first, then erase.
+        PlatformAdmins admins = platformAdmins.getIfAvailable();
+        if (admins != null && admins.isSoleSuperAdmin(subject)) {
+            request.refused("This account is the last platform super-admin; grant that role to another "
+                    + "account before erasing this one.", clock.instant());
+            erasures.save(request);
+            auditLog.record("compliance.erasure_refused", null, subject, null, "reason=last-super-admin");
             return request;
         }
         int cleared = 0;

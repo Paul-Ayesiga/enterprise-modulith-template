@@ -148,6 +148,26 @@ class KeycloakUserAdminGateway {
     }
 
     /**
+     * The subjects (Keycloak user ids) that hold a realm role, by its DIRECT assignment — the reverse of
+     * {@link #realmRoles(String)}. Used to guard the last super-admin: a role granted only through a
+     * composite or a group would not appear here, so the guard errs toward permitting (never falsely
+     * blocking) an erasure.
+     */
+    Set<String> usersWithRealmRole(String roleName) {
+        List<?> users = keycloakAdminRestClient.get()
+                .uri("/roles/{name}/users", roleName)
+                .retrieve()
+                .body(List.class);
+        if (users == null) {
+            return Set.of();
+        }
+        return users.stream()
+                .filter(Map.class::isInstance)
+                .map(user -> String.valueOf(((Map<?, ?>) user).get("id")))
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+    }
+
+    /**
      * Whether Keycloak still holds this account — deliberately THREE answers, not a boolean.
      *
      * <p>"Deleted" and "I could not find out" are different facts with opposite consequences, and a
