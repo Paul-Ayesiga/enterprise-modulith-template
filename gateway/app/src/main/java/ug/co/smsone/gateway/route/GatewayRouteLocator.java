@@ -25,6 +25,7 @@ import ug.co.smsone.gateway.core.route.RouteSource;
 import ug.co.smsone.gateway.core.route.ServiceDefinition;
 import ug.co.smsone.gateway.core.route.ServiceRegistry;
 import ug.co.smsone.gateway.core.traffic.TrafficPolicy;
+import ug.co.smsone.gateway.core.transform.TransformPolicy;
 
 /**
  * The adapter from the core's route MODEL to the Spring Cloud Gateway RUNTIME: it translates each
@@ -49,7 +50,8 @@ class GatewayRouteLocator {
             TrafficPolicy traffic = route.traffic();
             routes.route(route.id(), spec -> {
                 UriSpec withFilters = match(spec, route.predicates())
-                        .filters(filters -> applyTraffic(filters, traffic, route.id(), rateLimiter, keyResolver));
+                        .filters(filters -> applyTraffic(
+                                applyTransform(filters, route.transform()), traffic, route.id(), rateLimiter, keyResolver));
                 if (traffic.hasTimeout()) {
                     // Per-route response timeout — a slow backend fails fast (504) rather than hanging.
                     withFilters = withFilters.metadata("response-timeout", traffic.responseTimeoutMs());
@@ -86,6 +88,34 @@ class GatewayRouteLocator {
         if (traffic.hasCache()) {
             // Cache GET responses for the TTL; the key is tenant-scoped (TenantAwareCacheKeyGenerator).
             spec = spec.localResponseCache(Duration.ofSeconds(traffic.cacheTtlSeconds()), DataSize.ofMegabytes(10));
+        }
+        return spec;
+    }
+
+    /** Apply the route's request/response transforms — path/header/query rewrites, entirely by config. */
+    private static GatewayFilterSpec applyTransform(GatewayFilterSpec filters, TransformPolicy transform) {
+        GatewayFilterSpec spec = filters;
+        if (transform.rewritesPath()) {
+            spec = spec.rewritePath(transform.rewritePathRegex(), transform.rewritePathReplacement());
+        }
+        if (transform.stripsPrefix()) {
+            spec = spec.stripPrefix(transform.stripPrefix());
+        }
+        for (var header : transform.setRequestHeaders().entrySet()) {
+            // set (overwrite), not add — a client cannot spoof an injected X-Tenant/X-Consumer.
+            spec = spec.setRequestHeader(header.getKey(), header.getValue());
+        }
+        for (String header : transform.removeRequestHeaders()) {
+            spec = spec.removeRequestHeader(header);
+        }
+        for (var param : transform.addRequestParams().entrySet()) {
+            spec = spec.addRequestParameter(param.getKey(), param.getValue());
+        }
+        for (var header : transform.setResponseHeaders().entrySet()) {
+            spec = spec.setResponseHeader(header.getKey(), header.getValue());
+        }
+        for (String header : transform.removeResponseHeaders()) {
+            spec = spec.removeResponseHeader(header);
         }
         return spec;
     }

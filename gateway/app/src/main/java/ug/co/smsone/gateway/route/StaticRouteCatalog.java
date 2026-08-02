@@ -16,6 +16,7 @@ import ug.co.smsone.gateway.core.route.ServiceDefinition;
 import ug.co.smsone.gateway.core.route.ServiceRegistry;
 import ug.co.smsone.gateway.core.security.AuthPolicy;
 import ug.co.smsone.gateway.core.traffic.TrafficPolicy;
+import ug.co.smsone.gateway.core.transform.TransformPolicy;
 
 /**
  * The static-config adapter for the {@link RouteSource} and {@link ServiceRegistry} ports: it maps
@@ -38,8 +39,17 @@ class StaticRouteCatalog implements RouteSource, ServiceRegistry {
                         route.predicates().stream()
                                 .map(predicate -> new RoutePredicate(predicate.kind(), predicate.args()))
                                 .toList(),
-                        route.serviceId(), toAuthPolicy(route.auth()), toTrafficPolicy(route.traffic()), Map.of()))
+                        route.serviceId(), toAuthPolicy(route.auth()), toTrafficPolicy(route.traffic()),
+                        toTransformPolicy(route.transform()), Map.of()))
                 .toList();
+    }
+
+    private static TransformPolicy toTransformPolicy(GatewayProperties.TransformProps transform) {
+        return transform == null ? TransformPolicy.NONE
+                : new TransformPolicy(transform.rewritePathRegex(), transform.rewritePathReplacement(),
+                        transform.stripPrefix(), transform.setRequestHeaders(), transform.removeRequestHeaders(),
+                        transform.addRequestParams(), transform.setResponseHeaders(),
+                        transform.removeResponseHeaders());
     }
 
     private static AuthPolicy toAuthPolicy(GatewayProperties.AuthProps auth) {

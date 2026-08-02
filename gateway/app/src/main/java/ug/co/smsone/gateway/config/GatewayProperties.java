@@ -2,6 +2,7 @@ package ug.co.smsone.gateway.config;
 
 import java.net.URI;
 import java.util.List;
+import java.util.Map;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import ug.co.smsone.gateway.core.route.RoutePredicate;
 
@@ -36,12 +37,19 @@ public record GatewayProperties(List<ServiceProps> services, List<RouteProps> ro
         }
     }
 
-    /** A route: {@code predicates}, target {@code serviceId}, coarse {@code auth}, {@code traffic} policy. */
+    /** A route: {@code predicates}, target {@code serviceId}, coarse {@code auth}, {@code traffic}, {@code transform}. */
     public record RouteProps(String id, int order, String serviceId, List<PredicateProps> predicates,
-            AuthProps auth, TrafficProps traffic) {
+            AuthProps auth, TrafficProps traffic, TransformProps transform) {
         public RouteProps {
             predicates = predicates == null ? List.of() : predicates;
         }
+    }
+
+    /** A route's request/response transformation: path rewrite/strip, header and query manipulation. */
+    public record TransformProps(String rewritePathRegex, String rewritePathReplacement, Integer stripPrefix,
+            Map<String, String> setRequestHeaders, List<String> removeRequestHeaders,
+            Map<String, String> addRequestParams, Map<String, String> setResponseHeaders,
+            List<String> removeResponseHeaders) {
     }
 
     /** A route's coarse edge auth policy: require a token, require scopes, enforce the path tenant. */

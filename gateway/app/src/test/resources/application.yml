@@ -162,3 +162,19 @@ gateway:
         authenticated: true
       traffic:
         cache-ttl-seconds: 60
+    - id: transform-route
+      order: 27
+      service-id: backend
+      predicates:
+        - kind: PATH
+          args: [/xform/**]
+      transform:
+        strip-prefix: 1                       # /xform/foo -> /foo upstream
+        set-request-headers:
+          X-Tenant-Injected: acme
+        remove-request-headers: [Authorization]
+        add-request-params:
+          source: edge
+        set-response-headers:
+          X-Frame-Options: DENY
+        remove-response-headers: [X-Backend-Secret]
