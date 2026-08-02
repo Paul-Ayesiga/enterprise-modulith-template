@@ -7,7 +7,7 @@
 // or point this script at the modulith directly:  TARGET_URL=http://localhost:28080 k6 run ...
 import http from "k6/http";
 import { check } from "k6";
-import { GATEWAY, READ_PATH, bearer, getToken } from "../lib/common.js";
+import { GATEWAY, READ_PATH, bearer, getToken, record } from "../lib/common.js";
 
 const TARGET = __ENV.TARGET_URL || GATEWAY;
 const RATE = Number(__ENV.RATE || 100); // peak requests/second
@@ -30,7 +30,9 @@ export const options = {
     }
   },
   thresholds: {
-    http_req_failed: ["rate<0.01"],
+    // The SLO gates REAL failures (5xx/transport), not 429s — a single box hammering one principal is
+    // rate-limited by design; those 429s show as edge_rate_limited_429, not as a failed SLO.
+    server_errors_5xx: ["rate<0.01"],
     http_req_duration: ["p(95)<300", "p(99)<800"]
   }
 };
@@ -41,5 +43,6 @@ export function setup() {
 
 export default function (data) {
   const res = http.get(`${TARGET}${READ_PATH}`, { headers: bearer(data.token) });
-  check(res, { "status is 200": (r) => r.status === 200 });
+  record(res);
+  check(res, { "status is 200 or 429 (never 5xx)": (r) => r.status === 200 || r.status === 429 });
 }

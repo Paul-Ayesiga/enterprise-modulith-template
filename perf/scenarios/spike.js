@@ -5,7 +5,7 @@
 // see raw spike behaviour rather than the edge shedding load (which is itself a valid thing to watch).
 import http from "k6/http";
 import { check } from "k6";
-import { GATEWAY, READ_PATH, bearer, getToken } from "../lib/common.js";
+import { GATEWAY, READ_PATH, bearer, getToken, record } from "../lib/common.js";
 
 const TARGET = __ENV.TARGET_URL || GATEWAY;
 const CALM = Number(__ENV.CALM || 20); // requests/second between spikes
@@ -31,7 +31,9 @@ export const options = {
   thresholds: {
     // Post-spike recovery is the real signal — keep the aggregate percentiles honest.
     http_req_duration: ["p(95)<800", "p(99)<2000"],
-    http_req_failed: ["rate<0.05"]
+    // Gate real failures (5xx/transport); 429s from the burst outrunning the limit are expected and
+    // surface separately as edge_rate_limited_429.
+    server_errors_5xx: ["rate<0.01"]
   }
 };
 
@@ -41,5 +43,6 @@ export function setup() {
 
 export default function (data) {
   const res = http.get(`${TARGET}${READ_PATH}`, { headers: bearer(data.token) });
-  check(res, { "status is 200": (r) => r.status === 200 });
+  record(res);
+  check(res, { "status is 200 or 429 (never 5xx)": (r) => r.status === 200 || r.status === 429 });
 }

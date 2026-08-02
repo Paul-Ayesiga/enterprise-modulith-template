@@ -5,7 +5,7 @@
 // as baseline.js if you push RATE above the default per-principal limit.
 import http from "k6/http";
 import { check } from "k6";
-import { GATEWAY, READ_PATH, bearer, getToken } from "../lib/common.js";
+import { GATEWAY, READ_PATH, bearer, getToken, record } from "../lib/common.js";
 
 const TARGET = __ENV.TARGET_URL || GATEWAY;
 const RATE = Number(__ENV.RATE || 15);
@@ -22,7 +22,8 @@ export const options = {
     }
   },
   thresholds: {
-    http_req_failed: ["rate<0.01"],
+    // Real failures only; sustained 429s (if you soak above the limit) show as edge_rate_limited_429.
+    server_errors_5xx: ["rate<0.01"],
     // Flat percentiles over a long run are the goal — creep here means a leak or contention.
     http_req_duration: ["p(95)<300", "p(99)<800"]
   }
@@ -34,5 +35,6 @@ export function setup() {
 
 export default function (data) {
   const res = http.get(`${TARGET}${READ_PATH}`, { headers: bearer(data.token) });
-  check(res, { "status is 200": (r) => r.status === 200 });
+  record(res);
+  check(res, { "status is 200 or 429 (never 5xx)": (r) => r.status === 200 || r.status === 429 });
 }

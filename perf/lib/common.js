@@ -2,6 +2,22 @@
 // Everything is env-overridable so the same scripts run against local (2xxxx), staging, or CI.
 import http from "k6/http";
 import { fail } from "k6";
+import { Counter, Rate } from "k6/metrics";
+
+// Split responses so a run distinguishes the edge SHEDDING load (429 — expected when a single k6 box
+// outruns the per-principal rate limit or per-consumer quota) from REAL failures (5xx / transport).
+// The throughput SLOs sit on server_errors_5xx, NOT on k6's built-in http_req_failed, which lumps 429s
+// in and so reads as a scary "88% failed" on a single-box run even when the backend is perfectly healthy.
+export const rateLimited = new Counter("edge_rate_limited_429");
+export const serverErrors = new Rate("server_errors_5xx");
+
+/** Tally one response into the enforcement (429) vs real-error (5xx/transport) buckets. */
+export function record(res) {
+  if (res.status === 429) {
+    rateLimited.add(1);
+  }
+  serverErrors.add(res.status >= 500 || res.status === 0);
+}
 
 export const GATEWAY = __ENV.GATEWAY_URL || "http://localhost:28090";
 export const MODULITH = __ENV.MODULITH_URL || "http://localhost:28080";

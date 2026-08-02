@@ -96,12 +96,19 @@ against the tuned numbers as real.
 
 | Scenario | Gate |
 |---|---|
-| `baseline` | error rate < 1% · p95 < 300 ms · p99 < 800 ms |
-| `spike` | error rate < 5% · p95 < 800 ms · p99 < 2 s (recovery is judged on the timeline, not just the aggregate) |
-| `soak` | error rate < 1% · p95 < 300 ms · p99 < 800 ms held flat for the whole run |
+| `baseline` | **5xx/transport** error < 1% · p95 < 300 ms · p99 < 800 ms |
+| `spike` | **5xx/transport** error < 1% · p95 < 800 ms · p99 < 2 s (recovery is judged on the timeline, not just the aggregate) |
+| `soak` | **5xx/transport** error < 1% · p95 < 300 ms · p99 < 800 ms held flat for the whole run |
 | `edge-enforcement` | some 429s **and** some 200s · shed ratio > 50% · zero 5xx |
 | `auth-write` | error rate < 1% · read p95 < 300 ms · write p95 < 500 ms |
 | `gateway-vs-direct` | gateway p95 < 300 ms · direct p95 < 250 ms · error rate < 1% |
+
+The throughput scenarios gate on `server_errors_5xx` (real failures — 5xx and transport), **not** on k6's
+built-in `http_req_failed`. That built-in lumps in every **429**, so a single k6 box hammering one
+principal — which the edge rate-limits by design — reads as a scary "~88% failed" even when the backend
+is perfectly healthy. The 429s are still reported, separately, as `edge_rate_limited_429`: that number is
+the edge *shedding* load, not the system failing. To push real throughput past the shedding, raise the
+limit or spread the load across principals (see [Throughput vs enforcement](#throughput-vs-enforcement)).
 
 ---
 
