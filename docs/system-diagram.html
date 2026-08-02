@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SMSOne — System Architecture</title>
+<style>
+  :root {
+    --ground: #080d18;
+    --grid: #0e1626;
+    --panel: #101a2e;
+    --panel-2: #0c1424;
+    --border: #22304c;
+    --border-soft: #1a2740;
+    --ink: #dde7f7;
+    --muted: #8496b6;
+    --faint: #5f708f;
+    --client: #b7a2ff;
+    --edge: #6ea8ff;
+    --core: #43d9ac;
+    --infra: #eab863;
+    --wire: #3a4d74;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background:
+      radial-gradient(1200px 600px at 15% -10%, #0d1b33 0%, transparent 60%),
+      radial-gradient(1000px 700px at 100% 0%, #0b1f2b 0%, transparent 55%),
+      var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1160px; margin: 0 auto; padding: 44px 24px 90px; }
+
+  /* ---- header ---- */
+  header { margin-bottom: 34px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 12px; letter-spacing: 0.22em;
+    text-transform: uppercase; color: var(--edge); margin: 0 0 12px;
+  }
+  h1 {
+    font-size: clamp(30px, 5vw, 46px); line-height: 1.04; letter-spacing: -0.025em;
+    margin: 0 0 14px; text-wrap: balance; font-weight: 800;
+  }
+  h1 .thin { color: var(--muted); font-weight: 500; }
+  .lede { color: var(--muted); font-size: 17px; max-width: 66ch; margin: 0 0 18px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px; }
+  .stat {
+    font-family: var(--mono); font-size: 12.5px; color: var(--ink);
+    background: var(--panel-2); border: 1px solid var(--border-soft);
+    padding: 5px 11px; border-radius: 7px;
+  }
+  .stat b { color: var(--edge); font-weight: 700; }
+
+  /* ---- section scaffolding ---- */
+  section { margin-top: 40px; }
+  .sec-head { display: flex; align-items: baseline; gap: 12px; margin: 0 0 4px; }
+  .sec-num { font-family: var(--mono); font-size: 13px; color: var(--faint); }
+  h2 { font-size: 20px; letter-spacing: -0.01em; margin: 0; font-weight: 700; }
+  .sec-sub { color: var(--muted); font-size: 14px; margin: 4px 0 20px; }
+
+  /* ---- diagram panels ---- */
+  .diagram {
+    background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+    border: 1px solid var(--border);
+    border-radius: 16px; padding: 18px;
+    overflow-x: auto;
+    box-shadow: 0 24px 60px -30px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,0.03);
+  }
+  .diagram pre.mermaid { margin: 0; text-align: center; min-width: 720px; }
+  .diagram.seq pre.mermaid { min-width: 640px; }
+
+  /* ---- legend ---- */
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 16px 2px 0; }
+  .legend .item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .swatch { width: 13px; height: 13px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.14); }
+  .swatch.client { background: var(--client); }
+  .swatch.edge { background: var(--edge); }
+  .swatch.core { background: var(--core); }
+  .swatch.infra { background: var(--infra); }
+  .legend .dash { font-family: var(--mono); color: var(--faint); }
+
+  /* ---- breakdown cards ---- */
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(255px, 1fr)); gap: 16px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border-soft);
+    border-radius: 13px; padding: 18px 18px 16px; position: relative;
+  }
+  .card::before {
+    content: ""; position: absolute; left: 0; top: 16px; bottom: 16px; width: 3px;
+    border-radius: 3px; background: var(--accent, var(--edge));
+  }
+  .card.c-edge { --accent: var(--edge); }
+  .card.c-core { --accent: var(--core); }
+  .card.c-infra { --accent: var(--infra); }
+  .card.c-client { --accent: var(--client); }
+  .card h3 {
+    margin: 0 0 3px; font-size: 15px; font-weight: 700; letter-spacing: -0.01em;
+    padding-left: 12px;
+  }
+  .card .tag {
+    font-family: var(--mono); font-size: 11px; color: var(--faint);
+    text-transform: uppercase; letter-spacing: 0.08em; padding-left: 12px;
+    display: block; margin-bottom: 10px;
+  }
+  .card ul { margin: 0; padding: 0 0 0 12px; list-style: none; }
+  .card li { font-size: 13.5px; color: var(--muted); padding: 3px 0; }
+  .card li b { color: var(--ink); font-weight: 600; }
+  .card li code, .mono { font-family: var(--mono); font-size: 12.5px; color: var(--edge); }
+  .card.c-core li code { color: var(--core); }
+  .card.c-infra li code { color: var(--infra); }
+
+  /* ---- pipeline strip ---- */
+  .pipeline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 4px; }
+  .stage {
+    font-family: var(--mono); font-size: 12.5px; color: var(--ink);
+    background: var(--panel-2); border: 1px solid var(--border);
+    padding: 6px 11px; border-radius: 8px; white-space: nowrap;
+  }
+  .stage small { color: var(--faint); }
+  .arrow { color: var(--wire); font-family: var(--mono); }
+
+  footer {
+    margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--border-soft);
+    color: var(--faint); font-size: 12.5px; font-family: var(--mono); line-height: 1.7;
+  }
+  footer b { color: var(--muted); font-weight: 600; }
+  a { color: var(--edge); }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">System Architecture · Reference</p>
+    <h1>SMSOne <span class="thin">— a Spring Modulith behind a reactive edge</span></h1>
+    <p class="lede">
+      A multi-tenant messaging platform: 23 domain modules inside one deployable, fronted by a stateless
+      reactive API gateway that owns the edge — auth, traffic, observability, and API management — so every
+      service speaks one front door. The whole system, in one diagram.
+    </p>
+    <div class="meta">
+      <span class="stat"><b>23</b> modulith modules</span>
+      <span class="stat"><b>7</b> gateway phases shipped</span>
+      <span class="stat">edge <b>:8090</b> · admin <b>:9090</b> · api <b>:8080</b></span>
+      <span class="stat">hexagonal · ports &amp; adapters</span>
+    </div>
+  </header>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h2>The whole system</h2></div>
+    <p class="sec-sub">Clients enter through the gateway; the gateway proxies <code class="mono">/api/v1/**</code> to the modulith and reaches it over three thin, secret-authed seams; every module shares the infrastructure below.</p>
+    <div class="diagram">
+      <pre class="mermaid">
+%%{init: {'theme':'base','themeVariables':{
+  'background':'transparent','fontFamily':'ui-sans-serif, system-ui, sans-serif','fontSize':'13px',
+  'primaryColor':'#12203a','primaryTextColor':'#dde7f7','primaryBorderColor':'#2a3c5c',
+  'lineColor':'#3a4d74','clusterBkg':'#0c1424','clusterBorder':'#22304c','titleColor':'#8496b6',
+  'edgeLabelBackground':'#0c1424'
+}}}%%
+flowchart TB
+  subgraph CLIENTS["CLIENTS"]
+    direction LR
+    web["Web / SPA — Bearer JWT"]
+    mob["Mobile — Bearer JWT"]
+    apic["API client — X-Api-Key"]
+    svc["Internal service — X-Internal-Token"]
+  end
+
+  subgraph EDGE["API GATEWAY — reactive / WebFlux"]
+    direction TB
+    pipe["Pipeline: request-id → trace → access-log → lifecycle → auth → quota → plugins → routing"]
+    traffic["Traffic: rate-limit · timeout · circuit-breaker · retries · cache · load-balance · compress"]
+    xform["Transform + Security: rewrite · strip Authorization · JWT/JWKS · API-key introspection · internal tokens"]
+    adm["Admin @ :9090: route table · product catalog · OpenAPI · Prometheus"]
+    pipe --- traffic --- xform --- adm
+  end
+
+  subgraph PLATFORM["PLATFORM — Spring Modulith / servlet + JDBC — /api/v1"]
+    direction TB
+    subgraph IAM["Identity and Access"]
+      direction LR
+      identity["identity"]; access["access"]; apikeys["apikeys"]; profile["profile"]
+    end
+    subgraph TEN["Tenancy and Commercial"]
+      direction LR
+      organization["organization"]; subscription["subscription"]; billing["billing"]
+    end
+    subgraph COMM["Comms and Events"]
+      direction LR
+      notification["notification"]; webhooks["webhooks"]
+    end
+    subgraph DATA["Data movement"]
+      direction LR
+      exchange["exchange"]; files["files"]; document["document"]; search["search"]
+    end
+    subgraph GOV["Ops and Governance"]
+      direction LR
+      audit["audit"]; compliance["compliance"]; maintenance["maintenance"]; scheduler["scheduler"]; analytics["analytics"]; support["support"]; settings["settings"]; integration["integration"]; localization["localization"]
+    end
+    shared["shared kernel: JSON:API envelope · security context · persistence · AuditLog port"]
+  end
+
+  subgraph INFRA["INFRASTRUCTURE"]
+    direction LR
+    pg[("Postgres")]; kc[("Keycloak")]; vk[("Valkey")]; sw[("SeaweedFS")]; mp[("Mailpit / SMTP")]; kb[("Kill Bill")]; otel[("otel-lgtm")]
+  end
+
+  web --> EDGE
+  mob --> EDGE
+  apic --> EDGE
+  svc --> EDGE
+  EDGE ==>|"proxy /api/v1/** (+X-Auth-Subject, X-Tenant-Id, traceparent)"| PLATFORM
+  EDGE -.->|"introspect · audit · quota (gateway-secret seams)"| PLATFORM
+  EDGE -.->|JWKS| kc
+  EDGE -.->|"rate-limit + quota counters"| vk
+  PLATFORM ==> pg
+  identity -.-> kc
+  files -.-> sw
+  notification -.-> mp
+  billing -.-> kb
+  PLATFORM -.-> vk
+  PLATFORM -.-> otel
+  EDGE -.-> otel
+
+  classDef client fill:#171334,stroke:#6d5bd0,color:#cbbcff;
+  classDef edge fill:#0f2140,stroke:#3f74d8,color:#bcd6ff;
+  classDef core fill:#0a2b24,stroke:#249e7a,color:#8fe8cf;
+  classDef infra fill:#2a2410,stroke:#b58b3a,color:#f0cf8c;
+  class web,mob,apic,svc client;
+  class pipe,cap,adm edge;
+  class identity,access,apikeys,profile,organization,subscription,billing,notification,webhooks,exchange,files,document,search,audit,compliance,maintenance,scheduler,analytics,support,settings,integration,localization,shared core;
+  class pg,kc,vk,sw,mp,kb,otel infra;
+      </pre>
+    </div>
+    <div class="legend">
+      <span class="item"><span class="swatch client"></span> Clients</span>
+      <span class="item"><span class="swatch edge"></span> Gateway (edge)</span>
+      <span class="item"><span class="swatch core"></span> Modulith module</span>
+      <span class="item"><span class="swatch infra"></span> Infrastructure</span>
+      <span class="item"><span class="dash">══</span> proxied API traffic</span>
+      <span class="item"><span class="dash">┈┈</span> control / async seam</span>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>One request, end to end</h2></div>
+    <p class="sec-sub">Coarse authorization at the edge, fine-grained <code class="mono">hasPermission</code> in the service — defense in depth. The gateway holds no tenant state; it stamps identity and forwards.</p>
+    <div class="diagram seq">
+      <pre class="mermaid">
+%%{init: {'theme':'base','themeVariables':{
+  'background':'transparent','fontFamily':'ui-sans-serif, system-ui, sans-serif','fontSize':'13px',
+  'actorBkg':'#12203a','actorBorder':'#3f74d8','actorTextColor':'#dde7f7','signalColor':'#8496b6',
+  'signalTextColor':'#aeb9d0','noteBkgColor':'#0c1424','noteBorderColor':'#22304c','noteTextColor':'#8fe8cf',
+  'sequenceNumberColor':'#080d18','lineColor':'#3a4d74','labelBoxBkgColor':'#0c1424','labelTextColor':'#dde7f7'
+}}}%%
+sequenceDiagram
+  autonumber
+  actor C as Client
+  participant G as Gateway :8090
+  participant K as Keycloak
+  participant V as Valkey
+  participant M as Modulith :8080
+  participant D as Postgres
+  C->>G: GET /api/v1/orgs/{id}/…  (Bearer JWT)
+  Note over G: mint request-id + W3C traceparent
+  G->>K: validate JWT against JWKS (cached)
+  G->>G: coarse authZ — authenticated? tenant? scope?
+  G->>V: quota INCR (per-consumer window)
+  Note over G: lifecycle check + request transforms
+  G->>M: proxy /api/v1/…  (+ X-Auth-Subject, X-Tenant-Id, traceparent)
+  M->>M: fine-grained hasPermission (defense in depth)
+  M->>D: read / write — scoped to one tenant
+  D-->>M: rows
+  M-->>G: JSON:API envelope (meta.requestId)
+  G-->>C: response (+ X-Request-Id, X-Trace-Id)
+  Note over G,M: on denial → async edge audit event (gateway-secret seam)
+      </pre>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>The edge, phase by phase</h2></div>
+    <p class="sec-sub">Seven shipped phases. Each route opts into what it needs by configuration — predicates, auth, traffic, transform, lifecycle, product — with no code.</p>
+    <div class="grid">
+      <div class="card c-edge"><h3>1 · Core</h3><span class="tag">routing</span><ul>
+        <li>Predicate routing (path/host/header/method/query), reverse proxy</li>
+        <li>Request-id + one <b>error envelope</b> for edge failures</li>
+      </ul></div>
+      <div class="card c-edge"><h3>2 · Security</h3><span class="tag">who are you</span><ul>
+        <li>Bearer <b>JWT</b> validated against Keycloak <code>JWKS</code> — no platform call</li>
+        <li>Coarse authZ; <b>API-key introspection</b> + internal service tokens</li>
+      </ul></div>
+      <div class="card c-edge"><h3>3 · Traffic</h3><span class="tag">protect &amp; shape</span><ul>
+        <li>Rate-limit · timeout · request-size · <b>circuit-breaker</b> · retries</li>
+        <li><b>Tenant-safe cache</b>, load-balancing, gzip compression</li>
+      </ul></div>
+      <div class="card c-edge"><h3>4 · Observability</h3><span class="tag">measure</span><ul>
+        <li>Prometheus metrics; W3C <b>trace propagation</b> gateway→service</li>
+        <li>Separable access / security / error log streams; <b>edge audit sink</b></li>
+      </ul></div>
+      <div class="card c-edge"><h3>5 · Extensibility</h3><span class="tag">program it</span><ul>
+        <li>Request/response <b>transforms</b>; a <b>plugin framework</b></li>
+        <li>Dynamic routes (no restart); WebSocket; named reusable policies</li>
+      </ul></div>
+      <div class="card c-edge"><h3>6 · Administration</h3><span class="tag">operate</span><ul>
+        <li>Admin API on a <b>separate port</b>; per-consumer <b>quotas from the plan</b></li>
+        <li>API-key rotation; service discovery auto-registers a backend</li>
+      </ul></div>
+      <div class="card c-edge"><h3>7 · Enterprise</h3><span class="tag">API management</span><ul>
+        <li><b>Lifecycle</b> (published/deprecated→Sunset/retired→410) + versioning</li>
+        <li>API <b>products</b>, catalog, and published <b>OpenAPI</b></li>
+      </ul></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h2>The pipeline order</h2></div>
+    <p class="sec-sub">Global filters run in this order for every request; a retired version 410s before auth, and quota is metered after identity is known.</p>
+    <div class="pipeline">
+      <span class="stage">request-id <small>+0</small></span><span class="arrow">→</span>
+      <span class="stage">trace <small>+1</small></span><span class="arrow">→</span>
+      <span class="stage">access-log <small>+2</small></span><span class="arrow">→</span>
+      <span class="stage">lifecycle <small>+5</small></span><span class="arrow">→</span>
+      <span class="stage">auth <small>+10</small></span><span class="arrow">→</span>
+      <span class="stage">quota <small>+15</small></span><span class="arrow">→</span>
+      <span class="stage">plugins <small>+20</small></span><span class="arrow">→</span>
+      <span class="stage">routing <small>proxy</small></span>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">05</span><h2>The platform — 23 modules</h2></div>
+    <p class="sec-sub">One Spring Modulith deployable. Each module owns its data and exposes only its published ports; boundaries are enforced by <code class="mono">ModularityTests</code>.</p>
+    <div class="grid">
+      <div class="card c-core"><h3>Identity &amp; Access</h3><span class="tag">who &amp; what they may do</span><ul>
+        <li><code>identity</code> — users, provisioning, Keycloak sync</li>
+        <li><code>access</code> — roles, permissions, org authorization</li>
+        <li><code>apikeys</code> — machine credentials (mint / rotate / revoke)</li>
+        <li><code>profile</code> — the caller's own record, devices, consent</li>
+      </ul></div>
+      <div class="card c-core"><h3>Tenancy &amp; Commercial</h3><span class="tag">orgs &amp; money</span><ul>
+        <li><code>organization</code> — tenants, members, groups, lifecycle</li>
+        <li><code>subscription</code> — plans, entitlements, <b>edge quotas</b></li>
+        <li><code>billing</code> — invoices, proxied from Kill Bill</li>
+      </ul></div>
+      <div class="card c-core"><h3>Comms &amp; Events</h3><span class="tag">reaching out</span><ul>
+        <li><code>notification</code> — in-app + email (SMTP)</li>
+        <li><code>webhooks</code> — signed, retried outbound event delivery</li>
+      </ul></div>
+      <div class="card c-core"><h3>Data movement</h3><span class="tag">in &amp; out</span><ul>
+        <li><code>exchange</code> — background import/export jobs + schedules</li>
+        <li><code>files</code> — object storage (SeaweedFS), presign</li>
+        <li><code>document</code> · <code>search</code> — rendering &amp; lookup</li>
+      </ul></div>
+      <div class="card c-core"><h3>Ops &amp; Governance</h3><span class="tag">running it safely</span><ul>
+        <li><code>audit</code> — append-only who/when/what trail</li>
+        <li><code>compliance</code> — legal holds, erasure (GDPR)</li>
+        <li><code>maintenance</code> · <code>scheduler</code> · <code>analytics</code></li>
+        <li><code>support</code> · <code>settings</code> · <code>integration</code> · <code>localization</code></li>
+      </ul></div>
+      <div class="card c-core"><h3>Shared kernel</h3><span class="tag">the spine</span><ul>
+        <li>JSON:API <b>envelope</b> + <code>meta.requestId</code> on every response</li>
+        <li>Security context, cursor pagination, persistence base</li>
+        <li>The <code>AuditLog</code> port every module records through</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">06</span><h2>Infrastructure &amp; the seams</h2></div>
+    <p class="sec-sub">The gateway and the modulith share Valkey and the OTel collector; everything else the platform owns. The three control seams are thin HTTP endpoints, each backed by an existing platform port.</p>
+    <div class="grid">
+      <div class="card c-infra"><h3>Data &amp; identity</h3><span class="tag">stores</span><ul>
+        <li><code>Postgres</code> — every module's tenant data</li>
+        <li><code>Keycloak</code> — the IdP; issues JWTs, serves JWKS</li>
+        <li><code>Valkey</code> — cache, rate-limit &amp; quota counters (shared)</li>
+      </ul></div>
+      <div class="card c-infra"><h3>Objects, mail &amp; billing</h3><span class="tag">services</span><ul>
+        <li><code>SeaweedFS</code> — S3-style object store for files</li>
+        <li><code>Mailpit / SMTP</code> — outbound email</li>
+        <li><code>Kill Bill</code> — subscription billing engine</li>
+        <li><code>otel-lgtm</code> — traces / metrics / logs collector</li>
+      </ul></div>
+      <div class="card c-edge"><h3>Gateway ⇢ platform seams</h3><span class="tag">gateway-secret, @Hidden</span><ul>
+        <li><code>/internal/gateway/api-key/introspect</code> → <b>ApiKeyAuthenticator</b></li>
+        <li><code>/internal/gateway/audit</code> → <b>AuditLog.recordExternal</b></li>
+        <li><code>/internal/gateway/quota</code> → <b>Entitlements.limitOf</b></li>
+      </ul></div>
+    </div>
+  </section>
+
+  <footer>
+    <b>Boot 4.1 · Java 21 · Spring Modulith · Spring Cloud Gateway (reactive)</b><br/>
+    Hexagonal: the gateway core depends on neither Spring Cloud Gateway nor any platform module — enforced by an ArchUnit test.
+    Design: docs/GATEWAY_ARCHITECTURE.md · ADR 0007 · docs/GATEWAY_PLAN.md.
+  </footer>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({ startOnLoad: true, securityLevel: "loose" });</script>
+</body>
+</html>
