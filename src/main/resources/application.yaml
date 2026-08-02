@@ -85,10 +85,11 @@ server:
       enabled: false
 
 app:
-  # Shared secret the API gateway presents to the key-introspection endpoint (must match the
-  # gateway's gateway.platform.introspection.secret). ALWAYS override in production.
+  # Shared secrets the API gateway presents to the internal seams (must match the gateway's
+  # gateway.platform.*.secret). ALWAYS override in production.
   gateway:
     introspection-secret: ${GATEWAY_INTROSPECTION_SECRET:dev-gateway-secret}
+    audit-secret: ${GATEWAY_AUDIT_SECRET:dev-gateway-secret}
   keycloak-admin:
     base-url: ${KEYCLOAK_URL:http://localhost:8081}
     realm: ${KEYCLOAK_REALM:smsone}

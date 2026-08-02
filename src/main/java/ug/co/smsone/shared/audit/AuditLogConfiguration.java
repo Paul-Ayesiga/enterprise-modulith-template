@@ -1,5 +1,6 @@
 package ug.co.smsone.shared.audit;
 
+import java.util.UUID;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -15,8 +16,17 @@ class AuditLogConfiguration {
     @Bean
     @ConditionalOnMissingBean(AuditLog.class)
     AuditLog noOpAuditLog() {
-        return (action, orgId, target, fromState, toState) -> {
-            // no-op: no audit module on this context
+        return new AuditLog() {
+            @Override
+            public void record(String action, UUID orgId, String target, String fromState, String toState) {
+                // no-op: no audit module on this context
+            }
+
+            @Override
+            public void recordExternal(String action, UUID orgId, String actor, String target,
+                    String fromState, String toState) {
+                // no-op: no audit module on this context
+            }
         };
     }
 }

@@ -22,6 +22,8 @@ dependencies {
     implementation(project(":gateway:core"))
     implementation("org.springframework:spring-webflux")
     implementation("org.springframework.boot:spring-boot-autoconfigure")
+    // Best-effort audit publishing logs its own failures (to the gateway.error stream).
+    implementation("org.slf4j:slf4j-api")
 
     testImplementation(libs.boot.test)
     testImplementation("io.projectreactor:reactor-test")

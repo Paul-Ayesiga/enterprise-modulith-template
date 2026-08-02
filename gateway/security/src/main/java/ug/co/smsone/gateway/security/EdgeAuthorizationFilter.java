@@ -26,6 +26,8 @@ import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.util.pattern.PathPattern;
 import org.springframework.web.util.pattern.PathPatternParser;
 import reactor.core.publisher.Mono;
+import ug.co.smsone.gateway.core.audit.AuditSink;
+import ug.co.smsone.gateway.core.audit.EdgeAuditEvent;
 import ug.co.smsone.gateway.core.route.RouteDefinition;
 import ug.co.smsone.gateway.core.route.RouteSource;
 import ug.co.smsone.gateway.core.security.ApiKeyIntrospector;
@@ -56,13 +58,16 @@ public class EdgeAuthorizationFilter implements GlobalFilter, Ordered {
     private final ApiKeyIntrospector introspector;
     private final List<SecurityProperties.InternalToken> internalTokens;
     private final MeterRegistry meterRegistry;
+    private final AuditSink auditSink;
 
     public EdgeAuthorizationFilter(RouteSource routeSource, SecurityProperties properties,
-            ObjectProvider<ApiKeyIntrospector> introspector, ObjectProvider<MeterRegistry> meterRegistry) {
+            ObjectProvider<ApiKeyIntrospector> introspector, ObjectProvider<MeterRegistry> meterRegistry,
+            ObjectProvider<AuditSink> auditSink) {
         this.tenantClaim = properties.tenantClaim();
         this.introspector = introspector.getIfAvailable();
         this.internalTokens = properties.internalTokens();
         this.meterRegistry = meterRegistry.getIfAvailable();
+        this.auditSink = auditSink.getIfAvailable();
         this.policies = routeSource.routes().stream()
                 .collect(Collectors.toUnmodifiableMap(RouteDefinition::id, route -> compile(route.auth())));
     }
@@ -79,7 +84,7 @@ public class EdgeAuthorizationFilter implements GlobalFilter, Ordered {
         return resolvePrincipal(exchange)
                 .flatMap(principal -> authorize(exchange, chain, compiled, principal))
                 .switchIfEmpty(Mono.defer(() ->
-                        deny(exchange, "unauthorized", HttpStatus.UNAUTHORIZED, "Authentication required")));
+                        deny(exchange, null, "unauthorized", HttpStatus.UNAUTHORIZED, "Authentication required")));
     }
 
     /** Precedence: a trusted internal-service token, then an API key (if an introspector exists), then the JWT. */
@@ -117,13 +122,13 @@ public class EdgeAuthorizationFilter implements GlobalFilter, Ordered {
             CompiledPolicy compiled, EdgePrincipal principal) {
         for (String required : compiled.policy().requiredScopes()) {
             if (!principal.hasScope(required)) {
-                return deny(exchange, "forbidden_scope", HttpStatus.FORBIDDEN, "Missing scope: " + required);
+                return deny(exchange, principal, "forbidden_scope", HttpStatus.FORBIDDEN, "Missing scope: " + required);
             }
         }
         if (compiled.tenantPattern() != null && !principal.internal()) {
             String pathTenant = extractTenant(compiled.tenantPattern(), exchange);
             if (pathTenant != null && !pathTenant.equals(principal.tenant())) {
-                return deny(exchange, "forbidden_tenant", HttpStatus.FORBIDDEN, "Tenant mismatch");
+                return deny(exchange, principal, "forbidden_tenant", HttpStatus.FORBIDDEN, "Tenant mismatch");
             }
         }
         GatewayAttributes.putPrincipal(exchange, principal);
@@ -173,16 +178,28 @@ public class EdgeAuthorizationFilter implements GlobalFilter, Ordered {
         return new CompiledPolicy(policy, pattern);
     }
 
-    /** Deny with a status: count the failure ({@code gateway.auth.failures}) and log it to the security stream. */
-    private <T> Mono<T> deny(ServerWebExchange exchange, String reason, HttpStatus status, String message) {
+    /**
+     * Deny with a status: count the failure ({@code gateway.auth.failures}), log it to the security
+     * stream, and publish an edge audit event to the platform (best-effort, non-blocking). {@code
+     * principal} is the resolved caller when known (scope/tenant denials), null when unauthenticated.
+     */
+    private <T> Mono<T> deny(ServerWebExchange exchange, EdgePrincipal principal, String reason,
+            HttpStatus status, String message) {
+        String method = String.valueOf(exchange.getRequest().getMethod());
+        String path = exchange.getRequest().getURI().getRawPath();
+        String requestId = GatewayAttributes.requestId(exchange);
         if (meterRegistry != null) {
             meterRegistry.counter("gateway.auth.failures", "reason", reason).increment();
         }
         securityLog.warn("edge_auth_denied reason={} status={} method={} path={} rid={}",
-                reason, status.value(),
-                exchange.getRequest().getMethod(),
-                exchange.getRequest().getURI().getRawPath(),
-                GatewayAttributes.requestId(exchange));
+                reason, status.value(), method, path, requestId);
+        if (auditSink != null) {
+            EdgeAuditEvent event = new EdgeAuditEvent("gateway.access_denied",
+                    principal == null ? null : principal.subject(),
+                    principal == null ? null : principal.tenant(),
+                    method, path, status.value(), reason, requestId, GatewayAttributes.traceId(exchange));
+            auditSink.publish(event).subscribe(); // fire-and-forget; the adapter owns its own errors
+        }
         return Mono.error(new ResponseStatusException(status, message));
     }
 

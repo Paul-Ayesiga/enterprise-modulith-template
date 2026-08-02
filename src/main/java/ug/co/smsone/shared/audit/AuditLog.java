@@ -25,4 +25,17 @@ public interface AuditLog {
     default void record(String action, UUID orgId, String target) {
         record(action, orgId, target, null, null);
     }
+
+    /**
+     * Record an event whose actor was resolved OUTSIDE this process — by the edge/gateway — and so
+     * arrives explicitly, rather than from this thread's security context. This is the one path where
+     * the actor is a parameter: the accountable identity genuinely lives in another process (the
+     * gateway authenticated it; this is a machine-to-machine call with no user on the thread). For edge
+     * audit events only; every in-process call site must keep using {@link #record} so it can never
+     * misstate who acted.
+     *
+     * @param actor the edge principal the gateway resolved — a user subject, {@code key:<id>}, or
+     *              {@code service:<name>}; null if the gateway could not resolve one
+     */
+    void recordExternal(String action, UUID orgId, String actor, String target, String fromState, String toState);
 }

@@ -32,6 +32,14 @@ class AuditLogImpl implements AuditLog {
         repository.save(AuditEntry.of(orgId, action, attribution(), target, fromState, toState, clock.instant()));
     }
 
+    @Override
+    public void recordExternal(String action, UUID orgId, String actor, String target,
+            String fromState, String toState) {
+        // The actor came over the wire (the edge resolved it), not from this thread's context.
+        repository.save(AuditEntry.of(orgId, action, new AuditEntry.Attribution(actor, null, null),
+                target, fromState, toState, clock.instant()));
+    }
+
     /**
      * Read from the security context here rather than taken as a port parameter: an argument every call
      * site has to remember is an argument some call site will forget, and this is the one table that
