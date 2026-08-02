@@ -173,6 +173,18 @@ and an edge audit event reaches the platform.
 
 ## Phase 5 — Extensibility
 
+**Status: COMPLETE 2026-08-02 — no deferred items.** (5a) Config-driven request/response transforms
+(`TransformPolicy`): path rewrite/strip, set/remove request headers, add request params, set/remove
+response headers — header injection uses set (overwrite) so a client can't spoof `X-Tenant`/`X-Consumer`.
+(5b) Plugin framework: a core `GatewayPlugin` port + `PluginChain`; `PluginGlobalFilter` discovers plugin
+beans, keeps the ones enabled in config, orders them, and folds them into one pipeline stage — adding a
+bean extends the edge, config toggles/reorders it. (5c) Dynamic routes: `RouteCatalog` is a live mutable
+table + a `RouteRegistrar` port; register/remove publishes a `RefreshRoutesEvent`, the locator re-reads,
+and `EdgeAuthorizationFilter` rebuilds its policy map — a route (and its auth) takes effect with no
+restart. (5d) WebSocket pass-through (SCG rewrites http→ws on upgrade). (5e) Named, reusable policy sets
+(`gateway.policies.<name>`) attached by `policy-ref`; inline route config overrides per aspect. Tests:
+`TransformTest`, `PluginTest` (2), `DynamicRouteTest` (2), `WebSocketTest`, `NamedPolicyTest` (3).
+
 **Focus.** Turn cross-cutting behavior into a first-class plugin/policy system.
 
 **Deliverables** — a **plugin framework** (every §7 stage is a registered plugin, independently
