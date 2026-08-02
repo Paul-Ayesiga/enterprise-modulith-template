@@ -95,10 +95,14 @@ public class EdgeAuthorizationFilter implements GlobalFilter, Ordered, Applicati
         if (compiled == null || !compiled.policy().requiresToken()) {
             return chain.filter(exchange);
         }
+        // switchIfEmpty must guard ONLY an empty principal (no/invalid token). Placed AFTER the flatMap
+        // it also caught the downstream chain completing empty — e.g. the rate limiter answering 429 via
+        // setComplete() — raising a spurious 401 that collided with the already-committed response and
+        // surfaced to the client as a 500 under load. Guarding resolvePrincipal directly is the fix.
         return resolvePrincipal(exchange)
-                .flatMap(principal -> authorize(exchange, chain, compiled, principal))
                 .switchIfEmpty(Mono.defer(() ->
-                        deny(exchange, null, "unauthorized", HttpStatus.UNAUTHORIZED, "Authentication required")));
+                        deny(exchange, null, "unauthorized", HttpStatus.UNAUTHORIZED, "Authentication required")))
+                .flatMap(principal -> authorize(exchange, chain, compiled, principal));
     }
 
     /** Precedence: a trusted internal-service token, then an API key (if an introspector exists), then the JWT. */
