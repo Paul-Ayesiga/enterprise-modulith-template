@@ -1,69 +1,51 @@
-import { fetchCatalog, openApiUrl, adminBaseUrl, type Product, type RouteSummary } from "./lib/gateway";
+import { Catalog } from "./components/Catalog";
+import { Header } from "./components/Header";
+import { EmptyState, ErrorState } from "./components/States";
+import { adminBaseUrl, fetchCatalog, openApiUrl, routeTableUrl, totalRoutes } from "./lib/gateway";
 
-// Always read the live catalog from the gateway on each request.
+// Read the live catalog from the gateway on every request.
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
   const { products, error } = await fetchCatalog();
+  const routeCount = totalRoutes(products);
 
   return (
-    <main>
-      <section className="hero">
-        <h1>SMSOne Developer Portal</h1>
-        <p>The APIs available through the gateway — grouped by product, with lifecycle and access.</p>
-        <div className="links">
-          <a className="button" href={openApiUrl()} target="_blank" rel="noreferrer">OpenAPI document ↗</a>
-          <a className="button" href={`${adminBaseUrl()}/actuator/gatewayroutes`} target="_blank" rel="noreferrer">
-            Route table ↗
-          </a>
-        </div>
-      </section>
+    <>
+      <Header openApiUrl={openApiUrl()} routeTableUrl={routeTableUrl()} />
 
-      {error && (
-        <div className="error">
-          Could not reach the gateway at <code>{adminBaseUrl()}</code> — <code>{error}</code>.
-          <br />
-          Start it with <code>make gateway</code> (and <code>make run</code> for the modulith), or set{" "}
-          <code>GATEWAY_ADMIN_URL</code>.
-        </div>
-      )}
+      <main id="main" className="main">
+        <section className="intro">
+          <h1 className="intro__title">APIs through the gateway</h1>
+          <p className="intro__lede">
+            Every route the edge exposes, grouped by product — with its paths, lifecycle, and whether it
+            needs a token. This portal reads the gateway live and stores nothing.
+          </p>
+          {!error && products.length > 0 && (
+            <p className="intro__stats">
+              <strong>{products.length}</strong> product{products.length === 1 ? "" : "s"}
+              <span className="intro__dot" aria-hidden="true">
+                ·
+              </span>
+              <strong>{routeCount}</strong> route{routeCount === 1 ? "" : "s"}
+            </p>
+          )}
+        </section>
 
-      {!error && products.length === 0 && (
-        <div className="error">No products are published yet. Give a route a <code>product</code> in the gateway config.</div>
-      )}
+        {error ? (
+          <ErrorState message={error} />
+        ) : products.length === 0 ? (
+          <EmptyState />
+        ) : (
+          <Catalog products={products} />
+        )}
+      </main>
 
-      {products.map((product) => (
-        <ProductCard key={product.id} product={product} />
-      ))}
-
-      <footer>
-        Live from <code>{adminBaseUrl()}/actuator/gatewaycatalog</code>. This portal reads the gateway; it stores nothing.
+      <footer className="site-footer">
+        <p>
+          Live from <code>{adminBaseUrl()}/actuator/gatewaycatalog</code>. Read-only; nothing is stored.
+        </p>
       </footer>
-    </main>
-  );
-}
-
-function ProductCard({ product }: { product: Product }) {
-  return (
-    <section className="product">
-      <h2>{product.name}</h2>
-      {product.description && <p className="desc">{product.description}</p>}
-      {product.routes.map((route) => (
-        <RouteRow key={route.id} route={route} />
-      ))}
-    </section>
-  );
-}
-
-function RouteRow({ route }: { route: RouteSummary }) {
-  const lifecycle = route.lifecycle.toLowerCase();
-  return (
-    <div className="route">
-      <span className="path">{route.paths.join(", ") || "—"}</span>
-      <span className="rid">{route.id}</span>
-      <span className="spacer" />
-      {route.authenticated ? <span className="badge auth">token</span> : <span className="badge open">open</span>}
-      <span className={`badge ${lifecycle}`}>{lifecycle}</span>
-    </div>
+    </>
   );
 }
