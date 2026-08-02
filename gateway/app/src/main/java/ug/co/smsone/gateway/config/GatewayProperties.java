@@ -12,11 +12,13 @@ import ug.co.smsone.gateway.core.route.RoutePredicate;
  * discovery integration can replace it later without the core or the runtime changing.
  */
 @ConfigurationProperties("gateway")
-public record GatewayProperties(List<ServiceProps> services, List<RouteProps> routes) {
+public record GatewayProperties(List<ServiceProps> services, List<RouteProps> routes,
+        Map<String, PolicyProps> policies) {
 
     public GatewayProperties {
         services = services == null ? List.of() : services;
         routes = routes == null ? List.of() : routes;
+        policies = policies == null ? Map.of() : policies;
     }
 
     /**
@@ -37,12 +39,20 @@ public record GatewayProperties(List<ServiceProps> services, List<RouteProps> ro
         }
     }
 
-    /** A route: {@code predicates}, target {@code serviceId}, coarse {@code auth}, {@code traffic}, {@code transform}. */
+    /**
+     * A route: {@code predicates}, target {@code serviceId}, and its policy — either a {@code policyRef}
+     * to a named {@link PolicyProps}, or inline {@code auth}/{@code traffic}/{@code transform}. Inline
+     * config overrides the referenced policy per aspect (route's own {@code auth} wins over the policy's).
+     */
     public record RouteProps(String id, int order, String serviceId, List<PredicateProps> predicates,
-            AuthProps auth, TrafficProps traffic, TransformProps transform) {
+            AuthProps auth, TrafficProps traffic, TransformProps transform, String policyRef) {
         public RouteProps {
             predicates = predicates == null ? List.of() : predicates;
         }
+    }
+
+    /** A named, reusable policy — auth/traffic/transform composed once and attached to routes by {@code policy-ref}. */
+    public record PolicyProps(AuthProps auth, TrafficProps traffic, TransformProps transform) {
     }
 
     /** A route's request/response transformation: path rewrite/strip, header and query manipulation. */

@@ -43,7 +43,7 @@ class RouteCatalog implements RouteSource, ServiceRegistry, RouteRegistrar {
         this.services = properties.services().stream()
                 .map(service -> new ServiceDefinition(service.id(), service.effectiveInstances(), service.healthPath()))
                 .collect(Collectors.toUnmodifiableMap(ServiceDefinition::id, Function.identity()));
-        properties.routes().forEach(route -> routes.put(route.id(), toRouteDefinition(route)));
+        properties.routes().forEach(route -> routes.put(route.id(), toRouteDefinition(route, properties.policies())));
     }
 
     @Override
@@ -76,13 +76,44 @@ class RouteCatalog implements RouteSource, ServiceRegistry, RouteRegistrar {
         return List.copyOf(services.values());
     }
 
-    private static RouteDefinition toRouteDefinition(GatewayProperties.RouteProps route) {
+    private static RouteDefinition toRouteDefinition(GatewayProperties.RouteProps route,
+            Map<String, GatewayProperties.PolicyProps> policies) {
+        // A route's inline config wins per aspect; otherwise it inherits its referenced named policy.
+        GatewayProperties.PolicyProps policy = resolvePolicy(route.policyRef(), policies);
+        GatewayProperties.AuthProps auth = route.auth() != null ? route.auth() : policyAuth(policy);
+        GatewayProperties.TrafficProps traffic = route.traffic() != null ? route.traffic() : policyTraffic(policy);
+        GatewayProperties.TransformProps transform =
+                route.transform() != null ? route.transform() : policyTransform(policy);
         return new RouteDefinition(route.id(), route.order(),
                 route.predicates().stream()
                         .map(predicate -> new RoutePredicate(predicate.kind(), predicate.args()))
                         .toList(),
-                route.serviceId(), toAuthPolicy(route.auth()), toTrafficPolicy(route.traffic()),
-                toTransformPolicy(route.transform()), Map.of());
+                route.serviceId(), toAuthPolicy(auth), toTrafficPolicy(traffic),
+                toTransformPolicy(transform), Map.of());
+    }
+
+    private static GatewayProperties.PolicyProps resolvePolicy(String ref,
+            Map<String, GatewayProperties.PolicyProps> policies) {
+        if (ref == null || ref.isBlank()) {
+            return null;
+        }
+        GatewayProperties.PolicyProps policy = policies.get(ref);
+        if (policy == null) {
+            throw new IllegalStateException("Route references unknown policy '" + ref + "'");
+        }
+        return policy;
+    }
+
+    private static GatewayProperties.AuthProps policyAuth(GatewayProperties.PolicyProps policy) {
+        return policy == null ? null : policy.auth();
+    }
+
+    private static GatewayProperties.TrafficProps policyTraffic(GatewayProperties.PolicyProps policy) {
+        return policy == null ? null : policy.traffic();
+    }
+
+    private static GatewayProperties.TransformProps policyTransform(GatewayProperties.PolicyProps policy) {
+        return policy == null ? null : policy.transform();
     }
 
     private static TransformPolicy toTransformPolicy(GatewayProperties.TransformProps transform) {

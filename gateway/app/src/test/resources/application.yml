@@ -34,6 +34,14 @@ gateway:
     rate-limit:
       replenish-rate: 1     # deliberately tiny so a rapid burst trips 429 deterministically
       burst-capacity: 2
+  policies:
+    open-headers:                             # a reusable transform-only policy
+      transform:
+        set-response-headers:
+          X-Policy: open
+    must-auth:                                # a reusable auth policy
+      auth:
+        authenticated: true
   services:
     - id: backend
       uri: "${backend.uri:http://localhost:1}"
@@ -184,3 +192,33 @@ gateway:
       predicates:
         - kind: PATH
           args: [/ws/**]
+    - id: pa-route                            # shares the named open-headers policy
+      order: 30
+      service-id: backend
+      predicates:
+        - kind: PATH
+          args: [/pa/**]
+      policy-ref: open-headers
+    - id: pb-route                            # same named policy, different route
+      order: 31
+      service-id: backend
+      predicates:
+        - kind: PATH
+          args: [/pb/**]
+      policy-ref: open-headers
+    - id: pc-route                            # references the named auth policy
+      order: 32
+      service-id: backend
+      predicates:
+        - kind: PATH
+          args: [/pc/**]
+      policy-ref: must-auth
+    - id: pd-route                            # references must-auth but overrides auth inline → open
+      order: 33
+      service-id: backend
+      predicates:
+        - kind: PATH
+          args: [/pd/**]
+      policy-ref: must-auth
+      auth:
+        authenticated: false
