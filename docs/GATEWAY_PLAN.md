@@ -233,6 +233,22 @@ revoked; a discovery source registers a backend automatically.
 
 ## Phase 7 — Enterprise enhancements
 
+**Status: gateway-side capabilities SHIPPED 2026-08-02; the rest are separate deployables, flagged not
+dropped.** Built into the gateway: (7a) **API lifecycle + versioning** — a route's `LifecyclePolicy`
+(published/deprecated/retired); a `LifecycleFilter` 410s a retired route and adds `Deprecation`/`Sunset`
+to a deprecated one; versioning by predicate (header/path), each version with its own lifecycle. (7b)
+**API products + catalog + OpenAPI publish** — routes join a `product`; management endpoints
+`gatewaycatalog` (products → their routes) and `gatewayopenapi` (an OpenAPI 3 doc of the edge surface,
+tagged by product, deprecated per lifecycle), both on the admin port. Tests: `LifecycleTest` (3),
+`ProductCatalogTest` (2).
+
+**Explicitly out of the gateway codebase** (separate deployables/infra — a gateway change can't deliver
+these, so they are flagged, not silently deferred): a **developer portal** is its own front-end app —
+the gateway ships its BACKEND (the catalog + OpenAPI endpoints); **multi-region failover** is deployment
+topology (multiple gateway instances + global DNS/anycast, not code); **advanced analytics** is Phase 4's
+Prometheus stream plus a dashboarding stack; **branding** is a portal concern. Per-tenant policy
+attachment would extend Phase 5's named policies when a consumer/tenant registry (Phase 6) is wired to it.
+
 **Focus.** Grow from gateway into API management.
 
 **Deliverables** — API products (group APIs for onboarding/monetization); OpenAPI import/export/publish
