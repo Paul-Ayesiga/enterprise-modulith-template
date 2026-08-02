@@ -12,7 +12,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus,metrics,gatewayroutes
+        include: health,info,prometheus,metrics,gatewayroutes,gatewaycatalog,gatewayopenapi
 
 # One backend stub (its uri + the JWKS uri are set per-run to the test server's random port), plus
 # routes for the predicate tests (Phase 1) and the auth-policy tests (Phase 2).
@@ -42,6 +42,10 @@ gateway:
     must-auth:                                # a reusable auth policy
       auth:
         authenticated: true
+  products:
+    sms-api:
+      name: SMS API
+      description: Send and manage messages
   services:
     - id: backend
       uri: "${backend.uri:http://localhost:1}"
@@ -55,6 +59,7 @@ gateway:
     - id: by-path
       order: 0
       service-id: backend
+      product: sms-api
       predicates:
         - kind: PATH
           args: [/path-route/**]

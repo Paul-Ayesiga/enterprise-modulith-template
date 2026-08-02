@@ -22,7 +22,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus,metrics,gatewayroutes   # gatewayroutes = the route-admin API
+        include: health,info,prometheus,metrics,gatewayroutes,gatewaycatalog,gatewayopenapi   # route-admin + API catalog/OpenAPI
 
 # The route/service catalog (config-driven). Today the gateway fronts one backend — the modulith;
 # add services and routes here as the platform splits into more.

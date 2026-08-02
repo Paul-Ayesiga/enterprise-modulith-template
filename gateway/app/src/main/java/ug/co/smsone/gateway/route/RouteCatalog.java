@@ -101,7 +101,9 @@ class RouteCatalog implements RouteSource, ServiceRegistry, RouteRegistrar, Serv
                         .map(predicate -> new RoutePredicate(predicate.kind(), predicate.args()))
                         .toList(),
                 route.serviceId(), toAuthPolicy(auth), toTrafficPolicy(traffic),
-                toTransformPolicy(transform), toLifecyclePolicy(route.lifecycle()), Map.of());
+                toTransformPolicy(transform), toLifecyclePolicy(route.lifecycle()),
+                route.product() == null || route.product().isBlank()
+                        ? Map.of() : Map.of("product", route.product()));
     }
 
     private static LifecyclePolicy toLifecyclePolicy(GatewayProperties.LifecycleProps lifecycle) {

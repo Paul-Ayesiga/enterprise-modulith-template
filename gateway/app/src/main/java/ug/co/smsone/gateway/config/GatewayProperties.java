@@ -14,12 +14,17 @@ import ug.co.smsone.gateway.core.route.RoutePredicate;
  */
 @ConfigurationProperties("gateway")
 public record GatewayProperties(List<ServiceProps> services, List<RouteProps> routes,
-        Map<String, PolicyProps> policies) {
+        Map<String, PolicyProps> policies, Map<String, ProductProps> products) {
 
     public GatewayProperties {
         services = services == null ? List.of() : services;
         routes = routes == null ? List.of() : routes;
         policies = policies == null ? Map.of() : policies;
+        products = products == null ? Map.of() : products;
+    }
+
+    /** An API product — a named grouping of routes for a catalog/onboarding. Routes join it by {@code product}. */
+    public record ProductProps(String name, String description) {
     }
 
     /**
@@ -47,7 +52,7 @@ public record GatewayProperties(List<ServiceProps> services, List<RouteProps> ro
      */
     public record RouteProps(String id, int order, String serviceId, List<PredicateProps> predicates,
             AuthProps auth, TrafficProps traffic, TransformProps transform, String policyRef,
-            LifecycleProps lifecycle) {
+            LifecycleProps lifecycle, String product) {
         public RouteProps {
             predicates = predicates == null ? List.of() : predicates;
         }
