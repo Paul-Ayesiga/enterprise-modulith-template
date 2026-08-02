@@ -18,8 +18,22 @@ public record GatewayProperties(List<ServiceProps> services, List<RouteProps> ro
         routes = routes == null ? List.of() : routes;
     }
 
-    /** A backend: {@code id}, its base {@code uri}, and where to health-check it. */
-    public record ServiceProps(String id, URI uri, String healthPath) {
+    /**
+     * A backend: {@code id}, where to health-check it, and its instance(s). Give a single {@code uri}
+     * for one instance, or {@code instances} for several (the edge then load-balances across them).
+     */
+    public record ServiceProps(String id, URI uri, List<URI> instances, String healthPath) {
+        public ServiceProps {
+            instances = instances == null ? List.of() : instances;
+        }
+
+        /** The effective instance list: the explicit {@code instances} if given, else the single {@code uri}. */
+        public List<URI> effectiveInstances() {
+            if (!instances.isEmpty()) {
+                return instances;
+            }
+            return uri == null ? List.of() : List.of(uri);
+        }
     }
 
     /** A route: {@code predicates}, target {@code serviceId}, coarse {@code auth}, {@code traffic} policy. */
@@ -37,9 +51,9 @@ public record GatewayProperties(List<ServiceProps> services, List<RouteProps> ro
         }
     }
 
-    /** A route's traffic policy: timeout (ms), max request bytes, rate-limit / circuit-breaker / retries. */
+    /** A route's traffic policy: timeout, max bytes, rate-limit / circuit-breaker / retries, cache TTL. */
     public record TrafficProps(Long responseTimeoutMs, Long maxRequestBytes, boolean rateLimited,
-            boolean circuitBreaker, int retries) {
+            boolean circuitBreaker, int retries, Long cacheTtlSeconds) {
     }
 
     /** A predicate: its {@code kind} (PATH/HOST/HEADER/METHOD/QUERY) and the factory {@code args}. */

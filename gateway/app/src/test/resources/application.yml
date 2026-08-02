@@ -2,6 +2,12 @@ spring:
   application:
     name: gateway-test
 
+server:
+  compression:
+    enabled: true
+    mime-types: application/json,text/plain
+    min-response-size: 1024
+
 # One backend stub (its uri + the JWKS uri are set per-run to the test server's random port), plus
 # routes for the predicate tests (Phase 1) and the auth-policy tests (Phase 2).
 gateway:
@@ -25,6 +31,11 @@ gateway:
   services:
     - id: backend
       uri: "${backend.uri:http://localhost:1}"
+      health-path: /health
+    - id: lb-backend                          # two instances → the edge load-balances across them
+      instances:
+        - "${lb.a.uri:http://localhost:1}"
+        - "${lb.b.uri:http://localhost:1}"
       health-path: /health
   routes:
     - id: by-path
@@ -129,3 +140,19 @@ gateway:
           args: [/retry/**]
       traffic:
         retries: 2
+    - id: lb-route
+      order: 25
+      service-id: lb-backend
+      predicates:
+        - kind: PATH
+          args: [/lb/**]
+    - id: cache-route
+      order: 26
+      service-id: backend
+      predicates:
+        - kind: PATH
+          args: [/cache/**]
+      auth:                                   # authenticated → the edge stamps X-Tenant-Id (cache key)
+        authenticated: true
+      traffic:
+        cache-ttl-seconds: 60

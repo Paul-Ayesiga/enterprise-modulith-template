@@ -33,6 +33,10 @@ dependencies {
     // Traffic management (Phase 3): reactive Valkey for the rate limiter, Resilience4j for circuit breaking.
     implementation("org.springframework.boot:spring-boot-starter-data-redis-reactive")
     implementation("org.springframework.cloud:spring-cloud-starter-circuitbreaker-reactor-resilience4j")
+    // Phase 3c — response caching (SCG LocalResponseCache is backed by Caffeine) and load-balancing
+    // (resolve lb://service across its instances).
+    implementation("com.github.ben-manes.caffeine:caffeine")
+    implementation("org.springframework.cloud:spring-cloud-starter-loadbalancer")
 
     testImplementation(libs.boot.test)
     testImplementation(libs.testcontainers.junit)

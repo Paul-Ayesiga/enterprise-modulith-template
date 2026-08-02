@@ -30,7 +30,7 @@ class StaticRouteCatalog implements RouteSource, ServiceRegistry {
 
     StaticRouteCatalog(GatewayProperties properties) {
         this.services = properties.services().stream()
-                .map(service -> new ServiceDefinition(service.id(), service.uri(), service.healthPath()))
+                .map(service -> new ServiceDefinition(service.id(), service.effectiveInstances(), service.healthPath()))
                 .collect(Collectors.toUnmodifiableMap(ServiceDefinition::id, Function.identity()));
         this.routes = properties.routes().stream()
                 .sorted(Comparator.comparingInt(GatewayProperties.RouteProps::order))
@@ -50,7 +50,8 @@ class StaticRouteCatalog implements RouteSource, ServiceRegistry {
     private static TrafficPolicy toTrafficPolicy(GatewayProperties.TrafficProps traffic) {
         return traffic == null ? TrafficPolicy.NONE
                 : new TrafficPolicy(traffic.responseTimeoutMs(), traffic.maxRequestBytes(),
-                        traffic.rateLimited(), traffic.circuitBreaker(), traffic.retries());
+                        traffic.rateLimited(), traffic.circuitBreaker(), traffic.retries(),
+                        traffic.cacheTtlSeconds());
     }
 
     @Override

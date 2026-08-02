@@ -1,5 +1,7 @@
 package ug.co.smsone.gateway.route;
 
+import java.net.URI;
+import java.time.Duration;
 import java.util.Iterator;
 import java.util.List;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -52,7 +54,9 @@ class GatewayRouteLocator {
                     // Per-route response timeout — a slow backend fails fast (504) rather than hanging.
                     withFilters = withFilters.metadata("response-timeout", traffic.responseTimeoutMs());
                 }
-                return withFilters.uri(service.uri());
+                // A multi-instance service is addressed as lb://id so Spring Cloud LoadBalancer picks an
+                // instance per request; a single-instance service goes straight to its uri.
+                return withFilters.uri(service.loadBalanced() ? URI.create("lb://" + service.id()) : service.uri());
             });
         }
         return routes.build();
@@ -78,6 +82,10 @@ class GatewayRouteLocator {
             spec = spec.circuitBreaker(config -> config.setName("cb-" + routeId)
                     .setFallbackUri("forward:/__fallback")
                     .setStatusCodes(java.util.Set.of("500", "502", "503", "504")));
+        }
+        if (traffic.hasCache()) {
+            // Cache GET responses for the TTL; the key is tenant-scoped (TenantAwareCacheKeyGenerator).
+            spec = spec.localResponseCache(Duration.ofSeconds(traffic.cacheTtlSeconds()), DataSize.ofMegabytes(10));
         }
         return spec;
     }

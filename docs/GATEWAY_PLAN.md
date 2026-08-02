@@ -107,17 +107,27 @@ introspection; CORS preflight is answered at the edge. Keycloak Testcontainer + 
 
 ## Phase 3 — Traffic management
 
-**Status: the gate is SHIPPED 2026-08-02 (rate limiting, timeout, request-size, circuit breaker,
-retries); load-balancing / response-caching / compression remain (a distinct slice, LB overlapping
-Phase 6 discovery).** A route opts into a `TrafficPolicy` (in `gateway:core`): `rateLimited` applies a
-shared token bucket on **Valkey** (SCG `RedisRateLimiter`, keyed by principal → tenant → IP) → 429;
-`responseTimeoutMs` fails a slow backend fast → 504 (in the gateway envelope); `maxRequestBytes`
-rejects an oversized body → 413; `circuitBreaker` trips on a run of backend 5xx and forwards to a
-`/__fallback` → 503 in the envelope, recovering once the backend heals; `retries` re-attempts an
-idempotent GET on a 5xx. Tests: `TrafficTest` (4, real Valkey + a slow/echo stub), `ResilienceTest`
-(2, a switchable-failure + attempt-counting stub — 503 while failing, recovers to 200; retry succeeds).
-Note: SCG-filter-generated errors (413/429) keep SCG's response shape; routing/auth/timeout/circuit
-failures use the gateway envelope — a documented refinement.
+**Status: COMPLETE 2026-08-02 — no deferred items.** The gate (3a/3b) plus the remaining traffic
+capabilities (3c: load-balancing, response caching, compression) are all shipped and gated.
+
+A route opts into a `TrafficPolicy` (in `gateway:core`): `rateLimited` applies a shared token bucket on
+**Valkey** (SCG `RedisRateLimiter`, keyed by principal → tenant → IP) → 429; `responseTimeoutMs` fails a
+slow backend fast → 504 (in the gateway envelope); `maxRequestBytes` rejects an oversized body → 413;
+`circuitBreaker` trips on a run of backend 5xx and forwards to a `/__fallback` → 503 in the envelope,
+recovering once the backend heals; `retries` re-attempts an idempotent GET on a 5xx; `cacheTtlSeconds`
+caches a GET at the edge for the TTL, **keyed per tenant** so no caller is served another tenant's
+response (a `@Primary TenantAwareCacheKeyGenerator` folds the stamped `X-Tenant-Id` into SCG's
+`LocalResponseCache` key). Load-balancing: a service with more than one `instances[]` entry is routed
+`lb://id`, spread across instances by Spring Cloud LoadBalancer over a `ReactiveDiscoveryClient` backed
+by the gateway's own `ServiceRegistry`. Compression: the reactor-netty server gzips proxied responses
+above a min size when the client sends `Accept-Encoding`.
+
+Tests (43 in `gateway:app`): `TrafficTest` (4, real Valkey + a slow/echo stub), `ResilienceTest` (2,
+switchable-failure + attempt-counting stub — 503 while failing, recovers to 200; retry succeeds),
+`CacheTest` (2, a counting backend + minted per-tenant JWTs — same tenant served from cache, a different
+tenant misses and never reads the first's response), `CompressionTest` (3, large gzip / no-accept / small),
+`LoadBalancingTest` (1, two instances, both reached). Note: SCG-filter-generated errors (413/429) keep
+SCG's response shape; routing/auth/timeout/circuit failures use the gateway envelope — a documented refinement.
 
 **Focus.** Protect backends and shape load.
 

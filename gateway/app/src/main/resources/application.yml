@@ -8,6 +8,11 @@ spring:
 
 server:
   port: ${GATEWAY_PORT:8090}
+  # Compress proxied responses the client will accept (gzip), above a min size and for text-like types.
+  compression:
+    enabled: true
+    mime-types: application/json,application/xml,text/plain,text/css,application/javascript
+    min-response-size: 1024
 
 management:
   endpoints:
