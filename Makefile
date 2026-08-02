@@ -79,6 +79,9 @@ run: env ## Run the app + auto-started stack (Ctrl-C stops both); seeds the plat
 seed: env ## Like `run`, but also seeds the demo org (acme, owner paul) + Kill Bill tenant & catalog
 	@$(RUN_ENV) ORG_DEV_BOOTSTRAP_ENABLED=true BILLING_BOOTSTRAP=true ./gradlew :bootRun
 
+killbill-init: env ## Create the Kill Bill 'smsone' tenant + simple catalog via the KB API (no app boot)
+	@set -a; . $(ENV_FILE); set +a; bash scripts/killbill-init.sh
+
 gateway: env ## Run the API gateway (:8090, admin :9090) fronting the modulith — `make run` first, this in a 2nd terminal
 	@$(GATEWAY_RUN_ENV) ./gradlew :gateway:app:bootRun
 
