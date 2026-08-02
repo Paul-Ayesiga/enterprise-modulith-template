@@ -308,6 +308,22 @@ DELETE /api/v1/admin/impersonations/3e7a…                                     
   rows name the <em>operator</em> as actor with <code>onBehalfOf</code> = the worn identity. Re-checked every request.</p></div></div>
 
 <h2 id="plans">C3 · Plans, entitlements, trials &amp; billing</h2>
+<div class="card"><strong>How Kill Bill fits — the mental model.</strong> Kill Bill is a <em>separate</em> billing engine
+(its own container); the app hands it the money side and reads results back. Mind the word <em>tenant</em>: in Kill
+Bill it means a whole isolated billing world — <strong>not</strong> your org. Your <em>entire platform</em> is
+<strong>one</strong> Kill Bill tenant (<code>smsone</code>); each of your orgs is a Kill Bill <strong>account</strong> inside it.
+<pre><code>Kill Bill (the container)
+ └─ Tenant: smsone           ← your ENTIRE platform — ONE tenant  (api-key smsone / secret smsone-secret)
+     ├─ Catalog              ← the plans you sell (pro-monthly, enterprise-monthly); no catalog ⇒ nothing to subscribe to
+     ├─ Account: acme        ← your org "acme" — one Kill Bill account per org
+     │    └─ Subscription    ← acme on "pro-monthly"  →  Invoices / Payments
+     └─ Account: globex …</code></pre>
+Two credentials, easily confused: <code>admin</code>/<code>password</code> logs into the Kaui <em>console</em>;
+<code>smsone</code>/<code>smsone-secret</code> (api-key/secret) selects <em>which billing world</em> — and the app
+authenticates with that same pair. Kill Bill owns the money (invoices, balances); the app's entitlements stay the
+authority for what a plan lets an org <em>do</em>. Kill Bill events reconcile into entitlements — the one write
+direction. Turn on <code>app.billing.auto-provision-accounts</code> (or run <code>make killbill-init</code> then create
+an org) and a new org lands as an account here automatically.</div>
 <div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/admin/plans</span><span class="perm plat">platform-support</span></div>
   <div class="ep-body"><p>The plan catalog, rank-ordered. Entitlement encoding: <code>-1</code> = feature on, a positive number = a cap, an
   absent key = off / unlimited.</p></div></div>
