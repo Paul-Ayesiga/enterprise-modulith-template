@@ -178,3 +178,9 @@ gateway:
         set-response-headers:
           X-Frame-Options: DENY
         remove-response-headers: [X-Backend-Secret]
+    - id: ws-route
+      order: 28
+      service-id: backend
+      predicates:
+        - kind: PATH
+          args: [/ws/**]
