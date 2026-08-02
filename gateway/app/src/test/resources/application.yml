@@ -198,6 +198,12 @@ gateway:
       predicates:
         - kind: PATH
           args: [/quota/**]
+    - id: disc-route                          # targets a service that arrives via discovery, not config
+      order: 40
+      service-id: discovered-svc
+      predicates:
+        - kind: PATH
+          args: [/disc/**]
     - id: pa-route                            # shares the named open-headers policy
       order: 30
       service-id: backend

@@ -7,8 +7,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 import org.springframework.cloud.gateway.event.RefreshRoutesEvent;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
@@ -18,6 +16,7 @@ import ug.co.smsone.gateway.core.route.RoutePredicate;
 import ug.co.smsone.gateway.core.route.RouteRegistrar;
 import ug.co.smsone.gateway.core.route.RouteSource;
 import ug.co.smsone.gateway.core.route.ServiceDefinition;
+import ug.co.smsone.gateway.core.route.ServiceRegistrar;
 import ug.co.smsone.gateway.core.route.ServiceRegistry;
 import ug.co.smsone.gateway.core.security.AuthPolicy;
 import ug.co.smsone.gateway.core.traffic.TrafficPolicy;
@@ -32,17 +31,16 @@ import ug.co.smsone.gateway.core.transform.TransformPolicy;
  * {@code order} (lower = higher priority).
  */
 @Component
-class RouteCatalog implements RouteSource, ServiceRegistry, RouteRegistrar {
+class RouteCatalog implements RouteSource, ServiceRegistry, RouteRegistrar, ServiceRegistrar {
 
-    private final Map<String, ServiceDefinition> services;
+    private final ConcurrentMap<String, ServiceDefinition> services = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, RouteDefinition> routes = new ConcurrentHashMap<>();
     private final ApplicationEventPublisher events;
 
     RouteCatalog(GatewayProperties properties, ApplicationEventPublisher events) {
         this.events = events;
-        this.services = properties.services().stream()
-                .map(service -> new ServiceDefinition(service.id(), service.effectiveInstances(), service.healthPath()))
-                .collect(Collectors.toUnmodifiableMap(ServiceDefinition::id, Function.identity()));
+        properties.services().forEach(service -> services.put(service.id(),
+                new ServiceDefinition(service.id(), service.effectiveInstances(), service.healthPath())));
         properties.routes().forEach(route -> routes.put(route.id(), toRouteDefinition(route, properties.policies())));
     }
 
@@ -55,6 +53,19 @@ class RouteCatalog implements RouteSource, ServiceRegistry, RouteRegistrar {
     @Override
     public void remove(String routeId) {
         if (routes.remove(routeId) != null) {
+            events.publishEvent(new RefreshRoutesEvent(this));
+        }
+    }
+
+    @Override
+    public void register(ServiceDefinition service) {
+        services.put(service.id(), service);
+        events.publishEvent(new RefreshRoutesEvent(this));
+    }
+
+    @Override
+    public void deregister(String serviceId) {
+        if (services.remove(serviceId) != null) {
             events.publishEvent(new RefreshRoutesEvent(this));
         }
     }

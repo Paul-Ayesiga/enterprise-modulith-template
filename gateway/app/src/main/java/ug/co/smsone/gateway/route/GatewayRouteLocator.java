@@ -4,6 +4,8 @@ import java.net.URI;
 import java.time.Duration;
 import java.util.Iterator;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.cloud.gateway.filter.ratelimit.KeyResolver;
 import org.springframework.cloud.gateway.filter.ratelimit.RedisRateLimiter;
@@ -36,6 +38,8 @@ import ug.co.smsone.gateway.core.transform.TransformPolicy;
 @EnableConfigurationProperties(GatewayProperties.class)
 class GatewayRouteLocator {
 
+    private static final Logger log = LoggerFactory.getLogger(GatewayRouteLocator.class);
+
     @Bean
     RouteLocator gatewayRoutes(RouteLocatorBuilder builder, RouteSource routeSource, ServiceRegistry services,
             RedisRateLimiter rateLimiter, KeyResolver keyResolver) {
@@ -51,9 +55,14 @@ class GatewayRouteLocator {
             if (route.predicates().isEmpty()) {
                 throw new IllegalStateException("Route '" + route.id() + "' has no predicates");
             }
-            ServiceDefinition service = services.find(route.serviceId())
-                    .orElseThrow(() -> new IllegalStateException(
-                            "Route '" + route.id() + "' targets unknown service '" + route.serviceId() + "'"));
+            ServiceDefinition service = services.find(route.serviceId()).orElse(null);
+            if (service == null) {
+                // The service isn't registered yet (e.g. not yet discovered) — skip; a later refresh,
+                // once it registers, rebuilds this route rather than failing the whole locator.
+                log.warn("Route '{}' targets unregistered service '{}' — skipped until it is registered",
+                        route.id(), route.serviceId());
+                continue;
+            }
             TrafficPolicy traffic = route.traffic();
             routes.route(route.id(), spec -> {
                 UriSpec withFilters = match(spec, route.predicates())
