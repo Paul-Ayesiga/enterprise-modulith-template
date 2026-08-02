@@ -6,6 +6,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 import ug.co.smsone.shared.audit.AuditLog;
@@ -47,16 +48,29 @@ class BillingService {
             List<KillBillGateway.KbSubscription> subscriptions, List<String> paymentMethods) {
     }
 
-    /** Idempotent: provisioning twice returns the same linkage. Remote first, row after. */
+    /**
+     * Idempotent, and safe under concurrency: two provisions of the same org — e.g. the
+     * auto-provision listener racing a manual admin call — both resolve Kill Bill's idempotent
+     * account, then the unique {@code org_id} constraint elects one row. The loser resolves to that
+     * row rather than surfacing the insert clash as a 500 (§4.4 idempotent-race, like the Keycloak
+     * {@code createUser} 409). Remote first, row after.
+     */
     BillingAccount provision(UUID orgId) {
         Optional<BillingAccount> existing = accounts.findByOrgId(orgId);
         if (existing.isPresent()) {
             return existing.get();
         }
         UUID kbAccountId = killBill.ensureAccount(orgId, "org-" + orgId);
-        BillingAccount linked = transactionTemplate.execute(tx ->
-                accounts.findByOrgId(orgId).orElseGet(() ->
-                        accounts.save(BillingAccount.link(orgId, kbAccountId))));
+        BillingAccount linked;
+        try {
+            linked = transactionTemplate.execute(tx ->
+                    accounts.findByOrgId(orgId).orElseGet(() ->
+                            accounts.save(BillingAccount.link(orgId, kbAccountId))));
+        } catch (DataIntegrityViolationException raced) {
+            // A concurrent provision won the insert; ensureAccount is idempotent by externalKey, so
+            // both linked the same Kill Bill account — resolve to the committed row.
+            return accounts.findByOrgId(orgId).orElseThrow(() -> raced);
+        }
         auditLog.record("billing.account_provisioned", orgId, kbAccountId.toString(), null,
                 "externalKey=" + orgId);
         return linked;
