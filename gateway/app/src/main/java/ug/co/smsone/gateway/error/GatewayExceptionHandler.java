@@ -3,6 +3,8 @@ package ug.co.smsone.gateway.error;
 import java.net.ConnectException;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeoutException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -24,12 +26,23 @@ import ug.co.smsone.gateway.core.web.GatewayAttributes;
 @Order(-2)
 public class GatewayExceptionHandler implements WebExceptionHandler {
 
+    /** The gateway/system error stream — upstream faults, separable from access/security logs. */
+    private static final Logger errorLog = LoggerFactory.getLogger("gateway.error");
+
     @Override
     public Mono<Void> handle(ServerWebExchange exchange, Throwable ex) {
         if (exchange.getResponse().isCommitted()) {
             return Mono.error(ex);
         }
         GatewayErrorCode code = map(ex);
+        if (code.status().is5xxServerError()) {
+            // An upstream fault (bad gateway / timeout / unavailable) — the operator's concern, not the caller's.
+            errorLog.warn("gateway_fault code={} status={} method={} path={} rid={} cause={}",
+                    code.code(), code.status().value(),
+                    exchange.getRequest().getMethod(),
+                    exchange.getRequest().getURI().getRawPath(),
+                    GatewayAttributes.requestId(exchange), ex.toString());
+        }
         exchange.getResponse().setStatusCode(code.status());
         exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
         byte[] body = envelope(code, GatewayAttributes.requestId(exchange));

@@ -62,5 +62,8 @@ gateway:
         rate-limited: true
 
 logging:
+  # Separable observability streams — route each to its own appender/file in your logback config.
   level:
-    gateway.access: INFO
+    gateway.access: INFO      # one line per request (method, path, status, latency, ids, tenant)
+    gateway.security: INFO    # authN/authZ decisions (edge_auth_denied ...)
+    gateway.error: WARN       # upstream faults (gateway_fault ...)

@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
@@ -46,6 +48,8 @@ public class EdgeAuthorizationFilter implements GlobalFilter, Ordered {
 
     private static final String API_KEY_HEADER = "X-Api-Key";
     private static final String INTERNAL_TOKEN_HEADER = "X-Internal-Token";
+    /** The security stream — authN/authZ decisions, separable from access/error/system logs. */
+    private static final Logger securityLog = LoggerFactory.getLogger("gateway.security");
 
     private final Map<String, CompiledPolicy> policies;
     private final String tenantClaim;
@@ -75,7 +79,7 @@ public class EdgeAuthorizationFilter implements GlobalFilter, Ordered {
         return resolvePrincipal(exchange)
                 .flatMap(principal -> authorize(exchange, chain, compiled, principal))
                 .switchIfEmpty(Mono.defer(() ->
-                        deny("unauthorized", HttpStatus.UNAUTHORIZED, "Authentication required")));
+                        deny(exchange, "unauthorized", HttpStatus.UNAUTHORIZED, "Authentication required")));
     }
 
     /** Precedence: a trusted internal-service token, then an API key (if an introspector exists), then the JWT. */
@@ -113,13 +117,13 @@ public class EdgeAuthorizationFilter implements GlobalFilter, Ordered {
             CompiledPolicy compiled, EdgePrincipal principal) {
         for (String required : compiled.policy().requiredScopes()) {
             if (!principal.hasScope(required)) {
-                return deny("forbidden_scope", HttpStatus.FORBIDDEN, "Missing scope: " + required);
+                return deny(exchange, "forbidden_scope", HttpStatus.FORBIDDEN, "Missing scope: " + required);
             }
         }
         if (compiled.tenantPattern() != null && !principal.internal()) {
             String pathTenant = extractTenant(compiled.tenantPattern(), exchange);
             if (pathTenant != null && !pathTenant.equals(principal.tenant())) {
-                return deny("forbidden_tenant", HttpStatus.FORBIDDEN, "Tenant mismatch");
+                return deny(exchange, "forbidden_tenant", HttpStatus.FORBIDDEN, "Tenant mismatch");
             }
         }
         GatewayAttributes.putPrincipal(exchange, principal);
@@ -169,11 +173,16 @@ public class EdgeAuthorizationFilter implements GlobalFilter, Ordered {
         return new CompiledPolicy(policy, pattern);
     }
 
-    /** Deny with a status, counting the failure by reason for {@code gateway.auth.failures}. */
-    private <T> Mono<T> deny(String reason, HttpStatus status, String message) {
+    /** Deny with a status: count the failure ({@code gateway.auth.failures}) and log it to the security stream. */
+    private <T> Mono<T> deny(ServerWebExchange exchange, String reason, HttpStatus status, String message) {
         if (meterRegistry != null) {
             meterRegistry.counter("gateway.auth.failures", "reason", reason).increment();
         }
+        securityLog.warn("edge_auth_denied reason={} status={} method={} path={} rid={}",
+                reason, status.value(),
+                exchange.getRequest().getMethod(),
+                exchange.getRequest().getURI().getRawPath(),
+                GatewayAttributes.requestId(exchange));
         return Mono.error(new ResponseStatusException(status, message));
     }
 
