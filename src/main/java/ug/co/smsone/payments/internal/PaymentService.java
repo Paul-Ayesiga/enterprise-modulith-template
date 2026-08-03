@@ -9,7 +9,9 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
+import ug.co.smsone.integration.Integrations;
 import org.springframework.transaction.annotation.Transactional;
 import ug.co.smsone.shared.audit.AuditLog;
 import ug.co.smsone.shared.error.NotFoundException;
@@ -29,20 +31,23 @@ class PaymentService {
 
     private final PaymentRepository payments;
     private final Map<String, PaymentGateway> gateways;
+    private final ObjectProvider<Integrations> integrations;
     private final AuditLog auditLog;
     private final Clock clock;
 
-    PaymentService(PaymentRepository payments, List<PaymentGateway> gateways, AuditLog auditLog, Clock clock) {
+    PaymentService(PaymentRepository payments, List<PaymentGateway> gateways,
+            ObjectProvider<Integrations> integrations, AuditLog auditLog, Clock clock) {
         this.payments = payments;
         this.gateways = gateways.stream()
                 .collect(Collectors.toUnmodifiableMap(PaymentGateway::provider, Function.identity()));
+        this.integrations = integrations;
         this.auditLog = auditLog;
         this.clock = clock;
     }
 
     Payment initiate(UUID orgId, String provider, BigDecimal amount, String currency, String description,
             String phoneNumber, String email) {
-        PaymentGateway gateway = requireGateway(provider);
+        PaymentGateway gateway = requireGateway(orgId, provider);
         if (amount == null || amount.signum() <= 0) {
             throw new ValidationException("amount must be positive.", ApiSource.pointer("/data/attributes/amount"));
         }
@@ -92,7 +97,7 @@ class PaymentService {
             return payment;
         }
         PaymentStatus before = payment.getStatus();
-        PaymentGateway.StatusResult result = requireGateway(payment.getProvider())
+        PaymentGateway.StatusResult result = requireGateway(payment.getOrgId(), payment.getProvider())
                 .status(payment.getOrgId(), payment);
         payment.applyStatus(result.status(), result.detail(), result.confirmationCode(), clock.instant());
         Payment saved = payments.save(payment);
@@ -104,13 +109,27 @@ class PaymentService {
         return saved;
     }
 
-    private PaymentGateway requireGateway(String provider) {
-        PaymentGateway gateway = provider == null ? null : gateways.get(provider.trim().toLowerCase());
+    /**
+     * An omitted provider means "the org's configured choice": the integration hub's
+     * PAYMENT_GATEWAY entry (org override, else platform default) names the gateway — so which PSP
+     * serves an organization is database configuration, not caller knowledge.
+     */
+    private PaymentGateway requireGateway(UUID orgId, String provider) {
+        String effective = provider == null || provider.isBlank() ? configuredProvider(orgId) : provider;
+        PaymentGateway gateway = effective == null ? null : gateways.get(effective.trim().toLowerCase());
         if (gateway == null) {
-            throw new ValidationException("provider must be one of: " + String.join(", ", gateways.keySet()),
+            throw new ValidationException((effective == null
+                    ? "provider is required (this organization has no configured payment gateway); one of: "
+                    : "provider must be one of: ") + String.join(", ", gateways.keySet()),
                     ApiSource.pointer("/data/attributes/provider"));
         }
         return gateway;
+    }
+
+    private String configuredProvider(UUID orgId) {
+        Integrations hub = integrations.getIfAvailable();
+        return hub == null ? null : hub.resolve(orgId, Integrations.Kind.PAYMENT_GATEWAY)
+                .map(Integrations.ResolvedIntegration::provider).orElse(null);
     }
 
     private static String blankToNull(String value) {

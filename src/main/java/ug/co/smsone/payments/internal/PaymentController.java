@@ -34,7 +34,7 @@ class PaymentController {
         this.service = service;
     }
 
-    record InitiatePaymentRequest(@NotBlank String provider, @NotNull BigDecimal amount,
+    record InitiatePaymentRequest(String provider, @NotNull BigDecimal amount,
             @NotBlank String currency, @NotBlank String description, String phoneNumber, String email) {
     }
 
@@ -46,7 +46,9 @@ class PaymentController {
     @PostMapping
     @Operation(summary = "Initiate a payment collection",
             description = """
-                    Starts a collection through the named gateway. `provider` is `pesapal` (hosted \
+                    Starts a collection. `provider` is optional — omitted, the organization's \
+                    configured PAYMENT_GATEWAY integration (org override, else platform default) \
+                    names the gateway. Explicit values: `pesapal` (hosted \
                     page — send the payer to the returned `redirectUrl`; card + mobile money) or \
                     `yo-uganda` (a mobile-money approval prompt is pushed to `phoneNumber` — no \
                     redirect). Whether it runs against the sandbox or live money is the gateway's \

@@ -8,21 +8,18 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import java.util.Map;
-import java.util.Optional;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
-import ug.co.smsone.integration.Integrations;
 import ug.co.smsone.notification.NotificationMessage;
 
 /**
  * The Speeda Mobile wire contract (Web SMS API v1.13) without the real gateway: the POST body carries
  * the spec's exact field names, the phone number is normalized to digits (no {@code +}), unicode text
  * auto-upgrades the encoding, an S response succeeds and an F response throws (so the dispatcher
- * records + retries), and hub-resolved credentials beat the env fallback.
+ * records + retries), and hub settings beat the env fallback key-by-key.
  */
 class SpeedaMobileSmsSenderTest {
 
@@ -30,18 +27,16 @@ class SpeedaMobileSmsSenderTest {
             "http://speeda.test", "API-ENV", "env-secret", "SpeedaFin", null, null);
 
     private MockRestServiceServer server;
-    private RestClient client;
 
-    private SpeedaMobileSmsSender sender(Integrations hub) {
+    private SpeedaMobileSmsSender sender() {
         RestClient.Builder builder = RestClient.builder();
         server = MockRestServiceServer.bindTo(builder).build();
-        client = builder.build();
-        return new SpeedaMobileSmsSender(client, env, provider(hub));
+        return new SpeedaMobileSmsSender(builder.build(), env);
     }
 
     @Test
     void postsTheSpecBodyAndAcceptsAnSResponse() {
-        SpeedaMobileSmsSender sms = sender(null);
+        SpeedaMobileSmsSender sms = sender();
         server.expect(requestTo("http://speeda.test/api/SendSMS"))
                 .andExpect(method(HttpMethod.POST))
                 .andExpect(jsonPath("$.api_id").value("API-ENV"))
@@ -56,46 +51,46 @@ class SpeedaMobileSmsSenderTest {
                         MediaType.APPLICATION_JSON));
 
         // The + and formatting are the caller's habit; the wire wants bare digits.
-        sms.send(new NotificationMessage("+256 772-123456", "code", "Your code is 4711", Map.of()));
+        sms.send(new NotificationMessage("+256 772-123456", "code", "Your code is 4711", Map.of()), Map.of());
         server.verify();
     }
 
     @Test
     void anFResponseThrowsSoTheDispatcherRecordsTheFailure() {
-        SpeedaMobileSmsSender sms = sender(null);
+        SpeedaMobileSmsSender sms = sender();
         server.expect(requestTo("http://speeda.test/api/SendSMS"))
                 .andRespond(withSuccess("{\"message_id\":0,\"status\":\"F\",\"remarks\":\"Invalid Sender\"}",
                         MediaType.APPLICATION_JSON));
 
-        assertThatThrownBy(() -> sms.send(new NotificationMessage("256772123456", "s", "b", Map.of())))
+        assertThatThrownBy(() -> sms.send(new NotificationMessage("256772123456", "s", "b", Map.of()), Map.of()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("Invalid Sender");
     }
 
     @Test
     void unicodeTextUpgradesTheEncoding() {
-        SpeedaMobileSmsSender sms = sender(null);
+        SpeedaMobileSmsSender sms = sender();
         server.expect(requestTo("http://speeda.test/api/SendSMS"))
                 .andExpect(jsonPath("$.encoding").value("U"))
                 .andRespond(withSuccess("{\"message_id\":1,\"status\":\"S\",\"remarks\":\"ok\"}",
                         MediaType.APPLICATION_JSON));
 
-        sms.send(new NotificationMessage("256772123456", "s", "Habari — karibu 😊", Map.of()));
+        sms.send(new NotificationMessage("256772123456", "s", "Habari — karibu 😊", Map.of()), Map.of());
         server.verify();
     }
 
     @Test
-    void hubResolvedCredentialsBeatTheEnvFallback() {
-        Integrations hub = (orgId, kind) -> Optional.of(new Integrations.ResolvedIntegration(
-                "speedamobile", Map.of("apiId", "API-HUB", "apiPassword", "hub-secret", "senderId", "HubSender")));
-        SpeedaMobileSmsSender sms = sender(hub);
+    void hubSettingsBeatTheEnvFallbackKeyByKey() {
+        SpeedaMobileSmsSender sms = sender();
         server.expect(requestTo("http://speeda.test/api/SendSMS"))
                 .andExpect(jsonPath("$.api_id").value("API-HUB"))
                 .andExpect(jsonPath("$.sender_id").value("HubSender"))
+                .andExpect(jsonPath("$.api_password").value("env-secret")) // missing key -> env fills it
                 .andRespond(withSuccess("{\"message_id\":2,\"status\":\"S\",\"remarks\":\"ok\"}",
                         MediaType.APPLICATION_JSON));
 
-        sms.send(new NotificationMessage("256772123456", "s", "b", Map.of()));
+        sms.send(new NotificationMessage("256772123456", "s", "b", Map.of()),
+                Map.of("apiId", "API-HUB", "senderId", "HubSender"));
         server.verify();
     }
 
@@ -110,20 +105,4 @@ class SpeedaMobileSmsSenderTest {
         assertThat(SpeedaMobileSmsSender.encodingFor("émoji ✨", "FS")).isEqualTo("FS");
     }
 
-    private static ObjectProvider<Integrations> provider(Integrations hub) {
-        return new ObjectProvider<>() {
-            @Override
-            public Integrations getObject() {
-                if (hub == null) {
-                    throw new IllegalStateException("absent");
-                }
-                return hub;
-            }
-
-            @Override
-            public Integrations getIfAvailable() {
-                return hub;
-            }
-        };
-    }
 }

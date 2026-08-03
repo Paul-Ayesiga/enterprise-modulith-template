@@ -101,7 +101,7 @@ class NotificationDeliveryQueueTest extends AbstractIntegrationTest {
     // ---- helpers ----
 
     private UUID enqueueOne(String subject) {
-        queue.enqueue(List.of(new NewDelivery(NotificationChannel.WEBHOOK, "http://example.invalid", subject, "b")), 3);
+        queue.enqueue(List.of(new NewDelivery(NotificationChannel.WEBHOOK, "http://example.invalid", subject, "b", null)), 3);
         return jdbc.queryForObject("select id from notification_delivery where subject = ?", UUID.class, subject);
     }
 

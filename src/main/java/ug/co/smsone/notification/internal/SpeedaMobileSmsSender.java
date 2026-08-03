@@ -4,14 +4,9 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
-import ug.co.smsone.integration.Integrations;
-import ug.co.smsone.notification.NotificationChannel;
-import ug.co.smsone.notification.NotificationChannelSender;
 import ug.co.smsone.notification.NotificationMessage;
 
 /**
@@ -20,9 +15,10 @@ import ug.co.smsone.notification.NotificationMessage;
  * gateway answers {@code {message_id, status: S|F, remarks}}. Active when
  * {@code app.notification.sms.stub=false} (the dev default keeps the logging stub).
  *
- * <p>Credentials resolve through the integration hub first — an {@code SMS_PROVIDER} integration with
- * provider {@code speedamobile} (settings {@code apiId/apiPassword/senderId}, org override wins over
- * platform default) — falling back to the static {@link SpeedaSmsProperties} (env {@code SPEEDA_*}).
+ * <p>One adapter behind the {@link SmsChannelRouter}: the router resolves the org's provider choice
+ * and hands over that integration's decrypted settings ({@code apiId/apiPassword/senderId}, optional
+ * {@code baseUrl/smsType/encoding}); missing keys fall back to the static {@link SpeedaSmsProperties}
+ * (env {@code SPEEDA_*}).
  *
  * <p>Wire rules from the spec: the phone number carries no {@code +} (country code + number, digits
  * only — normalization strips formatting); {@code encoding} auto-upgrades to {@code U} (unicode) when
@@ -30,34 +26,30 @@ import ug.co.smsone.notification.NotificationMessage;
  * dispatcher records the failure and retries with backoff like any channel error.
  */
 @Component
-@ConditionalOnProperty(name = "app.notification.sms.stub", havingValue = "false")
-class SpeedaMobileSmsSender implements NotificationChannelSender {
+class SpeedaMobileSmsSender implements SmsGateway {
 
     private static final Logger log = LoggerFactory.getLogger(SpeedaMobileSmsSender.class);
     static final String PROVIDER = "speedamobile";
 
     private final RestClient restClient;
     private final SpeedaSmsProperties properties;
-    private final ObjectProvider<Integrations> integrations;
 
-    SpeedaMobileSmsSender(RestClient speedaRestClient, SpeedaSmsProperties properties,
-            ObjectProvider<Integrations> integrations) {
+    SpeedaMobileSmsSender(RestClient speedaRestClient, SpeedaSmsProperties properties) {
         this.restClient = speedaRestClient;
         this.properties = properties;
-        this.integrations = integrations;
     }
 
     record SpeedaResponse(Object message_id, String status, String remarks) {
     }
 
     @Override
-    public NotificationChannel channel() {
-        return NotificationChannel.SMS;
+    public String provider() {
+        return PROVIDER;
     }
 
     @Override
-    public void send(NotificationMessage message) {
-        Credentials credentials = resolveCredentials();
+    public void send(NotificationMessage message, Map<String, String> settings) {
+        Credentials credentials = resolveCredentials(settings);
         String phone = normalizePhone(message.address());
         String text = message.body() == null || message.body().isBlank()
                 ? message.subject() : message.body();
@@ -89,35 +81,21 @@ class SpeedaMobileSmsSender implements NotificationChannelSender {
             String smsType, String encoding) {
     }
 
-    /** Integration hub (provider {@code speedamobile}) first; static env config as the fallback. */
-    private Credentials resolveCredentials() {
-        Integrations hub = integrations.getIfAvailable();
-        if (hub != null) {
-            var resolved = hub.resolve(null, Integrations.Kind.SMS_PROVIDER)
-                    .filter(integration -> PROVIDER.equalsIgnoreCase(integration.provider()))
-                    .orElse(null);
-            if (resolved != null) {
-                Map<String, String> settings = resolved.settings();
-                String apiId = settings.get("apiId");
-                String apiPassword = settings.get("apiPassword");
-                String senderId = settings.get("senderId");
-                if (apiId != null && apiPassword != null && senderId != null) {
-                    return new Credentials(
-                            settings.getOrDefault("baseUrl", properties.baseUrl()),
-                            apiId, apiPassword, senderId,
-                            settings.getOrDefault("smsType", properties.smsType()),
-                            settings.getOrDefault("encoding", properties.encoding()));
-                }
-                log.warn("SMS integration '{}' is missing apiId/apiPassword/senderId — falling back to env config",
-                        PROVIDER);
-            }
-        }
-        if (!properties.configured()) {
+    /** Hub settings win key-by-key; env config fills the gaps; neither complete → a clear refusal. */
+    private Credentials resolveCredentials(Map<String, String> settings) {
+        String apiId = settings.getOrDefault("apiId", properties.apiId());
+        String apiPassword = settings.getOrDefault("apiPassword", properties.apiPassword());
+        String senderId = settings.getOrDefault("senderId", properties.senderId());
+        if (apiId == null || apiId.isBlank() || apiPassword == null || apiPassword.isBlank()
+                || senderId == null || senderId.isBlank()) {
             throw new IllegalStateException("No Speeda Mobile credentials: configure the SMS_PROVIDER "
                     + "integration (provider 'speedamobile') or set SPEEDA_API_ID/SPEEDA_API_PASSWORD/SPEEDA_SENDER_ID.");
         }
-        return new Credentials(properties.baseUrl(), properties.apiId(), properties.apiPassword(),
-                properties.senderId(), properties.smsType(), properties.encoding());
+        return new Credentials(
+                settings.getOrDefault("baseUrl", properties.baseUrl()),
+                apiId, apiPassword, senderId,
+                settings.getOrDefault("smsType", properties.smsType()),
+                settings.getOrDefault("encoding", properties.encoding()));
     }
 
     /** Spec: no leading {@code +}; country code + number, digits only. */

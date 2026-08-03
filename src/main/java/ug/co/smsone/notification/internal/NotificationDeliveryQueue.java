@@ -40,8 +40,8 @@ class NotificationDeliveryQueue {
     void enqueue(List<NewDelivery> deliveries, int maxAttempts) {
         jdbc.batchUpdate("""
                 insert into notification_delivery
-                    (id, channel, recipient, subject, body, status, attempts, max_attempts, next_attempt_at, created_at)
-                values (?, ?, ?, ?, ?, 'PENDING', 0, ?, now(), now())
+                    (id, channel, recipient, subject, body, org_id, status, attempts, max_attempts, next_attempt_at, created_at)
+                values (?, ?, ?, ?, ?, ?, 'PENDING', 0, ?, now(), now())
                 """, new BatchPreparedStatementSetter() {
             @Override
             public void setValues(PreparedStatement ps, int i) throws SQLException {
@@ -51,7 +51,8 @@ class NotificationDeliveryQueue {
                 ps.setString(3, d.recipient());
                 ps.setString(4, truncate(d.subject() == null ? "" : d.subject(), 255)); // subject is NOT NULL
                 ps.setString(5, d.body());
-                ps.setInt(6, maxAttempts);
+                ps.setObject(6, d.orgId());
+                ps.setInt(7, maxAttempts);
             }
 
             @Override
@@ -80,8 +81,8 @@ class NotificationDeliveryQueue {
                     for update skip locked
                 ) c
                 where d.id = c.id
-                returning d.id, d.channel, d.recipient, d.subject, d.body, d.attempts, d.max_attempts,
-                          d.created_at, d.throttled_since
+                returning d.id, d.channel, d.recipient, d.subject, d.body, d.org_id, d.attempts,
+                          d.max_attempts, d.created_at, d.throttled_since
                 """,
                 (rs, rowNum) -> {
                     Timestamp throttledSince = rs.getTimestamp("throttled_since");
@@ -91,6 +92,7 @@ class NotificationDeliveryQueue {
                             rs.getString("recipient"),
                             rs.getString("subject"),
                             rs.getString("body"),
+                            rs.getObject("org_id", UUID.class),
                             rs.getInt("attempts"),
                             rs.getInt("max_attempts"),
                             rs.getTimestamp("created_at").toInstant(),
