@@ -20,6 +20,17 @@ export type ServiceRow = {
   routeCount: number;
 };
 
+/** One consumer's live quota window, from the gatewayusage endpoint (top talkers first). */
+export type UsageRow = {
+  consumer: string;
+  used: number;
+  limited: boolean;
+  limit: number | null;
+  windowSeconds: number | null;
+  remaining: number | null;
+  resetSeconds: number;
+};
+
 export type Overview = {
   routes: RouteRow[];
   services: ServiceRow[];
@@ -116,6 +127,16 @@ export async function fetchOverview(): Promise<Overview> {
       health: "unknown",
       error: e instanceof Error ? e.message : String(e)
     };
+  }
+}
+
+/** Live per-consumer usage — never throws; an unreachable endpoint renders as an error state. */
+export async function fetchUsage(): Promise<{ usage: UsageRow[]; error: string | null }> {
+  try {
+    const usage = await getJson<UsageRow[]>("/actuator/gatewayusage");
+    return { usage: Array.isArray(usage) ? usage : [], error: null };
+  } catch (e) {
+    return { usage: [], error: e instanceof Error ? e.message : String(e) };
   }
 }
 

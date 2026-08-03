@@ -1,13 +1,14 @@
 import { CreateRouteForm } from "./components/CreateRouteForm";
 import { Header } from "./components/Header";
 import { RouteTableRow } from "./components/RouteTableRow";
-import { adminBaseUrl, fetchOverview, grafanaUrl } from "./lib/gateway";
+import { adminBaseUrl, fetchOverview, fetchUsage, grafanaUrl, type UsageRow } from "./lib/gateway";
 
 // Read the live gateway state on every request.
 export const dynamic = "force-dynamic";
 
 export default async function AdminHome() {
-  const { routes, services, productCount, health, error } = await fetchOverview();
+  const [{ routes, services, productCount, health, error }, { usage, error: usageError }] =
+    await Promise.all([fetchOverview(), fetchUsage()]);
   const routesUrl = `${adminBaseUrl()}/actuator/gatewayroutes`;
 
   return (
@@ -82,6 +83,42 @@ export default async function AdminHome() {
 
             <section className="section">
               <div className="section__head">
+                <h2 className="section__title">Consumers</h2>
+                <span className="section__hint">live quota windows — top talkers first</span>
+              </div>
+              {usage.length === 0 ? (
+                <div className="panel" style={{ padding: "0.9rem 1.1rem" }}>
+                  <p className="field__hint" style={{ margin: 0 }}>
+                    {usageError
+                      ? `Usage unavailable: ${usageError}`
+                      : "No metered traffic this window — consumers appear here as soon as an authenticated, quota-limited call passes the edge."}
+                  </p>
+                </div>
+              ) : (
+                <div className="panel panel__scroll">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Consumer (org)</th>
+                        <th>Used</th>
+                        <th>Limit</th>
+                        <th>Remaining</th>
+                        <th>Window</th>
+                        <th>Resets in</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {usage.map((row) => (
+                        <UsageRowView key={row.consumer} row={row} />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+
+            <section className="section">
+              <div className="section__head">
                 <h2 className="section__title">Services</h2>
                 <span className="section__hint">backends the routes target</span>
               </div>
@@ -122,6 +159,28 @@ function Stat({ value, label }: { value: number | string; label: string }) {
       <div className="stat__value">{value}</div>
       <div className="stat__label">{label}</div>
     </div>
+  );
+}
+
+function UsageRowView({ row }: { row: UsageRow }) {
+  const exhausted = row.limited && (row.remaining ?? 0) <= 0;
+  return (
+    <tr>
+      <td className="mono route-id">{row.consumer}</td>
+      <td className="num">{row.used.toLocaleString()}</td>
+      <td className="num">{row.limited ? row.limit?.toLocaleString() : "∞"}</td>
+      <td className="num">
+        {row.limited ? (
+          <span className={exhausted ? "badge badge--retired" : undefined}>
+            {row.remaining?.toLocaleString()}
+          </span>
+        ) : (
+          "—"
+        )}
+      </td>
+      <td>{row.limited ? `${row.windowSeconds}s` : "—"}</td>
+      <td className="num">{row.resetSeconds}s</td>
+    </tr>
   );
 }
 
