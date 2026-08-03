@@ -12,10 +12,10 @@ class PaymentsConfig {
 
     /** One HTTP client for both gateways, with real timeouts — a stalled PSP must not pin a request thread. */
     @Bean
-    RestClient paymentsRestClient(RestClient.Builder builder) {
+    RestClient paymentsRestClient() {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(5_000);
         factory.setReadTimeout(20_000); // PSP order submits can be slow; still bounded
-        return builder.requestFactory(factory).build();
+        return RestClient.builder().requestFactory(factory).build();
     }
 }

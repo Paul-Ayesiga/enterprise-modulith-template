@@ -15,10 +15,10 @@ class NotificationConfig {
      * delivery-worker permit (the SMTP client next door follows the same rule).
      */
     @Bean
-    RestClient speedaRestClient(RestClient.Builder builder) {
+    RestClient speedaRestClient() {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(5_000);
         factory.setReadTimeout(10_000);
-        return builder.requestFactory(factory).build();
+        return RestClient.builder().requestFactory(factory).build();
     }
 }
