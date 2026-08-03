@@ -455,7 +455,93 @@ flowchart TB
 
   <!-- ============================================================ 07 -->
   <section>
-    <div class="sec-head"><span class="sec-num">07</span><h2>Data &amp; caching plane — what lives where</h2></div>
+    <div class="sec-head"><span class="sec-num">07</span><h2>Webhook delivery — the full state machine</h2></div>
+    <p class="sec-sub">One durable row per (event × matching subscription), driven by a competing-consumer
+      worker pool. Delivery is <b>at-least-once</b> — a crash between the POST and its status write leaves
+      the row claimed, and the stale-lock reclaim re-POSTs it — so receivers verify the signature and
+      de-duplicate on their side.</p>
+    <div class="diagram">
+      <pre class="mermaid">
+stateDiagram-v2
+  [*] --> PENDING : event commits → one row per matching subscription (single batch INSERT)
+  PENDING --> PROCESSING : claim — FOR UPDATE SKIP LOCKED batch,<br/>joined with the subscription's URL + signing secret
+  PROCESSING --> DELIVERED : receiver answers 2xx
+  PROCESSING --> PENDING : transient failure (5xx · timeout · DNS)<br/>reschedule at now + 10s × 2^(n−1), cap 1h
+  PROCESSING --> DEAD : permanent failure (4xx) — immediately<br/>or attempts reach max (5)
+  PROCESSING --> PENDING : crash mid-POST → lock stale (2 min)<br/>→ reclaimed and re-POSTed (at-least-once)
+  DELIVERED --> [*] : purged at retention (30d default, per-org override)
+  DEAD --> [*] : dead-letter — visible in the delivery log
+      </pre>
+    </div>
+    <div class="grid" style="margin-top:12px">
+      <div class="card c-edge"><h3>The wire</h3><span class="tag">what a receiver sees</span>
+        <table class="kv">
+          <tr><td>signature</td><td><code>X-Webhook-Signature: sha256=&lt;hex&gt;</code> — HMAC-SHA256 over the <b>exact raw body</b> with the subscription secret</td></tr>
+          <tr><td>event header</td><td><code>X-Webhook-Event</code> names the type; body always carries <code>event · orgId · occurredAt</code></td></tr>
+          <tr><td>send timeout</td><td>5 s per attempt — a slow receiver counts as transient</td></tr>
+          <tr><td>secret</td><td>AES-GCM encrypted at rest; full value shown exactly once at create; rotation = new subscription</td></tr>
+        </table></div>
+      <div class="card c-core"><h3>The queue mechanics</h3><span class="tag">postgres as the queue</span>
+        <table class="kv">
+          <tr><td>claim</td><td><code>FOR UPDATE SKIP LOCKED</code> batch — instances never double-claim</td></tr>
+          <tr><td>fencing</td><td>completion is <b>fenced</b>: the status write requires the row still PROCESSING <em>at the claimant's attempt count</em> — a stale claimant whose row was re-claimed cannot corrupt the new owner's state</td></tr>
+          <tr><td>failure split</td><td>4xx = permanent → DEAD immediately; 5xx/timeout/DNS = transient → backoff retry</td></tr>
+          <tr><td>cadence</td><td>poll 5 s · stale lock 2 min · shutdown grace 20 s</td></tr>
+          <tr><td>observability</td><td>per-subscription delivery log (status, attempts/max, response code, last error) — surfaced in the dev portal</td></tr>
+        </table></div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 08 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">08</span><h2>Exchange jobs — imports &amp; exports at scale</h2></div>
+    <p class="sec-sub">Never a long request: submit answers <b>202</b> with a job id and a worker drives the
+      file through batches. The batch commit is the whole trick — records, offset, counters, heartbeat, and
+      the cancel check are <b>one transaction</b>, which is what makes a crashed job resumable and an
+      at-least-once re-run produce exactly-once effects (proven: 100k rows with a mid-run kill → exactly
+      100k effects).</p>
+    <div class="diagram">
+      <pre class="mermaid">
+stateDiagram-v2
+  [*] --> PENDING : submit → 202 + job id (source already in S3)
+  PENDING --> VALIDATING : claimOne — stale-lock 5 min
+  VALIDATING --> PROCESSING : header matches the handler's template
+  VALIDATING --> FAILED : unreadable file / wrong header — curated message
+  PROCESSING --> PROCESSING : batch of 500 → ONE tx commits records + next_offset +<br/>processed/failed counters (the write IS the heartbeat,<br/>and returns cancel_requested)
+  PROCESSING --> COMPLETED : all records applied, failed = 0
+  PROCESSING --> COMPLETED_WITH_ERRORS : invalid rows collected —<br/>row-addressed CSV report (302 from /report)
+  PROCESSING --> PENDING : infra error → release claim, backoff base × 2^(n−1)<br/>→ later claim RESUMES from next_offset
+  PROCESSING --> FAILED : claim generation hits max (3) — a poison batch dies loudly
+  PROCESSING --> CANCELLED : cancel_requested seen at the batch boundary
+      </pre>
+    </div>
+    <div class="grid" style="margin-top:12px">
+      <div class="card c-core"><h3>Exactly-once effects</h3><span class="tag">at-least-once × idempotent</span>
+        <table class="kv">
+          <tr><td>resume</td><td>a reclaimed job restarts <b>from the last committed offset</b>, never row zero</td></tr>
+          <tr><td>handlers</td><td>idempotent by contract — re-applying a delivered batch is a no-op</td></tr>
+          <tr><td>data errors</td><td>invalid records go to the error table (<code>on conflict do nothing</code> — re-runs don't duplicate) and <b>never burn a retry</b></td></tr>
+          <tr><td>infra errors</td><td>release + exponential per-claim backoff; 3 claim generations then FAILED</td></tr>
+        </table></div>
+      <div class="card c-core"><h3>Liveness &amp; fencing</h3><span class="tag">competing consumers</span>
+        <table class="kv">
+          <tr><td>heartbeat</td><td>mid-batch re-stamp (~every staleLock/3) keeps a slow batch from being double-claimed; a false return means the claim was lost — <b>stop immediately</b></td></tr>
+          <tr><td>cancel</td><td>best-effort, honored at the next batch boundary — mid-batch records still commit</td></tr>
+          <tr><td>cadence</td><td>poll 2 s · batch 500 · stale lock 5 min · presigned results 10 min</td></tr>
+        </table></div>
+      <div class="card c-core"><h3>Authority &amp; lifecycle</h3><span class="tag">who a job runs as</span>
+        <table class="kv">
+          <tr><td>submit</td><td>needs the handler's own permission (e.g. org-members import → <code>member:invite</code>)</td></tr>
+          <tr><td>processing</td><td>the escalation guard re-evaluates against the <b>requester</b> at apply time — an import can't grant what its submitter lost</td></tr>
+          <tr><td>schedules</td><td>six-field cron (UTC), fire <em>as</em> the owner; revoking the owner's permission disables the schedule</td></tr>
+          <tr><td>afterwards</td><td>requester gets an in-app notification; <code>org.exchange.job_completed</code> webhook fans out; artifacts appear in the org document catalog (<code>source: EXCHANGE</code>); log rows purge at retention (per-org override)</td></tr>
+        </table></div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 09 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">09</span><h2>Data &amp; caching plane — what lives where</h2></div>
     <p class="sec-sub">Five stores, each with one job — plus a two-level cache in front of the hot reads.</p>
     <div class="grid">
       <div class="card c-infra"><h3>Postgres 18</h3><span class="tag">system of record</span><ul>
@@ -509,9 +595,9 @@ flowchart TB
     </div>
   </section>
 
-  <!-- ============================================================ 08 -->
+  <!-- ============================================================ 10 -->
   <section>
-    <div class="sec-head"><span class="sec-num">08</span><h2>Identity plane &amp; the two authority axes</h2></div>
+    <div class="sec-head"><span class="sec-num">10</span><h2>Identity plane &amp; the two authority axes</h2></div>
     <div class="grid">
       <div class="card c-client"><h3>Keycloak :28081</h3><span class="tag">the idp</span><ul>
         <li>Realm <code>smsone</code>; two-column <code>smsone</code> login + email theme; product name env-driven (<code>BRAND_NAME</code>)</li>
@@ -534,9 +620,9 @@ flowchart TB
     </div>
   </section>
 
-  <!-- ============================================================ 09 -->
+  <!-- ============================================================ 11 -->
   <section>
-    <div class="sec-head"><span class="sec-num">09</span><h2>Observability</h2></div>
+    <div class="sec-head"><span class="sec-num">11</span><h2>Observability</h2></div>
     <div class="grid">
       <div class="card c-infra"><h3>otel-lgtm :23000</h3><span class="tag">grafana · tempo · loki · mimir</span><ul>
         <li>OTLP gRPC <code>:24317</code> — traces + metrics + logs from gateway, modulith, and k6</li>
