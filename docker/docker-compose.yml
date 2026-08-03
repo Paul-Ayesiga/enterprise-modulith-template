@@ -20,14 +20,21 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.7.0
-    command: ["start-dev", "--import-realm"]
+    # The --spi-theme-* flags disable theme caching so edits under docker/keycloak/themes
+    # show on refresh (dev loop); production serves themes cached.
+    command: ["start-dev", "--import-realm",
+              "--spi-theme-static-max-age=-1", "--spi-theme-cache-themes=false", "--spi-theme-cache-templates=false"]
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:-admin}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      # Substituted into realm-smsone.json's displayName at import — the brand name the
+      # smsone login/email theme renders everywhere (realm.displayName / realmName).
+      BRAND_NAME: ${BRAND_NAME:-SMSOne}
     ports:
       - "${KEYCLOAK_PORT:-8081}:8080"
     volumes:
       - ./keycloak:/opt/keycloak/data/import:ro
+      - ./keycloak/themes:/opt/keycloak/themes:ro
 
   valkey:
     image: valkey/valkey:8-alpine

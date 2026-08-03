@@ -1,5 +1,8 @@
 {
   "realm": "smsone",
+  "displayName": "${BRAND_NAME}",
+  "loginTheme": "smsone",
+  "emailTheme": "smsone",
   "enabled": true,
   "registrationAllowed": false,
   "organizationsEnabled": true,
