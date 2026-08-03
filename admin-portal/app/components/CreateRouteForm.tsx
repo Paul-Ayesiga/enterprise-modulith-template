@@ -54,6 +54,18 @@ export function CreateRouteForm({ services }: { services: string[] }) {
           <span className="field__hint">Must be a registered service.</span>
         </div>
       </div>
+      <div className="form__row" style={{ marginTop: 4 }}>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+          <input type="checkbox" name="authenticated" value="true" />
+          <input type="hidden" name="authenticated" value="false" />
+          Require token <span className="field__hint">(401 without a valid bearer)</span>
+        </label>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+          <input type="checkbox" name="rateLimited" value="true" />
+          <input type="hidden" name="rateLimited" value="false" />
+          Rate limit <span className="field__hint">(shared token bucket, 429 over it)</span>
+        </label>
+      </div>
       <div className="form__actions">
         <SubmitButton />
         {state && (
@@ -67,8 +79,8 @@ export function CreateRouteForm({ services }: { services: string[] }) {
         )}
       </div>
       <p className="field__hint">
-        Routes created here are <strong>open</strong> (no token) with default traffic — for an authenticated,
-        rate-limited, product-grouped route, add it to <code>gateway/app/…/application.yml</code> instead.
+        Scopes, tenant templates, timeouts, caching, and product grouping stay config-driven — add those
+        in <code>gateway/app/…/application.yml</code>.
       </p>
     </form>
   );

@@ -133,8 +133,20 @@ export function EditRouteForm({ route, services, onDone }: { route: RouteRow; se
             <option value="DEPRECATED">DEPRECATED — serves + warns (Sunset)</option>
             <option value="RETIRED">RETIRED — paused, 410 Gone</option>
           </select>
-          <span className="field__hint">Auth, traffic, and transform policies are preserved.</span>
+          <span className="field__hint">Scopes, timeouts, caching, and transforms are preserved.</span>
         </div>
+      </div>
+      <div className="form__row" style={{ marginTop: 4 }}>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+          <input type="checkbox" name="authenticated" value="true" defaultChecked={route.authenticated} />
+          <input type="hidden" name="authenticated" value="false" />
+          Require token <span className="field__hint">(401 without a valid bearer)</span>
+        </label>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+          <input type="checkbox" name="rateLimited" value="true" defaultChecked={route.rateLimited} />
+          <input type="hidden" name="rateLimited" value="false" />
+          Rate limit <span className="field__hint">(shared token bucket, 429 over it)</span>
+        </label>
       </div>
       <div className="form__actions">
         <SaveButton />

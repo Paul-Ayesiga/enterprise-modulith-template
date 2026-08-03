@@ -20,12 +20,15 @@ export async function createRoute(_prev: ActionState, formData: FormData): Promi
   if (!path.startsWith("/")) {
     return { ok: false, message: "path must start with '/', e.g. /api/v1/reports/**." };
   }
+  // Checkbox-before-hidden pattern: get() sees "true" when checked, the hidden "false" otherwise.
+  const authenticated = String(formData.get("authenticated") ?? "") === "true";
+  const rateLimited = String(formData.get("rateLimited") ?? "") === "true";
 
   try {
     const res = await fetch(`${adminBaseUrl()}/actuator/gatewayroutes`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id, path, serviceId }),
+      body: JSON.stringify({ id, path, serviceId, authenticated, rateLimited }),
       cache: "no-store"
     });
     if (!res.ok) {
@@ -66,6 +69,8 @@ export async function updateRoute(_prev: ActionState, formData: FormData): Promi
   if (serviceId) patch.serviceId = serviceId;
   if (order !== null) patch.order = order;
   if (lifecycle) patch.lifecycle = lifecycle;
+  patch.authenticated = String(formData.get("authenticated") ?? "") === "true";
+  patch.rateLimited = String(formData.get("rateLimited") ?? "") === "true";
   if (Object.keys(patch).length === 0) {
     return { ok: false, message: "Nothing to change." };
   }

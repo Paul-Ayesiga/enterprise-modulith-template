@@ -12,6 +12,7 @@ export type RouteRow = {
   predicates: string[];
   paths: string[];
   lifecycle: Lifecycle;
+  rateLimited: boolean;
   product: string | null;
 };
 
@@ -72,6 +73,7 @@ type RawRoute = {
   // First-class from the gatewayroutes read since the update op landed; older gateways omit them.
   path?: string;
   lifecycle?: string;
+  rateLimited?: boolean;
 };
 type CatalogProduct = { id: string; name: string; routes: { id: string; paths: string[]; lifecycle: string }[] };
 
@@ -102,6 +104,7 @@ export async function fetchOverview(): Promise<Overview> {
           predicates: r.predicates ?? [],
           paths: r.path ? [r.path] : meta?.paths ?? pathsFromPredicates(r.predicates ?? []),
           lifecycle: r.lifecycle ?? meta?.lifecycle ?? "PUBLISHED",
+          rateLimited: r.rateLimited ?? false,
           product: meta?.product ?? null
         };
       })

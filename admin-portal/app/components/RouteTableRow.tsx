@@ -37,6 +37,7 @@ export function RouteTableRow({ route, services }: { route: RouteRow; services: 
               <GlobeIcon /> Open
             </span>
           )}
+          {route.rateLimited && <div className="field__hint">rate-limited</div>}
         </td>
         <td>
           <LifecycleBadge lifecycle={route.lifecycle} />
