@@ -54,19 +54,29 @@ public class GatewayRoutesEndpoint {
                     .map(predicate -> predicate.kind() + " " + predicate.args()).toList());
             row.put("path", firstPath(route));
             row.put("lifecycle", route.lifecycle().status().name());
+            row.put("rateLimited", route.traffic().rateLimited());
             return row;
         }).toList();
     }
 
-    /** Create (or replace) an open route matching a path to a known service; takes effect immediately. */
+    /**
+     * Create (or replace) a route matching a path to a known service; takes effect immediately.
+     * {@code authenticated} requires a valid token at the edge (401 without); {@code rateLimited}
+     * applies the shared token bucket. Both default off — the open route this endpoint always made.
+     */
     @WriteOperation
-    public Map<String, Object> createRoute(String id, String path, String serviceId) {
+    public Map<String, Object> createRoute(String id, String path, String serviceId,
+            @Nullable Boolean authenticated, @Nullable Boolean rateLimited) {
         if (services.find(serviceId).isEmpty()) {
             throw new IllegalArgumentException("Unknown service '" + serviceId + "'");
         }
+        AuthPolicy auth = Boolean.TRUE.equals(authenticated)
+                ? new AuthPolicy(true, java.util.Set.of(), null) : AuthPolicy.OPEN;
+        TrafficPolicy traffic = Boolean.TRUE.equals(rateLimited)
+                ? new TrafficPolicy(null, null, true, false, 0, null) : TrafficPolicy.NONE;
         registrar.register(new RouteDefinition(id, 1000,
                 List.of(new RoutePredicate(RoutePredicate.Kind.PATH, List.of(path))),
-                serviceId, AuthPolicy.OPEN, TrafficPolicy.NONE, TransformPolicy.NONE,
+                serviceId, auth, traffic, TransformPolicy.NONE,
                 LifecyclePolicy.PUBLISHED, Map.of()));
         return Map.of("status", "registered", "id", id);
     }
@@ -74,14 +84,17 @@ public class GatewayRoutesEndpoint {
     /**
      * Update an existing route in place — {@code POST gatewayroutes/{id}} with any of {@code path},
      * {@code serviceId}, {@code order}, {@code lifecycle} (PUBLISHED | DEPRECATED | RETIRED),
-     * {@code sunset}. Everything not provided is PRESERVED (auth, traffic, transform, metadata — the
-     * policies a delete-and-recreate would lose). Re-registering refreshes the edge, so a lifecycle
-     * flip to RETIRED pauses traffic (410 Gone) immediately and back to PUBLISHED resumes it.
+     * {@code sunset}, {@code authenticated}, {@code rateLimited}. Everything not provided is
+     * PRESERVED (the policies a delete-and-recreate would lose). {@code authenticated} flips only the
+     * token requirement — required scopes and the tenant template stay as configured; {@code
+     * rateLimited} flips only the token bucket — timeouts, body caps, breaker, retries, cache stay.
+     * Re-registering refreshes the edge, so a lifecycle flip to RETIRED pauses traffic (410 Gone)
+     * immediately and back to PUBLISHED resumes it.
      */
     @WriteOperation
     public Map<String, Object> updateRoute(@Selector String id, @Nullable String path,
             @Nullable String serviceId, @Nullable Integer order, @Nullable String lifecycle,
-            @Nullable String sunset) {
+            @Nullable String sunset, @Nullable Boolean authenticated, @Nullable Boolean rateLimited) {
         RouteDefinition existing = routeSource.routes().stream()
                 .filter(route -> route.id().equals(id)).findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Unknown route '" + id + "'"));
@@ -101,15 +114,26 @@ public class GatewayRoutesEndpoint {
             }
             lifecyclePolicy = new LifecyclePolicy(status, sunset != null ? sunset : existing.lifecycle().sunset());
         }
+        AuthPolicy auth = existing.auth();
+        if (authenticated != null) {
+            auth = new AuthPolicy(authenticated, auth.requiredScopes(), auth.tenantPathTemplate());
+        }
+        TrafficPolicy traffic = existing.traffic();
+        if (rateLimited != null) {
+            traffic = new TrafficPolicy(traffic.responseTimeoutMs(), traffic.maxRequestBytes(),
+                    rateLimited, traffic.circuitBreaker(), traffic.retries(), traffic.cacheTtlSeconds());
+        }
         RouteDefinition updated = new RouteDefinition(id,
                 order != null ? order : existing.order(),
                 predicates,
                 serviceId != null ? serviceId : existing.serviceId(),
-                existing.auth(), existing.traffic(), existing.transform(),
+                auth, traffic, existing.transform(),
                 lifecyclePolicy, existing.metadata());
         registrar.register(updated);
         return Map.of("status", "updated", "id", id,
-                "lifecycle", lifecyclePolicy.status().name());
+                "lifecycle", lifecyclePolicy.status().name(),
+                "authenticated", auth.requiresToken(),
+                "rateLimited", traffic.rateLimited());
     }
 
     @DeleteOperation

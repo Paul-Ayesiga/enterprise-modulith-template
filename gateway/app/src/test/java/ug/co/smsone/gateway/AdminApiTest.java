@@ -115,6 +115,35 @@ class AdminApiTest {
     }
 
     @Test
+    void authAndRateLimitFlagsFlipAtTheEdge() {
+        // Created authenticated: the edge demands a token before the backend is ever reached.
+        clientFor(adminPort).post().uri("/actuator/gatewayroutes")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("id", "admin-authed", "path", "/adminauthed/**", "serviceId", "backend",
+                        "authenticated", true))
+                .exchange()
+                .expectStatus().isOk();
+        assertThat(awaitStatus("/adminauthed/x", 401)).as("an authenticated route 401s without a token").isTrue();
+
+        // Update flips it open (and turns the token bucket on) — live, in place.
+        clientFor(adminPort).post().uri("/actuator/gatewayroutes/admin-authed")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("authenticated", false, "rateLimited", true))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.authenticated").isEqualTo(false)
+                .jsonPath("$.rateLimited").isEqualTo(true);
+        assertThat(awaitStatus("/adminauthed/x", 200)).as("flipped open, it serves without a token").isTrue();
+
+        clientFor(adminPort).get().uri("/actuator/gatewayroutes").exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$[?(@.id == 'admin-authed' && @.authenticated == false && @.rateLimited == true)]")
+                .exists();
+    }
+
+    @Test
     void adminApiIsNotReachableOnThePublicPort() {
         // Actuator (incl. the admin API) is bound to the management port only — the edge has no such route.
         clientFor(publicPort).get().uri("/actuator/gatewayroutes").exchange().expectStatus().isNotFound();
