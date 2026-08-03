@@ -1,7 +1,10 @@
-// Server-side proxy for the "try it" console. The browser POSTs {method, path, token, body} here; this
-// handler forwards it to the gateway front door and returns the response. Running it server-side means no
-// CORS to negotiate and the bearer token never has to live in browser-reachable JS beyond the one request.
+// Server-side proxy for the "try it" console. The browser POSTs {method, path, authMode, credential,
+// body} here; this handler forwards it to the gateway front door and returns the response. Running it
+// server-side means no CORS to negotiate, pasted credentials never live in browser-reachable JS beyond
+// the one request — and "session" mode can read the httpOnly cookie the browser itself cannot, so a
+// signed-in developer tries endpoints AS themselves with nothing to paste.
 import { NextResponse } from "next/server";
+import { getSession } from "../../lib/auth";
 import { apiBaseUrl } from "../../lib/gateway";
 
 export const runtime = "nodejs";
@@ -10,6 +13,10 @@ export const dynamic = "force-dynamic";
 type ProxyRequest = {
   method?: string;
   path?: string;
+  /** "session" (the signed-in user's token) | "bearer" (pasted) | "apikey" (pasted, X-Api-Key). */
+  authMode?: "session" | "bearer" | "apikey";
+  credential?: string;
+  /** Legacy field from older clients — treated as a pasted bearer. */
   token?: string;
   body?: string | null;
   contentType?: string;
@@ -38,8 +45,21 @@ export async function POST(req: Request) {
 
   const url = `${apiBaseUrl()}${path}`;
   const headers: Record<string, string> = { accept: "application/json" };
-  if (payload.token) {
-    headers.authorization = `Bearer ${payload.token.trim()}`;
+  const credential = (payload.credential ?? payload.token ?? "").trim();
+  const mode = payload.authMode ?? (credential ? "bearer" : "none");
+  if (mode === "session") {
+    const session = getSession();
+    if (!session) {
+      return NextResponse.json(
+        { url, error: "You're not signed in (or the session expired). Refresh to sign in again, or switch to a pasted credential." },
+        { status: 401 }
+      );
+    }
+    headers.authorization = `Bearer ${session.token}`;
+  } else if (mode === "bearer" && credential) {
+    headers.authorization = `Bearer ${credential}`;
+  } else if (mode === "apikey" && credential) {
+    headers["x-api-key"] = credential;
   }
   const init: RequestInit = { method, headers, cache: "no-store" };
   if (payload.body != null && payload.body !== "" && method !== "GET" && method !== "HEAD") {

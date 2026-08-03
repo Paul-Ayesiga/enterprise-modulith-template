@@ -1,8 +1,7 @@
 import { CreateRouteForm } from "./components/CreateRouteForm";
-import { DeleteRouteButton } from "./components/DeleteRouteButton";
 import { Header } from "./components/Header";
-import { GlobeIcon, LockIcon } from "./components/Icons";
-import { adminBaseUrl, fetchOverview, grafanaUrl, type RouteRow } from "./lib/gateway";
+import { RouteTableRow } from "./components/RouteTableRow";
+import { adminBaseUrl, fetchOverview, grafanaUrl } from "./lib/gateway";
 
 // Read the live gateway state on every request.
 export const dynamic = "force-dynamic";
@@ -74,7 +73,7 @@ export default async function AdminHome() {
                   </thead>
                   <tbody>
                     {routes.map((route) => (
-                      <RouteRowView key={route.id} route={route} />
+                      <RouteTableRow key={route.id} route={route} services={services.map((s) => s.id)} />
                     ))}
                   </tbody>
                 </table>
@@ -126,47 +125,3 @@ function Stat({ value, label }: { value: number | string; label: string }) {
   );
 }
 
-function RouteRowView({ route }: { route: RouteRow }) {
-  return (
-    <tr>
-      <td>
-        <span className="mono route-id">{route.id}</span>
-        {route.product && <div className="field__hint">{route.product}</div>}
-      </td>
-      <td className="num">{route.order}</td>
-      <td className="mono">{route.serviceId}</td>
-      <td>
-        <div className="paths">
-          {route.paths.length ? (
-            route.paths.map((p) => <code key={p}>{p}</code>)
-          ) : (
-            <span className="field__hint">—</span>
-          )}
-        </div>
-      </td>
-      <td>
-        {route.authenticated ? (
-          <span className="badge badge--auth">
-            <LockIcon /> Token
-          </span>
-        ) : (
-          <span className="badge badge--open">
-            <GlobeIcon /> Open
-          </span>
-        )}
-      </td>
-      <td>
-        <LifecycleBadge lifecycle={route.lifecycle} />
-      </td>
-      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-        <DeleteRouteButton id={route.id} />
-      </td>
-    </tr>
-  );
-}
-
-function LifecycleBadge({ lifecycle }: { lifecycle: string }) {
-  const key = lifecycle.toLowerCase();
-  const label = key.charAt(0).toUpperCase() + key.slice(1);
-  return <span className={`badge badge--${key}`}>{label}</span>;
-}

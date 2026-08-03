@@ -14,16 +14,28 @@ type ProxyResponse = {
 
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
 
+type AuthMode = "session" | "bearer" | "apikey";
+
+const MODES: { value: AuthMode; label: string }[] = [
+  { value: "session", label: "My session" },
+  { value: "bearer", label: "Bearer token" },
+  { value: "apikey", label: "API key" }
+];
+
 export function TryConsole({
   initialPath = "/api/v1/settings",
-  initialMethod = "GET"
+  initialMethod = "GET",
+  signedIn = false
 }: {
   initialPath?: string;
   initialMethod?: string;
+  signedIn?: boolean;
 }) {
   const [method, setMethod] = useState<string>(METHODS.includes(initialMethod as never) ? initialMethod : "GET");
   const [path, setPath] = useState(initialPath);
-  const [token, setToken] = useState("");
+  // Signed in → default to the session token (nothing to paste); pasting stays one click away.
+  const [authMode, setAuthMode] = useState<AuthMode>(signedIn ? "session" : "bearer");
+  const [credential, setCredential] = useState("");
   const [body, setBody] = useState("");
   const [loading, setLoading] = useState(false);
   const [res, setRes] = useState<ProxyResponse | null>(null);
@@ -38,7 +50,13 @@ export function TryConsole({
       const response = await fetch("/api/proxy", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ method, path, token, body: hasBody ? body : null })
+        body: JSON.stringify({
+          method,
+          path,
+          authMode,
+          credential: authMode === "session" ? null : credential,
+          body: hasBody ? body : null
+        })
       });
       setRes((await response.json()) as ProxyResponse);
     } catch (e) {
@@ -79,22 +97,52 @@ export function TryConsole({
         </div>
 
         <div className="field">
-          <label className="field__label" htmlFor="try-token">
-            Bearer token
-          </label>
-          <input
-            id="try-token"
-            className="console__token"
-            type="password"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            placeholder="paste a token — run: make token"
-            autoComplete="off"
-            spellCheck={false}
-          />
-          <span className="field__hint">
-            Sent server-side to the gateway; never stored. Leave blank to test an open route or see a 401.
+          <span className="field__label" id="try-auth-label">
+            Authenticate as
           </span>
+          <div role="radiogroup" aria-labelledby="try-auth-label" style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            {MODES.map((m) => (
+              <label key={m.value} style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                <input
+                  type="radio"
+                  name="try-auth-mode"
+                  value={m.value}
+                  checked={authMode === m.value}
+                  onChange={() => setAuthMode(m.value)}
+                />
+                {m.label}
+                {m.value === "session" && !signedIn && (
+                  <span className="field__hint" style={{ margin: 0 }}>(sign in first)</span>
+                )}
+              </label>
+            ))}
+          </div>
+          {authMode === "session" ? (
+            <span className="field__hint">
+              {signedIn
+                ? "Requests carry your signed-in session token — server-side, nothing to paste."
+                : "You're not signed in — session requests will answer 401. Sign in, or pick a pasted credential."}
+            </span>
+          ) : (
+            <>
+              <input
+                id="try-credential"
+                className="console__token"
+                type="password"
+                value={credential}
+                onChange={(e) => setCredential(e.target.value)}
+                placeholder={authMode === "bearer" ? "paste a token — run: make token" : "paste an API key — mint one under Credentials"}
+                aria-label={authMode === "bearer" ? "Bearer token" : "API key"}
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <span className="field__hint">
+                {authMode === "bearer"
+                  ? "Sent server-side as Authorization: Bearer; never stored. Leave blank to test an open route or see a 401."
+                  : "Sent server-side as X-Api-Key; never stored. Keys come from the Credentials page."}
+              </span>
+            </>
+          )}
         </div>
 
         {hasBody && (

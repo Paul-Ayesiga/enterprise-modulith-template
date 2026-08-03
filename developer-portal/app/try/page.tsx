@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Header } from "../components/Header";
 import { TryConsole } from "../components/TryConsole";
+import { getSession } from "../lib/auth";
 import { openApiUrl, routeTableUrl } from "../lib/gateway";
 
 export const dynamic = "force-dynamic";
@@ -10,6 +11,7 @@ export default function TryPage({
 }: {
   searchParams: { path?: string; method?: string };
 }) {
+  const signedIn = getSession() !== null;
   return (
     <>
       <Header openApiUrl={openApiUrl()} routeTableUrl={routeTableUrl()} />
@@ -18,14 +20,16 @@ export default function TryPage({
         <section className="intro">
           <h1 className="intro__title">Try it</h1>
           <p className="intro__lede">
-            Send a live request through the gateway — choose a method, paste a token, and read the
-            response. It&rsquo;s proxied server-side, so there&rsquo;s no CORS and the token stays off the page.
+            Send a live request through the gateway — as your signed-in session, a pasted token, or an
+            API key — and read the response. It&rsquo;s proxied server-side, so there&rsquo;s no CORS and
+            credentials stay off the page.
           </p>
         </section>
 
         <TryConsole
           initialPath={searchParams.path ?? "/api/v1/settings"}
           initialMethod={searchParams.method ?? "GET"}
+          signedIn={signedIn}
         />
       </main>
 

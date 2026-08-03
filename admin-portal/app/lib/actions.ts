@@ -39,6 +39,76 @@ export async function createRoute(_prev: ActionState, formData: FormData): Promi
   }
 }
 
+/**
+ * Edit a route in place via POST gatewayroutes/{id}. Only the provided fields change — the gateway
+ * preserves auth/traffic/transform policies, exactly what delete-and-recreate would lose.
+ */
+export async function updateRoute(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const id = String(formData.get("id") ?? "").trim();
+  const path = String(formData.get("path") ?? "").trim();
+  const serviceId = String(formData.get("serviceId") ?? "").trim();
+  const orderRaw = String(formData.get("order") ?? "").trim();
+  const lifecycle = String(formData.get("lifecycle") ?? "").trim();
+
+  if (!id) {
+    return { ok: false, message: "Missing route id." };
+  }
+  if (path && !path.startsWith("/")) {
+    return { ok: false, message: "path must start with '/', e.g. /api/v1/reports/**." };
+  }
+  const order = orderRaw === "" ? null : Number(orderRaw);
+  if (order !== null && (!Number.isInteger(order) || order < 0)) {
+    return { ok: false, message: "order must be a non-negative integer (lower wins)." };
+  }
+
+  const patch: Record<string, unknown> = {};
+  if (path) patch.path = path;
+  if (serviceId) patch.serviceId = serviceId;
+  if (order !== null) patch.order = order;
+  if (lifecycle) patch.lifecycle = lifecycle;
+  if (Object.keys(patch).length === 0) {
+    return { ok: false, message: "Nothing to change." };
+  }
+
+  try {
+    const res = await fetch(`${adminBaseUrl()}/actuator/gatewayroutes/${encodeURIComponent(id)}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+      cache: "no-store"
+    });
+    if (!res.ok) {
+      const detail = await safeMessage(res);
+      return { ok: false, message: `Gateway rejected the update (${res.status})${detail ? `: ${detail}` : ""}.` };
+    }
+    revalidatePath("/");
+    return { ok: true, message: `Route "${id}" updated — live on the edge now.` };
+  } catch (e) {
+    return { ok: false, message: `Can't reach the gateway admin API: ${msg(e)}` };
+  }
+}
+
+/** One-click lifecycle flip: RETIRED pauses traffic (410 Gone), PUBLISHED resumes it. */
+export async function setLifecycle(id: string, lifecycle: string): Promise<ActionState> {
+  try {
+    const res = await fetch(`${adminBaseUrl()}/actuator/gatewayroutes/${encodeURIComponent(id)}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ lifecycle }),
+      cache: "no-store"
+    });
+    if (!res.ok) {
+      const detail = await safeMessage(res);
+      return { ok: false, message: `Lifecycle change failed (${res.status})${detail ? `: ${detail}` : ""}.` };
+    }
+    revalidatePath("/");
+    const verb = lifecycle === "RETIRED" ? "paused (410 on the edge)" : `set to ${lifecycle}`;
+    return { ok: true, message: `Route "${id}" ${verb}.` };
+  } catch (e) {
+    return { ok: false, message: `Can't reach the gateway admin API: ${msg(e)}` };
+  }
+}
+
 /** Remove a route via the gatewayroutes delete operation. */
 export async function deleteRoute(id: string): Promise<ActionState> {
   try {

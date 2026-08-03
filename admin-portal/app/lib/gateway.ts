@@ -52,7 +52,16 @@ async function getJson<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-type RawRoute = { id: string; order: number; serviceId: string; authenticated: boolean; predicates: string[] };
+type RawRoute = {
+  id: string;
+  order: number;
+  serviceId: string;
+  authenticated: boolean;
+  predicates: string[];
+  // First-class from the gatewayroutes read since the update op landed; older gateways omit them.
+  path?: string;
+  lifecycle?: string;
+};
 type CatalogProduct = { id: string; name: string; routes: { id: string; paths: string[]; lifecycle: string }[] };
 
 /** Load the live route table, joined with the catalog for each route's paths, lifecycle, and product. */
@@ -80,8 +89,8 @@ export async function fetchOverview(): Promise<Overview> {
           serviceId: r.serviceId,
           authenticated: r.authenticated,
           predicates: r.predicates ?? [],
-          paths: meta?.paths ?? pathsFromPredicates(r.predicates ?? []),
-          lifecycle: meta?.lifecycle ?? "PUBLISHED",
+          paths: r.path ? [r.path] : meta?.paths ?? pathsFromPredicates(r.predicates ?? []),
+          lifecycle: r.lifecycle ?? meta?.lifecycle ?? "PUBLISHED",
           product: meta?.product ?? null
         };
       })

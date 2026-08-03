@@ -91,3 +91,27 @@ export function MoonIcon({ className }: IconProps) {
     </svg>
   );
 }
+
+export function PencilIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)} width={13} height={13}>
+      <path d="M17 3a2.4 2.4 0 0 1 3.4 3.4L8 18.8 3.5 20l1.2-4.5Z" />
+    </svg>
+  );
+}
+
+export function PauseIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)} width={13} height={13}>
+      <path d="M9 5v14M15 5v14" />
+    </svg>
+  );
+}
+
+export function PlayIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)} width={13} height={13}>
+      <path d="M7 4.5v15l12-7.5Z" />
+    </svg>
+  );
+}
