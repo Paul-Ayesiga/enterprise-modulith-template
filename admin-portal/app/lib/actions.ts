@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { adminBaseUrl } from "./gateway";
+import { adminBaseUrl, adminHeaders } from "./gateway";
 
 export type ActionState = { ok: boolean; message: string } | null;
 
@@ -27,7 +27,7 @@ export async function createRoute(_prev: ActionState, formData: FormData): Promi
   try {
     const res = await fetch(`${adminBaseUrl()}/actuator/gatewayroutes`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...adminHeaders() },
       body: JSON.stringify({ id, path, serviceId, authenticated, rateLimited }),
       cache: "no-store"
     });
@@ -78,7 +78,7 @@ export async function updateRoute(_prev: ActionState, formData: FormData): Promi
   try {
     const res = await fetch(`${adminBaseUrl()}/actuator/gatewayroutes/${encodeURIComponent(id)}`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...adminHeaders() },
       body: JSON.stringify(patch),
       cache: "no-store"
     });
@@ -98,7 +98,7 @@ export async function setLifecycle(id: string, lifecycle: string): Promise<Actio
   try {
     const res = await fetch(`${adminBaseUrl()}/actuator/gatewayroutes/${encodeURIComponent(id)}`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...adminHeaders() },
       body: JSON.stringify({ lifecycle }),
       cache: "no-store"
     });
@@ -119,6 +119,7 @@ export async function deleteRoute(id: string): Promise<ActionState> {
   try {
     const res = await fetch(`${adminBaseUrl()}/actuator/gatewayroutes/${encodeURIComponent(id)}`, {
       method: "DELETE",
+      headers: adminHeaders(),
       cache: "no-store"
     });
     if (!res.ok && res.status !== 404) {

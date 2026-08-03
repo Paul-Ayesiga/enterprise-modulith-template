@@ -45,6 +45,12 @@ export function adminBaseUrl(): string {
   return process.env.GATEWAY_ADMIN_URL ?? "http://localhost:29090";
 }
 
+/** The management-port credential (gateway.admin.token) — sent as X-Admin-Token when configured. */
+export function adminHeaders(): Record<string, string> {
+  const token = process.env.GATEWAY_ADMIN_TOKEN;
+  return token ? { "x-admin-token": token } : {};
+}
+
 export function grafanaUrl(): string {
   return process.env.GRAFANA_URL ?? "http://localhost:23000";
 }
@@ -56,7 +62,7 @@ export function prometheusUrl(): string {
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${adminBaseUrl()}${path}`, {
     cache: "no-store",
-    headers: { accept: "application/json" }
+    headers: { accept: "application/json", ...adminHeaders() }
   });
   if (!res.ok) {
     throw new Error(`${path} → ${res.status} ${res.statusText}`);
@@ -145,7 +151,7 @@ export async function fetchUsage(): Promise<{ usage: UsageRow[]; error: string |
 
 async function fetchHealth(): Promise<string> {
   try {
-    const res = await fetch(`${adminBaseUrl()}/actuator/health`, { cache: "no-store" });
+    const res = await fetch(`${adminBaseUrl()}/actuator/health`, { cache: "no-store" });  // probes stay tokenless
     if (!res.ok) return "DOWN";
     const body = (await res.json()) as { status?: string };
     return body.status ?? "UNKNOWN";

@@ -62,11 +62,17 @@ export function routeTableUrl(): string {
  * Fetch the product catalog. Never throws: returns an error message the page renders as a state,
  * rather than crashing the render tree.
  */
+/** The management-port credential (gateway.admin.token) — sent as X-Admin-Token when configured. */
+export function adminHeaders(): Record<string, string> {
+  const token = process.env.GATEWAY_ADMIN_TOKEN;
+  return token ? { "x-admin-token": token } : {};
+}
+
 export async function fetchCatalog(): Promise<CatalogResult> {
   try {
     const res = await fetch(`${adminBaseUrl()}/actuator/gatewaycatalog`, {
       cache: "no-store",
-      headers: { accept: "application/json" }
+      headers: { accept: "application/json", ...adminHeaders() }
     });
     if (!res.ok) {
       return { products: [], error: `Gateway responded ${res.status} ${res.statusText}` };

@@ -1,6 +1,6 @@
 // "My usage" data: the org's live quota window from the gateway's usage endpoint (the same Valkey
 // counter the edge enforces against) + the plan/entitlements from the platform subscription API.
-import { adminBaseUrl, apiBaseUrl } from "./gateway";
+import { adminBaseUrl, adminHeaders, apiBaseUrl } from "./gateway";
 
 export type MyUsage = {
   consumer: string;
@@ -24,7 +24,7 @@ export async function fetchUsageFor(orgId: string): Promise<{ usage: MyUsage | n
   try {
     const res = await fetch(`${adminBaseUrl()}/actuator/gatewayusage/${encodeURIComponent(orgId)}`, {
       cache: "no-store",
-      headers: { accept: "application/json" }
+      headers: { accept: "application/json", ...adminHeaders() }
     });
     if (!res.ok) {
       return { usage: null, error: `The gateway usage endpoint answered ${res.status} — is the gateway running?` };
