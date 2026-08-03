@@ -541,7 +541,121 @@ stateDiagram-v2
 
   <!-- ============================================================ 09 -->
   <section>
-    <div class="sec-head"><span class="sec-num">09</span><h2>Data &amp; caching plane — what lives where</h2></div>
+    <div class="sec-head"><span class="sec-num">09</span><h2>Billing — the reconcile loop</h2></div>
+    <p class="sec-sub">Kill Bill owns the <b>money</b>; the subscription module owns <b>access</b>. Every
+      state that matters flows one way — Kill Bill event → <code>reconcile</code> → the audited plan-assign
+      path — and reconcile is idempotent by construction: it repeats what Kill Bill says, so a duplicate
+      callback or a dev setup without the callback converges to the same standing.</p>
+    <div class="diagram">
+      <pre class="mermaid">
+stateDiagram-v2
+  direction LR
+  state "FREE (no row)" as FREE
+  [*] --> TRIALING : org registered → trial-on-signup (PRO, 30d, entitlement-only)
+  [*] --> ACTIVE : straight-to-paid (admin assign / subscribe)
+  TRIALING --> PAUSED : TrialExpiryJob — trial lapsed unpaid
+  TRIALING --> ACTIVE : payment lands / plan assigned
+  PAUSED --> ACTIVE : payment success (callback) or admin assign — the pay-to-recover path
+  ACTIVE --> PAST_DUE : payment failure (callback) — entitlements KEPT, a grace
+  PAST_DUE --> ACTIVE : payment success (callback)
+  ACTIVE --> FREE : KB subscription cancelled → reconcile finds no billable sub
+  note right of PAUSED : org is READ-ONLY — org writes answer 402,\nreads pass, /billing stays open
+      </pre>
+    </div>
+    <div class="grid" style="margin-top:12px">
+      <div class="card c-core"><h3>The one write direction</h3><span class="tag">event → entitlements</span>
+        <table class="kv">
+          <tr><td>callback</td><td>KB push → <code>/api/v1/billing/killbill/notifications?token=…</code> (static token auth)</td></tr>
+          <tr><td>payment event</td><td><code>onPaymentOutcome</code>: success → standing ACTIVE · failure → PAST_DUE (plan untouched)</td></tr>
+          <tr><td>subscription event</td><td><code>onSubscriptionEvent</code> → <code>reconcile(orgId)</code>: first ACTIVE KB subscription maps plan name → plan code; none → <b>FREE, not limbo</b></td></tr>
+          <tr><td>assign path</td><td>always the audited <code>Subscriptions.assignPlan</code> — publishes <code>SubscriptionChanged</code> → entitlement cache evicted (a downgrade bites the next request) + <code>org.subscription_changed</code> webhook</td></tr>
+        </table></div>
+      <div class="card c-core"><h3>Provision &amp; trial</h3><span class="tag">org lifecycle hooks</span>
+        <table class="kv">
+          <tr><td>account</td><td><code>OrganizationRegistered</code> → KB account (externalKey = orgId), idempotent and <b>race-safe</b>: a lost unique-insert resolves to the winner instead of 500</td></tr>
+          <tr><td>trial</td><td>trial-on-signup (opt-in): PRO 30d, <b>entitlement-only</b> — no KB subscription, no invoice until it converts; a straight-to-paid assignment wins (no-op guard)</td></tr>
+          <tr><td>money starts</td><td>first KB subscription (<code>pro-monthly</code>/<code>enterprise-monthly</code>) → invoice; card data never touches the platform (KB payment plugins)</td></tr>
+          <tr><td>unknown org</td><td>a billing event racing provisioning is a logged no-op, never a 500</td></tr>
+        </table></div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 10 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">10</span><h2>Impersonation — the audited bridge</h2></div>
+    <p class="sec-sub">The only sanctioned crossing between the platform axis and tenant data. A session is a
+      first-class record with a hard clock, worn per-request via a header — and its validity is re-checked
+      on <b>every request</b>, deliberately uncached: ending a session must bite immediately, not a TTL later.</p>
+    <div class="diagram">
+      <pre class="mermaid">
+stateDiagram-v2
+  [*] --> ACTIVE : POST /admin/impersonations — platform-support floor,\nreason ≥ 8 chars (audited), WRITE mode needs platform-admin
+  ACTIVE --> ACTIVE : each tenant request with X-Impersonate <id>\n→ filter @Order(−2) swaps the principal,\nsession re-validated against the store
+  ACTIVE --> ENDED : DELETE (operator or admin cuts it off)
+  ACTIVE --> EXPIRED : clock hits expiresAt — default TTL 15 min, hard cap 30 min
+  ENDED --> [*]
+  EXPIRED --> [*]
+  note right of ACTIVE : READ_ONLY (default) admits only GET/HEAD/OPTIONS\nWRITE admits mutations — platform-admin only
+      </pre>
+    </div>
+    <div class="grid" style="margin-top:12px">
+      <div class="card c-client"><h3>What a session is NOT</h3><span class="tag">containment</span>
+        <table class="kv">
+          <tr><td>no platform reach</td><td>while wearing a session, platform routes refuse — a session carries the <b>target's</b> org permissions and nothing else</td></tr>
+          <tr><td>no self-extension</td><td>TTL is fixed at mint; a request may shorten, never lengthen past the 30-min cap (a default above the cap fails at boot)</td></tr>
+          <tr><td>dies with the actor</td><td>validity is tied to the operator's own account standing — a disabled operator's sessions are dead, not merely expiring</td></tr>
+        </table></div>
+      <div class="card c-client"><h3>The audit shape</h3><span class="tag">who did what, as whom</span>
+        <table class="kv">
+          <tr><td>actor</td><td>always the <b>operator's</b> subject — never the worn identity</td></tr>
+          <tr><td>onBehalfOf</td><td>the target subject rides every audit row written during the session — the one place actor and effective identity deliberately differ</td></tr>
+          <tr><td>mint record</td><td>who, whom, org scope, reason, mode, TTL — queryable via the sessions list</td></tr>
+        </table></div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 11 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">11</span><h2>Two-level cache — under concurrent load</h2></div>
+    <p class="sec-sub">The shared kernel cache behind entitlements, permissions, and settings: per-node
+      <b>Caffeine L1</b> in front of shared <b>Valkey L2</b>, built so an L2 outage degrades and a write
+      invalidates every node <em>now</em> — a plan downgrade must bite the very next gate check.</p>
+    <div class="diagram">
+      <pre class="mermaid">
+flowchart TB
+  R["get(key)"] --> L1{"L1 Caffeine<br/>per node, ns"}
+  L1 -- hit --> OUT["value"]
+  L1 -- miss --> L2{"L2 Valkey<br/>shared"}
+  L2 -- hit --> W1["populate L1"] --> OUT
+  L2 -- "error → WARN, degrade<br/>(counted as miss)" --> LOCK
+  L2 -- miss --> LOCK["striped lock<br/>(bounded table — collision =<br/>serialization, never wrongness)"]
+  LOCK --> DC{"double-check L1<br/>peer just loaded?"}
+  DC -- yes --> OUT
+  DC -- no --> LOAD["loader (DB)"] --> PUB["write-through: L1 (caller's instance)<br/>+ L2 (normalized copy — types survive<br/>the round-trip)"] --> OUT
+
+  WRITE["put / evict"] --> BOTH["L1 + L2"] --> MSG["publish invalidation<br/>'cache:key' channel"]
+  MSG --> PEERS["every peer node:<br/>evictLocal(cache, key) — stale L1 dropped"]
+      </pre>
+    </div>
+    <div class="grid" style="margin-top:12px">
+      <div class="card c-infra"><h3>The three guarantees</h3><span class="tag">why this shape</span>
+        <table class="kv">
+          <tr><td>outage ≠ outage</td><td>L2 down → L1-only with a warn; the app never falls over because the cache did</td></tr>
+          <tr><td>stampede bound</td><td>striped locks serialize cold loads per stripe; the first loader publishes to L2, so peer nodes' cold reads hit L2 instead of re-running the loader</td></tr>
+          <tr><td>freshness</td><td>invalidation is pub/sub, not TTL — cross-node staleness lasts a network hop, not a cache lifetime</td></tr>
+        </table></div>
+      <div class="card c-infra"><h3>Operational notes</h3><span class="tag">observability</span>
+        <table class="kv">
+          <tr><td>metrics</td><td>lookups counted by outcome (hit-L1 / hit-L2 / miss / degraded) per cache name</td></tr>
+          <tr><td>L2 encoding</td><td>values normalized on the L2 write so numeric/value types survive the JSON round-trip (the bug class this design retired)</td></tr>
+          <tr><td>consumers</td><td>entitlement resolver (plan gates), permission resolution, settings/flags — the reads on every request's hot path</td></tr>
+        </table></div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 12 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">12</span><h2>Data &amp; caching plane — what lives where</h2></div>
     <p class="sec-sub">Five stores, each with one job — plus a two-level cache in front of the hot reads.</p>
     <div class="grid">
       <div class="card c-infra"><h3>Postgres 18</h3><span class="tag">system of record</span><ul>
@@ -595,9 +709,9 @@ stateDiagram-v2
     </div>
   </section>
 
-  <!-- ============================================================ 10 -->
+  <!-- ============================================================ 13 -->
   <section>
-    <div class="sec-head"><span class="sec-num">10</span><h2>Identity plane &amp; the two authority axes</h2></div>
+    <div class="sec-head"><span class="sec-num">13</span><h2>Identity plane &amp; the two authority axes</h2></div>
     <div class="grid">
       <div class="card c-client"><h3>Keycloak :28081</h3><span class="tag">the idp</span><ul>
         <li>Realm <code>smsone</code>; two-column <code>smsone</code> login + email theme; product name env-driven (<code>BRAND_NAME</code>)</li>
@@ -620,9 +734,9 @@ stateDiagram-v2
     </div>
   </section>
 
-  <!-- ============================================================ 11 -->
+  <!-- ============================================================ 14 -->
   <section>
-    <div class="sec-head"><span class="sec-num">11</span><h2>Observability</h2></div>
+    <div class="sec-head"><span class="sec-num">14</span><h2>Observability</h2></div>
     <div class="grid">
       <div class="card c-infra"><h3>otel-lgtm :23000</h3><span class="tag">grafana · tempo · loki · mimir</span><ul>
         <li>OTLP gRPC <code>:24317</code> — traces + metrics + logs from gateway, modulith, and k6</li>
@@ -655,14 +769,12 @@ stateDiagram-v2
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 <script>
 (function () {
-  // Theme boot: stored choice > OS preference > dark (the poster default).
+  // Theme boot: stored choice > OS preference > dark. localStorage can be blocked on file:// —
+  // everything below works without it (it only loses persistence across visits).
   var stored = null;
   try { stored = localStorage.getItem("smsone-doc-theme"); } catch (e) {}
   var theme = stored || (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
-  if (theme === "light") document.documentElement.setAttribute("data-theme", "light");
 
-  // Mermaid inlines colors into its SVG at render time, so pick them per theme here
-  // (and the toggle reloads the page to re-render — the one honest way with static SVG).
   var dark = {
     background: "transparent", fontFamily: "ui-sans-serif, system-ui, sans-serif", fontSize: "13px",
     primaryColor: "#12203a", primaryTextColor: "#dde7f7", primaryBorderColor: "#2a3c5c",
@@ -675,13 +787,30 @@ stateDiagram-v2
     lineColor: "#8aa0c2", clusterBkg: "#f2f5fb", clusterBorder: "#ccd7e8",
     titleColor: "#44586f", edgeLabelBackground: "#f2f5fb"
   };
-  mermaid.initialize({ startOnLoad: true, securityLevel: "loose", theme: "base",
-    themeVariables: theme === "light" ? light : dark });
+
+  // Keep every diagram's source so a toggle can re-render it in the new palette
+  // (mermaid inlines colors into the SVG at render time).
+  var holders = Array.prototype.slice.call(document.querySelectorAll(".mermaid"));
+  var sources = holders.map(function (el) { return el.textContent; });
+
+  function apply(next) {
+    if (next === "light") document.documentElement.setAttribute("data-theme", "light");
+    else document.documentElement.removeAttribute("data-theme");
+    mermaid.initialize({ startOnLoad: false, securityLevel: "loose", theme: "base",
+      themeVariables: next === "light" ? light : dark });
+    holders.forEach(function (el, i) {
+      el.removeAttribute("data-processed");
+      el.textContent = sources[i];
+    });
+    mermaid.run();
+  }
+
+  apply(theme);
 
   document.getElementById("themeToggle").addEventListener("click", function () {
-    var next = document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light";
-    try { localStorage.setItem("smsone-doc-theme", next); } catch (e) {}
-    location.reload();
+    theme = theme === "light" ? "dark" : "light";
+    try { localStorage.setItem("smsone-doc-theme", theme); } catch (e) {}
+    apply(theme);
   });
 })();
 </script>
