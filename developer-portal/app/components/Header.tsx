@@ -10,6 +10,7 @@ type HeaderProps = {
 
 const NAV = [
   { href: "/", label: "APIs" },
+  { href: "/getting-started", label: "Start" },
   { href: "/reference", label: "Reference" },
   { href: "/try", label: "Try it" },
   { href: "/usage", label: "Usage" },
