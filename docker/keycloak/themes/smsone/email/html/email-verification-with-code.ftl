@@ -19,7 +19,7 @@
 <head>
   <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Your ${realmName!'SMSOne'} verification code</title>
+  <title>Your ${realmName!'SMSONE'} verification code</title>
 </head>
 <body style="margin:0;padding:0;background-color:#f5f5f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#0f172a;-webkit-font-smoothing:antialiased;">
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#f5f5f4;padding:24px 16px;">
@@ -28,8 +28,8 @@
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background-color:#ffffff;border-radius:8px;border:1px solid #e5e7eb;overflow:hidden;">
           <tr>
             <td style="padding:32px 32px 0 32px;">
-              <div style="font-family:'Century Gothic','Avant Garde',Helvetica,Arial,sans-serif;font-size:26px;font-weight:700;color:#10218B;text-align:center;letter-spacing:-0.01em;">${realmName!'SMSOne'}</div>
-              <div style="margin-top:18px;font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:#737373;font-weight:500;">${realmName!'SMSOne'} · Verification code</div>
+              <div style="font-family:'Century Gothic','Avant Garde',Helvetica,Arial,sans-serif;font-size:26px;font-weight:700;color:#10218B;text-align:center;letter-spacing:-0.01em;">${realmName!'SMSONE'}</div>
+              <div style="margin-top:18px;font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:#737373;font-weight:500;">${realmName!'SMSONE'} · Verification code</div>
               <h1 style="margin:6px 0 0 0;font-size:22px;font-weight:600;line-height:1.25;color:#0f172a;">
                 Confirm your email
               </h1>

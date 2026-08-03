@@ -6,6 +6,6 @@ ${code}
 
 This code will expire in ${linkExpiration} minutes. If you did not request this code, please ignore this email.
 
-${realmName!'SMSOne'}
-Copyright © 2026 ${realmName!'SMSOne'}. All Rights Reserved.
-Connecting communities, simplifying living.
+${realmName!'SMSONE'}
+Copyright © 2026 ${realmName!'SMSONE'}. All Rights Reserved.
+One platform for your organizations.

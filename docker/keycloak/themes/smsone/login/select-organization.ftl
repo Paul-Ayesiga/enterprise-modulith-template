@@ -2,10 +2,10 @@
 <#--
     Override of theme/base/login/select-organization.ftl. Fires during
     the OAuth flow when the signing-in user belongs to multiple
-    Keycloak organizations (we map one Keycloak org per SMSOne
-    community). The upstream default is a bare bulleted list with
-    "Select an organization" wording; ours uses SMSOne branding
-    ("community" not "organization") and renders each option as a
+    Keycloak organizations (we map one Keycloak org per SMSONE
+    organization). The upstream default is a bare bulleted list with
+    "Select an organization" wording; ours uses SMSONE branding
+    ("organization" not "organization") and renders each option as a
     keyboard-accessible radio card matching the look of our
     select-authenticator screen.
 
@@ -16,9 +16,9 @@
 -->
 <@layout.registrationLayout; section>
     <#if section = "form">
-        <h1 class="smsone-title">Choose your community</h1>
+        <h1 class="smsone-title">Choose your organization</h1>
         <p class="smsone-subtitle">
-            You're a member of more than one community on ${realm.displayName!'SMSOne'} —
+            You're a member of more than one organization on ${realm.displayName!'SMSONE'} —
             pick the one you'd like to sign into.
         </p>
 

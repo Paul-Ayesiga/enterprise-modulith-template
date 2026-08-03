@@ -1,5 +1,5 @@
 /*
- * SMSOne login-theme enhancements (progressive — pure DOM, no deps):
+ * SMSONE login-theme enhancements (progressive — pure DOM, no deps):
  *   1. Show/hide (eye) toggle on every password field.
  *   2. Loading spinner on the primary submit button while the form posts.
  *

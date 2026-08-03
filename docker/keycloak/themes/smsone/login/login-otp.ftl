@@ -25,7 +25,7 @@
     </form>
   <#elseif section = "info">
     <div class="smsone-inline-note">
-      Need help? Contact your ${realm.displayName!'SMSOne'} administrator for support.
+      Need help? Contact your ${realm.displayName!'SMSONE'} administrator for support.
     </div>
   </#if>
 </@layout.registrationLayout>

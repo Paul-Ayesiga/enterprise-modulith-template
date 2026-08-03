@@ -19,7 +19,7 @@
     - link
     - linkExpiration (raw minutes int, sometimes thousands-separated)
     - url.resourcesUrl
-    - realmName (display name, "SMSOne")
+    - realmName (display name, "SMSONE")
 -->
 <#-- Keycloak hands linkExpiration in as a thousands-separated string
      (e.g. "1,440"). Strip the commas before ?number or FreeMarker
@@ -32,7 +32,7 @@
 <head>
   <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Welcome to your ${realmName!'SMSOne'} portal</title>
+  <title>Welcome to your ${realmName!'SMSONE'} portal</title>
 </head>
 <body style="margin:0;padding:0;background-color:#f5f5f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#0f172a;-webkit-font-smoothing:antialiased;">
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#f5f5f4;padding:24px 16px;">
@@ -41,8 +41,8 @@
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background-color:#ffffff;border-radius:8px;border:1px solid #e5e7eb;overflow:hidden;">
           <tr>
             <td style="padding:32px 32px 0 32px;">
-              <div style="font-family:'Century Gothic','Avant Garde',Helvetica,Arial,sans-serif;font-size:26px;font-weight:700;color:#10218B;text-align:center;letter-spacing:-0.01em;">${realmName!'SMSOne'}</div>
-              <div style="margin-top:18px;font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:#737373;font-weight:500;">${realmName!'SMSOne'} · Invitation</div>
+              <div style="font-family:'Century Gothic','Avant Garde',Helvetica,Arial,sans-serif;font-size:26px;font-weight:700;color:#10218B;text-align:center;letter-spacing:-0.01em;">${realmName!'SMSONE'}</div>
+              <div style="margin-top:18px;font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:#737373;font-weight:500;">${realmName!'SMSONE'} · Invitation</div>
               <h1 style="margin:6px 0 0 0;font-size:22px;font-weight:600;line-height:1.25;color:#0f172a;">
                 Welcome to your portal
               </h1>
@@ -52,7 +52,7 @@
           <tr>
             <td style="padding:20px 32px 0 32px;">
               <p style="margin:0;font-size:14px;line-height:1.6;color:#404040;">
-                Hi ${(user.firstName!user.username!'there')}, your community manager has invited you to ${realmName!'SMSOne'}.
+                Hi ${(user.firstName!user.username!'there')}, your administrator has invited you to ${realmName!'SMSONE'}.
                 Click the button below to set your password — that&rsquo;s all it takes.
               </p>
             </td>
@@ -87,7 +87,7 @@
           <tr>
             <td style="padding:32px 32px 24px 32px;">
               <div style="border-top:1px solid #e5e7eb;padding-top:16px;font-size:11px;line-height:1.55;color:#a3a3a3;">
-                You&rsquo;re receiving this because a community on ${realmName!'SMSOne'} was set up with your email.
+                You&rsquo;re receiving this because an organization on ${realmName!'SMSONE'} was set up with your email.
                 Questions? Reply to this email or write to <a href="mailto:hello@smsone.co.ug" style="color:#737373;text-decoration:underline;">hello@smsone.co.ug</a>.
               </div>
             </td>

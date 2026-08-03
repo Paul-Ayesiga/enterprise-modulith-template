@@ -1,6 +1,6 @@
 Hello ${(user.firstName!user.username!'there')},
 
-A login attempt to your ${realmName!'SMSOne'} account was rejected due to an incorrect password or other login failure.
+A login attempt to your ${realmName!'SMSONE'} account was rejected due to an incorrect password or other login failure.
 
 Time: ${event.date?datetime?string('dd MMM yyyy, HH:mm:ss')}
 IP Address: ${event.ipAddress}
@@ -22,6 +22,6 @@ If this was you, you can safely ignore this email. However, if you do not recogn
 
 Reset your password: ${url.loginUrl}
 
-${realmName!'SMSOne'}
-Copyright © 2026 ${realmName!'SMSOne'}. All Rights Reserved.
-Connecting communities, simplifying living.
+${realmName!'SMSONE'}
+Copyright © 2026 ${realmName!'SMSONE'}. All Rights Reserved.
+One platform for your organizations.

@@ -29,7 +29,7 @@ services:
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
       # Substituted into realm-smsone.json's displayName at import — the brand name the
       # smsone login/email theme renders everywhere (realm.displayName / realmName).
-      BRAND_NAME: ${BRAND_NAME:-SMSOne}
+      BRAND_NAME: ${BRAND_NAME:-SMSONE}
     ports:
       - "${KEYCLOAK_PORT:-8081}:8080"
     volumes:

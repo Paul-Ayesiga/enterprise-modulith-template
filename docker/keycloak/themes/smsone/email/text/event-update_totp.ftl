@@ -11,5 +11,5 @@ If you did not perform this action, please contact your system administrator imm
 Review account activity: ${(url.accountUrl)!'https://smsone.co.ug'}
 
 ---
-${realmName!'SMSOne'}
-${realmName!'SMSOne'}
+${realmName!'SMSONE'}
+${realmName!'SMSONE'}

@@ -3,7 +3,7 @@
 <@layout.registrationLayout displayMessage=!messagesPerField.existsError('password','password-confirm') displayInfo=true; section>
   <#if section = "form">
     <div class="smsone-page-badge">Create account</div>
-    <h1 class="smsone-title">Register for ${realm.displayName!'SMSOne'}</h1>
+    <h1 class="smsone-title">Register for ${realm.displayName!'SMSONE'}</h1>
     <p class="smsone-subtitle">Complete your profile to access your patient mobile experience.</p>
 
     <form id="kc-register-form" action="${url.registrationAction}" method="post">

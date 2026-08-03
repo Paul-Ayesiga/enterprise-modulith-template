@@ -3,7 +3,7 @@
     <#if section = "form">
         <div class="smsone-page-badge">Welcome back</div>
         <h1 class="smsone-title">Sign in to the portal</h1>
-        <p class="smsone-subtitle">Use your account credentials to continue to the ${realm.displayName!'SMSOne'} portal.</p>
+        <p class="smsone-subtitle">Use your account credentials to continue to the ${realm.displayName!'SMSONE'} portal.</p>
 
         <form id="kc-form-login" onsubmit="login.disabled = true; return true;" action="${url.loginAction}" method="post">
             

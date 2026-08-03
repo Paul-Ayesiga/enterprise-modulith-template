@@ -18,7 +18,7 @@
 <head>
   <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Verify your email — ${realmName!'SMSOne'}</title>
+  <title>Verify your email — ${realmName!'SMSONE'}</title>
 </head>
 <body style="margin:0;padding:0;background-color:#f5f5f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#0f172a;-webkit-font-smoothing:antialiased;">
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#f5f5f4;padding:24px 16px;">
@@ -27,8 +27,8 @@
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background-color:#ffffff;border-radius:8px;border:1px solid #e5e7eb;overflow:hidden;">
           <tr>
             <td style="padding:32px 32px 0 32px;">
-              <div style="font-family:'Century Gothic','Avant Garde',Helvetica,Arial,sans-serif;font-size:26px;font-weight:700;color:#10218B;text-align:center;letter-spacing:-0.01em;">${realmName!'SMSOne'}</div>
-              <div style="margin-top:18px;font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:#737373;font-weight:500;">${realmName!'SMSOne'} · Email verification</div>
+              <div style="font-family:'Century Gothic','Avant Garde',Helvetica,Arial,sans-serif;font-size:26px;font-weight:700;color:#10218B;text-align:center;letter-spacing:-0.01em;">${realmName!'SMSONE'}</div>
+              <div style="margin-top:18px;font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:#737373;font-weight:500;">${realmName!'SMSONE'} · Email verification</div>
               <h1 style="margin:6px 0 0 0;font-size:22px;font-weight:600;line-height:1.25;color:#0f172a;">
                 Confirm your email address
               </h1>
@@ -38,7 +38,7 @@
           <tr>
             <td style="padding:20px 32px 0 32px;">
               <p style="margin:0;font-size:14px;line-height:1.6;color:#404040;">
-                Hi ${(user.firstName!user.username!'there')}, thanks for signing up to ${realmName!'SMSOne'}.
+                Hi ${(user.firstName!user.username!'there')}, thanks for signing up to ${realmName!'SMSONE'}.
                 Confirm your email address to finish setting up your account.
               </p>
             </td>
@@ -65,7 +65,7 @@
                 <#else>
                   <strong style="color:#0f172a;">${expMinutes} minute<#if expMinutes gt 1>s</#if></strong>.
                 </#if>
-                If you didn&rsquo;t sign up for ${realmName!'SMSOne'}, you can safely ignore this email.
+                If you didn&rsquo;t sign up for ${realmName!'SMSONE'}, you can safely ignore this email.
               </div>
             </td>
           </tr>

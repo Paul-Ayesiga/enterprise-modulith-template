@@ -1,4 +1,4 @@
-/* SMSOne Auth Theme — mirrors smsone-fe-control-panel design system */
+/* SMSONE Auth Theme — mirrors smsone-fe-control-panel design system */
 
 @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
 
@@ -42,7 +42,7 @@
   --smsone-ink-muted: #4B5563;
   --smsone-ink-faint: #9CA3AF;
 
-  /* Brand — locked to #10218B, the established SMSOne brand */
+  /* Brand — locked to #10218B, the established SMSONE brand */
   --smsone-primary: #10218B;
   --smsone-primary-hover: #0C1A6E;
   --smsone-primary-soft: #E5E9FB;
@@ -69,7 +69,7 @@
   --smsone-text-muted: var(--smsone-ink-muted);
   --smsone-border: var(--smsone-line);
 
-  /* Radius (matches SMSOne admin: rounded-lg=8, rounded-xl=12) */
+  /* Radius (matches SMSONE admin: rounded-lg=8, rounded-xl=12) */
   --smsone-radius-sm: 6px;
   --smsone-radius: 8px;
   --smsone-radius-lg: 12px;
@@ -186,11 +186,40 @@ body {
   color: rgba(255, 255, 255, 0.60);
 }
 
-/* Form panel — the card centered in the remaining space, footer at the bottom. */
+/* Form panel — the form centered in the remaining space, footer at the bottom.
+   Minimalist geometry (a thin brand ring bleeding off the top-right, a faint dot
+   grid bottom-left) gives the card-less body its structure. */
 .smsone-form-panel {
+  position: relative;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+}
+
+.smsone-form-panel::before {
+  content: "";
+  position: absolute;
+  top: -140px;
+  right: -140px;
+  width: 380px;
+  height: 380px;
+  border-radius: 50%;
+  border: 1.5px solid var(--smsone-primary-soft);
+  pointer-events: none;
+}
+
+.smsone-form-panel::after {
+  content: "";
+  position: absolute;
+  bottom: 72px;
+  left: 56px;
+  width: 150px;
+  height: 96px;
+  background-image: radial-gradient(var(--smsone-line-strong) 1px, transparent 1px);
+  background-size: 14px 14px;
+  opacity: 0.55;
+  pointer-events: none;
 }
 
 .smsone-form-area {
@@ -231,15 +260,13 @@ body {
   max-width: 100%;
 }
 
-/* Card */
+/* The form sits directly on the body — no card chrome. The panel's geometric
+   accents (thin ring + dot grid, below) frame it instead. */
 .smsone-card {
-  background: var(--smsone-surface);
   width: 100%;
   max-width: 420px;
-  border-radius: var(--smsone-radius-lg);
-  border: 0.5px solid var(--smsone-line);
-  box-shadow: var(--smsone-shadow-sm);
-  padding: 2rem;
+  position: relative;
+  z-index: 1;
 }
 
 .smsone-card--wide {
@@ -376,7 +403,9 @@ body {
   font-family: inherit;
   font-size: 0.8125rem;
   color: var(--smsone-ink);
-  background: var(--smsone-bg);
+  /* White fields on the tinted body — the card chrome is gone, so the surface
+     lives on the inputs themselves. */
+  background: var(--smsone-surface);
   transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
   outline: none;
 }
@@ -576,10 +605,6 @@ body {
 @media (max-width: 640px) {
   .smsone-form-area {
     padding: 1.5rem 1rem;
-  }
-
-  .smsone-card {
-    padding: 1.5rem;
   }
 
   .smsone-form-row {

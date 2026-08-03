@@ -3,7 +3,7 @@
 <head>
   <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Security Alert - ${realmName!'SMSOne'}</title>
+  <title>Security Alert - ${realmName!'SMSONE'}</title>
 </head>
 <body style="margin:0;padding:0;background-color:#FAFAF7;font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#FAFAF7;padding:40px 20px;">
@@ -15,7 +15,7 @@
           <tr>
             <td style="padding:40px 40px 0;text-align:center;">
                 <#-- Using the 'way' from email-reference: resourcesUrl/img/logo.png -->
-                <div style="font-family:'Century Gothic','Avant Garde',Helvetica,Arial,sans-serif;font-size:26px;font-weight:700;color:#10218B;text-align:center;letter-spacing:-0.01em;">${realmName!'SMSOne'}</div>
+                <div style="font-family:'Century Gothic','Avant Garde',Helvetica,Arial,sans-serif;font-size:26px;font-weight:700;color:#10218B;text-align:center;letter-spacing:-0.01em;">${realmName!'SMSONE'}</div>
             </td>
           </tr>
           
@@ -31,7 +31,7 @@
               </p>
               
               <p style="margin:0 0 32px;font-size:16px;line-height:1.6;color:#334155;text-align:center;">
-                A login attempt to your ${realmName!'SMSOne'} account was rejected due to an incorrect password or other login failure.
+                A login attempt to your ${realmName!'SMSONE'} account was rejected due to an incorrect password or other login failure.
               </p>
               
               <div style="margin:0 0 32px;padding:24px;background-color:#fef2f2;border:1px solid #fee2e2;border-radius:4px;">
@@ -79,11 +79,11 @@
           <tr>
             <td style="padding:32px 40px;background-color:#ffffff;border-top:1px solid #f1f5f9;text-align:center;">
               <p style="margin:0 0 8px;font-size:12px;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.05em;">
-                ${realmName!'SMSOne'}
+                ${realmName!'SMSONE'}
               </p>
               <p style="margin:0;font-size:12px;color:#94a3b8;line-height:1.6;">
-                Copyright &copy; 2026 ${realmName!'SMSOne'}. All Rights Reserved.<br />
-                Connecting communities, simplifying living.
+                Copyright &copy; 2026 ${realmName!'SMSONE'}. All Rights Reserved.<br />
+                One platform for your organizations.
               </p>
             </td>
           </tr>

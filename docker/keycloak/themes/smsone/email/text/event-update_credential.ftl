@@ -11,5 +11,5 @@ If you did not authorize this change, please contact your system administrator i
 View account security: ${(url.accountUrl)!'https://smsone.co.ug'}
 
 ---
-${realmName!'SMSOne'}
-${realmName!'SMSOne'}
+${realmName!'SMSONE'}
+${realmName!'SMSONE'}
