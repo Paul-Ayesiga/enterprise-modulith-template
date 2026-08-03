@@ -112,6 +112,18 @@ class AdminApiTest {
                 .expectBody()
                 .jsonPath("$[?(@.id == 'admin-edited' && @.order == 900 && @.lifecycle == 'PUBLISHED')]").exists()
                 .jsonPath("$[?(@.id == 'admin-edited' && @.path == '/adminmoved/**')]").exists();
+
+        // Deprecation with a sunset is announced in the read — what a live changelog renders.
+        clientFor(adminPort).post().uri("/actuator/gatewayroutes/admin-edited")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("lifecycle", "DEPRECATED", "sunset", "Wed, 01 Oct 2026 00:00:00 GMT"))
+                .exchange()
+                .expectStatus().isOk();
+        clientFor(adminPort).get().uri("/actuator/gatewayroutes").exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$[?(@.id == 'admin-edited' && @.lifecycle == 'DEPRECATED' "
+                        + "&& @.sunset == 'Wed, 01 Oct 2026 00:00:00 GMT')]").exists();
     }
 
     @Test

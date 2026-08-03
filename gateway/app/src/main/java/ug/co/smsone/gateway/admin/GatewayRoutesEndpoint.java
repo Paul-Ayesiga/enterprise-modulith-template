@@ -54,6 +54,7 @@ public class GatewayRoutesEndpoint {
                     .map(predicate -> predicate.kind() + " " + predicate.args()).toList());
             row.put("path", firstPath(route));
             row.put("lifecycle", route.lifecycle().status().name());
+            row.put("sunset", route.lifecycle().sunset());
             row.put("rateLimited", route.traffic().rateLimited());
             return row;
         }).toList();

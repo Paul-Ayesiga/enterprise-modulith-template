@@ -58,16 +58,42 @@ export function routeTableUrl(): string {
   return `${adminBaseUrl()}/actuator/gatewayroutes`;
 }
 
-/**
- * Fetch the product catalog. Never throws: returns an error message the page renders as a state,
- * rather than crashing the render tree.
- */
 /** The management-port credential (gateway.admin.token) — sent as X-Admin-Token when configured. */
 export function adminHeaders(): Record<string, string> {
   const token = process.env.GATEWAY_ADMIN_TOKEN;
   return token ? { "x-admin-token": token } : {};
 }
 
+/** A route the gateway currently announces as deprecated (or already retired). */
+export type DeprecatedRoute = { id: string; path: string; lifecycle: string; sunset: string | null };
+
+/**
+ * Live deprecations from the route table — the changelog section that must never go stale, so it is
+ * rendered from the gateway rather than written by hand. Unreachable gateway → empty with an error.
+ */
+export async function fetchDeprecations(): Promise<{ deprecated: DeprecatedRoute[]; error: string | null }> {
+  try {
+    const res = await fetch(`${adminBaseUrl()}/actuator/gatewayroutes`, {
+      cache: "no-store",
+      headers: { accept: "application/json", ...adminHeaders() }
+    });
+    if (!res.ok) {
+      return { deprecated: [], error: `Gateway responded ${res.status}` };
+    }
+    const routes = (await res.json()) as DeprecatedRoute[];
+    const deprecated = (Array.isArray(routes) ? routes : [])
+      .filter((r) => r.lifecycle === "DEPRECATED" || r.lifecycle === "RETIRED")
+      .sort((a, b) => a.lifecycle.localeCompare(b.lifecycle) || a.id.localeCompare(b.id));
+    return { deprecated, error: null };
+  } catch (e) {
+    return { deprecated: [], error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
+ * Fetch the product catalog. Never throws: returns an error message the page renders as a state,
+ * rather than crashing the render tree.
+ */
 export async function fetchCatalog(): Promise<CatalogResult> {
   try {
     const res = await fetch(`${adminBaseUrl()}/actuator/gatewaycatalog`, {

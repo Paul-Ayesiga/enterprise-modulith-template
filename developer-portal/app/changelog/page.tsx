@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Header } from "../components/Header";
-import { openApiUrl, routeTableUrl } from "../lib/gateway";
+import { fetchDeprecations, openApiUrl, routeTableUrl, type DeprecatedRoute } from "../lib/gateway";
 
 export const dynamic = "force-dynamic";
 
@@ -39,7 +39,9 @@ const ENTRIES: Entry[] = [
   }
 ];
 
-export default function ChangelogPage() {
+export default async function ChangelogPage() {
+  const { deprecated, error } = await fetchDeprecations();
+
   return (
     <>
       <Header openApiUrl={openApiUrl()} routeTableUrl={routeTableUrl()} />
@@ -52,6 +54,8 @@ export default function ChangelogPage() {
             ships a <code>Sunset</code> date before it&rsquo;s retired.
           </p>
         </section>
+
+        <Deprecations deprecated={deprecated} error={error} />
 
         <ol className="changelog" role="list">
           {ENTRIES.map((entry, i) => (
@@ -76,5 +80,65 @@ export default function ChangelogPage() {
         </p>
       </footer>
     </>
+  );
+}
+
+/**
+ * Rendered LIVE from the gateway's route table — never hand-maintained, so it cannot go stale. A
+ * stale deprecation notice is worse than none; this section is the part of a changelog that must be
+ * trustworthy by construction.
+ */
+function Deprecations({ deprecated, error }: { deprecated: DeprecatedRoute[]; error: string | null }) {
+  if (error) {
+    return (
+      <p className="field__hint" style={{ marginBottom: "1.25rem" }}>
+        Live deprecation status unavailable right now ({error}).
+      </p>
+    );
+  }
+  if (deprecated.length === 0) {
+    return (
+      <section className="panel" style={{ padding: "0.9rem 1.1rem", marginBottom: "1.25rem" }}>
+        <p style={{ margin: 0 }}>
+          <span className="badge badge--published">Live</span>{" "}
+          <strong>No deprecated endpoints right now</strong>
+          <span className="field__hint" style={{ marginLeft: 8 }}>
+            read from the gateway&rsquo;s route table on every visit
+          </span>
+        </p>
+      </section>
+    );
+  }
+  return (
+    <section className="panel panel__scroll" style={{ marginBottom: "1.25rem" }}>
+      <div style={{ padding: "0.9rem 1.1rem 0" }}>
+        <strong>Current deprecations &amp; sunsets</strong>{" "}
+        <span className="field__hint">live from the gateway — plan your migration</span>
+      </div>
+      <table className="keys-table">
+        <thead>
+          <tr>
+            <th>Route</th>
+            <th>Path</th>
+            <th>Status</th>
+            <th>Sunset</th>
+          </tr>
+        </thead>
+        <tbody>
+          {deprecated.map((route) => (
+            <tr key={route.id}>
+              <td className="mono">{route.id}</td>
+              <td className="mono">{route.path || "—"}</td>
+              <td>
+                <span className={`badge badge--${route.lifecycle === "RETIRED" ? "retired" : "deprecated"}`}>
+                  {route.lifecycle === "RETIRED" ? "RETIRED (410)" : "DEPRECATED"}
+                </span>
+              </td>
+              <td>{route.sunset ?? "not announced yet"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
   );
 }
