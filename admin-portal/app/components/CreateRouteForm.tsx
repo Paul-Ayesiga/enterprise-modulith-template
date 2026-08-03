@@ -79,8 +79,9 @@ export function CreateRouteForm({ services }: { services: string[] }) {
         )}
       </div>
       <p className="field__hint">
-        Scopes, tenant templates, timeouts, caching, and product grouping stay config-driven — add those
-        in <code>gateway/app/…/application.yml</code>.
+        <strong>Runtime tier:</strong> changes made here take effect instantly but live in gateway memory —
+        a restart re-seeds from YAML. Durable topology (and scopes, tenant templates, timeouts, caching,
+        product grouping) belongs in <code>gateway/app/…/application.yml</code>.
       </p>
     </form>
   );

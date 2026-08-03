@@ -36,7 +36,7 @@ export async function createRoute(_prev: ActionState, formData: FormData): Promi
       return { ok: false, message: `Gateway rejected the route (${res.status})${detail ? `: ${detail}` : ""}.` };
     }
     revalidatePath("/");
-    return { ok: true, message: `Route "${id}" registered — it is live on the edge now.` };
+    return { ok: true, message: `Route "${id}" registered — live now. Runtime change: it survives until the gateway restarts; add it to the gateway YAML to keep it.` };
   } catch (e) {
     return { ok: false, message: `Can't reach the gateway admin API: ${msg(e)}` };
   }
@@ -87,7 +87,7 @@ export async function updateRoute(_prev: ActionState, formData: FormData): Promi
       return { ok: false, message: `Gateway rejected the update (${res.status})${detail ? `: ${detail}` : ""}.` };
     }
     revalidatePath("/");
-    return { ok: true, message: `Route "${id}" updated — live on the edge now.` };
+    return { ok: true, message: `Route "${id}" updated — live now. Runtime change: a gateway restart reverts to the YAML-configured route.` };
   } catch (e) {
     return { ok: false, message: `Can't reach the gateway admin API: ${msg(e)}` };
   }
@@ -108,7 +108,8 @@ export async function setLifecycle(id: string, lifecycle: string): Promise<Actio
     }
     revalidatePath("/");
     const verb = lifecycle === "RETIRED" ? "paused (410 on the edge)" : `set to ${lifecycle}`;
-    return { ok: true, message: `Route "${id}" ${verb}.` };
+    const caveat = lifecycle === "RETIRED" ? " Runtime-only: a gateway restart un-pauses it." : "";
+    return { ok: true, message: `Route "${id}" ${verb}.${caveat}` };
   } catch (e) {
     return { ok: false, message: `Can't reach the gateway admin API: ${msg(e)}` };
   }

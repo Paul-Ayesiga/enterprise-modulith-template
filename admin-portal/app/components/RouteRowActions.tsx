@@ -163,6 +163,9 @@ export function EditRouteForm({ route, services, onDone }: { route: RouteRow; se
           </p>
         )}
       </div>
+      <p className="field__hint">
+        Runtime tier: edits apply instantly and last until the gateway restarts — YAML is the durable truth.
+      </p>
     </form>
   );
 }
