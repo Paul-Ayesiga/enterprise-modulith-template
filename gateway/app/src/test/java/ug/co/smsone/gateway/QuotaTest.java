@@ -29,6 +29,7 @@ import ug.co.smsone.gateway.core.quota.QuotaProvider;
  * modulith side (GatewayQuotaTest).
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@org.springframework.test.context.TestPropertySource(properties = "management.server.port=0")
 @Import(QuotaTest.StubQuota.class)
 class QuotaTest {
 
@@ -61,6 +62,9 @@ class QuotaTest {
     @Value("${local.server.port}")
     private int gatewayPort;
 
+    @Value("${local.management.port}")
+    private int adminPort;
+
     private WebTestClient client;
 
     @DynamicPropertySource
@@ -85,11 +89,28 @@ class QuotaTest {
     }
 
     @Test
-    void enforcesTheConsumerQuotaFromTheProvider() {
+    void enforcesTheConsumerQuotaFromTheProviderAndReportsUsage() {
         client().get().uri("/quota/x").exchange().expectStatus().isOk();       // 1 of 2
         client().get().uri("/quota/x").exchange().expectStatus().isOk();       // 2 of 2
         client().get().uri("/quota/x").exchange()                              // over the ceiling
                 .expectStatus().isEqualTo(429)
                 .expectBody().jsonPath("$.errors[0].code").isEqualTo("RATE_LIMITED");
+
+        // The usage endpoint reports the SAME window counter the filter enforced against:
+        // 3 attempts (the denied one counts — it incremented before the ceiling check), limit 2.
+        WebTestClient admin = WebTestClient.bindToServer(new ReactorClientHttpConnector(HttpClient.newConnection()))
+                .baseUrl("http://localhost:" + adminPort).build();
+        admin.get().uri("/actuator/gatewayusage/quota-test-org").exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.consumer").isEqualTo("quota-test-org")
+                .jsonPath("$.used").isEqualTo(3)
+                .jsonPath("$.limited").isEqualTo(true)
+                .jsonPath("$.limit").isEqualTo(2)
+                .jsonPath("$.remaining").isEqualTo(0);
+        admin.get().uri("/actuator/gatewayusage").exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$[?(@.consumer == 'quota-test-org' && @.used == 3)]").exists();
     }
 }
