@@ -100,8 +100,10 @@ build: ## Compile + assemble the app (skips tests) — modulith only; `gateway-b
 test: ## Run the modulith test suite (real Testcontainers) — `gateway-test` for the edge
 	./gradlew :test
 
-openapi: ## Regenerate docs/openapi/*.{yaml,json} from the running app
+openapi: ## Regenerate docs/openapi/*.{yaml,json} + the Postman collection (HTTPie/Insomnia import this)
 	./gradlew :exportOpenApi
+	npx --yes openapi-to-postmanv2 -s docs/openapi/openapi.json -o docs/openapi/postman_collection.json -p \
+		-O folderStrategy=Tags,requestNameSource=Fallback
 
 clean: ## Drop local build caches (keeps downloaded deps and Docker images — both slow to refetch)
 	@./gradlew --stop >/dev/null 2>&1 || true
