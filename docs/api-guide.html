@@ -43,6 +43,19 @@
 
   .sidebar { position:sticky; top:var(--topbar-h); height:calc(100vh - var(--topbar-h)); overflow-y:auto;
              padding:1.2rem .7rem 3rem; border-right:1px solid var(--line); background:var(--bg); }
+  .nav-search { width:100%; margin:0 0 .6rem; padding:.42rem .6rem; border:1px solid var(--line); border-radius:7px;
+                background:var(--panel); color:var(--ink); font:inherit; font-size:.84rem; }
+  .nav-search:focus { outline:none; border-color:var(--brand); box-shadow:0 0 0 2px var(--brand-soft); }
+  .nav-search::placeholder { color:var(--faint); }
+  #searchHits { margin:0 0 .6rem; }
+  #searchHits .hit { display:block; padding:.24rem .55rem; border-radius:6px; text-decoration:none;
+                     font-size:.76rem; color:var(--mut); line-height:1.4; }
+  #searchHits .hit:hover { background:var(--brand-soft); color:var(--ink); }
+  #searchHits .hit .m { font-family:ui-monospace,Menlo,monospace; font-weight:700; font-size:.66rem; margin-right:.3rem; }
+  #searchHits .hit .m.GET{color:var(--ok)}#searchHits .hit .m.POST{color:var(--brand)}
+  #searchHits .hit .m.PUT{color:var(--warn)}#searchHits .hit .m.PATCH{color:var(--plat)}#searchHits .hit .m.DELETE{color:var(--bad)}
+  #searchHits .hit code { font-size:.72rem; background:none; padding:0; }
+  #searchHits .none { font-size:.76rem; color:var(--faint); padding:.2rem .55rem; }
   #nav .nav-part { margin:1.2rem 0 .25rem; padding:0 .55rem; font-size:.68rem; font-weight:700; text-transform:uppercase;
                    letter-spacing:.07em; color:var(--faint); }
   #nav .nav-part:first-child { margin-top:0; }
@@ -141,7 +154,12 @@
   </div>
 </div>
 <div class="layout">
-  <aside class="sidebar" id="sidebar"><nav id="nav" aria-label="Guide sections"></nav></aside>
+  <aside class="sidebar" id="sidebar">
+    <input class="nav-search" id="navSearch" type="search" placeholder="Search sections &amp; endpoints…  (/)"
+           aria-label="Search the guide" autocomplete="off" spellcheck="false">
+    <div id="searchHits" hidden></div>
+    <nav id="nav" aria-label="Guide sections"></nav>
+  </aside>
   <main class="content" id="content">
 
 <div class="card">
@@ -468,11 +486,33 @@ GET  /api/v1/orgs/{orgId}/exchange/jobs/{jobId}/result   # 302 → the output fi
   <div class="ep-body"><p>A recurring export (six-field Spring cron, UTC) — fires AS you; revoking your permission disables it.</p>
   <pre><code>POST …/exchange/schedules {"handler":"org-members","format":"CSV","cron":"0 0 2 * * *"}</code></pre></div></div>
 
-<h2 id="orgbilling">D5 · Org self-service billing</h2>
+<h2 id="orgbilling">D5 · Billing &amp; payment collection</h2>
 <div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/orgs/{orgId}/billing/invoices</span> · <span class="path">/payment-methods</span><span class="perm org">org:read</span></div>
   <div class="ep-body"><p>The tenant's own invoices + subscription view. Add a payment method (<code>POST …/payment-methods</code>,
   <code>org:update</code>) — also the pay-to-recover path out of a <code>PAUSED</code> standing. Raw card data never touches this
   API; <code>pluginProperties</code> carries only what a hosted page tokenized.</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/payments</span><span class="perm org">org:update</span></div>
+  <div class="ep-body"><p>Initiate a payment collection through a gateway. <code>provider</code> is <b>optional</b> — omitted, the
+  org's configured <code>PAYMENT_GATEWAY</code> integration names it (org override → platform default), so which PSP serves an
+  org is configuration, not caller knowledge. Every gateway runs in a switchable <code>sandbox</code>/<code>live</code> mode,
+  echoed on the resource — nothing touches real money until <code>live</code> is explicit.</p>
+  <table class="params"><tr><th>Field</th><th>Type</th><th>Req</th><th>Description</th></tr>
+    <tr><td>provider</td><td>string</td><td>no</td><td><code>pesapal</code> (hosted page: card + mobile money) or <code>yo-uganda</code> (mobile-money prompt pushed to the handset). Default: the org's configured gateway.</td></tr>
+    <tr><td>amount</td><td>number</td><td>yes</td><td>Positive; charged in <code>currency</code>.</td></tr>
+    <tr><td>currency</td><td>string</td><td>yes</td><td>3-letter ISO, e.g. <code>UGX</code>.</td></tr>
+    <tr><td>description</td><td>string</td><td>yes</td><td>≤100 chars — appears on the payer's page/statement.</td></tr>
+    <tr><td>phoneNumber / email</td><td>string</td><td>one</td><td>The payer's contact. Yo! requires the phone (that handset gets the approval prompt).</td></tr></table>
+  <pre><code>POST /api/v1/orgs/{orgId}/payments
+{"provider":"pesapal","amount":15000,"currency":"UGX","description":"PRO plan invoice","email":"payer@acme.test"}
+# → 201 {"attributes":{"status":"PENDING","mode":"sandbox","redirectUrl":"https://cybqa.pesapal.com/…"}}
+#   pesapal: send the payer to redirectUrl · yo-uganda: no redirect, the prompt is on the phone</code></pre></div></div>
+<div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/orgs/{orgId}/payments/{id}</span><span class="perm org">org:read</span></div>
+  <div class="ep-body"><p><b>Read-with-refresh</b>: a <code>PENDING</code> payment re-asks its gateway before answering (this is how
+  Yo!'s poll flow completes), so poll this until the status is terminal — <code>COMPLETED</code> / <code>FAILED</code> /
+  <code>REVERSED</code> never regress. The gateway's own answer is the only truth: Pesapal's public IPN + browser callback
+  (<code>/api/v1/payments/pesapal/ipn</code>·<code>/callback</code>, unauthenticated by vendor design) are <em>inert triggers</em>
+  that just cause the same server-side re-query.</p>
+  <pre><code>GET …/payments/{id}   # → {"status":"COMPLETED","confirmationCode":"…","statusDetail":"Completed via MpesaUG"}</code></pre></div></div>
 
 <h2 id="security">D6 · Security policy &amp; integrations</h2>
 <div class="ep"><div class="ep-head"><span class="method PUT">PUT</span><span class="path">/api/v1/orgs/{orgId}/security-policy</span><span class="perm org">org:update</span></div>
@@ -482,8 +522,14 @@ GET  /api/v1/orgs/{orgId}/exchange/jobs/{jobId}/result   # 302 → the output fi
   <pre><code>PUT …/security-policy {"ipAllowlist":"203.0.113.0/24","requireTrustedDevice":true,"sessionMaxAgeSeconds":3600}
 POST …/security-policy/trusted-devices {"subject":"kc-7d2e…","deviceId":"…","trusted":true}   # trust is the org's grant</code></pre></div></div>
 <div class="ep"><div class="ep-head"><span class="method PUT">PUT</span><span class="path">/api/v1/orgs/{orgId}/integrations</span><span class="perm org">org:update</span></div>
-  <div class="ep-body"><p>An org override for a provider <code>kind</code> — wins over the platform default (C5). Secrets encrypted + masked;
-  <code>POST …/integrations/{id}/test</code> probes it.</p></div></div>
+  <div class="ep-body"><p>An org override for a provider <code>kind</code> — wins over the platform default (C5), which wins over env
+  config. This is how orgs opt for different providers: <code>SMS_PROVIDER</code> → <code>speedamobile</code>
+  (settings <code>apiId/apiPassword/senderId</code>; notifications route each SMS by the <em>recipient org's</em> choice) ·
+  <code>PAYMENT_GATEWAY</code> → <code>pesapal</code> | <code>yo-uganda</code> (settings include <code>mode:
+  sandbox|live</code> and the gateway credentials; also sets the org's default payment provider, D5). Secrets encrypted +
+  masked; <code>POST …/integrations/{id}/test</code> probes it.</p>
+  <pre><code>PUT /api/v1/orgs/{orgId}/integrations
+{"kind":"PAYMENT_GATEWAY","provider":"yo-uganda","settings":{"mode":"live","apiUsername":"…","apiPassword":"…"}}</code></pre></div></div>
 
 <h2 id="orgmisc">D7 · Documents, search, support, audit &amp; maintenance</h2>
 <div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/documents</span><span class="perm org">document:manage</span></div>
@@ -627,7 +673,63 @@ What passes there behaves the same against the compose stack.</li>
   window.addEventListener('resize', onScroll);
   spy();
 
-  // 5) Mobile: the sidebar becomes a drawer.
+  // 5) Search: filter the section nav live and list endpoint hits for direct jumps.
+  //    Matches section titles and endpoint method+path against every typed term (AND).
+  var searchInput = document.getElementById('navSearch');
+  var hitsEl = document.getElementById('searchHits');
+  function normalize(s) { return s.toLowerCase(); }
+  function runSearch() {
+    var q = normalize(searchInput.value.trim());
+    if (!q) {
+      hitsEl.hidden = true; hitsEl.innerHTML = '';
+      navEl.querySelectorAll('a,.nav-part').forEach(function (el) { el.style.display = ''; });
+      return;
+    }
+    var terms = q.split(/\s+/);
+    function matches(text) {
+      var t = normalize(text);
+      return terms.every(function (term) { return t.indexOf(term) !== -1; });
+    }
+    // Filter the section list: a section stays if its title or any of its endpoints match.
+    var visibleByPart = {};
+    sections.forEach(function (sec) {
+      var hit = matches(sec.title) || sec.eps.some(function (ep) { return matches(ep.method + ' ' + ep.path); });
+      var link = navLinks[sec.id];
+      if (link) { link.style.display = hit ? '' : 'none'; }
+      if (hit && sec.part) { visibleByPart[sec.part.id] = true; }
+    });
+    navEl.querySelectorAll('.nav-part').forEach(function (el, i) {
+      var part = parts[i];
+      el.style.display = part && visibleByPart[part.id] ? '' : 'none';
+    });
+    // Flat endpoint hits for direct jumps (capped — search tighter for more).
+    var out = [], MAX = 14;
+    for (var i = 0; i < sections.length && out.length < MAX; i++) {
+      var sec = sections[i];
+      for (var j = 0; j < sec.eps.length && out.length < MAX; j++) {
+        var ep = sec.eps[j];
+        if (matches(ep.method + ' ' + ep.path + ' ' + sec.title)) {
+          out.push('<a class="hit" href="#' + ep.id + '"><span class="m ' + ep.method + '">' + esc(ep.method)
+            + '</span><code>' + esc(ep.path) + '</code></a>');
+        }
+      }
+    }
+    hitsEl.innerHTML = out.length ? out.join('') : '<div class="none">No endpoints match — sections above still filter.</div>';
+    hitsEl.hidden = false;
+  }
+  searchInput.addEventListener('input', runSearch);
+  searchInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { searchInput.value = ''; runSearch(); searchInput.blur(); }
+  });
+  hitsEl.addEventListener('click', function (e) { if (e.target.closest('a')) closeNav(); });
+  // "/" focuses search from anywhere (unless already typing in a field).
+  document.addEventListener('keydown', function (e) {
+    if (e.key === '/' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) {
+      e.preventDefault(); searchInput.focus();
+    }
+  });
+
+  // 5b) Mobile: the sidebar becomes a drawer.
   var sidebar = document.getElementById('sidebar'), backdrop = document.getElementById('backdrop'), menuBtn = document.getElementById('menuBtn');
   function closeNav() { sidebar.classList.remove('open'); backdrop.classList.remove('show'); menuBtn.setAttribute('aria-expanded', 'false'); }
   menuBtn.addEventListener('click', function () {
