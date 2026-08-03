@@ -193,6 +193,17 @@ app:
     secret-encryption-key: ${WEBHOOKS_SECRET_KEY:smsone-dev-webhook-secret-key}
   notification:
     from: ${NOTIFICATION_FROM:no-reply@smsone.co.ug}
+    sms:
+      # DEV default: a logging stub. Set SMS_STUB=false (with SPEEDA_* creds, or an SMS_PROVIDER
+      # integration with provider 'speedamobile') to send real SMS through Speeda Mobile.
+      stub: ${SMS_STUB:true}
+      speeda:
+        base-url: ${SPEEDA_BASE_URL:http://apidocs.speedamobile.com}
+        api-id: ${SPEEDA_API_ID:}
+        api-password: ${SPEEDA_API_PASSWORD:}
+        sender-id: ${SPEEDA_SENDER_ID:}
+        sms-type: ${SPEEDA_SMS_TYPE:T}
+        encoding: ${SPEEDA_ENCODING:T}
     slack-webhook-url: ${NOTIFICATION_SLACK_WEBHOOK:}
     webhook-timeout-seconds: ${NOTIFICATION_WEBHOOK_TIMEOUT:5}
     # Async fan-out worker (durable delivery queue).
