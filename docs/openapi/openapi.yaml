@@ -1,4 +1,4 @@
-openapi: 3.1.0
+openapi: 3.0.1
 info:
   title: SMSOne Enterprise API
   description: |-
@@ -1580,11 +1580,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -1678,11 +1678,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -1958,11 +1958,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -2075,6 +2075,56 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}/payments:
+    post:
+      tags:
+      - Organization · Profile
+      summary: Initiate a payment collection
+      description: "Starts a collection. `provider` is optional — omitted, the organization's\
+        \ configured PAYMENT_GATEWAY integration (org override, else platform default)\
+        \ names the gateway. Explicit values: `pesapal` (hosted page — send the payer\
+        \ to the returned `redirectUrl`; card + mobile money) or `yo-uganda` (a mobile-money\
+        \ approval prompt is pushed to `phoneNumber` — no redirect). Whether it runs\
+        \ against the sandbox or live money is the gateway's configured `mode`, echoed\
+        \ on the resource. The outcome converges from the gateway (IPN / on-read refresh)\
+        \ — poll the GET until the status is terminal."
+      operationId: initiate
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InitiatePaymentRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/orgs/{orgId}/members:
     get:
       tags:
@@ -2093,11 +2143,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -2238,11 +2288,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -2383,11 +2433,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -2565,13 +2615,13 @@ paths:
         content:
           application/json:
             schema:
+              required:
+              - file
               type: object
               properties:
                 file:
                   type: string
                   format: binary
-              required:
-              - file
       responses:
         "202":
           description: Accepted
@@ -2652,11 +2702,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -2721,13 +2771,13 @@ paths:
         content:
           application/json:
             schema:
+              required:
+              - file
               type: object
               properties:
                 file:
                   type: string
                   format: binary
-              required:
-              - file
       responses:
         "201":
           description: Created
@@ -2843,11 +2893,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -3059,11 +3109,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -3272,13 +3322,13 @@ paths:
         content:
           application/json:
             schema:
+              required:
+              - file
               type: object
               properties:
                 file:
                   type: string
                   format: binary
-              required:
-              - file
       responses:
         "201":
           description: Created
@@ -3353,13 +3403,13 @@ paths:
         content:
           application/json:
             schema:
+              required:
+              - file
               type: object
               properties:
                 file:
                   type: string
                   format: binary
-              required:
-              - file
       responses:
         "201":
           description: Created
@@ -3436,11 +3486,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -3496,13 +3546,13 @@ paths:
         content:
           application/json:
             schema:
+              required:
+              - file
               type: object
               properties:
                 file:
                   type: string
                   format: binary
-              required:
-              - file
       responses:
         "201":
           description: Created
@@ -3862,11 +3912,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -4024,11 +4074,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -4205,11 +4255,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -4252,11 +4302,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -4386,11 +4436,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -4533,11 +4583,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -4568,6 +4618,48 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/WindowedResultResourceObject"
+  /api/v1/orgs/{orgId}/payments/{id}:
+    get:
+      tags:
+      - Organization · Profile
+      summary: Read a payment (refreshes a PENDING one from its gateway)
+      operationId: get_10
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/orgs/{orgId}/maintenance:
     get:
       tags:
@@ -4618,7 +4710,7 @@ paths:
       tags:
       - Organization · Groups
       summary: Get one group with its members
-      operationId: get_10
+      operationId: get_11
       parameters:
       - name: orgId
         in: path
@@ -4710,11 +4802,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -4750,7 +4842,7 @@ paths:
       tags:
       - Organization · Exchange
       summary: Get one exchange job with its progress
-      operationId: get_11
+      operationId: get_12
       parameters:
       - name: orgId
         in: path
@@ -5032,11 +5124,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -5079,11 +5171,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -5263,7 +5355,8 @@ paths:
             '*/*':
               schema:
                 type: object
-                additionalProperties: {}
+                additionalProperties:
+                  type: object
   /api/v1/files/{key}:
     get:
       tags:
@@ -5350,11 +5443,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -5578,11 +5671,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -5695,11 +5788,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -5762,11 +5855,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -5805,11 +5898,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -5835,7 +5928,7 @@ paths:
       tags:
       - Platform · Support queue
       summary: Get one ticket (any org)
-      operationId: get_12
+      operationId: get_13
       parameters:
       - name: id
         in: path
@@ -5886,11 +5979,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -5929,11 +6022,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -5959,7 +6052,7 @@ paths:
       tags:
       - Platform · Organizations
       summary: Inspect one organization as the platform
-      operationId: get_13
+      operationId: get_14
       parameters:
       - name: orgId
         in: path
@@ -6083,11 +6176,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -6594,13 +6687,13 @@ paths:
 components:
   schemas:
     UpsertTranslationRequest:
+      required:
+      - value
       type: object
       properties:
         value:
-          type: string
           minLength: 1
-      required:
-      - value
+          type: string
     ResourceObject:
       type: object
       properties:
@@ -6608,24 +6701,30 @@ components:
           type: string
         type:
           type: string
-        attributes: {}
+        attributes:
+          type: object
     UpsertSettingRequest:
+      required:
+      - value
       type: object
       properties:
         value:
-          type: string
           minLength: 1
+          type: string
         description:
           type: string
-      required:
-      - value
     UpdateWebhookRequest:
+      required:
+      - events
+      - url
       type: object
       properties:
         url:
-          type: string
           minLength: 1
+          type: string
         events:
+          minItems: 1
+          uniqueItems: true
           type: array
           items:
             type: string
@@ -6640,13 +6739,8 @@ components:
             - org.subscription_changed
             - org.exchange.job_completed
             - org.ticket.escalated
-          minItems: 1
-          uniqueItems: true
         status:
           type: string
-      required:
-      - events
-      - url
     PolicyRequest:
       type: object
       properties:
@@ -6658,31 +6752,31 @@ components:
           type: integer
           format: int64
     UpdateRoleRequest:
-      type: object
-      properties:
-        name:
-          type: string
-          maxLength: 120
-          minLength: 0
-        description:
-          type: string
-        permissions:
-          type: array
-          items:
-            type: string
-          minItems: 1
-          uniqueItems: true
       required:
       - name
       - permissions
+      type: object
+      properties:
+        name:
+          maxLength: 120
+          minLength: 0
+          type: string
+        description:
+          type: string
+        permissions:
+          minItems: 1
+          uniqueItems: true
+          type: array
+          items:
+            type: string
     AssignRoleRequest:
+      required:
+      - roleCode
       type: object
       properties:
         roleCode:
-          type: string
           minLength: 1
-      required:
-      - roleCode
+          type: string
     UpsertRequest:
       type: object
       properties:
@@ -6737,10 +6831,10 @@ components:
         email:
           type: string
         roles:
+          uniqueItems: true
           type: array
           items:
             type: string
-          uniqueItems: true
         activeOrgAlias:
           type: string
         activeOrgId:
@@ -6759,26 +6853,28 @@ components:
         actorSubject:
           type: string
     ToggleFeatureFlagRequest:
+      required:
+      - enabled
       type: object
       properties:
         enabled:
           type: boolean
         description:
           type: string
-      required:
-      - enabled
     StatusRequest:
       type: object
       properties:
         status:
           type: string
     UpdatePlanRequest:
+      required:
+      - name
       type: object
       properties:
         name:
-          type: string
           maxLength: 100
           minLength: 0
+          type: string
         rank:
           type: integer
           format: int32
@@ -6787,8 +6883,6 @@ components:
           additionalProperties:
             type: integer
             format: int64
-      required:
-      - name
     AssignRequest:
       type: object
       properties:
@@ -6810,36 +6904,41 @@ components:
           type: integer
           format: int32
     CreateOrganizationRequest:
-      type: object
-      properties:
-        alias:
-          type: string
-          maxLength: 120
-          minLength: 0
-          pattern: "^[a-z0-9][a-z0-9-]{0,118}[a-z0-9]$"
-        name:
-          type: string
-          maxLength: 200
-          minLength: 0
-        ownerEmail:
-          type: string
-          format: email
-          minLength: 1
-        ownerFirstName:
-          type: string
-        ownerLastName:
-          type: string
       required:
       - alias
       - name
       - ownerEmail
+      type: object
+      properties:
+        alias:
+          maxLength: 120
+          minLength: 0
+          pattern: "^[a-z0-9][a-z0-9-]{0,118}[a-z0-9]$"
+          type: string
+        name:
+          maxLength: 200
+          minLength: 0
+          type: string
+        ownerEmail:
+          minLength: 1
+          type: string
+          format: email
+        ownerFirstName:
+          type: string
+        ownerLastName:
+          type: string
     CreateWebhookRequest:
+      required:
+      - events
+      - url
       type: object
       properties:
         url:
-          type: string
           minLength: 1
+          type: string
         events:
+          minItems: 1
+          uniqueItems: true
           type: array
           items:
             type: string
@@ -6854,11 +6953,6 @@ components:
             - org.subscription_changed
             - org.exchange.job_completed
             - org.ticket.escalated
-          minItems: 1
-          uniqueItems: true
-      required:
-      - events
-      - url
     OpenRequest:
       type: object
       properties:
@@ -6883,46 +6977,67 @@ components:
         trusted:
           type: boolean
     CreateRoleRequest:
-      type: object
-      properties:
-        code:
-          type: string
-          maxLength: 64
-          minLength: 0
-          pattern: "^[A-Za-z][A-Za-z0-9_]{1,62}$"
-        name:
-          type: string
-          maxLength: 120
-          minLength: 0
-        description:
-          type: string
-        permissions:
-          type: array
-          items:
-            type: string
-          minItems: 1
-          uniqueItems: true
       required:
       - code
       - name
       - permissions
+      type: object
+      properties:
+        code:
+          maxLength: 64
+          minLength: 0
+          pattern: "^[A-Za-z][A-Za-z0-9_]{1,62}$"
+          type: string
+        name:
+          maxLength: 120
+          minLength: 0
+          type: string
+        description:
+          type: string
+        permissions:
+          minItems: 1
+          uniqueItems: true
+          type: array
+          items:
+            type: string
+    InitiatePaymentRequest:
+      required:
+      - amount
+      - currency
+      - description
+      type: object
+      properties:
+        provider:
+          type: string
+        amount:
+          type: number
+        currency:
+          minLength: 1
+          type: string
+        description:
+          minLength: 1
+          type: string
+        phoneNumber:
+          type: string
+        email:
+          type: string
     InviteMemberRequest:
+      required:
+      - email
+      - roleCode
       type: object
       properties:
         email:
+          minLength: 1
           type: string
           format: email
-          minLength: 1
         firstName:
           type: string
         lastName:
           type: string
         roleCode:
-          type: string
           minLength: 1
-      required:
-      - email
-      - roleCode
+          type: string
     CreateRequest:
       type: object
       properties:
@@ -6951,7 +7066,8 @@ components:
           type: boolean
         pluginProperties:
           type: object
-          additionalProperties: {}
+          additionalProperties:
+            type: object
     RegisterRequest:
       type: object
       properties:
@@ -6973,28 +7089,31 @@ components:
         source:
           type: string
     PresignRequest:
+      required:
+      - operation
       type: object
       properties:
         operation:
-          type: string
           minLength: 1
+          type: string
         key:
           type: string
         contentType:
           type: string
-      required:
-      - operation
     CreatePlanRequest:
+      required:
+      - code
+      - name
       type: object
       properties:
         code:
-          type: string
           maxLength: 30
           minLength: 0
-        name:
           type: string
+        name:
           maxLength: 100
           minLength: 0
+          type: string
         rank:
           type: integer
           format: int32
@@ -7003,9 +7122,6 @@ components:
           additionalProperties:
             type: integer
             format: int64
-      required:
-      - code
-      - name
     TrialRequest:
       type: object
       properties:
@@ -7035,24 +7151,24 @@ components:
         message:
           type: string
     OpenImpersonationRequest:
+      required:
+      - reason
+      - targetSubject
       type: object
       properties:
         targetSubject:
-          type: string
           minLength: 1
+          type: string
         orgId:
           type: string
           format: uuid
         reason:
-          type: string
           minLength: 1
+          type: string
         mode:
           type: string
         ttl:
           type: string
-      required:
-      - reason
-      - targetSubject
     SubjectHoldRequest:
       type: object
       properties:
@@ -7073,14 +7189,14 @@ components:
         subject:
           type: string
     UpdateOrganizationRequest:
+      required:
+      - name
       type: object
       properties:
         name:
-          type: string
           maxLength: 200
           minLength: 0
-      required:
-      - name
+          type: string
     PageMeta:
       type: object
       properties:
