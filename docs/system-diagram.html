@@ -582,7 +582,75 @@ stateDiagram-v2
 
   <!-- ============================================================ 10 -->
   <section>
-    <div class="sec-head"><span class="sec-num">10</span><h2>Impersonation — the audited bridge</h2></div>
+    <div class="sec-head"><span class="sec-num">10</span><h2>Payment collection — Pesapal &amp; Yo! (sandbox ⇄ live)</h2></div>
+    <p class="sec-sub">Two gateway adapters behind one internal seam, each with a switchable
+      <code>mode</code> (<b>sandbox</b> default — nothing touches real money until <code>live</code> is
+      explicit; credentials resolve hub-first with env fallback, and the mode is stamped on every payment
+      row). The gateway's own answer is the only truth: IPN pings and browser callbacks merely trigger a
+      server-side re-query, and terminal states never regress.</p>
+    <div class="diagram">
+      <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant C as Org client
+  participant API as Platform /orgs/{id}/payments
+  participant P as Pesapal API 3.0
+  participant B as Payer's browser
+  C->>API: POST {provider: pesapal, amount, currency, email}
+  API->>P: POST /api/Auth/RequestToken (5-min JWT, cached)
+  API->>P: POST /api/URLSetup/RegisterIPN (lazy, once per credential set)
+  API->>P: POST /api/Transactions/SubmitOrderRequest
+  P-->>API: order_tracking_id + redirect_url
+  API-->>C: 201 PENDING + redirectUrl
+  C->>B: send payer to redirectUrl (hosted page — card / mobile money)
+  B->>P: pays
+  P->>API: GET /payments/pesapal/ipn?OrderTrackingId=…  (secretless — a trigger, not truth)
+  API->>P: GET /api/Transactions/GetTransactionStatus
+  P-->>API: status_code 1 COMPLETED (2 FAILED · 3 REVERSED · 0 INVALID/PENDING)
+  API-->>P: ack {orderNotificationType, orderTrackingId, status: 200}
+  B->>API: GET /payments/pesapal/callback (return leg — also just a trigger)
+      </pre>
+    </div>
+    <div class="diagram" style="margin-top:12px">
+      <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant C as Org client
+  participant API as Platform /orgs/{id}/payments
+  participant Y as Yo! Payments (task.php)
+  participant M as Payer's handset
+  C->>API: POST {provider: yo-uganda, amount, phoneNumber}
+  API->>Y: XML AutoCreate — acdepositfunds, NonBlocking TRUE, Account=digits
+  Y->>M: mobile-money approval prompt
+  Y-->>API: Status OK · TransactionStatus PENDING · TransactionReference
+  API-->>C: 201 PENDING (no redirect — the approval is on the handset)
+  M->>Y: payer enters PIN
+  C->>API: GET /payments/{id}  (read-with-refresh)
+  API->>Y: XML — actransactioncheckstatus by TransactionReference
+  Y-->>API: SUCCEEDED → COMPLETED (FAILED · PENDING · INDETERMINATE)
+      </pre>
+    </div>
+    <div class="grid" style="margin-top:12px">
+      <div class="card c-infra"><h3>The mode switch</h3><span class="tag">sandbox ⇄ live</span>
+        <table class="kv">
+          <tr><td>selector</td><td><code>mode</code> per gateway — integration-hub setting (org override wins) or env (<code>PESAPAL_MODE</code>/<code>YO_MODE</code>); invalid values fail at boot</td></tr>
+          <tr><td>pesapal</td><td>sandbox <code>cybqa.pesapal.com/pesapalv3</code> · live <code>pay.pesapal.com/v3</code>; sandbox defaults to Pesapal's <b>published UG demo keys</b> — works with zero setup</td></tr>
+          <tr><td>yo!</td><td>sandbox <code>sandbox.yo.co.ug/services/yopaymentsdev</code> · live <code>paymentsapi1.yo.co.ug/ybs</code>; needs your API username/password in both modes</td></tr>
+          <tr><td>audit</td><td>the mode rides the payment row — a sandbox test can never masquerade as live revenue</td></tr>
+        </table></div>
+      <div class="card c-core"><h3>Trust &amp; convergence</h3><span class="tag">who is believed</span>
+        <table class="kv">
+          <tr><td>IPN/callback</td><td>secretless by vendor design → permitted but <b>inert</b>: handlers only re-query the gateway by tracking id</td></tr>
+          <tr><td>read = refresh</td><td><code>GET /payments/{id}</code> re-asks the gateway while PENDING — Yo!'s poll flow needs no webhook</td></tr>
+          <tr><td>no regress</td><td>terminal states (COMPLETED/FAILED/REVERSED) never downgrade; duplicate IPNs are no-ops</td></tr>
+          <tr><td>audited</td><td><code>payment.initiated</code> + one terminal transition per row (<code>payment.completed</code>…)</td></tr>
+        </table></div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 11 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">11</span><h2>Impersonation — the audited bridge</h2></div>
     <p class="sec-sub">The only sanctioned crossing between the platform axis and tenant data. A session is a
       first-class record with a hard clock, worn per-request via a header — and its validity is re-checked
       on <b>every request</b>, deliberately uncached: ending a session must bite immediately, not a TTL later.</p>
@@ -614,9 +682,9 @@ stateDiagram-v2
     </div>
   </section>
 
-  <!-- ============================================================ 11 -->
+  <!-- ============================================================ 12 -->
   <section>
-    <div class="sec-head"><span class="sec-num">11</span><h2>Two-level cache — under concurrent load</h2></div>
+    <div class="sec-head"><span class="sec-num">12</span><h2>Two-level cache — under concurrent load</h2></div>
     <p class="sec-sub">The shared kernel cache behind entitlements, permissions, and settings: per-node
       <b>Caffeine L1</b> in front of shared <b>Valkey L2</b>, built so an L2 outage degrades and a write
       invalidates every node <em>now</em> — a plan downgrade must bite the very next gate check.</p>
@@ -653,9 +721,9 @@ flowchart TB
     </div>
   </section>
 
-  <!-- ============================================================ 12 -->
+  <!-- ============================================================ 13 -->
   <section>
-    <div class="sec-head"><span class="sec-num">12</span><h2>Data &amp; caching plane — what lives where</h2></div>
+    <div class="sec-head"><span class="sec-num">13</span><h2>Data &amp; caching plane — what lives where</h2></div>
     <p class="sec-sub">Five stores, each with one job — plus a two-level cache in front of the hot reads.</p>
     <div class="grid">
       <div class="card c-infra"><h3>Postgres 18</h3><span class="tag">system of record</span><ul>
@@ -709,9 +777,9 @@ flowchart TB
     </div>
   </section>
 
-  <!-- ============================================================ 13 -->
+  <!-- ============================================================ 14 -->
   <section>
-    <div class="sec-head"><span class="sec-num">13</span><h2>Identity plane &amp; the two authority axes</h2></div>
+    <div class="sec-head"><span class="sec-num">14</span><h2>Identity plane &amp; the two authority axes</h2></div>
     <div class="grid">
       <div class="card c-client"><h3>Keycloak :28081</h3><span class="tag">the idp</span><ul>
         <li>Realm <code>smsone</code>; two-column <code>smsone</code> login + email theme; product name env-driven (<code>BRAND_NAME</code>)</li>
@@ -734,9 +802,9 @@ flowchart TB
     </div>
   </section>
 
-  <!-- ============================================================ 14 -->
+  <!-- ============================================================ 15 -->
   <section>
-    <div class="sec-head"><span class="sec-num">14</span><h2>Observability</h2></div>
+    <div class="sec-head"><span class="sec-num">15</span><h2>Observability</h2></div>
     <div class="grid">
       <div class="card c-infra"><h3>otel-lgtm :23000</h3><span class="tag">grafana · tempo · loki · mimir</span><ul>
         <li>OTLP gRPC <code>:24317</code> — traces + metrics + logs from gateway, modulith, and k6</li>
