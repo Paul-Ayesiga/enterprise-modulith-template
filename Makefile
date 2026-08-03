@@ -100,10 +100,15 @@ build: ## Compile + assemble the app (skips tests) — modulith only; `gateway-b
 test: ## Run the modulith test suite (real Testcontainers) — `gateway-test` for the edge
 	./gradlew :test
 
+# Base URL baked into the Postman collection (HTTPie shows empty URLs for {{baseUrl}} variables).
+# Default = the modulith direct; `make openapi POSTMAN_BASE=http://localhost:28090` for the gateway.
+POSTMAN_BASE ?= http://localhost:28080
+
 openapi: ## Regenerate docs/openapi/*.{yaml,json} + the Postman collection (HTTPie/Insomnia import this)
 	./gradlew :exportOpenApi
 	npx --yes openapi-to-postmanv2 -s docs/openapi/openapi.json -o docs/openapi/postman_collection.json -p \
 		-O folderStrategy=Tags,requestNameSource=Fallback
+	python3 scripts/postman-baseurl.py docs/openapi/postman_collection.json $(POSTMAN_BASE)
 
 clean: ## Drop local build caches (keeps downloaded deps and Docker images — both slow to refetch)
 	@./gradlew --stop >/dev/null 2>&1 || true
