@@ -660,6 +660,14 @@ Run top to bottom on every change.
 - [ ] New collection endpoint: stable unique `Sort`, `page.scrollPosition(SORT)`, no totals/offset.
 - [ ] Caller-supplied outbound URL passes `SafeOutboundUrl`.
 
+**Documentation (MUST — no exceptions)**
+- [ ] Any change to the API surface (new/changed endpoint, parameter, permission, error code,
+      provider, or behavior a caller can observe) updates **`docs/api-guide.html`** in the same
+      change-set. The guide is self-indexing — nav, "On this page", and search all generate from
+      the content — so adding/editing the `.ep` blocks in the right Part section is the whole job.
+- [ ] Architecture-level changes (a new module, store, filter, gateway stage, integration, or
+      delivery flow) update **`docs/system-diagram.html`** the same way.
+
 **Data**
 - [ ] Correct base class (`BaseEntity` / `AggregateRoot` / `SoftDeletableEntity`).
 - [ ] Soft-deletable entity carries **both** `@SQLDelete` (with `and version = ?`) and `@SQLRestriction`.
