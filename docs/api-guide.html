@@ -9,7 +9,15 @@
           --code:#0d1626; --codeink:#d6e1f4; --brand:#1d4ed8; --brand-soft:#e7edfd;
           --ok:#0a7d43; --ok-soft:#e3f4ea; --warn:#a05a00; --warn-soft:#fbefda; --bad:#b3261e; --bad-soft:#fbe7e5;
           --plat:#6b21a8; --plat-soft:#f2e9fb; --org:#0e7490; --org-soft:#e0f2f6; --any:#475569; --any-soft:#eef1f5;
+          --code-chip:#e9eef7; --th-bg:#eef2f9; --ep-head-bg:#fbfcfe; --part-border:#cddafc;
           --topbar-h:52px; }
+  /* Dark palette — same tokens, flipped ground. Toggled by the ◐ button (stored) or the OS preference. */
+  :root[data-theme="dark"] {
+    --ink:#dce4f2; --mut:#9aa8bf; --faint:#67758c; --line:#26334d; --bg:#0b1220; --panel:#111a2c;
+    --brand:#6ea8fe; --brand-soft:#16233f;
+    --ok:#34c27a; --ok-soft:#0f241b; --warn:#e0a24a; --warn-soft:#2a2113; --bad:#f87171; --bad-soft:#2b1717;
+    --plat:#c084fc; --plat-soft:#241a33; --org:#4cc3e0; --org-soft:#0e2430; --any:#9aa8bf; --any-soft:#1a2333;
+    --code-chip:#1a2438; --th-bg:#152036; --ep-head-bg:#0f1930; --part-border:#1f3055; }
   * { box-sizing:border-box; }
   html { scroll-behavior:smooth; }
   @media (prefers-reduced-motion:reduce){ html { scroll-behavior:auto; } }
@@ -26,6 +34,9 @@
   .topbar a:hover { color:#fff; }
   .topbar code { background:#1c2b41; color:#cfe0fb; }
   .menu-btn { display:none; background:none; border:0; color:#fff; font-size:1.3rem; cursor:pointer; padding:.1rem .3rem; line-height:1; }
+  .theme-btn { background:#1c2b41; border:1px solid #2a3c5c; color:#cfe0fb; border-radius:999px;
+               padding:.18rem .7rem; font:600 .74rem ui-monospace,Menlo,monospace; cursor:pointer; }
+  .theme-btn:hover { border-color:#57b3ff; }
 
   /* ---- three-pane layout ---- */
   .layout { display:grid; grid-template-columns:16rem minmax(0,1fr) 15rem; max-width:90rem; margin:0 auto; align-items:start; }
@@ -60,26 +71,26 @@
 
   /* ---- content elements ---- */
   h2 { margin:2.4rem 0 .5rem; font-size:1.22rem; border-bottom:2px solid var(--line); padding-bottom:.3rem; letter-spacing:-.01em; scroll-margin-top:calc(var(--topbar-h) + 12px); }
-  .part { margin:2.4rem 0 1rem; padding:.9rem 1.1rem; border-radius:10px; background:var(--brand-soft); border:1px solid #cddafc; scroll-margin-top:calc(var(--topbar-h) + 12px); }
+  .part { margin:2.4rem 0 1rem; padding:.9rem 1.1rem; border-radius:10px; background:var(--brand-soft); border:1px solid var(--part-border); scroll-margin-top:calc(var(--topbar-h) + 12px); }
   .content > .part:first-of-type { margin-top:.4rem; }
   .part h2 { margin:0; font-size:1.28rem; border:0; padding:0; scroll-margin-top:0; }
   .part p { margin:.3rem 0 0; color:var(--mut); font-size:.92rem; }
   p, li { color:var(--ink); }
   .mut { color:var(--mut); }
-  code { background:#e9eef7; padding:.08rem .34rem; border-radius:4px; font-size:.85em; }
+  code { background:var(--code-chip); padding:.08rem .34rem; border-radius:4px; font-size:.85em; }
   pre { background:var(--code); color:var(--codeink); padding:.85rem 1.05rem; border-radius:8px;
         overflow-x:auto; font-size:.82rem; line-height:1.55; margin:.5rem 0 .9rem; }
   pre code { background:none; padding:0; color:inherit; }
   table { border-collapse:collapse; width:100%; margin:.5rem 0 1rem; font-size:.87rem; background:var(--panel); }
   th, td { border:1px solid var(--line); padding:.42rem .6rem; text-align:left; vertical-align:top; }
-  th { background:#eef2f9; font-size:.82rem; }
+  th { background:var(--th-bg); font-size:.82rem; }
   .params th:first-child, .params td:first-child { font-family:ui-monospace,Menlo,monospace; white-space:nowrap; }
   .params td:nth-child(2), .params td:nth-child(3) { white-space:nowrap; color:var(--mut); }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:.85rem 1.1rem; margin:.8rem 0; }
   .tip { border-left:4px solid var(--ok); background:linear-gradient(90deg,var(--ok-soft),var(--panel) 22%); }
   .warn { border-left:4px solid var(--warn); background:linear-gradient(90deg,var(--warn-soft),var(--panel) 22%); }
   .ep { background:var(--panel); border:1px solid var(--line); border-radius:9px; margin:.7rem 0; overflow:hidden; scroll-margin-top:calc(var(--topbar-h) + 12px); }
-  .ep-head { display:flex; align-items:center; gap:.55rem; flex-wrap:wrap; padding:.6rem .85rem; background:#fbfcfe; border-bottom:1px solid var(--line); }
+  .ep-head { display:flex; align-items:center; gap:.55rem; flex-wrap:wrap; padding:.6rem .85rem; background:var(--ep-head-bg); border-bottom:1px solid var(--line); }
   .ep-body { padding:.7rem .85rem; }
   .ep-body > p:first-child { margin-top:0; }
   .ep-body pre { margin-bottom:.3rem; }
@@ -107,6 +118,17 @@
   }
   @media (prefers-reduced-motion:reduce){ .sidebar { transition:none; } }
 </style>
+<script>
+  // Theme boot before first paint: stored choice ("smsone-doc-theme", shared with the
+  // architecture page) wins; otherwise the OS preference; otherwise light.
+  (function () {
+    var stored = null;
+    try { stored = localStorage.getItem("smsone-doc-theme"); } catch (e) {}
+    if (stored === "dark" || (!stored && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches)) {
+      document.documentElement.setAttribute("data-theme", "dark");
+    }
+  })();
+</script>
 </head>
 <body>
 <div class="topbar">
@@ -115,6 +137,7 @@
   <div class="links">
     <a href="http://localhost:8080/swagger-ui/index.html">Swagger UI</a>
     <a href="http://localhost:8080/v3/api-docs">OpenAPI</a>
+    <button class="theme-btn" id="themeBtn" aria-label="Toggle color theme">◐ theme</button>
   </div>
 </div>
 <div class="layout">
@@ -612,6 +635,14 @@ What passes there behaves the same against the compose stack.</li>
   });
   backdrop.addEventListener('click', closeNav);
   navEl.addEventListener('click', function (e) { if (e.target.closest('a')) closeNav(); });
+
+  // 6) Theme toggle — flips data-theme live (pure CSS tokens) and stores the choice.
+  document.getElementById('themeBtn').addEventListener('click', function () {
+    var next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    if (next === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+    else document.documentElement.removeAttribute('data-theme');
+    try { localStorage.setItem('smsone-doc-theme', next); } catch (e) {}
+  });
 })();
 </script>
 </body>

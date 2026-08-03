@@ -6,405 +6,598 @@
 <title>SMSOne — System Architecture</title>
 <style>
   :root {
-    --ground: #080d18;
-    --grid: #0e1626;
-    --panel: #101a2e;
-    --panel-2: #0c1424;
-    --border: #22304c;
-    --border-soft: #1a2740;
-    --ink: #dde7f7;
-    --muted: #8496b6;
-    --faint: #5f708f;
-    --client: #b7a2ff;
-    --edge: #6ea8ff;
-    --core: #43d9ac;
-    --infra: #eab863;
-    --wire: #3a4d74;
-    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
-    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --ground: #080d18; --grid: #0e1626; --panel: #101a2e; --panel-2: #0c1424;
+    --border: #22304c; --border-soft: #182339;
+    --ink: #dde7f7; --muted: #9db0cc; --faint: #647894; --wire: #3a4d74;
+    --edge: #57b3ff; --core: #7ee0a3; --infra: #e6b86a; --client: #c9a7f5; --danger: #ff7a76;
+    --pill-bg: #1a2440;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  :root[data-theme="light"] {
+    --ground: #f6f8fc; --grid: #eef2f9; --panel: #ffffff; --panel-2: #f2f5fb;
+    --border: #ccd7e8; --border-soft: #dde4ee;
+    --ink: #14202e; --muted: #44586f; --faint: #7c8da5; --wire: #9fb2d0;
+    --edge: #1d4ed8; --core: #0a7d43; --infra: #a05a00; --client: #6b21a8; --danger: #b3261e;
+    --pill-bg: #e7edf9;
   }
 
   * { box-sizing: border-box; }
-
+  html { scroll-behavior: smooth; }
   body {
-    margin: 0;
-    background:
-      radial-gradient(1200px 600px at 15% -10%, #0d1b33 0%, transparent 60%),
-      radial-gradient(1000px 700px at 100% 0%, #0b1f2b 0%, transparent 55%),
-      var(--ground);
-    color: var(--ink);
-    font-family: var(--sans);
-    line-height: 1.5;
-    -webkit-font-smoothing: antialiased;
+    margin: 0; background: var(--ground); color: var(--ink);
+    font: 15px/1.6 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-image: radial-gradient(circle at 20% 0%, var(--grid) 0%, transparent 45%);
   }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 40px 28px 60px; }
 
-  .wrap { max-width: 1160px; margin: 0 auto; padding: 44px 24px 90px; }
-
-  /* ---- header ---- */
-  header { margin-bottom: 34px; }
-  .eyebrow {
-    font-family: var(--mono); font-size: 12px; letter-spacing: 0.22em;
-    text-transform: uppercase; color: var(--edge); margin: 0 0 12px;
+  .toggle {
+    position: fixed; top: 14px; right: 16px; z-index: 20;
+    background: var(--panel); color: var(--ink); border: 1px solid var(--border);
+    border-radius: 999px; padding: 6px 14px; font: 600 12.5px var(--mono);
+    cursor: pointer;
   }
-  h1 {
-    font-size: clamp(30px, 5vw, 46px); line-height: 1.04; letter-spacing: -0.025em;
-    margin: 0 0 14px; text-wrap: balance; font-weight: 800;
-  }
-  h1 .thin { color: var(--muted); font-weight: 500; }
-  .lede { color: var(--muted); font-size: 17px; max-width: 66ch; margin: 0 0 18px; }
-  .meta { display: flex; flex-wrap: wrap; gap: 8px; }
-  .stat {
-    font-family: var(--mono); font-size: 12.5px; color: var(--ink);
-    background: var(--panel-2); border: 1px solid var(--border-soft);
-    padding: 5px 11px; border-radius: 7px;
-  }
-  .stat b { color: var(--edge); font-weight: 700; }
+  .toggle:hover { border-color: var(--edge); }
 
-  /* ---- section scaffolding ---- */
-  section { margin-top: 40px; }
-  .sec-head { display: flex; align-items: baseline; gap: 12px; margin: 0 0 4px; }
-  .sec-num { font-family: var(--mono); font-size: 13px; color: var(--faint); }
-  h2 { font-size: 20px; letter-spacing: -0.01em; margin: 0; font-weight: 700; }
-  .sec-sub { color: var(--muted); font-size: 14px; margin: 4px 0 20px; }
+  header .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--edge); margin: 0 0 6px; }
+  header h1 { margin: 0 0 10px; font-size: 30px; letter-spacing: -0.02em; }
+  header h1 .thin { font-weight: 400; color: var(--muted); }
+  header .lede { max-width: 860px; color: var(--muted); margin: 0 0 14px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px 18px; font-family: var(--mono); font-size: 12.5px; color: var(--faint); }
+  .meta b { color: var(--ink); }
 
-  /* ---- diagram panels ---- */
-  .diagram {
-    background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
-    border: 1px solid var(--border);
-    border-radius: 16px; padding: 18px;
-    overflow-x: auto;
-    box-shadow: 0 24px 60px -30px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,0.03);
-  }
-  .diagram pre.mermaid { margin: 0; text-align: center; min-width: 720px; }
-  .diagram.seq pre.mermaid { min-width: 640px; }
+  section { margin-top: 46px; }
+  .sec-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+  .sec-num { font-family: var(--mono); font-size: 13px; color: var(--edge); }
+  .sec-head h2 { margin: 0; font-size: 20px; letter-spacing: -0.01em; }
+  .sec-sub { color: var(--muted); margin: 2px 0 16px; max-width: 940px; }
+  .sec-sub code, .mono { font-family: var(--mono); font-size: 12.5px; }
 
-  /* ---- legend ---- */
-  .legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 16px 2px 0; }
-  .legend .item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
-  .swatch { width: 13px; height: 13px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.14); }
-  .swatch.client { background: var(--client); }
-  .swatch.edge { background: var(--edge); }
-  .swatch.core { background: var(--core); }
-  .swatch.infra { background: var(--infra); }
-  .legend .dash { font-family: var(--mono); color: var(--faint); }
+  .diagram { background: var(--panel-2); border: 1px solid var(--border-soft); border-radius: 12px; padding: 14px; overflow-x: auto; }
+  .diagram svg { max-width: 100%; }
 
-  /* ---- breakdown cards ---- */
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(255px, 1fr)); gap: 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
   .card {
-    background: var(--panel); border: 1px solid var(--border-soft);
-    border-radius: 13px; padding: 18px 18px 16px; position: relative;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px 14px 12px; position: relative; --accent: var(--edge);
   }
-  .card::before {
-    content: ""; position: absolute; left: 0; top: 16px; bottom: 16px; width: 3px;
-    border-radius: 3px; background: var(--accent, var(--edge));
-  }
-  .card.c-edge { --accent: var(--edge); }
-  .card.c-core { --accent: var(--core); }
-  .card.c-infra { --accent: var(--infra); }
-  .card.c-client { --accent: var(--client); }
-  .card h3 {
-    margin: 0 0 3px; font-size: 15px; font-weight: 700; letter-spacing: -0.01em;
-    padding-left: 12px;
-  }
-  .card .tag {
-    font-family: var(--mono); font-size: 11px; color: var(--faint);
-    text-transform: uppercase; letter-spacing: 0.08em; padding-left: 12px;
-    display: block; margin-bottom: 10px;
-  }
+  .card::before { content: ""; position: absolute; left: 0; top: 12px; bottom: 12px; width: 3px; border-radius: 3px; background: var(--accent); }
+  .card.c-edge { --accent: var(--edge); } .card.c-core { --accent: var(--core); }
+  .card.c-infra { --accent: var(--infra); } .card.c-client { --accent: var(--client); }
+  .card h3 { margin: 0 0 3px; font-size: 15px; font-weight: 700; letter-spacing: -0.01em; padding-left: 12px; }
+  .card .tag { font-family: var(--mono); font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.08em; padding-left: 12px; display: block; margin-bottom: 10px; }
   .card ul { margin: 0; padding: 0 0 0 12px; list-style: none; }
   .card li { font-size: 13.5px; color: var(--muted); padding: 3px 0; }
   .card li b { color: var(--ink); font-weight: 600; }
-  .card li code, .mono { font-family: var(--mono); font-size: 12.5px; color: var(--edge); }
-  .card.c-core li code { color: var(--core); }
-  .card.c-infra li code { color: var(--infra); }
+  .card li code { font-family: var(--mono); font-size: 12.5px; color: var(--edge); }
+  .card.c-core li code { color: var(--core); } .card.c-infra li code { color: var(--infra); }
+  .card.c-client li code { color: var(--client); }
 
-  /* ---- pipeline strip ---- */
-  .pipeline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 4px; }
-  .stage {
-    font-family: var(--mono); font-size: 12.5px; color: var(--ink);
-    background: var(--panel-2); border: 1px solid var(--border);
-    padding: 6px 11px; border-radius: 8px; white-space: nowrap;
+  /* ---- vertical stage chain (the detailed pipelines) ---- */
+  .chain { display: flex; flex-direction: column; gap: 0; max-width: 980px; }
+  .stagebox {
+    display: grid; grid-template-columns: 96px minmax(0,1fr) auto; gap: 4px 16px; align-items: start;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px;
   }
-  .stage small { color: var(--faint); }
-  .arrow { color: var(--wire); font-family: var(--mono); }
+  .stagebox .ord { font-family: var(--mono); font-size: 12px; color: var(--faint); padding-top: 2px; white-space: nowrap; }
+  .stagebox .what b { color: var(--ink); font-size: 14px; }
+  .stagebox .what { color: var(--muted); font-size: 13.5px; }
+  .stagebox .what code { font-family: var(--mono); font-size: 12px; color: var(--edge); }
+  .stagebox.core .what code { color: var(--core); }
+  .stagebox .fail { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+  .pill {
+    font-family: var(--mono); font-size: 11px; padding: 2px 8px; border-radius: 999px;
+    background: var(--pill-bg); border: 1px solid var(--border); color: var(--muted); white-space: nowrap;
+  }
+  .pill.bad { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+  .pill.ok { color: var(--core); }
+  .pill.store { color: var(--infra); }
+  .connector { align-self: center; color: var(--wire); font-family: var(--mono); font-size: 13px; padding: 1px 0 1px 46px; }
 
-  footer {
-    margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--border-soft);
-    color: var(--faint); font-size: 12.5px; font-family: var(--mono); line-height: 1.7;
-  }
+  .kv { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .kv td { padding: 4px 10px 4px 0; vertical-align: top; color: var(--muted); border-bottom: 1px dashed var(--border-soft); }
+  .kv td:first-child { font-family: var(--mono); font-size: 12px; color: var(--ink); white-space: nowrap; }
+  .kv tr:last-child td { border-bottom: 0; }
+
+  footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--border-soft); color: var(--faint); font-size: 12.5px; font-family: var(--mono); line-height: 1.8; }
   footer b { color: var(--muted); font-weight: 600; }
   a { color: var(--edge); }
+  @media (max-width: 720px) { .stagebox { grid-template-columns: minmax(0,1fr); } .stagebox .fail { flex-direction: row; flex-wrap: wrap; } }
 </style>
 </head>
 <body>
+<button class="toggle" id="themeToggle" aria-label="Toggle color theme">◐ theme</button>
 
 <div class="wrap">
   <header>
     <p class="eyebrow">System Architecture · Reference</p>
     <h1>SMSOne <span class="thin">— a Spring Modulith behind a reactive edge</span></h1>
     <p class="lede">
-      A multi-tenant messaging platform: 23 domain modules inside one deployable, fronted by a stateless
-      reactive API gateway that owns the edge — auth, traffic, observability, and API management — so every
-      service speaks one front door. The whole system, in one diagram.
+      A multi-tenant platform: 23 domain modules inside one deployable, fronted by a stateless reactive API
+      gateway that owns the edge. This page is the detail map — every filter in order, every limiter with its
+      algorithm, every store with what actually lives in it, top to bottom.
     </p>
     <div class="meta">
-      <span class="stat"><b>23</b> modulith modules</span>
-      <span class="stat"><b>7</b> gateway phases shipped</span>
-      <span class="stat">edge <b>:28090</b> · admin <b>:29090</b> · api <b>:28080</b></span>
-      <span class="stat">hexagonal · ports &amp; adapters</span>
+      <span><b>23</b> modulith modules</span>
+      <span><b>7</b> gateway phases shipped</span>
+      <span>edge <b>:28090</b> · gw-admin <b>:29090</b> · api <b>:28080</b> · idp <b>:28081</b></span>
+      <span>hexagonal · ports &amp; adapters</span>
     </div>
   </header>
 
+  <!-- ============================================================ 01 -->
   <section>
-    <div class="sec-head"><span class="sec-num">01</span><h2>The whole system</h2></div>
-    <p class="sec-sub">Clients enter through the gateway; the gateway proxies <code class="mono">/api/v1/**</code> to the modulith and reaches it over three thin, secret-authed seams; every module shares the infrastructure below.</p>
+    <div class="sec-head"><span class="sec-num">01</span><h2>The whole system, top to bottom</h2></div>
+    <p class="sec-sub">Clients enter through the gateway; the gateway shapes traffic and proxies
+      <code>/api/v1/**</code> to the modulith over a load-balanced connection plus three secret-authed seams;
+      the modulith commits state and an event outbox in one transaction; async consumers fan out; every
+      layer shares the stores at the bottom.</p>
     <div class="diagram">
       <pre class="mermaid">
-%%{init: {'theme':'base','themeVariables':{
-  'background':'transparent','fontFamily':'ui-sans-serif, system-ui, sans-serif','fontSize':'13px',
-  'primaryColor':'#12203a','primaryTextColor':'#dde7f7','primaryBorderColor':'#2a3c5c',
-  'lineColor':'#3a4d74','clusterBkg':'#0c1424','clusterBorder':'#22304c','titleColor':'#8496b6',
-  'edgeLabelBackground':'#0c1424'
-}}}%%
 flowchart TB
   subgraph CLIENTS["CLIENTS"]
     direction LR
-    web["Web / SPA — Bearer JWT"]
-    mob["Mobile — Bearer JWT"]
-    apic["API client — X-Api-Key"]
-    svc["Internal service — X-Internal-Token"]
+    web["Browser — portals :3001/:3002<br/>(OIDC + PKCE, httpOnly session)"]
+    apic["Server / CI — X-Api-Key"]
+    curl["curl / Postman — Bearer JWT"]
   end
 
-  subgraph EDGE["API GATEWAY — reactive / WebFlux"]
+  kc["KEYCLOAK :28081<br/>realm smsone · KC organizations · JWKS<br/>login+email theme · BRAND_NAME"]
+
+  subgraph EDGE["API GATEWAY — reactive :28090 · admin :29090"]
     direction TB
-    pipe["Pipeline: request-id → trace → access-log → lifecycle → auth → quota → plugins → routing"]
-    traffic["Traffic: rate-limit · timeout · circuit-breaker · retries · cache · load-balance · compress"]
-    xform["Transform + Security: rewrite · strip Authorization · JWT/JWKS · API-key introspection · internal tokens"]
-    adm["Admin @ :29090: route table · product catalog · OpenAPI · Prometheus"]
-    pipe --- traffic --- xform --- adm
+    auth["authorize: JWT via JWKS · API-key introspection"]
+    shape["shape: quota (fixed window) · rate limit (token bucket)<br/>timeout 15s · body cap 10MB · lifecycle 410/Sunset"]
+    resil["protect: circuit breaker (R4j) · retries (GET) · edge cache (tenant-keyed)"]
+    lb["load balance: Spring Cloud LoadBalancer → service instances"]
+    auth --> shape --> resil --> lb
   end
 
-  subgraph PLATFORM["PLATFORM — Spring Modulith / servlet + JDBC — /api/v1"]
+  subgraph CORE["SPRING MODULITH :28080 — servlet + JDBC"]
     direction TB
-    subgraph IAM["Identity and Access"]
-      direction LR
-      identity["identity"]; access["access"]; apikeys["apikeys"]; profile["profile"]
-    end
-    subgraph TEN["Tenancy and Commercial"]
-      direction LR
-      organization["organization"]; subscription["subscription"]; billing["billing"]
-    end
-    subgraph COMM["Comms and Events"]
-      direction LR
-      notification["notification"]; webhooks["webhooks"]
-    end
-    subgraph DATA["Data movement"]
-      direction LR
-      exchange["exchange"]; files["files"]; document["document"]; search["search"]
-    end
-    subgraph GOV["Ops and Governance"]
-      direction LR
-      audit["audit"]; compliance["compliance"]; maintenance["maintenance"]; scheduler["scheduler"]; analytics["analytics"]; support["support"]; settings["settings"]; integration["integration"]; localization["localization"]
-    end
-    shared["shared kernel: JSON:API envelope · security context · persistence · AuditLog port"]
+    chain["filter chain −100…5: security → impersonation → MDC →<br/>rate limit → idempotency → provisioning gate → org policy →<br/>maintenance → subscription access"]
+    modules["23 modules · ArchUnit-enforced boundaries · shared kernel ports"]
+    outbox["event publication registry (outbox, same TX)"]
+    chain --> modules --> outbox
   end
 
-  subgraph INFRA["INFRASTRUCTURE"]
+  subgraph ASYNC["ASYNC CONSUMERS — @ApplicationModuleListener"]
     direction LR
-    pg[("Postgres")]; kc[("Keycloak")]; vk[("Valkey")]; sw[("SeaweedFS")]; mp[("Mailpit / SMTP")]; kb[("Kill Bill")]; otel[("otel-lgtm")]
+    wh["webhook dispatcher<br/>HMAC · backoff · DLQ"]
+    ex["exchange workers<br/>resumable batches"]
+    bill["billing listeners<br/>KB account · trial"]
+    idx["search indexer · notifications"]
   end
 
-  web --> EDGE
-  mob --> EDGE
-  apic --> EDGE
-  svc --> EDGE
-  EDGE ==>|"proxy /api/v1/** (+X-Auth-Subject, X-Tenant-Id, traceparent)"| PLATFORM
-  EDGE -.->|"introspect · audit · quota (gateway-secret seams)"| PLATFORM
-  EDGE -.->|JWKS| kc
-  EDGE -.->|"rate-limit + quota counters"| vk
-  PLATFORM ==> pg
-  identity -.-> kc
-  files -.-> sw
-  notification -.-> mp
-  billing -.-> kb
-  PLATFORM -.-> vk
-  PLATFORM -.-> otel
+  recv["Webhook receivers (customer endpoints)"]
+
+  subgraph STORES["DATA PLANE"]
+    direction LR
+    pg[("Postgres 18<br/>records + outbox + FTS")]
+    vk[("Valkey 8<br/>L2 cache · buckets · windows · idempotency")]
+    sw[("SeaweedFS<br/>S3 objects")]
+    kb[("Kill Bill + MariaDB<br/>invoices · payments")]
+    duck[("DuckDB<br/>embedded analytics mart")]
+  end
+
+  otel["OBSERVABILITY — otel-lgtm :23000<br/>OTLP :24317 · Grafana · Prometheus scrape"]
+
+  CLIENTS --> EDGE
+  web -. "login redirect" .-> kc
+  kc -. "JWKS" .-> EDGE
+  kc -. "JWKS + admin API" .-> CORE
+  EDGE -- "proxy /api/v1/**" --> CORE
+  EDGE -. "seams: introspect · audit · quota<br/>(shared GATEWAY_SECRET)" .-> CORE
+  CORE --> ASYNC
+  wh --> recv
+  bill --> kb
+  CORE --> pg & vk & sw & duck
+  EDGE --> vk
+  kb -. "push notifications → /billing/killbill/notifications" .-> CORE
   EDGE -.-> otel
-
-  classDef client fill:#171334,stroke:#6d5bd0,color:#cbbcff;
-  classDef edge fill:#0f2140,stroke:#3f74d8,color:#bcd6ff;
-  classDef core fill:#0a2b24,stroke:#249e7a,color:#8fe8cf;
-  classDef infra fill:#2a2410,stroke:#b58b3a,color:#f0cf8c;
-  class web,mob,apic,svc client;
-  class pipe,cap,adm edge;
-  class identity,access,apikeys,profile,organization,subscription,billing,notification,webhooks,exchange,files,document,search,audit,compliance,maintenance,scheduler,analytics,support,settings,integration,localization,shared core;
-  class pg,kc,vk,sw,mp,kb,otel infra;
+  CORE -.-> otel
       </pre>
-    </div>
-    <div class="legend">
-      <span class="item"><span class="swatch client"></span> Clients</span>
-      <span class="item"><span class="swatch edge"></span> Gateway (edge)</span>
-      <span class="item"><span class="swatch core"></span> Modulith module</span>
-      <span class="item"><span class="swatch infra"></span> Infrastructure</span>
-      <span class="item"><span class="dash">══</span> proxied API traffic</span>
-      <span class="item"><span class="dash">┈┈</span> control / async seam</span>
     </div>
   </section>
 
+  <!-- ============================================================ 02 -->
   <section>
-    <div class="sec-head"><span class="sec-num">02</span><h2>One request, end to end</h2></div>
-    <p class="sec-sub">Coarse authorization at the edge, fine-grained <code class="mono">hasPermission</code> in the service — defense in depth. The gateway holds no tenant state; it stamps identity and forwards.</p>
-    <div class="diagram seq">
+    <div class="sec-head"><span class="sec-num">02</span><h2>The edge pipeline — every stage, in execution order</h2></div>
+    <p class="sec-sub">One request through the gateway. Left: the filter and its global order. Right: how it
+      fails and what backs it. Everything above routing runs for every request; the traffic stages apply
+      per-route from its <code>TrafficPolicy</code>.</p>
+    <div class="chain">
+      <div class="stagebox"><span class="ord">global</span>
+        <span class="what"><b>Request identity &amp; trace</b> — mints <code>gw-&lt;uuid&gt;</code> request id + W3C <code>traceparent</code>; both propagate to the backend and every log line.</span>
+        <span class="fail"><span class="pill">headers</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox"><span class="ord">+10</span>
+        <span class="what"><b>EdgeAuthorization</b> — Bearer JWTs validated against Keycloak's <b>JWKS</b> (cached, no IdP round-trip); <code>X-Api-Key</code> resolved via the modulith introspection seam. Enforces the route's <code>AuthPolicy</code>: authenticated · required scopes · tenant-path template (path tenant must equal token tenant). Denials → security log + edge-audit seam.</span>
+        <span class="fail"><span class="pill bad">401 / 403</span><span class="pill store">JWKS · seam</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox"><span class="ord">+15</span>
+        <span class="what"><b>Plan quota</b> — <b>fixed-window counter</b>: <code>INCR gwquota:&lt;tenant&gt;</code> + <code>EXPIRE</code> on first hit of the window; ceiling = the org's <code>api.requests.per_minute</code> entitlement fetched through the quota seam. The commercial ceiling, distinct from the burst limiter below. Read live by <code>gatewayusage</code>.</span>
+        <span class="fail"><span class="pill bad">429</span><span class="pill store">Valkey</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox"><span class="ord">+20</span>
+        <span class="what"><b>Plugins</b> — the extensibility seam: ordered custom filters registered by plugin modules.</span>
+        <span class="fail"><span class="pill">extension</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox"><span class="ord">route</span>
+        <span class="what"><b>Route match</b> — <code>RouteCatalog</code>: two tiers in one table — YAML-seeded (durable, git-reviewed) + runtime-registered via <code>gatewayroutes</code> (instant, survives until restart). Most-specific wins by ascending <code>order</code>; 8 API products; <code>platform-api</code> catch-all keeps ungrouped paths working.</span>
+        <span class="fail"><span class="pill bad">404</span><span class="pill">in-memory map</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox"><span class="ord">traffic</span>
+        <span class="what"><b>Rate limiter — token bucket</b> (SCG <code>RedisRateLimiter</code>): replenish <b>20 tokens/s</b>, burst <b>40</b>, per caller — key falls back <code>principal → tenant → IP</code>. Draft-IETF <code>RateLimit-*</code> headers on every response; a denial adds <code>Retry-After</code>. The burst guard, distinct from the plan quota above.</span>
+        <span class="fail"><span class="pill bad">429</span><span class="pill store">Valkey</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox"><span class="ord">traffic</span>
+        <span class="what"><b>Body cap &amp; response timeout</b> — requests over <b>10&nbsp;MB</b> refused; a backend slower than <b>15&nbsp;s</b> fails fast (per-route <code>edge-api</code> policy values).</span>
+        <span class="fail"><span class="pill bad">413 / 504</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox"><span class="ord">lifecycle</span>
+        <span class="what"><b>Lifecycle enforcement</b> — <code>DEPRECATED</code> still serves but stamps <code>Deprecation</code> + <code>Sunset</code> headers; <code>RETIRED</code> never reaches the backend. The dev portal's changelog renders this table live.</span>
+        <span class="fail"><span class="pill bad">410 Gone</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox"><span class="ord">cache</span>
+        <span class="what"><b>Edge response cache</b> — SCG <code>LocalResponseCache</code> (in-process), GETs only, per-route TTL; the stock URI+cookie key is replaced by a <b>tenant-aware</b> <code>@Primary CacheKeyGenerator</code> so tenants can never read each other's cached responses.</span>
+        <span class="fail"><span class="pill ok">hit → no proxy</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox"><span class="ord">resilience</span>
+        <span class="what"><b>Circuit breaker</b> — Resilience4j per route: sliding window <b>4 calls</b>, trip at <b>≥50% failures</b>, OPEN holds <b>1s</b> then HALF-OPEN probes; while open, the fallback controller answers instead of the backend. <b>Retries</b>: idempotent <b>GETs only</b>, on 5xx — a write is never replayed.</span>
+        <span class="fail"><span class="pill bad">503 fallback</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox"><span class="ord">balance</span>
+        <span class="what"><b>Load balancer</b> — Spring Cloud LoadBalancer (<code>lb://</code> via a registry-backed reactive discovery client): round-robin across each service's instances from the service registry; per-service <code>health-path</code> (<code>/actuator/health</code>). One backend today — the seam is where the modulith splits later.</span>
+        <span class="fail"><span class="pill">round-robin</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox"><span class="ord">egress</span>
+        <span class="what"><b>Proxy → backend</b> — response flows back through <b>gzip compression</b> and the separable log streams (<code>access</code> · <code>security</code> · <code>error</code>); OTel span + Prometheus counters close out.</span>
+        <span class="fail"><span class="pill ok">200…</span></span></div>
+    </div>
+    <p class="sec-sub" style="margin-top:14px">Admin plane (<code>:29090</code>, never routed publicly):
+      <code>gatewayroutes</code> (CRUD + lifecycle + auth/rate flags) · <code>gatewaycatalog</code> ·
+      <code>gatewayopenapi</code> · <code>gatewayusage</code> · Prometheus. Optional credential: set
+      <code>GATEWAY_ADMIN_TOKEN</code> and every call must carry <code>X-Admin-Token</code> (constant-time
+      compare; <code>/actuator/health</code> stays open for probes).</p>
+  </section>
+
+  <!-- ============================================================ 03 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>Traffic infrastructure — the small print</h2></div>
+    <p class="sec-sub">The two limiters are different algorithms with different jobs, and the resilience trio
+      protects the backend, not the caller.</p>
+    <div class="grid">
+      <div class="card c-edge"><h3>Token bucket — burst guard</h3><span class="tag">edge rate limiter</span>
+        <table class="kv">
+          <tr><td>algorithm</td><td>token bucket (SCG RedisRateLimiter, Lua on Valkey — atomic across gateway instances)</td></tr>
+          <tr><td>refill / burst</td><td>20 tokens/s · burst 40 (<code>GATEWAY_RATE_REPLENISH/BURST</code>)</td></tr>
+          <tr><td>key</td><td>principal → tenant → client IP (first available)</td></tr>
+          <tr><td>surface</td><td><code>RateLimit-Policy</code>/<code>RateLimit</code> headers · 429 + <code>Retry-After</code></td></tr>
+          <tr><td>job</td><td>absorb bursts fairly; protect the backend second-to-second</td></tr>
+        </table></div>
+      <div class="card c-edge"><h3>Fixed window — plan ceiling</h3><span class="tag">consumer quota</span>
+        <table class="kv">
+          <tr><td>algorithm</td><td>fixed-window counter — <code>INCR</code> + <code>EXPIRE</code>(window) on first hit</td></tr>
+          <tr><td>key</td><td><code>gwquota:&lt;tenant&gt;</code> on Valkey</td></tr>
+          <tr><td>ceiling</td><td>the org's plan entitlement (<code>api.requests.per_minute</code>) via the quota seam — upgrade the plan to raise it</td></tr>
+          <tr><td>visibility</td><td><code>gatewayusage</code> endpoint → portal Usage &amp; Consumers pages read the same counter</td></tr>
+          <tr><td>job</td><td>the commercial ceiling per subscription window</td></tr>
+        </table></div>
+      <div class="card c-edge"><h3>Circuit breaker</h3><span class="tag">resilience4j · per route</span>
+        <table class="kv">
+          <tr><td>window</td><td>COUNT_BASED, last 4 calls</td></tr>
+          <tr><td>trip</td><td>≥ 50% failures → <b>OPEN</b></td></tr>
+          <tr><td>recover</td><td>OPEN 1s → HALF-OPEN probe → CLOSED on success</td></tr>
+          <tr><td>while open</td><td>fallback controller answers 503 — the backend is left alone to recover</td></tr>
+          <tr><td>partner</td><td>retries: GET-only, on 5xx, per-route count — never a write</td></tr>
+        </table></div>
+      <div class="card c-edge"><h3>Load balancing &amp; discovery</h3><span class="tag">spring cloud loadbalancer</span>
+        <table class="kv">
+          <tr><td>strategy</td><td>round-robin across a service's instances</td></tr>
+          <tr><td>source</td><td>service registry (YAML instances) exposed through a reactive discovery client → <code>lb://&lt;serviceId&gt;</code></td></tr>
+          <tr><td>health</td><td>per-service <code>health-path</code> — <code>/actuator/health</code></td></tr>
+          <tr><td>today</td><td>one service (<code>modulith</code>) — the split seam is already load-balanced</td></tr>
+        </table></div>
+      <div class="card c-edge"><h3>Edge response cache</h3><span class="tag">scg localresponsecache</span>
+        <table class="kv">
+          <tr><td>store</td><td>in-process (per gateway instance)</td></tr>
+          <tr><td>scope</td><td>GETs · per-route TTL (<code>cacheTtlSeconds</code>)</td></tr>
+          <tr><td>key</td><td>tenant-aware <code>@Primary CacheKeyGenerator</code> — URI + <b>caller tenant</b>, replacing the stock URI+cookies key</td></tr>
+          <tr><td>why</td><td>cross-tenant cache bleed is impossible by key construction</td></tr>
+        </table></div>
+      <div class="card c-edge"><h3>Caps, timeout, compression</h3><span class="tag">edge-api policy</span>
+        <table class="kv">
+          <tr><td>request body</td><td>max 10 MB → 413</td></tr>
+          <tr><td>response timeout</td><td>15 s → 504 (fail a slow backend fast)</td></tr>
+          <tr><td>compression</td><td>gzip on responses</td></tr>
+          <tr><td>per-route</td><td>every value overridable per route; named policy <code>edge-api</code> is the shared default</td></tr>
+        </table></div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 04 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h2>Inside the modulith — the request chain, exact order</h2></div>
+    <p class="sec-sub">The gateway already authenticated the token; the modulith re-validates it (defense in
+      depth) and then runs its own ordered servlet chain — each filter one concern, each with a named
+      refusal.</p>
+    <div class="chain">
+      <div class="stagebox core"><span class="ord">MAX_PREC</span>
+        <span class="what"><b>RequestId</b> — adopts the gateway's <code>gw-…</code> id (or mints one); it becomes <code>meta.requestId</code> in every envelope.</span>
+        <span class="fail"><span class="pill">headers</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox core"><span class="ord">−100</span>
+        <span class="what"><b>Security chain</b> — JWT resource server (Keycloak issuer, audience <code>smsone-api</code>); identity keys on the <b>subject</b>, never the username; realm roles expand through the hierarchy (superadmin → admin → support).</span>
+        <span class="fail"><span class="pill bad">401</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox core"><span class="ord">−2</span>
+        <span class="what"><b>Impersonation</b> — <code>X-Impersonate: &lt;session&gt;</code> swaps the effective principal; session validity re-checked <b>every request</b>; audit rows name the operator with <code>onBehalfOf</code>.</span>
+        <span class="fail"><span class="pill bad">403</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox core"><span class="ord">−1</span>
+        <span class="what"><b>Org MDC</b> — stamps the <em>effective</em> org/tenant into the log context, so even a 429 two steps later is attributed.</span>
+        <span class="fail"><span class="pill">logging</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox core"><span class="ord">0</span>
+        <span class="what"><b>App rate limit</b> — <b>distributed window counters on Valkey</b>, tenant-scoped keys, split policies: reads <b>600/min</b>, writes <b>60/min</b> (defaults). Second line behind the edge bucket — protects the DB tier even from inside traffic.</span>
+        <span class="fail"><span class="pill bad">429</span><span class="pill store">Valkey</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox core"><span class="ord">1</span>
+        <span class="what"><b>Idempotency</b> — <code>Idempotency-Key</code> replays the stored response for same principal+key+body (24 h); same key, different body refuses. A replay still spends a rate-limit token (order 0 first) on purpose.</span>
+        <span class="fail"><span class="pill bad">409</span><span class="pill store">Valkey</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox core"><span class="ord">2</span>
+        <span class="what"><b>Provisioning gate</b> — no-JIT: a valid JWT alone is not access; the subject needs an <code>app_user</code> row. <code>GET /api/v1/me</code> is the one exception so onboarding is visible.</span>
+        <span class="fail"><span class="pill bad">403 NOT_PROVISIONED</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox core"><span class="ord">3</span>
+        <span class="what"><b>Org security policy</b> — the tenant's own tightening: IP allowlist (CIDR), trusted-device requirement (<code>X-Device-Id</code>), session max-age. Refusals name the rule; the policy endpoints themselves are always reachable (no lockout).</span>
+        <span class="fail"><span class="pill bad">403 (named rule)</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox core"><span class="ord">4</span>
+        <span class="what"><b>Maintenance</b> — during a <code>RESTRICT</code> window the org's writes answer 503 + <code>Retry-After</code>; reads pass; <code>ANNOUNCE</code> is banner-only.</span>
+        <span class="fail"><span class="pill bad">503</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox core"><span class="ord">5</span>
+        <span class="what"><b>Subscription access</b> — a <code>PAUSED</code> subscription (lapsed trial) makes the org read-only: org-scoped writes refuse, the billing surface stays open as the pay-to-recover path.</span>
+        <span class="fail"><span class="pill bad">402 PAUSED</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox core"><span class="ord">ctrl</span>
+        <span class="what"><b>Controller</b> — <code>@PreAuthorize hasPermission(orgId, 'organization', '&lt;perm&gt;')</code> fine-grained RBAC (permission union of role + groups, cached), entitlement gates with upgrade-shaped 403s, then the service layer. Every response: one JSON:API envelope, <code>data</code> ⊻ <code>errors</code>, always <code>meta.requestId</code>.</span>
+        <span class="fail"><span class="pill ok">envelope</span></span></div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 05 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">05</span><h2>The 23 modules</h2></div>
+    <p class="sec-sub">One deployable, hard internal boundaries: <code>internal</code> packages are
+      inaccessible across modules (ArchUnit + ModularityTests fail the build), cross-module calls go through
+      shared-kernel <b>ports</b> (<code>Entitlements</code>, <code>OrgAuthorization</code>, <code>LegalHolds</code>,
+      <code>PlatformAdmins</code>, <code>Subscriptions</code>, <code>AuditLog</code>, <code>UserProvisioning</code>…)
+      or <b>events</b>.</p>
+    <div class="diagram">
       <pre class="mermaid">
-%%{init: {'theme':'base','themeVariables':{
-  'background':'transparent','fontFamily':'ui-sans-serif, system-ui, sans-serif','fontSize':'13px',
-  'actorBkg':'#12203a','actorBorder':'#3f74d8','actorTextColor':'#dde7f7','signalColor':'#8496b6',
-  'signalTextColor':'#aeb9d0','noteBkgColor':'#0c1424','noteBorderColor':'#22304c','noteTextColor':'#8fe8cf',
-  'sequenceNumberColor':'#080d18','lineColor':'#3a4d74','labelBoxBkgColor':'#0c1424','labelTextColor':'#dde7f7'
-}}}%%
-sequenceDiagram
-  autonumber
-  actor C as Client
-  participant G as Gateway :28090
-  participant K as Keycloak
-  participant V as Valkey
-  participant M as Modulith :28080
-  participant D as Postgres
-  C->>G: GET /api/v1/orgs/{id}/…  (Bearer JWT)
-  Note over G: mint request-id + W3C traceparent
-  G->>K: validate JWT against JWKS (cached)
-  G->>G: coarse authZ — authenticated? tenant? scope?
-  G->>V: quota INCR (per-consumer window)
-  Note over G: lifecycle check + request transforms
-  G->>M: proxy /api/v1/…  (+ X-Auth-Subject, X-Tenant-Id, traceparent)
-  M->>M: fine-grained hasPermission (defense in depth)
-  M->>D: read / write — scoped to one tenant
-  D-->>M: rows
-  M-->>G: JSON:API envelope (meta.requestId)
-  G-->>C: response (+ X-Request-Id, X-Trace-Id)
-  Note over G,M: on denial → async edge audit event (gateway-secret seam)
+flowchart TB
+  subgraph IAM["Identity &amp; Access"]
+    direction LR
+    identity; access; apikeys; profile
+  end
+  subgraph TEN["Tenancy &amp; Commercial"]
+    direction LR
+    organization; subscription; billing; support; maintenance
+  end
+  subgraph DATA["Content &amp; Data movement"]
+    direction LR
+    files; document; exchange; search
+  end
+  subgraph COMM["Comms &amp; Events"]
+    direction LR
+    notification; webhooks; localization
+  end
+  subgraph GOV["Ops &amp; Governance"]
+    direction LR
+    audit; compliance; settings; integration; analytics; scheduler
+  end
+  shared["shared kernel — envelope · errors · security context · cursor paging · idempotency · rate limit · two-level cache · ports"]
+  IAM --- TEN --- DATA --- COMM --- GOV --- shared
       </pre>
     </div>
-  </section>
-
-  <section>
-    <div class="sec-head"><span class="sec-num">03</span><h2>The edge, phase by phase</h2></div>
-    <p class="sec-sub">Seven shipped phases. Each route opts into what it needs by configuration — predicates, auth, traffic, transform, lifecycle, product — with no code.</p>
-    <div class="grid">
-      <div class="card c-edge"><h3>1 · Core</h3><span class="tag">routing</span><ul>
-        <li>Predicate routing (path/host/header/method/query), reverse proxy</li>
-        <li>Request-id + one <b>error envelope</b> for edge failures</li>
+    <div class="grid" style="margin-top:12px">
+      <div class="card c-core"><h3>Rules that fail the build</h3><span class="tag">AGENTS §1</span><ul>
+        <li>Module boundaries — <b>ArchUnit + ModularityTests</b></li>
+        <li>Envelope + <code>meta.requestId</code> on every response</li>
+        <li>Keyset cursor paging only — no offsets, no totals</li>
+        <li>Subject-not-username identity; constructor injection; no Lombok</li>
       </ul></div>
-      <div class="card c-edge"><h3>2 · Security</h3><span class="tag">who are you</span><ul>
-        <li>Bearer <b>JWT</b> validated against Keycloak <code>JWKS</code> — no platform call</li>
-        <li>Coarse authZ; <b>API-key introspection</b> + internal service tokens</li>
+      <div class="card c-core"><h3>Gateway ⇢ platform seams</h3><span class="tag">@Hidden · GATEWAY_SECRET</span><ul>
+        <li><code>/internal/gateway/api-key/introspect</code> → ApiKeyAuthenticator</li>
+        <li><code>/internal/gateway/audit</code> → AuditLog.recordExternal</li>
+        <li><code>/internal/gateway/quota</code> → Entitlements.limitOf</li>
       </ul></div>
-      <div class="card c-edge"><h3>3 · Traffic</h3><span class="tag">protect &amp; shape</span><ul>
-        <li>Rate-limit · timeout · request-size · <b>circuit-breaker</b> · retries</li>
-        <li><b>Tenant-safe cache</b>, load-balancing, gzip compression</li>
-      </ul></div>
-      <div class="card c-edge"><h3>4 · Observability</h3><span class="tag">measure</span><ul>
-        <li>Prometheus metrics; W3C <b>trace propagation</b> gateway→service</li>
-        <li>Separable access / security / error log streams; <b>edge audit sink</b></li>
-      </ul></div>
-      <div class="card c-edge"><h3>5 · Extensibility</h3><span class="tag">program it</span><ul>
-        <li>Request/response <b>transforms</b>; a <b>plugin framework</b></li>
-        <li>Dynamic routes (no restart); WebSocket; named reusable policies</li>
-      </ul></div>
-      <div class="card c-edge"><h3>6 · Administration</h3><span class="tag">operate</span><ul>
-        <li>Admin API on a <b>separate port</b>; per-consumer <b>quotas from the plan</b></li>
-        <li>API-key rotation; service discovery auto-registers a backend</li>
-      </ul></div>
-      <div class="card c-edge"><h3>7 · Enterprise</h3><span class="tag">API management</span><ul>
-        <li><b>Lifecycle</b> (published/deprecated→Sunset/retired→410) + versioning</li>
-        <li>API <b>products</b>, catalog, and published <b>OpenAPI</b></li>
+      <div class="card c-core"><h3>Tests run on real infra</h3><span class="tag">testcontainers</span><ul>
+        <li>Postgres · Keycloak · Valkey · SeaweedFS · Kill Bill containers</li>
+        <li>No H2, no infrastructure mocks — what passes behaves in compose</li>
       </ul></div>
     </div>
   </section>
 
+  <!-- ============================================================ 06 -->
   <section>
-    <div class="sec-head"><span class="sec-num">04</span><h2>The pipeline order</h2></div>
-    <p class="sec-sub">Global filters run in this order for every request; a retired version 410s before auth, and quota is metered after identity is known.</p>
-    <div class="pipeline">
-      <span class="stage">request-id <small>+0</small></span><span class="arrow">→</span>
-      <span class="stage">trace <small>+1</small></span><span class="arrow">→</span>
-      <span class="stage">access-log <small>+2</small></span><span class="arrow">→</span>
-      <span class="stage">lifecycle <small>+5</small></span><span class="arrow">→</span>
-      <span class="stage">auth <small>+10</small></span><span class="arrow">→</span>
-      <span class="stage">quota <small>+15</small></span><span class="arrow">→</span>
-      <span class="stage">plugins <small>+20</small></span><span class="arrow">→</span>
-      <span class="stage">routing <small>proxy</small></span>
+    <div class="sec-head"><span class="sec-num">06</span><h2>Async plane — outbox, listeners, jobs</h2></div>
+    <p class="sec-sub">State change and event publication commit in the <b>same transaction</b> (Spring
+      Modulith's JDBC event publication registry — a transactional outbox in Postgres). Listeners run after
+      commit, async, each in its own transaction; an incomplete publication is re-delivered, so a consumer
+      outage defers work instead of losing it.</p>
+    <div class="chain">
+      <div class="stagebox core"><span class="ord">TX</span>
+        <span class="what"><b>Write + publish atomically</b> — e.g. <code>OrganizationRegistered</code>, <code>SubscriptionChanged</code>, <code>MemberRemoved</code> land in <code>event_publication</code> with the domain rows.</span>
+        <span class="fail"><span class="pill store">Postgres</span></span></div>
+      <div class="connector">│▼ after commit, async, at-least-once</div>
+      <div class="stagebox"><span class="ord">consumer</span>
+        <span class="what"><b>Webhook dispatcher</b> — per-org subscriptions; payload signed <b>HMAC-SHA256</b> (<code>X-Webhook-Signature</code>); at-least-once with backoff → <b>dead-letter after max attempts (5)</b>; secrets AES-GCM at rest, full value shown once; delivery log per subscription; per-org retention override.</span>
+        <span class="fail"><span class="pill">→ customer endpoints</span></span></div>
+      <div class="stagebox"><span class="ord">consumer</span>
+        <span class="what"><b>Exchange workers</b> — imports/exports as jobs: batch-committed, <b>resumable after a crash from the last committed batch</b>, idempotent handlers (proven: 100k rows with a mid-run kill → exactly 100k effects); row-addressed error reports; cron schedules run <em>as</em> their owner.</span>
+        <span class="fail"><span class="pill store">S3 + Postgres</span></span></div>
+      <div class="stagebox"><span class="ord">consumer</span>
+        <span class="what"><b>Billing listeners</b> — on org registration: auto-provision the Kill Bill account (idempotent, race-safe) and start the trial-on-signup (PRO 30d, skipped if a plan was already assigned). Kill Bill pushes payment/subscription events back → reconcile into entitlements (the one write direction).</span>
+        <span class="fail"><span class="pill store">Kill Bill</span></span></div>
+      <div class="stagebox"><span class="ord">consumer</span>
+        <span class="what"><b>Search indexer · notifications</b> — projections into Postgres FTS; in-app + email/SMS sends resolved through the integration hub's effective provider (org override wins over platform default).</span>
+        <span class="fail"><span class="pill store">Postgres · SMTP</span></span></div>
+      <div class="connector">│ scheduled, cluster-locked</div>
+      <div class="stagebox"><span class="ord">jobs</span>
+        <span class="what"><b>Scheduler</b> — DB lock rows make every job single-flight across instances (observable at <code>/admin/scheduler/locks</code>): trial expiry (TRIALING → PAUSED), retention purges (webhook deliveries, exchange jobs, soft-deleted rows — per-org overrides honored, legal holds always skipped), billing reconcile.</span>
+        <span class="fail"><span class="pill store">Postgres locks</span></span></div>
     </div>
   </section>
 
+  <!-- ============================================================ 07 -->
   <section>
-    <div class="sec-head"><span class="sec-num">05</span><h2>The platform — 23 modules</h2></div>
-    <p class="sec-sub">One Spring Modulith deployable. Each module owns its data and exposes only its published ports; boundaries are enforced by <code class="mono">ModularityTests</code>.</p>
+    <div class="sec-head"><span class="sec-num">07</span><h2>Data &amp; caching plane — what lives where</h2></div>
+    <p class="sec-sub">Five stores, each with one job — plus a two-level cache in front of the hot reads.</p>
     <div class="grid">
-      <div class="card c-core"><h3>Identity &amp; Access</h3><span class="tag">who &amp; what they may do</span><ul>
-        <li><code>identity</code> — users, provisioning, Keycloak sync</li>
-        <li><code>access</code> — roles, permissions, org authorization</li>
-        <li><code>apikeys</code> — machine credentials (mint / rotate / revoke)</li>
-        <li><code>profile</code> — the caller's own record, devices, consent</li>
+      <div class="card c-infra"><h3>Postgres 18</h3><span class="tag">system of record</span><ul>
+        <li>Every module's tenant data (Flyway-migrated, one schema)</li>
+        <li><code>event_publication</code> — the transactional outbox</li>
+        <li>Full-text search: <code>websearch_to_tsquery</code> + <code>pg_trgm</code> typo fallback (p95 ~35ms @ 100k docs)</li>
+        <li>Soft deletes + nightly purge at retention (legal holds skip)</li>
+        <li>Scheduler lock rows — clustered single-flight jobs</li>
       </ul></div>
-      <div class="card c-core"><h3>Tenancy &amp; Commercial</h3><span class="tag">orgs &amp; money</span><ul>
-        <li><code>organization</code> — tenants, members, groups, lifecycle</li>
-        <li><code>subscription</code> — plans, entitlements, <b>edge quotas</b></li>
-        <li><code>billing</code> — invoices, proxied from Kill Bill</li>
+      <div class="card c-infra"><h3>Valkey 8</h3><span class="tag">shared fast state — key namespaces</span><ul>
+        <li><b>Edge token buckets</b> — SCG rate limiter (20/s, burst 40)</li>
+        <li><code>gwquota:&lt;tenant&gt;</code> — plan-quota fixed windows</li>
+        <li>App rate-limit windows — per-tenant read/write counters</li>
+        <li>Idempotency replay store — 24 h response snapshots</li>
+        <li><b>L2 cache</b> + pub/sub invalidation channel (below)</li>
       </ul></div>
-      <div class="card c-core"><h3>Comms &amp; Events</h3><span class="tag">reaching out</span><ul>
-        <li><code>notification</code> — in-app + email (SMTP)</li>
-        <li><code>webhooks</code> — signed, retried outbound event delivery</li>
+      <div class="card c-infra"><h3>SeaweedFS</h3><span class="tag">s3 object store</span><ul>
+        <li>Personal + org files, document catalogs</li>
+        <li>Exchange artifacts: uploads, results, row-error reports</li>
+        <li>Reads hand out <b>short-lived presigned URLs</b> (302) — bytes never proxy through the app</li>
       </ul></div>
-      <div class="card c-core"><h3>Data movement</h3><span class="tag">in &amp; out</span><ul>
-        <li><code>exchange</code> — background import/export jobs + schedules</li>
-        <li><code>files</code> — object storage (SeaweedFS), presign</li>
-        <li><code>document</code> · <code>search</code> — rendering &amp; lookup</li>
+      <div class="card c-infra"><h3>Kill Bill 0.24 + MariaDB</h3><span class="tag">billing engine · kaui :29095</span><ul>
+        <li><b>One KB tenant = the platform</b> (<code>smsone</code>); one KB <b>account per org</b> (externalKey = orgId)</li>
+        <li>Catalog plans <code>pro-monthly</code> / <code>enterprise-monthly</code>; subscriptions → invoices → payments</li>
+        <li>Push notifications → <code>/api/v1/billing/killbill/notifications</code> → reconcile standing (ACTIVE ↔ PAST_DUE) into entitlements</li>
+        <li>Payment methods via KB plugins — raw card data never touches the platform</li>
       </ul></div>
-      <div class="card c-core"><h3>Ops &amp; Governance</h3><span class="tag">running it safely</span><ul>
-        <li><code>audit</code> — append-only who/when/what trail</li>
-        <li><code>compliance</code> — legal holds, erasure (GDPR)</li>
-        <li><code>maintenance</code> · <code>scheduler</code> · <code>analytics</code></li>
-        <li><code>support</code> · <code>settings</code> · <code>integration</code> · <code>localization</code></li>
+      <div class="card c-infra"><h3>DuckDB (embedded)</h3><span class="tag">analytics mart</span><ul>
+        <li>In-process OLAP — a durable mart file shared by all in-process connections</li>
+        <li>Long refreshes run on their own connection so KPI reads never block</li>
+        <li>Curated report catalog surfaced at <code>/api/v1/analytics/reports</code></li>
       </ul></div>
-      <div class="card c-core"><h3>Shared kernel</h3><span class="tag">the spine</span><ul>
-        <li>JSON:API <b>envelope</b> + <code>meta.requestId</code> on every response</li>
-        <li>Security context, cursor pagination, persistence base</li>
-        <li>The <code>AuditLog</code> port every module records through</li>
+      <div class="card c-infra"><h3>Keycloak 26 (its own store)</h3><span class="tag">identity data</span><ul>
+        <li>Realm <code>smsone</code> imported at boot (displayName ← <code>BRAND_NAME</code>)</li>
+        <li>Users (pinned platform admin), KC <b>Organizations</b> per tenant, realm roles</li>
+        <li>Dev-mode store lives in-container — a recreate re-imports the realm</li>
+      </ul></div>
+    </div>
+
+    <p class="sec-sub" style="margin-top:18px"><b>The two-level cache</b> (shared kernel, backing entitlements,
+      permissions, settings…): L1 is per-node Caffeine, L2 is shared Valkey; a pub/sub invalidation channel
+      drops peer L1s on write; L2 failure degrades to L1-only (never an outage); striped locks bound the
+      stampede on cold keys.</p>
+    <div class="chain">
+      <div class="stagebox"><span class="ord">read</span>
+        <span class="what"><b>L1 Caffeine</b> (per node, ns access) → miss → <b>L2 Valkey</b> (shared; first node to load publishes, peers' cold reads hit L2 not the DB) → miss → <b>loader</b> (DB) under a striped lock → write-through L2 then L1.</span>
+        <span class="fail"><span class="pill ok">hit path</span></span></div>
+      <div class="stagebox"><span class="ord">write</span>
+        <span class="what"><b>Invalidate</b> — evict + publish on the invalidation channel → every other node drops its stale L1 entry; a plan change bites the very next gate check, not a TTL later.</span>
+        <span class="fail"><span class="pill store">pub/sub</span></span></div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 08 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">08</span><h2>Identity plane &amp; the two authority axes</h2></div>
+    <div class="grid">
+      <div class="card c-client"><h3>Keycloak :28081</h3><span class="tag">the idp</span><ul>
+        <li>Realm <code>smsone</code>; two-column <code>smsone</code> login + email theme; product name env-driven (<code>BRAND_NAME</code>)</li>
+        <li><code>smsone-web</code> — public client, <b>PKCE required</b>, localhost:* redirects, post-logout registered</li>
+        <li><code>smsone-admin</code> — service account (<code>manage-users</code> + <code>view-realm</code>) used by provisioning</li>
+        <li>KC <b>Organizations</b>: one per tenant → the token's <code>organization</code>/tenant claim</li>
+        <li>JWKS consumed twice: gateway (edge validation) and modulith (defense in depth)</li>
+      </ul></div>
+      <div class="card c-client"><h3>Two disjoint axes</h3><span class="tag">authorization model</span><ul>
+        <li><b>Platform</b>: realm roles, hierarchical — support → admin → superadmin; guards <code>/admin/**</code></li>
+        <li><b>Organization</b>: per-tenant permissions (<code>member:invite</code>…), role ∪ groups, escalation guard (grant only what you hold)</li>
+        <li>A platform role grants <b>zero</b> org permissions — crossing is impersonation, audited, TTL-bound</li>
+        <li>Machine access: org API keys = a <b>subset</b> of the minter's permissions, SHA-256 stored, prefix+secret shown once, rotation</li>
+      </ul></div>
+      <div class="card c-client"><h3>Portal sessions</h3><span class="tag">:3001 / :3002</span><ul>
+        <li>Edge middleware gate → OIDC code + PKCE → tokens in <b>httpOnly</b> cookies</li>
+        <li>Silent refresh in middleware; sign-out ends the KC session (post-logout redirect)</li>
+        <li>Try-it proxies server-side: session token attached out of the cookie — credentials never in page JS</li>
       </ul></div>
     </div>
   </section>
 
+  <!-- ============================================================ 09 -->
   <section>
-    <div class="sec-head"><span class="sec-num">06</span><h2>Infrastructure &amp; the seams</h2></div>
-    <p class="sec-sub">The gateway and the modulith share Valkey and the OTel collector; everything else the platform owns. The three control seams are thin HTTP endpoints, each backed by an existing platform port.</p>
+    <div class="sec-head"><span class="sec-num">09</span><h2>Observability</h2></div>
     <div class="grid">
-      <div class="card c-infra"><h3>Data &amp; identity</h3><span class="tag">stores</span><ul>
-        <li><code>Postgres</code> — every module's tenant data</li>
-        <li><code>Keycloak</code> — the IdP; issues JWTs, serves JWKS</li>
-        <li><code>Valkey</code> — cache, rate-limit &amp; quota counters (shared)</li>
+      <div class="card c-infra"><h3>otel-lgtm :23000</h3><span class="tag">grafana · tempo · loki · mimir</span><ul>
+        <li>OTLP gRPC <code>:24317</code> — traces + metrics + logs from gateway, modulith, and k6</li>
+        <li>Grafana folder <b>SMSOne</b>: platform counters (dead-letters, 429s, exchange throughput) + <b>k6 Load</b></li>
+        <li>Prometheus scrape: gateway + modulith <code>/actuator/prometheus</code></li>
       </ul></div>
-      <div class="card c-infra"><h3>Objects, mail &amp; billing</h3><span class="tag">services</span><ul>
-        <li><code>SeaweedFS</code> — S3-style object store for files</li>
-        <li><code>Mailpit / SMTP</code> — outbound email</li>
-        <li><code>Kill Bill</code> — subscription billing engine</li>
-        <li><code>otel-lgtm</code> — traces / metrics / logs collector</li>
+      <div class="card c-edge"><h3>Correlation, end to end</h3><span class="tag">one id everywhere</span><ul>
+        <li><code>gw-&lt;uuid&gt;</code> minted at the edge → <code>X-Request-Id</code> → <code>meta.requestId</code> in the envelope</li>
+        <li>W3C <code>traceparent</code> propagated; org/tenant stamped into MDC on every platform log line</li>
+        <li>Gateway log streams separable: <code>access</code> · <code>security</code> (auth denials) · <code>error</code></li>
       </ul></div>
-      <div class="card c-edge"><h3>Gateway ⇢ platform seams</h3><span class="tag">gateway-secret, @Hidden</span><ul>
-        <li><code>/internal/gateway/api-key/introspect</code> → <b>ApiKeyAuthenticator</b></li>
-        <li><code>/internal/gateway/audit</code> → <b>AuditLog.recordExternal</b></li>
-        <li><code>/internal/gateway/quota</code> → <b>Entitlements.limitOf</b></li>
+      <div class="card c-infra"><h3>Load &amp; verification</h3><span class="tag">k6 · testcontainers</span><ul>
+        <li>k6 suite in <code>perf/</code> (baseline · spike · stress · soak) — OTLP → the same Grafana</li>
+        <li>Single-box runs are 429-capped by design — enforcement working, not failure</li>
+        <li>The whole test suite runs against real containers; modularity is build-enforced</li>
       </ul></div>
     </div>
   </section>
 
   <footer>
-    <b>Boot 4.1 · Java 21 · Spring Modulith · Spring Cloud Gateway (reactive)</b><br/>
-    Hexagonal: the gateway core depends on neither Spring Cloud Gateway nor any platform module — enforced by an ArchUnit test.
-    Design: docs/GATEWAY_ARCHITECTURE.md · ADR 0007 · docs/GATEWAY_PLAN.md.
+    <b>Boot 4.1 · Java 21 · Spring Modulith · Spring Cloud Gateway (reactive) · Resilience4j · Spring Cloud LoadBalancer</b><br/>
+    Ports (dev 2xxxx scheme): api <b>:28080</b> · idp <b>:28081</b> · killbill <b>:28082</b> · edge <b>:28090</b> ·
+    gw-admin <b>:29090</b> · kaui <b>:29095</b> · s3 <b>:28333</b> · mailpit <b>:28025</b> · grafana <b>:23000</b> ·
+    otlp <b>:24317</b> · dev-portal <b>:3001</b> · admin-portal <b>:3002</b><br/>
+    Hexagonal: the gateway core depends on neither Spring Cloud Gateway nor any platform module — enforced by ArchUnit.
+    Design: docs/GATEWAY_ARCHITECTURE.md · ADR 0007 · docs/ARCHITECTURE.md.
   </footer>
 </div>
+
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-<script>mermaid.initialize({ startOnLoad: true, securityLevel: "loose" });</script>
+<script>
+(function () {
+  // Theme boot: stored choice > OS preference > dark (the poster default).
+  var stored = null;
+  try { stored = localStorage.getItem("smsone-doc-theme"); } catch (e) {}
+  var theme = stored || (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+  if (theme === "light") document.documentElement.setAttribute("data-theme", "light");
+
+  // Mermaid inlines colors into its SVG at render time, so pick them per theme here
+  // (and the toggle reloads the page to re-render — the one honest way with static SVG).
+  var dark = {
+    background: "transparent", fontFamily: "ui-sans-serif, system-ui, sans-serif", fontSize: "13px",
+    primaryColor: "#12203a", primaryTextColor: "#dde7f7", primaryBorderColor: "#2a3c5c",
+    lineColor: "#3a4d74", clusterBkg: "#0c1424", clusterBorder: "#22304c",
+    titleColor: "#8496b6", edgeLabelBackground: "#0c1424"
+  };
+  var light = {
+    background: "transparent", fontFamily: "ui-sans-serif, system-ui, sans-serif", fontSize: "13px",
+    primaryColor: "#e7edfd", primaryTextColor: "#14202e", primaryBorderColor: "#9fb2d0",
+    lineColor: "#8aa0c2", clusterBkg: "#f2f5fb", clusterBorder: "#ccd7e8",
+    titleColor: "#44586f", edgeLabelBackground: "#f2f5fb"
+  };
+  mermaid.initialize({ startOnLoad: true, securityLevel: "loose", theme: "base",
+    themeVariables: theme === "light" ? light : dark });
+
+  document.getElementById("themeToggle").addEventListener("click", function () {
+    var next = document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light";
+    try { localStorage.setItem("smsone-doc-theme", next); } catch (e) {}
+    location.reload();
+  });
+})();
+</script>
 </body>
 </html>
