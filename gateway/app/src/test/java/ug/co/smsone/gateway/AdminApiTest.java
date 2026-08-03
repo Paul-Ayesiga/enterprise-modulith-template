@@ -73,6 +73,48 @@ class AdminApiTest {
     }
 
     @Test
+    void updatesARouteInPlaceAndLifecyclePausesAndResumesTraffic() {
+        clientFor(adminPort).post().uri("/actuator/gatewayroutes")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("id", "admin-edited", "path", "/adminedited/**", "serviceId", "backend"))
+                .exchange()
+                .expectStatus().isOk();
+        assertThat(awaitStatus("/adminedited/x", 200)).as("the created route serves").isTrue();
+
+        // Edit in place: the path moves, the old one stops matching — no delete-and-recreate.
+        clientFor(adminPort).post().uri("/actuator/gatewayroutes/admin-edited")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("path", "/adminmoved/**", "order", 900))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody().jsonPath("$.status").isEqualTo("updated");
+        assertThat(awaitStatus("/adminmoved/x", 200)).as("the edited path serves").isTrue();
+        assertThat(awaitStatus("/adminedited/x", 404)).as("the old path no longer matches").isTrue();
+
+        // Pause = lifecycle RETIRED (the edge answers 410 Gone); resume = PUBLISHED serves again.
+        clientFor(adminPort).post().uri("/actuator/gatewayroutes/admin-edited")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("lifecycle", "RETIRED"))
+                .exchange()
+                .expectStatus().isOk();
+        assertThat(awaitStatus("/adminmoved/x", 410)).as("a RETIRED route pauses traffic").isTrue();
+
+        clientFor(adminPort).post().uri("/actuator/gatewayroutes/admin-edited")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("lifecycle", "PUBLISHED"))
+                .exchange()
+                .expectStatus().isOk();
+        assertThat(awaitStatus("/adminmoved/x", 200)).as("PUBLISHED resumes traffic").isTrue();
+
+        // The read reflects the edit (path/order/lifecycle now first-class row fields).
+        clientFor(adminPort).get().uri("/actuator/gatewayroutes").exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$[?(@.id == 'admin-edited' && @.order == 900 && @.lifecycle == 'PUBLISHED')]").exists()
+                .jsonPath("$[?(@.id == 'admin-edited' && @.path == '/adminmoved/**')]").exists();
+    }
+
+    @Test
     void adminApiIsNotReachableOnThePublicPort() {
         // Actuator (incl. the admin API) is bound to the management port only — the edge has no such route.
         clientFor(publicPort).get().uri("/actuator/gatewayroutes").exchange().expectStatus().isNotFound();
