@@ -49,6 +49,10 @@ public class SecurityConfig {
                         // Kill Bill's push notifications cannot do OAuth; the endpoint authenticates
                         // by the shared token in the registered callback URL (constant-time compare).
                         .requestMatchers("/api/v1/billing/killbill/notifications").permitAll()
+                        // Pesapal IPN + browser return: secretless by vendor design — handlers only
+                        // trigger a server-side re-query of the gateway, so a forged ping is inert.
+                        .requestMatchers("/api/v1/payments/pesapal/ipn",
+                                "/api/v1/payments/pesapal/callback").permitAll()
                         // The API gateway's key-introspection seam authenticates by the shared gateway
                         // secret (constant-time compare) inside the controller, not OAuth.
                         .requestMatchers("/internal/gateway/**").permitAll()

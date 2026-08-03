@@ -263,6 +263,21 @@ app:
     plan-mapping:
       PRO: ${BILLING_PLAN_PRO:pro-monthly}
       ENTERPRISE: ${BILLING_PLAN_ENTERPRISE:enterprise-monthly}
+  payments:
+    # Payment collection gateways. mode switches sandbox <-> live per gateway; nothing touches real
+    # money until a mode is explicitly 'live'. Pesapal sandbox defaults are Pesapal's PUBLISHED
+    # Ugandan demo merchant keys, so sandbox works out of the box; Yo! needs your API account.
+    pesapal:
+      mode: ${PESAPAL_MODE:sandbox}
+      consumer-key: ${PESAPAL_CONSUMER_KEY:}
+      consumer-secret: ${PESAPAL_CONSUMER_SECRET:}
+      callback-url: ${PESAPAL_CALLBACK_URL:http://localhost:28080/api/v1/payments/pesapal/callback}
+      ipn-url: ${PESAPAL_IPN_URL:http://localhost:28080/api/v1/payments/pesapal/ipn}
+      ipn-id: ${PESAPAL_IPN_ID:}
+    yo:
+      mode: ${YO_MODE:sandbox}
+      api-username: ${YO_API_USERNAME:}
+      api-password: ${YO_API_PASSWORD:}
   document:
     # Presigned-download lifetime: long enough to follow the 302, short enough not to be a durable
     # capability. Bytes never pass through the API.
