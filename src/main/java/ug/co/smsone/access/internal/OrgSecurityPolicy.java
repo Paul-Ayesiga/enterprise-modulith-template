@@ -27,6 +27,9 @@ class OrgSecurityPolicy extends SoftDeletableEntity {
     @Column(name = "session_max_age_seconds")
     private Long sessionMaxAgeSeconds;
 
+    @Column(name = "require_mfa", nullable = false)
+    private boolean requireMfa;
+
     protected OrgSecurityPolicy() {
         // JPA
     }
@@ -37,10 +40,12 @@ class OrgSecurityPolicy extends SoftDeletableEntity {
         return policy;
     }
 
-    void update(String ipAllowlist, boolean requireTrustedDevice, Long sessionMaxAgeSeconds) {
+    void update(String ipAllowlist, boolean requireTrustedDevice, Long sessionMaxAgeSeconds,
+            boolean requireMfa) {
         this.ipAllowlist = ipAllowlist;
         this.requireTrustedDevice = requireTrustedDevice;
         this.sessionMaxAgeSeconds = sessionMaxAgeSeconds;
+        this.requireMfa = requireMfa;
     }
 
     UUID getOrgId() {
@@ -57,5 +62,9 @@ class OrgSecurityPolicy extends SoftDeletableEntity {
 
     Long getSessionMaxAgeSeconds() {
         return sessionMaxAgeSeconds;
+    }
+
+    boolean isRequireMfa() {
+        return requireMfa;
     }
 }

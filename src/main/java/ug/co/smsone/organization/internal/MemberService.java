@@ -50,11 +50,13 @@ class MemberService {
     private final TransactionTemplate transactionTemplate;
     private final AuditLog auditLog;
     private final ug.co.smsone.subscription.Entitlements entitlements;
+    private final org.springframework.beans.factory.ObjectProvider<ug.co.smsone.access.OrgSecurityPolicies> securityPolicies;
 
     MemberService(MembershipRepository memberships, RoleRepository roles, UserProvisioning userProvisioning,
             KeycloakOrgAdminGateway keycloakOrg, ApplicationEventPublisher events,
             PermissionEscalationGuard escalationGuard, TransactionTemplate transactionTemplate,
-            AuditLog auditLog, ug.co.smsone.subscription.Entitlements entitlements) {
+            AuditLog auditLog, ug.co.smsone.subscription.Entitlements entitlements,
+            org.springframework.beans.factory.ObjectProvider<ug.co.smsone.access.OrgSecurityPolicies> securityPolicies) {
         this.memberships = memberships;
         this.roles = roles;
         this.userProvisioning = userProvisioning;
@@ -64,6 +66,7 @@ class MemberService {
         this.transactionTemplate = transactionTemplate;
         this.auditLog = auditLog;
         this.entitlements = entitlements;
+        this.securityPolicies = securityPolicies;
     }
 
     /** The id → code map the member listing renders with — see {@link RoleRepository#codesByOrgId}. */
@@ -100,7 +103,12 @@ class MemberService {
         // through saveMembership's idempotent return either way.
         entitlements.requireWithinLimit(orgId,
                 ug.co.smsone.subscription.EntitlementKeys.MEMBERS_MAX, memberships.countByOrgId(orgId));
-        ProvisionedUser provisioned = userProvisioning.provision(new ProvisionRequest(email, firstName, lastName));
+        // An org that requires MFA enrolls the invitee in TOTP on first login — the policy reaches
+        // the invite, not just the session check.
+        ug.co.smsone.access.OrgSecurityPolicies policies = securityPolicies.getIfAvailable();
+        boolean requireTotp = policies != null && policies.requiresMfa(orgId);
+        ProvisionedUser provisioned = userProvisioning.provision(
+                new ProvisionRequest(email, firstName, lastName, requireTotp));
         keycloakOrg.addMember(orgId, provisioned.subject());
         // Explicit template, not @Transactional: this is a self-invocation, which never reaches the
         // proxy — the same reason remove() opens its transaction this way.

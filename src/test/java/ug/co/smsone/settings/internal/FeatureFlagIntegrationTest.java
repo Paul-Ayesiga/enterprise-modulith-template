@@ -52,7 +52,7 @@ class FeatureFlagIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void evaluationIsCachedAndEvictedOnToggle() {
-        featureFlagService.set("cache.flag", true, null);
+        featureFlagService.set("cache.flag", true, null, null);
         assertThat(featureFlagService.isEnabled("cache.flag")).isTrue();
 
         // flip behind the cache's back: cached evaluation must keep winning
@@ -60,7 +60,7 @@ class FeatureFlagIntegrationTest extends AbstractIntegrationTest {
         assertThat(featureFlagService.isEnabled("cache.flag")).isTrue();
 
         // a toggle through the service evicts
-        featureFlagService.set("cache.flag", false, null);
+        featureFlagService.set("cache.flag", false, null, null);
         assertThat(featureFlagService.isEnabled("cache.flag")).isFalse();
     }
 

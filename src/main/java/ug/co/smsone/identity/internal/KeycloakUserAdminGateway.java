@@ -203,8 +203,10 @@ class KeycloakUserAdminGateway {
      * Invite via Keycloak's {@code execute-actions-email}: the user receives an action link to set
      * their password (the admin never sees a credential). This is the ONLY credential mode — a
      * server-generated temporary password had no delivery channel, which stranded accounts.
+     * {@code actions} carries the required actions the link executes — always UPDATE_PASSWORD and
+     * VERIFY_EMAIL, plus CONFIGURE_TOTP when the org's policy requires MFA.
      */
-    void issueTemporaryCredentials(String userId) {
+    void issueTemporaryCredentials(String userId, List<String> actions) {
         keycloakAdminRestClient.put()
                 .uri(uri -> {
                     var builder = uri.path("/users/{id}/execute-actions-email")
@@ -216,7 +218,7 @@ class KeycloakUserAdminGateway {
                     return builder.build(userId);
                 })
                 .contentType(MediaType.APPLICATION_JSON)
-                .body(List.of("UPDATE_PASSWORD", "VERIFY_EMAIL"))
+                .body(actions)
                 .retrieve()
                 .toBodilessEntity();
     }

@@ -32,18 +32,19 @@ class SecurityPolicyService {
     }
 
     @Transactional
-    OrgSecurityPolicy upsert(UUID orgId, String ipAllowlist, boolean requireTrustedDevice, Long sessionMaxAge) {
+    OrgSecurityPolicy upsert(UUID orgId, String ipAllowlist, boolean requireTrustedDevice, Long sessionMaxAge,
+            boolean requireMfa) {
         String cleaned = normalizeCidrs(ipAllowlist);
         if (sessionMaxAge != null && sessionMaxAge <= 0) {
             throw new ValidationException("sessionMaxAgeSeconds must be positive when set.",
                     ApiSource.pointer("/data/attributes/sessionMaxAgeSeconds"));
         }
         OrgSecurityPolicy policy = policies.findByOrgId(orgId).orElseGet(() -> OrgSecurityPolicy.of(orgId));
-        policy.update(cleaned, requireTrustedDevice, sessionMaxAge);
+        policy.update(cleaned, requireTrustedDevice, sessionMaxAge, requireMfa);
         OrgSecurityPolicy saved = policies.save(policy);
         auditLog.record("access.security_policy_updated", orgId, orgId.toString(), null,
                 "ipAllowlist=[" + (cleaned == null ? "" : cleaned) + "] trustedDevice=" + requireTrustedDevice
-                        + " sessionMaxAge=" + sessionMaxAge);
+                        + " sessionMaxAge=" + sessionMaxAge + " requireMfa=" + requireMfa);
         return saved;
     }
 

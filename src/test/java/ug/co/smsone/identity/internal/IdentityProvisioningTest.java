@@ -1,6 +1,8 @@
 package ug.co.smsone.identity.internal;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.never;
 import static org.mockito.BDDMockito.then;
@@ -49,7 +51,22 @@ class IdentityProvisioningTest extends AbstractIntegrationTest {
         assertThat(result.alreadyExisted()).isFalse();
         assertThat(users.findBySubject(subject)).get()
                 .extracting(User::getStatus).isEqualTo(ProvisioningStatus.INVITED);
-        then(keycloak).should().issueTemporaryCredentials(subject); // new users get an invite
+        then(keycloak).should().issueTemporaryCredentials(eq(subject),
+                eq(java.util.List.of("UPDATE_PASSWORD", "VERIFY_EMAIL"))); // new users get an invite
+    }
+
+    @Test
+    void requireTotpAddsConfigureTotpToTheInvite() {
+        String subject = "kc-" + UUID.randomUUID();
+        String email = subject + "@smsone.co.ug";
+        given(keycloak.findByEmail(email)).willReturn(Optional.empty());
+        given(keycloak.createUser(email, "Amina", "K")).willReturn(new KeycloakUser(subject, email));
+
+        provisioning.provision(new ProvisionRequest(email, "Amina", "K", true));
+
+        // The org's MFA policy reaches first login: the action link enrolls TOTP too.
+        then(keycloak).should().issueTemporaryCredentials(eq(subject),
+                eq(java.util.List.of("UPDATE_PASSWORD", "VERIFY_EMAIL", "CONFIGURE_TOTP")));
     }
 
     @Test
@@ -63,7 +80,7 @@ class IdentityProvisioningTest extends AbstractIntegrationTest {
 
         assertThat(result.alreadyExisted()).isFalse(); // no local row yet — this provisions it
         assertThat(users.findBySubject(subject)).isPresent();
-        then(keycloak).should(never()).issueTemporaryCredentials(subject); // never reset a real account
+        then(keycloak).should(never()).issueTemporaryCredentials(eq(subject), anyList()); // never reset a real account
     }
 
     @Test
@@ -80,7 +97,7 @@ class IdentityProvisioningTest extends AbstractIntegrationTest {
 
         assertThat(result.alreadyExisted()).isFalse();
         assertThat(users.findBySubject(subject)).isPresent();
-        then(keycloak).should().issueTemporaryCredentials(subject);
+        then(keycloak).should().issueTemporaryCredentials(eq(subject), anyList());
     }
 
     @Test
@@ -97,7 +114,7 @@ class IdentityProvisioningTest extends AbstractIntegrationTest {
 
         assertThat(again.alreadyExisted()).isTrue();
         assertThat(users.findAll().stream().filter(u -> subject.equals(u.getSubject()))).hasSize(1);
-        then(keycloak).should().issueTemporaryCredentials(subject); // exactly once, from the first call
+        then(keycloak).should().issueTemporaryCredentials(eq(subject), anyList()); // exactly once, from the first call
     }
 
     @Test

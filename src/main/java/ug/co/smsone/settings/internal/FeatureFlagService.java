@@ -19,11 +19,16 @@ public class FeatureFlagService {
     private static final Sort LIST_SORT = Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
 
     private final FeatureFlagRepository repository;
+    private final FeatureFlagOrgOverrideRepository overrides;
     private final AuditLog auditLog;
+    private final java.time.Clock clock;
 
-    public FeatureFlagService(FeatureFlagRepository repository, AuditLog auditLog) {
+    public FeatureFlagService(FeatureFlagRepository repository,
+            FeatureFlagOrgOverrideRepository overrides, AuditLog auditLog, java.time.Clock clock) {
         this.repository = repository;
+        this.overrides = overrides;
         this.auditLog = auditLog;
+        this.clock = clock;
     }
 
     /** Hot path for guarding features — unknown flags are OFF, never an error. */
@@ -45,8 +50,58 @@ public class FeatureFlagService {
                 q -> q.limit(page.size()).sortBy(LIST_SORT).scroll(page.scrollPosition(LIST_SORT)));
     }
 
+    /**
+     * Org-aware evaluation, deliberately UNCACHED (the global {@link #isEnabled} keeps the hot
+     * cache): a hard org override beats everything; otherwise a disabled flag is off for everyone;
+     * otherwise a percentage buckets deterministically per (flag, org) so an org's answer is sticky
+     * across requests and instances; no percentage = plain enabled.
+     */
+    @Transactional(readOnly = true)
+    public boolean isEnabledFor(String key, java.util.UUID orgId) {
+        var override = overrides.findByFlagKeyAndOrgId(key, orgId);
+        if (override.isPresent()) {
+            return override.get().isEnabled();
+        }
+        return repository.findByKey(key).map(flag -> {
+            if (!flag.isEnabled()) {
+                return false;
+            }
+            Integer percentage = flag.getPercentage();
+            if (percentage == null) {
+                return true;
+            }
+            return Math.floorMod((key + "|" + orgId).hashCode(), 100) < percentage;
+        }).orElse(false);
+    }
+
+    public FeatureFlagOrgOverride setOrgOverride(String key, java.util.UUID orgId, boolean enabled) {
+        require(key); // an override on a nonexistent flag is a typo, not a wish
+        FeatureFlagOrgOverride override = overrides.findByFlagKeyAndOrgId(key, orgId)
+                .map(existing -> {
+                    existing.set(enabled);
+                    return existing;
+                })
+                .orElseGet(() -> FeatureFlagOrgOverride.of(key, orgId, enabled, clock.instant()));
+        FeatureFlagOrgOverride saved = overrides.save(override);
+        auditLog.record("settings.feature_flag_org_override", orgId, key, null, String.valueOf(enabled));
+        return saved;
+    }
+
+    public void clearOrgOverride(String key, java.util.UUID orgId) {
+        overrides.findByFlagKeyAndOrgId(key, orgId).ifPresent(override -> {
+            overrides.delete(override);
+            auditLog.record("settings.feature_flag_org_override_cleared", orgId, key,
+                    String.valueOf(override.isEnabled()), null);
+        });
+    }
+
     @CacheEvict(cacheNames = FLAGS_CACHE, key = "#key")
-    public FeatureFlag set(String key, boolean enabled, String description) {
+    public FeatureFlag set(String key, boolean enabled, String description, Integer percentage) {
+        if (percentage != null && (percentage < 0 || percentage > 100)) {
+            throw new ug.co.smsone.shared.error.ValidationException(
+                    "percentage must be between 0 and 100.",
+                    ug.co.smsone.shared.web.ApiSource.pointer("/data/attributes/percentage"));
+        }
         var existing = repository.findByKey(key);
         Boolean previous = existing.map(FeatureFlag::isEnabled).orElse(null);
         FeatureFlag flag = existing
@@ -55,9 +110,11 @@ public class FeatureFlagService {
                     return current;
                 })
                 .orElseGet(() -> FeatureFlag.create(key, enabled, description));
+        flag.rollout(percentage);
         FeatureFlag saved = repository.save(flag);
         auditLog.record("settings.feature_flag_changed", null, key,
-                previous == null ? null : String.valueOf(previous), String.valueOf(enabled));
+                previous == null ? null : String.valueOf(previous), String.valueOf(enabled)
+                        + (percentage == null ? "" : " pct=" + percentage));
         return saved;
     }
 

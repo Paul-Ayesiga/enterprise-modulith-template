@@ -59,7 +59,9 @@ class UserProvisioningService implements UserProvisioning {
             // after the first invite attempt failed. A genuinely pre-existing account (has a
             // password) is never sent a forced credential-reset invite.
             if (!keycloak.hasCredentials(kcUser.id())) {
-                keycloak.issueTemporaryCredentials(kcUser.id());
+                keycloak.issueTemporaryCredentials(kcUser.id(), request.requireTotp()
+                        ? java.util.List.of("UPDATE_PASSWORD", "VERIFY_EMAIL", "CONFIGURE_TOTP")
+                        : java.util.List.of("UPDATE_PASSWORD", "VERIFY_EMAIL"));
             }
             // One transaction for the row and the audit record that explains it: separate commits
             // would let a crash leave an app_user no audit accounts for — and the idempotent retry

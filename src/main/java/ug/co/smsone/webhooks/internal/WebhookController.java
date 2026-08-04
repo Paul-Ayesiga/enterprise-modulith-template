@@ -102,6 +102,19 @@ class WebhookController {
         return toResource(updated, mask(updated.getSecret()));
     }
 
+    @PostMapping("/{id}/rotate-secret")
+    @Operation(summary = "Rotate the signing secret",
+            description = """
+                    Mints a replacement secret, returned in full exactly once — the old secret stops \
+                    verifying immediately. Deploy the new secret to your receiver BEFORE rotating, \
+                    or deliveries in between will fail signature checks (they retry with backoff, so \
+                    a quick swap loses nothing).""")
+    @PreAuthorize("hasPermission(#orgId, 'organization', 'webhook:manage')")
+    ResourceObject rotateSecret(@PathVariable UUID orgId, @PathVariable UUID id) {
+        WebhookSubscriptionService.CreatedSubscription rotated = service.rotateSecret(orgId, id);
+        return toResource(rotated.subscription(), rotated.plainSecret());
+    }
+
     @DeleteMapping("/{id}")
     @Operation(summary = "Delete a webhook subscription",
             description = """

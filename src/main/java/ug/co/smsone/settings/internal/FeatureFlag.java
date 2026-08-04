@@ -24,6 +24,10 @@ public class FeatureFlag extends SoftDeletableEntity {
     @Column(columnDefinition = "text")
     private String description;
 
+    /** Percentage rollout (0–100) while enabled; null = all-or-nothing. Bucketed per org, sticky. */
+    @Column
+    private Integer percentage;
+
     protected FeatureFlag() {
         // JPA
     }
@@ -37,6 +41,14 @@ public class FeatureFlag extends SoftDeletableEntity {
         flag.description = description;
         flag.registerEvent(new FeatureFlagChanged(key, enabled, Instant.now()));
         return flag;
+    }
+
+    public void rollout(Integer percentage) {
+        this.percentage = percentage;
+    }
+
+    public Integer getPercentage() {
+        return percentage;
     }
 
     public void toggle(boolean enabled, String description) {

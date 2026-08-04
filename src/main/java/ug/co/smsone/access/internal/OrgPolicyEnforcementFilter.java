@@ -32,6 +32,8 @@ import ug.co.smsone.shared.web.RequestPaths;
  * org — a mismatch is RBAC's 403 to give, not ours. A denial is a distinct 403 whose detail NAMES
  * the policy (IP allowlist / trusted device / session age) so it never reads as a permission bug,
  * and is counted. No policy row, or an absent field, means the platform default (open) applies.
+ * {@code require_mfa} holds human JWT sessions to a multi-factor {@code amr} claim; machine
+ * principals (API keys, impersonation exchanges) are exempt by construction.
  * The device fingerprint header doubles as the throttled last-seen stamp.
  */
 @Component
@@ -108,6 +110,9 @@ public class OrgPolicyEnforcementFilter extends OncePerRequestFilter {
                 return "session-max-age";
             }
         }
+        if (policy.isRequireMfa() && lacksMfa()) {
+            return "mfa";
+        }
         if (policy.isRequireTrustedDevice()) {
             String fingerprint = request.getHeader(DEVICE_HEADER);
             if (fingerprint == null || fingerprint.isBlank()
@@ -124,6 +129,22 @@ public class OrgPolicyEnforcementFilter extends OncePerRequestFilter {
             devices.stampLastSeen(caller.subject(), fingerprint.trim(),
                     clock.instant(), clock.instant().minus(TOUCH_THROTTLE));
         }
+    }
+
+    /**
+     * The token's {@code amr} claim (RFC 8176) must name a second factor. Only HUMAN sessions are
+     * held to it: an API key is a machine credential with no MFA to have, and an impersonated
+     * principal was minted by a platform admin whose own session already passed the platform's
+     * rules — both carry no JWT here and are exempt by construction.
+     */
+    private static boolean lacksMfa() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (!(authentication instanceof JwtAuthenticationToken jwt)) {
+            return false;
+        }
+        java.util.List<String> amr = jwt.getToken().getClaimAsStringList("amr");
+        return amr == null || amr.stream().map(String::toLowerCase)
+                .noneMatch(java.util.Set.of("otp", "totp", "mfa", "hwk", "webauthn", "swk")::contains);
     }
 
     private static Instant issuedAt() {
