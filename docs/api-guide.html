@@ -99,6 +99,10 @@
   th { background:var(--th-bg); font-size:.82rem; }
   .params th:first-child, .params td:first-child { font-family:ui-monospace,Menlo,monospace; white-space:nowrap; }
   .params td:nth-child(2), .params td:nth-child(3) { white-space:nowrap; color:var(--mut); }
+  /* Comparison tables hold prose, not short values — fixed layout so columns share the pane and wrap. */
+  table.compare { table-layout:fixed; }
+  table.compare th, table.compare td { white-space:normal; word-break:normal; overflow-wrap:anywhere; }
+  table.compare th:first-child, table.compare td:first-child { width:16%; color:var(--mut); font-size:.82rem; }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:.85rem 1.1rem; margin:.8rem 0; }
   .tip { border-left:4px solid var(--ok); background:linear-gradient(90deg,var(--ok-soft),var(--panel) 22%); }
   .warn { border-left:4px solid var(--warn); background:linear-gradient(90deg,var(--warn-soft),var(--panel) 22%); }
@@ -231,11 +235,11 @@ see your own onboarding status).</p>
 <p class="mut">Follow <code>links.next</code> until <code>hasMore</code> is false. Cursors are opaque and collection-specific —
 replaying one against another collection is a <code>422</code>, not a 500.</p>
 
-<h2 id="limits">A4 · Rate limits &amp; plan quotas — two layers, one 429</h2>
+<h2 id="limits">A4 · Rate limits &amp; plan quotas</h2>
 <p>There are <strong>two</strong> rate controls in front of you, at different layers, protecting different things. Both
 answer <code>429</code>, but for different reasons — so they speak through <em>different headers</em>, and the right
 response to each is different. Don't confuse them.</p>
-<table class="params">
+<table class="compare">
   <tr><th>&nbsp;</th><th>Edge burst limiter</th><th>Plan quota</th></tr>
   <tr><td>The question</td><td>“Are you spiking too fast, right now?”</td><td>“Have you used what your plan entitles you to?”</td></tr>
   <tr><td>Purpose</td><td>Infrastructure protection / burst-smoothing — stop any one caller from slamming the front door.</td><td>Commercial fairness — enforce the volume your subscription buys, shared fairly across tenants.</td></tr>
