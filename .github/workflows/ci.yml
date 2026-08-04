@@ -6,18 +6,148 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  build:
+  # Modulith + gateway suites. Testcontainers (Postgres, Keycloak, SeaweedFS…) runs on the
+  # runner's Docker daemon — no service containers to declare; the tests own their infra.
+  backend-tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
-
       - uses: gradle/actions/setup-gradle@v4
+      - name: Modulith tests (incl. ModularityTests + contract tests)
+        run: ./gradlew :test
+      - name: Gateway tests
+        run: ./gradlew :gateway:app:test
+      - name: Test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            build/reports/tests
+            gateway/app/build/reports/tests
+          retention-days: 7
 
-      - name: Build and test
-        run: ./gradlew build
+  portal-build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        portal: [developer-portal, admin-portal]
+    defaults:
+      run:
+        working-directory: ${{ matrix.portal }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ${{ matrix.portal }}/package-lock.json
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Build
+        run: npm run build
+
+  # Supply chain: an SBOM of what we ship (kept as a build artifact — the ingredient list an
+  # auditor or a CVE fire drill starts from) and a vulnerability scan that FAILS on known-fixed
+  # CRITICALs. HIGHs are reported, not blocking — tighten once the baseline is clean.
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: SBOM (CycloneDX, via syft)
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: sbom.cyclonedx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.cyclonedx.json
+          retention-days: 30
+      - name: Vulnerability scan (trivy)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+  helm-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint + render the chart
+        run: |
+          helm lint deploy/helm/smsone
+          helm template smoke deploy/helm/smsone >/dev/null
+
+  # Images on every main push: Boot buildpacks for the JVM apps (no Dockerfiles to maintain),
+  # the portals from their Dockerfiles. Tags: the commit SHA (immutable — what Helm deploys pin)
+  # plus a moving `main`.
+  publish-images:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [backend-tests, portal-build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE_BASE: ghcr.io/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push JVM images (buildpacks)
+        run: |
+          ./gradlew bootBuildImage --imageName "$IMAGE_BASE/modulith:${GITHUB_SHA}" --publishImage
+          ./gradlew :gateway:app:bootBuildImage --imageName "$IMAGE_BASE/gateway:${GITHUB_SHA}" --publishImage
+      - name: Build and push portal images
+        run: |
+          for portal in developer-portal admin-portal; do
+            docker build -t "$IMAGE_BASE/$portal:${GITHUB_SHA}" "$portal"
+            docker push "$IMAGE_BASE/$portal:${GITHUB_SHA}"
+          done
+      - name: Move the main tags
+        run: |
+          for image in modulith gateway developer-portal admin-portal; do
+            docker pull "$IMAGE_BASE/$image:${GITHUB_SHA}"
+            docker tag "$IMAGE_BASE/$image:${GITHUB_SHA}" "$IMAGE_BASE/$image:main"
+            docker push "$IMAGE_BASE/$image:main"
+          done
+
+  # Deploy stub — the real command, wired to a protected environment, waiting for a cluster.
+  # Promote by adding KUBECONFIG as an environment secret and replacing the echo with the helm
+  # upgrade. First-deploy order: docs/PRODUCTION.md.
+  deploy:
+    if: github.event_name == 'workflow_dispatch'
+    needs: [backend-tests, portal-build, helm-lint]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy (stub)
+        run: |
+          echo "helm upgrade --install smsone deploy/helm/smsone \\"
+          echo "  --namespace smsone --create-namespace \\"
+          echo "  --set global.imageTag=${GITHUB_SHA} \\"
+          echo "  -f deploy/helm/smsone/values.yaml -f <environment-values>"
+          echo "(stub: add KUBECONFIG as an environment secret and replace this echo)"

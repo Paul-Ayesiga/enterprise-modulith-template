@@ -1,0 +1,23 @@
+SMSOne is deploying.
+
+Before anything works, the credentials Secret must exist (this chart never writes credentials):
+
+  kubectl -n {{ .Release.Namespace }} create secret generic {{ .Values.credentials.secretName }} \
+    --from-literal=postgres-user=... \
+    --from-literal=postgres-password=... \
+    --from-literal=killbill-user=... \
+    --from-literal=killbill-password=... \
+    --from-literal=keycloak-db-user=... \
+    --from-literal=keycloak-db-password=... \
+    --from-literal=keycloak-admin-user=... \
+    --from-literal=keycloak-admin-password=... \
+    --from-literal=gateway-admin-token=...
+
+Hosts (via {{ .Values.ingress.className }} ingress):
+  API     https://{{ .Values.ingress.hosts.api }}      (gateway — the only public API path)
+  Auth    https://{{ .Values.ingress.hosts.auth }}
+  Portal  https://{{ .Values.ingress.hosts.portal }}
+  Admin   https://{{ .Values.ingress.hosts.admin }}
+
+First deploy checklist (order matters): docs/PRODUCTION.md
+Restore procedure: docs/runbooks/restore.md

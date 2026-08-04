@@ -1,0 +1,54 @@
+{{- if .Values.ingress.enabled }}
+# Four hosts, one ingress: api → gateway (ALL public API traffic goes through the edge — the
+# modulith Service is deliberately not exposed here), auth → keycloak, portal/admin → the portals.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: smsone
+  labels:
+    {{- include "smsone.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tlsSecretName }}
+  tls:
+    - secretName: {{ .Values.ingress.tlsSecretName }}
+      hosts:
+        - {{ .Values.ingress.hosts.api }}
+        - {{ .Values.ingress.hosts.auth }}
+        - {{ .Values.ingress.hosts.portal }}
+        - {{ .Values.ingress.hosts.admin }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.hosts.api }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: gateway, port: { number: 8080 } }
+    - host: {{ .Values.ingress.hosts.auth }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: {{ .Release.Name }}-keycloak, port: { number: 8080 } }
+    - host: {{ .Values.ingress.hosts.portal }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: developer-portal, port: { number: 3000 } }
+    - host: {{ .Values.ingress.hosts.admin }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: admin-portal, port: { number: 3000 } }
+{{- end }}

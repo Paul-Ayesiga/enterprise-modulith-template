@@ -22,7 +22,8 @@ document is.
 | [DATA_MODEL.md](DATA_MODEL.md) | Every table, column, index and invariant; migration history; lifecycle and retention |
 | [EVENTS.md](EVENTS.md) | Domain event catalog: publishers, payloads, consumers, idempotency keys |
 | [SLO.md](SLO.md) | Service-level objectives: the promise, the exact measuring expression, the error budget, the discipline when it runs out |
-| [runbooks/](runbooks/) | One runbook per provisioned alert — what fired, first five minutes, diagnosis, remediation |
+| [runbooks/](runbooks/) | One runbook per provisioned alert — what fired, first five minutes, diagnosis, remediation — plus the restore/DR drill |
+| [PRODUCTION.md](PRODUCTION.md) | The road to a cluster: CI/images, Helm chart, prod Keycloak, backups, the dev-vs-prod knob table |
 | [openapi/](openapi/) | Generated OpenAPI 3.1 spec (`./gradlew exportOpenApi`) — Postman imports it natively |
 | [modulith/](modulith/) | Generated C4/PlantUML diagrams and per-module canvases (`./gradlew exportModulithDocs`) |
 
