@@ -31,6 +31,7 @@ flowchart TB
         webhooks["webhooks\nper-org outbound subscriptions"]
         payments["payments\nPSP collections · Pesapal / Yo! adapters"]
         signup["signup\nself-service org creation (opt-in)"]
+        geo["geo\ngeolocation stamps · GeoStamps port · Geocoder SPI"]
     end
 
     settings --> shared
@@ -43,6 +44,7 @@ flowchart TB
     organization --> shared
     audit --> shared
     webhooks --> shared
+    geo --> shared
 
     organization --> identity
     notification --> identity

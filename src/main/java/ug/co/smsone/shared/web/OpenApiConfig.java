@@ -70,6 +70,7 @@ public class OpenApiConfig {
     private static final String TAG_ORG_EXCHANGE = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Exchange";
     private static final String TAG_ORG_EXCHANGE_SCHEDULES =
             AXIS_ORGANIZATION + AXIS_SEPARATOR + "Exchange schedules";
+    private static final String TAG_ORG_GEO = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Geolocation";
     private static final String TAG_ORG_BILLING = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Billing";
     private static final String TAG_ORG_API_KEYS = AXIS_ORGANIZATION + AXIS_SEPARATOR + "API keys";
     private static final String TAG_PLATFORM_API_KEYS = AXIS_PLATFORM + AXIS_SEPARATOR + "API keys";
@@ -152,7 +153,9 @@ public class OpenApiConfig {
             Map.entry("MeController", "Me & notifications"),
             Map.entry("NotificationController", "Me & notifications"),
             Map.entry("FileController", "Files"),
-            Map.entry("PermissionCatalogController", "Reference data"));
+            Map.entry("PermissionCatalogController", "Reference data"),
+            Map.entry("GeoController", "Geolocation"),
+            Map.entry("GeoPolicyController", "Geolocation"));
 
     /**
      * The overrides for controllers that serve BOTH axes and genuinely mean a different resource on
@@ -372,6 +375,11 @@ public class OpenApiConfig {
                                 + "permission is re-checked at every fire, so a revocation stops the "
                                 + "schedule loudly instead of letting it keep exporting. One-off jobs and "
                                 + "their artifacts are " + TAG_ORG_EXCHANGE + "."),
+                        new Tag().name(TAG_ORG_GEO).description(
+                                "Geolocation stamps on a tenant's records, and the per-record-type capture "
+                                + "policy. Attaching a fix needs geo:capture; reading needs geo:read "
+                                + "(coordinates coarsened to ~1.1 km) or geo:read_precise (exact); configuring a "
+                                + "record-type's OFF/OPTIONAL/REQUIRED policy needs geo:policy:manage."),
                         new Tag().name(TAG_SHARED_ME).description(
                                 "The caller's own identity and in-app notifications; no axis owns them because "
                                 + "a tenant member and a platform operator both legitimately arrive here. "

@@ -640,6 +640,20 @@ POST …/security-policy/trusted-devices {"subject":"kc-7d2e…","deviceId":"…
   <div class="ep-body"><p>Your tenant's own trail; filter <code>action</code>/<code>from</code>/<code>to</code>. Rows written during an impersonation name the
   <em>operator</em> as actor with <code>onBehalfOf</code>. Read the maintenance banner at <code>GET …/maintenance?active=true</code>.</p></div></div>
 
+<h2 id="geo">D8 · Geolocation</h2>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/geo/stamps</span><span class="perm org">geo:capture</span></div>
+  <div class="ep-body"><p>Attach a device location to any record via a polymorphic subject (<code>subjectType</code>+<code>subjectId</code> — a soft
+  reference, no FK). Validated against the record-type's <em>capture policy</em>: coordinate range, minimum accuracy, freshness,
+  and allowed source. Coordinates are plain lat/lng (no PostGIS); who captured it is filled from the token, like the audit log.</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/orgs/{orgId}/geo/stamps</span><span class="perm org">geo:read</span></div>
+  <div class="ep-body"><p>Stamps newest first, filtered by subject (<code>subjectType</code>+<code>subjectId</code>) or a
+  <code>bbox=minLat,minLng,maxLat,maxLng</code>. Exact coordinates need <code>geo:read_precise</code>; <code>geo:read</code> alone
+  returns them coarsened to ~1.1&nbsp;km. Cursor-paginated (<code>page[size]</code>/<code>page[after]</code>).</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/orgs/{orgId}/geo/policies/{subjectType}</span> · <span class="path">PUT …</span><span class="perm org">geo:policy:manage</span></div>
+  <div class="ep-body"><p>Configure whether a record-type captures a location: <code>OFF</code>, <code>OPTIONAL</code>, or <code>REQUIRED</code>
+  (a REQUIRED type rejects a record with a missing or too-coarse fix), plus min-accuracy, freshness, allowed sources, and
+  retention. <code>GET</code> reads it (default <code>OFF</code>); <code>PUT</code> upserts it.</p></div></div>
+
 <!-- ============================ PART E ============================ -->
 <div class="part" id="ref"><h2>E · Reference</h2></div>
 

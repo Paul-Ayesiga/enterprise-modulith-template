@@ -760,6 +760,25 @@ have closed the cycle `document → search → organization → exchange`, and `
       undeclared
 - [x] **Gate:** full `./gradlew :test` and `:gateway:app:test` green over the final tree
 
+## Geolocation module — Phase 1 ✅ (2026-08-05)
+
+- [x] `geo` module + `shared.geo.GeoStamps` cross-cutting port (mirrors `AuditLog`): attach a location
+      to any record via a polymorphic subject soft-reference; `GeoFix`/`GeoStamp`/`CaptureMode`/`GeoSource`
+      value types in the kernel
+- [x] `geo_stamp` + `geo_capture_policy` (V47); `numeric(9,6)` lat/lng, no PostGIS — spatial ops behind
+      the `GeoSearch` port (`HaversineGeoSearch`: bbox + Haversine, keyset-paginated), ADR 0008
+- [x] Per-record-type capture policy (OFF/OPTIONAL/REQUIRED + min-accuracy / freshness / allowed-source);
+      REQUIRED rejects a missing or too-coarse fix — capture is opt-in per record type
+- [x] REST: `POST`/`GET /api/v1/orgs/{orgId}/geo/stamps` (bbox + subject filters; exact coords gated by
+      `geo:read_precise`, else coarsened) and `GET`/`PUT .../geo/policies/{subjectType}`
+- [x] `AuditLog` on every capture + policy change; `geo_stamp` in the soft-delete purge order + legal
+      holds; `GeoStampRecorded` / `GeoPolicyChanged` events; four `geo:*` codes in the permission catalog
+- [x] **Gate:** real-container `GeoStampTest` green (attach→query round-trip, REQUIRED/too-coarse
+      rejection, bbox search, coarsen-for-non-precise, tenant isolation); Modularity + Architecture +
+      soft-delete-purge-coverage + RBAC tests green
+- [ ] Phase 2 (deferred): reverse-geocoding `Geocoder` adapters + `geo_place` cache + async worker;
+      distance-ordered `near`; IP fallback; policy UI
+
 | Reference | What it is |
 |---|---|
 | [AGENTS.md](../AGENTS.md) | Engineering standards — §1 is the rules that fail the build, §14 the review checklist |

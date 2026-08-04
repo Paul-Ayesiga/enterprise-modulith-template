@@ -75,7 +75,8 @@ class SoftDeletePurgeJob {
             "org_security_policy",
             "integration",
             "maintenance_window",
-            "ticket");
+            "ticket",
+            "geo_stamp");
 
     /**
      * Bounded batch: the inner select is what the {@code idx_<table>_deleted} partial indexes (V17) were
@@ -123,7 +124,8 @@ class SoftDeletePurgeJob {
             Map.entry("billing_account", Map.entry(Owner.ORG, "org_id")),
             Map.entry("api_key", Map.entry(Owner.ORG, "org_id")),
             Map.entry("org_security_policy", Map.entry(Owner.ORG, "org_id")),
-            Map.entry("integration", Map.entry(Owner.ORG, "org_id")));
+            Map.entry("integration", Map.entry(Owner.ORG, "org_id")),
+            Map.entry("geo_stamp", Map.entry(Owner.ORG, "org_id")));
 
     private final JdbcTemplate jdbc;
     private final SoftDeleteProperties properties;

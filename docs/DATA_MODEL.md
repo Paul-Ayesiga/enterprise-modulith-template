@@ -1974,8 +1974,11 @@ The schema alone reads as if these cascades are live behaviour. They are not, ex
 | `V37__subscription_trial.sql` | `org_subscription` gains `trial_ends_at` + a `PAUSED` status (no new table); a partial index over live TRIALING rows backs the hourly expiry scan |
 | `V38__org_sla_override.sql` | `org_sla_override` (not soft-deletable; unique `(org_id, priority)`) — per-org SLA targets overriding the seeded `sla_policy`, consulted at ticket open |
 | `V39__org_retention_override.sql` | `org_retention_override` (not soft-deletable; unique `(org_id, scope)`) — per-org retention (days) for the org-scoped logs (`WEBHOOK_DELIVERY`, `EXCHANGE_JOB`), owned by scheduler, consulted by the retention jobs through the shared `RetentionOverrides` port |
+| `V47__geolocation.sql` | `geo_stamp` — soft-deletable; a polymorphic subject **soft-reference** (`subject_type`+`subject_id`, no FK); `numeric(9,6)` lat/lng with subject / captured-at / bbox / retention partial indexes. `geo_capture_policy` — per-org, per-record-type capture mode (OFF/OPTIONAL/REQUIRED). No PostGIS: all coordinate SQL is behind the `GeoSearch` port, so a later move is persistence-only (ADR 0008) |
 
-**The next free migration number is V40.**
+_(V40–V46 landed in interim work not yet folded into this table; V47 is the geolocation module.)_
+
+**The next free migration number is V48.**
 
 ---
 

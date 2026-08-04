@@ -300,8 +300,8 @@ step by step; copy that reasoning, not just the shape.
 
 ### 4.5 Migrations
 
-- `src/main/resources/db/migration/V<n>__<snake_name>.sql`. **V46 is taken; the next free number is
-  V47.** Never edit an applied migration; never renumber.
+- `src/main/resources/db/migration/V<n>__<snake_name>.sql`. **V47 is taken (geolocation); the next free
+  number is V48.** Never edit an applied migration; never renumber.
 - `ddl-auto: validate`. The schema is the migration's job, always.
 - Head the file with a comment explaining the *decision*, not the statements — `V17__soft_delete.sql`
   and `V11__organization_rbac.sql` are the reference voice.
@@ -320,7 +320,7 @@ Production deploys are rolling: for a window, the **previous** application versi
 
 - **Expand (ship N):** additive only — new tables, new *nullable* columns (or `not null` with a
   `default`, which Postgres 11+ applies without a table rewrite), new indexes. The old code must run
-  unchanged against the expanded schema. Everything through V46 is expand-shaped; keep it that way.
+  unchanged against the expanded schema. Everything through V47 is expand-shaped; keep it that way.
 - **Migrate (ship N or a job):** code writes both old and new shapes / backfills. Backfills that
   touch big tables run batched (`update ... where id in (select ... limit 10000)` in a loop, or a
   ShedLock job), never one statement holding a lock across millions of rows.

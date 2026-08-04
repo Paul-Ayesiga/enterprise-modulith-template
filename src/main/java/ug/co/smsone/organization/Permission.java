@@ -30,7 +30,12 @@ public enum Permission {
     WEBHOOK_MANAGE("webhook:manage"),
     DOCUMENT_READ("document:read"),
     DOCUMENT_MANAGE("document:manage"),
-    APIKEY_MANAGE("apikey:manage");
+    APIKEY_MANAGE("apikey:manage"),
+
+    GEO_CAPTURE("geo:capture"),
+    GEO_READ("geo:read"),
+    GEO_READ_PRECISE("geo:read_precise"),
+    GEO_POLICY_MANAGE("geo:policy:manage");
 
     private static final Map<String, Permission> BY_CODE =
             Arrays.stream(values()).collect(Collectors.toUnmodifiableMap(Permission::code, permission -> permission));
