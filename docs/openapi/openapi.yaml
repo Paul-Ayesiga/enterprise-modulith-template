@@ -75,6 +75,11 @@ tags:
     \ org's subscription. Reading is platform-support; assigning a plan is platform-admin,\
     \ audited, and bites the very next entitlement gate. A tenant reads its own state\
     \ under Organization · Profile's surface."
+- name: Platform · Billing accounts
+  description: "One org's window into the Kill Bill side: link its account, start\
+    \ a billed subscription, read balance and invoices. The catalogue and the entitlement\
+    \ authority stay in Platform · Billing & plans - money records here, access decisions\
+    \ there."
 - name: Platform · Ops
   description: "Running the platform: scheduler lock state (proof that clustered jobs\
     \ fire once), the curated analytics reports, and the cross-tenant audit trail.\
@@ -163,6 +168,11 @@ tags:
   description: Fixed vocabularies any authenticated caller may read — today the permission
     catalogue that Organization · Roles is composed from. A new shared read lands
     here until it earns a group of its own.
+- name: Shared · Sign-up
+  description: "Self-service organization creation, off unless SIGNUP_ENABLED: request\
+    \ a verification e-mail (always 202 - enumeration-safe), then redeem the single-use\
+    \ token to mint the org and its first OWNER. The only unauthenticated write surface,\
+    \ and deliberately this small."
 - name: Shared · Exchange catalog
   description: "The exchange handler catalogue and its downloadable templates — which\
     \ datasets can move, what each file must look like, which permissions gate it.\
@@ -568,8 +578,10 @@ paths:
       summary: Set the organization's security policy
       description: Every field TIGHTENS access. `ipAllowlist` is comma-joined CIDRs
         (blank clears it); `requireTrustedDevice` needs an org-blessed `X-Device-Id`;
-        `sessionMaxAgeSeconds` refuses tokens older than it for this org. A denial
-        is a 403 naming the rule.
+        `sessionMaxAgeSeconds` refuses tokens older than it for this org; `requireMfa`
+        refuses human sessions whose token carries no multi-factor `amr` claim (API
+        keys are machine credentials and exempt) and enrolls new invitees in TOTP.
+        A denial is a 403 naming the rule.
       operationId: set
       parameters:
       - name: orgId
@@ -1158,8 +1170,9 @@ paths:
       - Platform · Settings & flags
       summary: Create or toggle a feature flag
       description: "Upsert: a key that does not exist yet is created rather than rejected,\
-        \ so there is no separate create call. Flags are global — there is no per-organization\
-        \ override."
+        \ so there is no separate create call. `percentage` (0-100, optional) turns\
+        \ an enabled flag into a gradual rollout bucketed per organization; per-org\
+        \ overrides beat both."
       operationId: set_1
       parameters:
       - name: key
@@ -1196,6 +1209,136 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/feature-flags/{key}/orgs/{orgId}:
+    get:
+      tags:
+      - Shared · Settings & flags
+      summary: Evaluate a flag for one organization
+      description: "The effective answer this org gets: org override, else percentage\
+        \ bucket, else the global value. Unknown flags evaluate to false, never an\
+        \ error."
+      operationId: effective
+      parameters:
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+    put:
+      tags:
+      - Platform · Settings & flags
+      summary: Set a per-org override for a flag
+      description: "Pins the flag hard ON or OFF for one organization, beating the\
+        \ global value and any percentage rollout. The flag must already exist. Platform-admin\
+        \ only."
+      operationId: setOrgOverride
+      parameters:
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrgOverrideRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+    delete:
+      tags:
+      - Platform · Settings & flags
+      summary: Clear a per-org override
+      description: The organization falls back to the global value / percentage rollout.
+      operationId: clearOrgOverride
+      parameters:
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "204":
+          description: No Content
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
   /api/v1/admin/tickets/{id}/status:
     put:
       tags:
@@ -1521,6 +1664,121 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/signup:
+    post:
+      tags:
+      - Shared · Sign-up
+      summary: Start a self-service signup
+      description: Sends a verification email for creating a new organization. Always
+        answers 202 with the same message whether or not the address is known anywhere
+        — the email is the only channel that learns more. The link is single-use and
+        expires; a new request supersedes a pending one for the same address. Disabled
+        platforms answer 403 (SIGNUP_ENABLED).
+      operationId: request
+      parameters:
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignupBody"
+        required: true
+      responses:
+        "202":
+          description: Accepted
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+  /api/v1/signup/verify:
+    get:
+      tags:
+      - Shared · Sign-up
+      summary: Complete a signup from the emailed link
+      description: "Spends the single-use token: the organization is created through\
+        \ the standard provisioning path — the owner receives the set-password invite,\
+        \ the trial (when enabled) starts, and billing auto-provisions. Invalid, spent,\
+        \ and expired tokens all answer the same 422."
+      operationId: verifyGet
+      parameters:
+      - name: token
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+    post:
+      tags:
+      - Shared · Sign-up
+      summary: Complete a signup (programmatic form)
+      operationId: verifyPost
+      parameters:
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerifyBody"
+        required: true
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/orgs:
     post:
       tags:
@@ -1650,6 +1908,52 @@ paths:
       responses:
         "201":
           description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}/webhooks/{id}/rotate-secret:
+    post:
+      tags:
+      - Organization · Webhooks
+      summary: Rotate the signing secret
+      description: "Mints a replacement secret, returned in full exactly once — the\
+        \ old secret stops verifying immediately. Deploy the new secret to your receiver\
+        \ BEFORE rotating, or deliveries in between will fail signature checks (they\
+        \ retry with backoff, so a quick swap loses nothing)."
+      operationId: rotateSecret
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
           headers:
             X-Request-Id:
               description: "Public request id (accepted inbound, else minted as a\
@@ -2078,7 +2382,7 @@ paths:
   /api/v1/orgs/{orgId}/payments:
     post:
       tags:
-      - Organization · Profile
+      - Organization · Billing
       summary: Initiate a payment collection
       description: "Starts a collection. `provider` is optional — omitted, the organization's\
         \ configured PAYMENT_GATEWAY integration (org override, else platform default)\
@@ -3754,7 +4058,7 @@ paths:
   /api/v1/admin/orgs/{orgId}/billing/subscription:
     post:
       tags:
-      - Platform · Billing & plans
+      - Platform · Billing accounts
       summary: Put a tenant on a billable plan
       description: Creates the Kill Bill subscription for the mapped catalog plan
         and reconciles entitlements immediately (the push notification converges the
@@ -3790,7 +4094,7 @@ paths:
   /api/v1/admin/orgs/{orgId}/billing/account:
     post:
       tags:
-      - Platform · Billing & plans
+      - Platform · Billing accounts
       summary: Provision a tenant's Kill Bill account
       description: Creates (or resolves — idempotent by `externalKey` = org id) the
         Kill Bill account and records the linkage. A tenant needs one before any billable
@@ -4621,7 +4925,7 @@ paths:
   /api/v1/orgs/{orgId}/payments/{id}:
     get:
       tags:
-      - Organization · Profile
+      - Organization · Billing
       summary: Read a payment (refreshes a PENDING one from its gateway)
       operationId: get_10
       parameters:
@@ -6204,7 +6508,7 @@ paths:
   /api/v1/admin/orgs/{orgId}/billing:
     get:
       tags:
-      - Platform · Billing & plans
+      - Platform · Billing accounts
       summary: Inspect a tenant's billing state
       description: "Balance and live Kill Bill subscriptions, read straight from Kill\
         \ Bill."
@@ -6232,7 +6536,7 @@ paths:
   /api/v1/admin/orgs/{orgId}/billing/invoices:
     get:
       tags:
-      - Platform · Billing & plans
+      - Platform · Billing accounts
       summary: List a tenant's invoices
       description: "Proxied from Kill Bill, un-paged — the billing UI of record is\
         \ Kaui."
@@ -6259,6 +6563,36 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/compliance/orgs/{orgId}/export:
+    get:
+      tags:
+      - Platform · Compliance
+      summary: Export one organization's records (offboarding bundle)
+      description: "A JSON bundle of the organization's rows across every org-owned\
+        \ table — membership, roles, subscription, integrations, webhooks, payments,\
+        \ usage, tickets, audit (capped per table; the cap is stated in the payload).\
+        \ Secret-bearing columns never leave the database. Audited as compliance.org_exported."
+      operationId: exportOrg
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/admin/compliance/legal-holds:
     get:
       tags:
@@ -6751,6 +7085,8 @@ components:
         sessionMaxAgeSeconds:
           type: integer
           format: int64
+        requireMfa:
+          type: boolean
     UpdateRoleRequest:
       required:
       - name
@@ -6861,6 +7197,18 @@ components:
           type: boolean
         description:
           type: string
+        percentage:
+          maximum: 100
+          minimum: 0
+          type: integer
+          format: int32
+    OrgOverrideRequest:
+      required:
+      - enabled
+      type: object
+      properties:
+        enabled:
+          type: boolean
     StatusRequest:
       type: object
       properties:
@@ -6903,6 +7251,30 @@ components:
         days:
           type: integer
           format: int32
+    SignupBody:
+      required:
+      - email
+      - organizationName
+      type: object
+      properties:
+        organizationName:
+          minLength: 1
+          type: string
+        email:
+          minLength: 1
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+    VerifyBody:
+      required:
+      - token
+      type: object
+      properties:
+        token:
+          minLength: 1
+          type: string
     CreateOrganizationRequest:
       required:
       - alias

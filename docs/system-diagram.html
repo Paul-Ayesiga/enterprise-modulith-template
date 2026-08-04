@@ -155,7 +155,7 @@ flowchart TB
   subgraph CORE["SPRING MODULITH :28080 — servlet + JDBC"]
     direction TB
     chain["filter chain −100…5: security → impersonation → MDC →<br/>rate limit → idempotency → provisioning gate → org policy →<br/>maintenance → subscription access"]
-    modules["23 modules · ArchUnit-enforced boundaries · shared kernel ports"]
+    modules["25 modules · ArchUnit-enforced boundaries · shared kernel ports"]
     outbox["event publication registry (outbox, same TX)"]
     chain --> modules --> outbox
   end
@@ -351,7 +351,7 @@ flowchart TB
         <span class="fail"><span class="pill bad">403 NOT_PROVISIONED</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox core"><span class="ord">3</span>
-        <span class="what"><b>Org security policy</b> — the tenant's own tightening: IP allowlist (CIDR), trusted-device requirement (<code>X-Device-Id</code>), session max-age. Refusals name the rule; the policy endpoints themselves are always reachable (no lockout).</span>
+        <span class="what"><b>Org security policy</b> — the tenant's own tightening: IP allowlist (CIDR), trusted-device requirement (<code>X-Device-Id</code>), session max-age, <b>require-MFA</b> (a human JWT must carry a multi-factor <code>amr</code> claim; API keys/impersonation are machine principals and exempt). Refusals name the rule; the policy endpoints themselves are always reachable (no lockout).</span>
         <span class="fail"><span class="pill bad">403 (named rule)</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox core"><span class="ord">4</span>
@@ -370,7 +370,7 @@ flowchart TB
 
   <!-- ============================================================ 05 -->
   <section>
-    <div class="sec-head"><span class="sec-num">05</span><h2>The 23 modules</h2></div>
+    <div class="sec-head"><span class="sec-num">05</span><h2>The 25 modules</h2></div>
     <p class="sec-sub">One deployable, hard internal boundaries: <code>internal</code> packages are
       inaccessible across modules (ArchUnit + ModularityTests fail the build), cross-module calls go through
       shared-kernel <b>ports</b> (<code>Entitlements</code>, <code>OrgAuthorization</code>, <code>LegalHolds</code>,
@@ -385,7 +385,7 @@ flowchart TB
   end
   subgraph TEN["Tenancy &amp; Commercial"]
     direction LR
-    organization; subscription; billing; support; maintenance
+    organization; signup; subscription; billing; payments; support; maintenance
   end
   subgraph DATA["Content &amp; Data movement"]
     direction LR
@@ -479,7 +479,7 @@ stateDiagram-v2
           <tr><td>signature</td><td><code>X-Webhook-Signature: sha256=&lt;hex&gt;</code> — HMAC-SHA256 over the <b>exact raw body</b> with the subscription secret</td></tr>
           <tr><td>event header</td><td><code>X-Webhook-Event</code> names the type; body always carries <code>event · orgId · occurredAt</code></td></tr>
           <tr><td>send timeout</td><td>5 s per attempt — a slow receiver counts as transient</td></tr>
-          <tr><td>secret</td><td>AES-GCM encrypted at rest; full value shown exactly once at create; rotation = new subscription</td></tr>
+          <tr><td>secret</td><td>AES-GCM encrypted at rest; full value shown exactly once — at create or at <code>POST …/{id}/rotate-secret</code> (deploy the new <code>whsec_</code> to the receiver <b>first</b>; deliveries sign with it immediately)</td></tr>
         </table></div>
       <div class="card c-core"><h3>The queue mechanics</h3><span class="tag">postgres as the queue</span>
         <table class="kv">
@@ -557,7 +557,8 @@ stateDiagram-v2
   TRIALING --> ACTIVE : payment lands / plan assigned
   PAUSED --> ACTIVE : payment success (callback) or admin assign — the pay-to-recover path
   ACTIVE --> PAST_DUE : payment failure (callback) — entitlements KEPT, a grace
-  PAST_DUE --> ACTIVE : payment success (callback)
+  PAST_DUE --> PAUSED : DunningJob (nightly) — past-due beyond grace (7d default)
+  PAST_DUE --> ACTIVE : payment success (callback or a COMPLETED collection)
   ACTIVE --> FREE : KB subscription cancelled → reconcile finds no billable sub
   note right of PAUSED : org is READ-ONLY — org writes answer 402,\nreads pass, /billing stays open
       </pre>
@@ -566,7 +567,8 @@ stateDiagram-v2
       <div class="card c-core"><h3>The one write direction</h3><span class="tag">event → entitlements</span>
         <table class="kv">
           <tr><td>callback</td><td>KB push → <code>/api/v1/billing/killbill/notifications?token=…</code> (static token auth)</td></tr>
-          <tr><td>payment event</td><td><code>onPaymentOutcome</code>: success → standing ACTIVE · failure → PAST_DUE (plan untouched)</td></tr>
+          <tr><td>payment event</td><td><code>onPaymentOutcome</code>: success → standing ACTIVE + best-effort <b>receipt</b> (latest-invoice summary) · failure → PAST_DUE (plan untouched)</td></tr>
+          <tr><td>dunning</td><td><code>DunningJob</code> (ShedLock, nightly): PAST_DUE older than <code>grace-days</code> (7) → PAUSED; both PAST_DUE and PAUSED transitions e-mail the org's <b>owners</b> (<code>OrgContacts</code> port)</td></tr>
           <tr><td>subscription event</td><td><code>onSubscriptionEvent</code> → <code>reconcile(orgId)</code>: first ACTIVE KB subscription maps plan name → plan code; none → <b>FREE, not limbo</b></td></tr>
           <tr><td>assign path</td><td>always the audited <code>Subscriptions.assignPlan</code> — publishes <code>SubscriptionChanged</code> → entitlement cache evicted (a downgrade bites the next request) + <code>org.subscription_changed</code> webhook</td></tr>
         </table></div>
@@ -637,6 +639,7 @@ sequenceDiagram
           <tr><td>pesapal</td><td>sandbox <code>cybqa.pesapal.com/pesapalv3</code> · live <code>pay.pesapal.com/v3</code>; sandbox defaults to Pesapal's <b>published UG demo keys</b> — works with zero setup</td></tr>
           <tr><td>yo!</td><td>sandbox <code>sandbox.yo.co.ug/services/yopaymentsdev</code> · live <code>paymentsapi1.yo.co.ug/ybs</code>; needs your API username/password in both modes</td></tr>
           <tr><td>audit</td><td>the mode rides the payment row — a sandbox test can never masquerade as live revenue</td></tr>
+          <tr><td>VAT</td><td><code>TAX_VAT_RATE</code> (e.g. 18): the quoted amount is VAT-<b>inclusive</b>; <code>vatAmount = amount×r/(100+r)</code> + <code>netAmount</code> stamped on the row and echoed in the API</td></tr>
         </table></div>
       <div class="card c-core"><h3>Trust &amp; convergence</h3><span class="tag">who is believed</span>
         <table class="kv">
@@ -786,6 +789,7 @@ flowchart TB
         <li><code>smsone-web</code> — public client, <b>PKCE required</b>, localhost:* redirects, post-logout registered</li>
         <li><code>smsone-admin</code> — service account (<code>manage-users</code> + <code>view-realm</code>) used by provisioning</li>
         <li>KC <b>Organizations</b>: one per tenant → the token's <code>organization</code>/tenant claim</li>
+        <li>Self-service <b>signup</b> (opt-in, enumeration-safe 202): verified e-mail token → org + first OWNER; a require-MFA org's invites add <code>CONFIGURE_TOTP</code> to the first-login action link</li>
         <li>JWKS consumed twice: gateway (edge validation) and modulith (defense in depth)</li>
       </ul></div>
       <div class="card c-client"><h3>Two disjoint axes</h3><span class="tag">authorization model</span><ul>
@@ -821,6 +825,43 @@ flowchart TB
         <li>Single-box runs are 429-capped by design — enforcement working, not failure</li>
         <li>The whole test suite runs against real containers; modularity is build-enforced</li>
       </ul></div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 16 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">16</span><h2>Usage → Kill Bill — the metered-billing bridge</h2></div>
+    <p class="sec-sub">Every request the edge serves becomes, eventually, a billable usage record — through a
+      buffer that never blocks the hot path, a signed internal seam, an <b>additive</b> daily ledger, and an
+      opt-in export that Kill Bill de-duplicates by tracking id. Each hop is at-least-once; the ledger's
+      upsert and the export's tracking id are what make the whole pipeline effectively exactly-once.</p>
+    <div class="diagram">
+      <pre class="mermaid">
+flowchart LR
+  R[request] --> F["UsageMeteringFilter (+14)<br/>tenant resolved at the edge"]
+  F --> B["UsageBuffer<br/>in-memory counters — zero I/O on the hot path"]
+  B -->|"UsageFlushJob · 60s<br/>drain-once; restore on failure"| S["POST /internal/gateway/usage-report<br/>X-Gateway-Secret (constant-time check)"]
+  S --> L[("api_usage_daily<br/>(org_id, day) — additive upsert:<br/>requests + excluded.requests")]
+  L -->|"UsageExportJob · opt-in<br/>app.billing.usage-export.enabled"| KB["Kill Bill recordUsage<br/>unit api-requests · trackingId usage-&lt;org&gt;-&lt;day&gt;"]
+  KB --> INV[usage-priced invoices]
+  L -.->|exported flag flips only after KB accepts| L
+      </pre>
+    </div>
+    <div class="grid" style="margin-top:12px">
+      <div class="card c-edge"><h3>Why it cannot lie</h3><span class="tag">failure math</span>
+        <table class="kv">
+          <tr><td>flush fails</td><td>the drained counters are <b>restored</b> into the buffer — counted again next minute, never lost (gateway crash loses ≤60s of counts: the accepted trade)</td></tr>
+          <tr><td>report replays</td><td>the upsert is additive per (org, day) — but a report is sent once per drain, so replays don't double: the seam retries only on failure, where nothing was added</td></tr>
+          <tr><td>export replays</td><td>Kill Bill rejects a duplicate <code>trackingId</code> — the export can crash after the push and re-run safely; <code>exported</code> flips only after acceptance</td></tr>
+          <tr><td>unknown orgs</td><td>non-UUID tenants (IP-keyed anonymous traffic) are skipped at the seam — the ledger holds orgs, not noise</td></tr>
+        </table></div>
+      <div class="card c-core"><h3>Where money meets metering</h3><span class="tag">two different ceilings</span>
+        <table class="kv">
+          <tr><td>quota (live)</td><td><code>gwquota:&lt;tenant&gt;</code> fixed windows on Valkey — refuses at the edge <em>now</em> (429)</td></tr>
+          <tr><td>ledger (billed)</td><td><code>api_usage_daily</code> — what actually happened, per day, survives restarts, feeds invoices</td></tr>
+          <tr><td>visibility</td><td>orgs see their own usage in the developer portal; platform sees per-consumer counts via <code>gatewayusage</code></td></tr>
+          <tr><td>plans</td><td>a usage-priced KB plan bills from these records; entitlement caps stay the access authority (§09)</td></tr>
+        </table></div>
     </div>
   </section>
 

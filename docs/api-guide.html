@@ -321,6 +321,20 @@ GET  /api/v1/me/consents                                            # full histo
   <pre><code>curl -X POST $BASE/api/v1/orgs -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"alias":"acme","name":"Acme Ltd","ownerEmail":"owner@acme.test","ownerFirstName":"Ada"}'
 # → 201 {"data":{"id":"6a1f22b0-…","type":"organization","attributes":{"alias":"acme","status":"ACTIVE"}}}</code></pre></div></div>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/signup</span><span class="perm any">no auth (off by default)</span></div>
+  <div class="ep-body"><p>The <b>other</b> way an org comes to exist: self-service. Enabled with <code>SIGNUP_ENABLED=true</code>
+  (off ⇒ <code>403</code> naming the flag). Always answers <code>202</code> with the same message whether the email is known or
+  not (enumeration-safe); a verification link (single-use token, SHA-256-stored, 24h TTL) lands in the inbox (Mailpit in dev).</p>
+  <table class="params"><tr><th>Field</th><th>Type</th><th>Req</th><th>Description</th></tr>
+    <tr><td>organizationName</td><td>string</td><td>yes</td><td>Display name; the alias is derived (slugged, suffixed on collision).</td></tr>
+    <tr><td>email</td><td>string</td><td>yes</td><td>Becomes the first <code>OWNER</code>, invited with temp credentials.</td></tr>
+    <tr><td>firstName / lastName</td><td>string</td><td>no</td><td>On the owner's invite.</td></tr></table>
+  <pre><code>POST /api/v1/signup {"organizationName":"Acme Rockets","email":"ada@acme.test","firstName":"Ada"}
+# → 202 (always). Then, from the email:
+POST /api/v1/signup/verify {"token":"…from the link…"}
+# → 201 {"attributes":{"organizationId":"6a1f…","alias":"acme-rockets"}}   (invalid/used token ⇒ 422, generic)</code></pre>
+  <p class="mut">With <code>TRIAL_ON_SIGNUP=true</code> the new org starts on the PRO trial (30 days) instead of FREE —
+  same entitlement trial as <code>POST …/subscription/trial</code>.</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/admin/orgs</span><span class="perm plat">platform-support</span></div>
   <div class="ep-body"><p>Observe the fleet. <code>?status=active</code> filters; <code>…/{orgId}</code> reads one; <code>…/{orgId}/members</code> is the
   read-only roster (subjects + role codes).</p></div></div>
@@ -397,6 +411,14 @@ one tenant — so the platform runs a single KB tenant and manages every org as 
       <code>BILLING_CALLBACK_URL</code> so KB pushes invoice/payment events back and the standing reconciles
       (<code>PAST_DUE</code> ↔ <code>ACTIVE</code>).</li>
 </ol></div>
+<div class="card"><strong>The money edges run themselves.</strong> A failed Kill Bill payment marks the org
+<code>PAST_DUE</code>; the nightly <b>dunning</b> job pauses any org past-due longer than the grace window
+(<code>app.billing.dunning.grace-days</code>, default 7) — and both transitions email the org's <b>owners</b>. A later
+successful payment (Kill Bill event <em>or</em> a completed D5 collection) lifts the standing back to <code>ACTIVE</code>
+and sends a best-effort <b>receipt</b> (latest-invoice summary). Metered usage: the gateway reports each org's daily API
+request counts into the <code>api_usage_daily</code> ledger (internal seam, <code>X-Gateway-Secret</code>-signed); with
+<code>app.billing.usage-export.enabled=true</code> the nightly export pushes them to Kill Bill as <code>api-requests</code>
+usage (tracking-id-deduped) for usage-based plans.</div>
 
 <h2 id="platsupport">C4 · Support queue, SLA, compliance &amp; retention</h2>
 <div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/admin/tickets</span><span class="perm plat">platform-support</span></div>
@@ -411,6 +433,14 @@ one tenant — so the platform runs a single KB tenant and manages every org as 
   <div class="ep-body"><p>Keep one org's log rows on a different schedule than the default. <code>{scope}</code> ∈
   <code>webhook-delivery</code>, <code>exchange-job</code> (the only org-scoped logs). <code>{"days":365}</code>; <code>DELETE</code> reverts to default.</p></div></div>
 
+<div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/admin/compliance/orgs/{orgId}/export</span><span class="perm plat">platform-admin</span></div>
+  <div class="ep-body"><p>One organization's data as a single JSON bundle — offboarding and DSAR handovers. Reads across every
+  org-owned table (memberships, roles, subscriptions, webhooks + deliveries, payments, usage, exchange, documents, tickets,
+  audit …); secret-bearing columns (webhook secrets, API-key hashes) are dropped <em>at the source</em>; capped at 1000
+  rows per table (the cap is stated in the payload). The export itself is audited.</p>
+  <pre><code>GET /api/v1/admin/compliance/orgs/{orgId}/export
+# → {"attributes":{"organizationId":"…","rowCapPerTable":1000,"tables":{"organization":[…],"membership":[…],…}}}</code></pre></div></div>
+
 <h2 id="platcfg">C5 · Platform config — integrations, settings, maintenance, ops</h2>
 <div class="ep"><div class="ep-head"><span class="method PUT">PUT</span><span class="path">/api/v1/admin/integrations</span><span class="perm plat">platform-admin</span></div>
   <div class="ep-body"><p>The platform-default provider for a <code>kind</code> (<code>SMS_PROVIDER</code>, <code>EMAIL_PROVIDER</code>,
@@ -419,6 +449,15 @@ one tenant — so the platform runs a single KB tenant and manages every org as 
   <div class="ep-body"><p>Write platform reference data (any caller reads it — B4). Translations power <code>Accept-Language</code> error details.</p>
   <pre><code>PUT /api/v1/settings/branding.name          {"value":"SMSOne"}
 PUT /api/v1/translations/fr/error.forbidden {"value":"Accès refusé."}</code></pre></div></div>
+<div class="ep"><div class="ep-head"><span class="method PUT">PUT</span><span class="path">/api/v1/feature-flags/{key}/orgs/{orgId}</span><span class="perm plat">platform-admin</span></div>
+  <div class="ep-body"><p><b>Flag targeting.</b> Precedence per org: <b>org override</b> (this endpoint — pins hard ON/OFF)
+  → <b>percentage rollout</b> (<code>percentage: 0–100</code> on the flag's own <code>PUT</code>; deterministic per-org bucket, sticky,
+  only widens an <em>enabled</em> flag) → the global value. <code>DELETE</code> clears the override;
+  <code>GET …/{key}/orgs/{orgId}</code> (also <code>org:read</code>) answers what that org <em>effectively</em> gets —
+  unknown flags evaluate <code>false</code>, never an error.</p>
+  <pre><code>PUT /api/v1/feature-flags/beta.exports        {"enabled":true,"percentage":25}   # 25% of orgs, sticky
+PUT /api/v1/feature-flags/beta.exports/orgs/{orgId} {"enabled":true}              # this org: always on
+GET /api/v1/feature-flags/beta.exports/orgs/{orgId}   # → {"type":"feature-flag-evaluation","attributes":{"enabled":true}}</code></pre></div></div>
 <div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/admin/maintenance</span><span class="perm plat">platform-admin</span></div>
   <div class="ep-body"><p>Schedule a window (<code>orgId:null</code> = platform-wide). In a <code>RESTRICT</code> window an org's <em>writes</em> answer
   <code>503 Retry-After</code> (reads pass); <code>ANNOUNCE</code> is banner-only. Distinct from suspending a tenant (that's permanent).</p>
@@ -469,6 +508,14 @@ curl $BASE/api/v1/orgs/{orgId}/members -H "X-Api-Key: sk_9f3c1a2b.6d4e…full…
 # each delivery: header  X-Webhook-Signature: sha256=88e2c4…  — HMAC-SHA256 over the EXACT raw body with your secret
 echo -n "$RAW_BODY" | openssl dgst -sha256 -hmac "$WHSEC" -hex   # must equal the header</code></pre></div></div>
 
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/webhooks/{id}/rotate-secret</span><span class="perm org">webhook:manage</span></div>
+  <div class="ep-body"><p>Mint a fresh signing secret for one subscription (compromise response / scheduled hygiene). Same
+  secret-once semantics as create — the new <code>whsec_…</code> appears in <em>this response only</em>. <b>Order matters:</b>
+  deploy the new secret to your receiver <em>first</em>, then rotate — deliveries sign with the new secret immediately, and
+  a receiver still validating the old one will reject them (they retry with backoff, so a short overlap self-heals). Audited.</p>
+  <pre><code>POST /api/v1/orgs/{orgId}/webhooks/{id}/rotate-secret
+# → 200 {"attributes":{"secret":"whsec_1c9e…full…"}}     ← store it NOW; reads stay masked</code></pre></div></div>
+
 <h2 id="exchange">D4 · Exchange — imports &amp; exports at scale</h2>
 <p>Import/export is <strong>jobs, never long requests</strong> (CSV/JSONL/XLSX/XML). Submitting needs the handler's own
 permission (e.g. <code>org-members</code> import needs <code>member:invite</code>).</p>
@@ -504,23 +551,35 @@ GET  /api/v1/orgs/{orgId}/exchange/jobs/{jobId}/result   # 302 → the output fi
     <tr><td>phoneNumber / email</td><td>string</td><td>one</td><td>The payer's contact. Yo! requires the phone (that handset gets the approval prompt).</td></tr></table>
   <pre><code>POST /api/v1/orgs/{orgId}/payments
 {"provider":"pesapal","amount":15000,"currency":"UGX","description":"PRO plan invoice","email":"payer@acme.test"}
-# → 201 {"attributes":{"status":"PENDING","mode":"sandbox","redirectUrl":"https://cybqa.pesapal.com/…"}}
-#   pesapal: send the payer to redirectUrl · yo-uganda: no redirect, the prompt is on the phone</code></pre></div></div>
+# → 201 {"attributes":{"status":"PENDING","mode":"sandbox","redirectUrl":"https://cybqa.pesapal.com/…",
+#                      "amount":15000,"vatAmount":2288.14,"netAmount":12711.86}}
+#   pesapal: send the payer to redirectUrl · yo-uganda: no redirect, the prompt is on the phone</code></pre>
+  <p class="mut">With <code>TAX_VAT_RATE</code> set (e.g. <code>18</code>) the quoted <code>amount</code> is treated as VAT-<b>inclusive</b>
+  and the response echoes the breakdown — <code>vatAmount = amount×r/(100+r)</code>, <code>netAmount</code> the rest — for the
+  receipt/ledger. The payer is always charged exactly <code>amount</code>.</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/orgs/{orgId}/payments/{id}</span><span class="perm org">org:read</span></div>
   <div class="ep-body"><p><b>Read-with-refresh</b>: a <code>PENDING</code> payment re-asks its gateway before answering (this is how
   Yo!'s poll flow completes), so poll this until the status is terminal — <code>COMPLETED</code> / <code>FAILED</code> /
   <code>REVERSED</code> never regress. The gateway's own answer is the only truth: Pesapal's public IPN + browser callback
   (<code>/api/v1/payments/pesapal/ipn</code>·<code>/callback</code>, unauthenticated by vendor design) are <em>inert triggers</em>
   that just cause the same server-side re-query.</p>
-  <pre><code>GET …/payments/{id}   # → {"status":"COMPLETED","confirmationCode":"…","statusDetail":"Completed via MpesaUG"}</code></pre></div></div>
+  <pre><code>GET …/payments/{id}   # → {"status":"COMPLETED","confirmationCode":"…","statusDetail":"Completed via MpesaUG"}</code></pre>
+  <p class="mut">A collection reaching <code>COMPLETED</code> is money in: it lifts a <code>PAST_DUE</code>/<code>PAUSED</code>
+  standing back to <code>ACTIVE</code> on the spot — the payments surface stays reachable while paused, so this is the
+  self-service way out of read-only (the C3 dunning card is the way in).</p></div></div>
 
 <h2 id="security">D6 · Security policy &amp; integrations</h2>
 <div class="ep"><div class="ep-head"><span class="method PUT">PUT</span><span class="path">/api/v1/orgs/{orgId}/security-policy</span><span class="perm org">org:update</span></div>
   <div class="ep-body"><p>Tighten how the org is reached — each field optional, each <em>tightens</em>. A block is a <code>403</code> that <em>names the
   rule</em> ("Blocked by your organization's security policy (trusted-device)."), never confusable with RBAC. You can never
   lock yourself out of <code>/security-policy</code> itself.</p>
-  <pre><code>PUT …/security-policy {"ipAllowlist":"203.0.113.0/24","requireTrustedDevice":true,"sessionMaxAgeSeconds":3600}
-POST …/security-policy/trusted-devices {"subject":"kc-7d2e…","deviceId":"…","trusted":true}   # trust is the org's grant</code></pre></div></div>
+  <pre><code>PUT …/security-policy {"ipAllowlist":"203.0.113.0/24","requireTrustedDevice":true,
+                       "sessionMaxAgeSeconds":3600,"requireMfa":true}
+POST …/security-policy/trusted-devices {"subject":"kc-7d2e…","deviceId":"…","trusted":true}   # trust is the org's grant</code></pre>
+  <p class="mut"><code>requireMfa</code> holds <b>human sessions</b> to a multi-factor token — the JWT's <code>amr</code> claim must
+  name a second factor (<code>otp</code>/<code>totp</code>/<code>webauthn</code>…), else <code>403 (mfa)</code>. API keys are machine
+  credentials and exempt; new invites into a require-MFA org get TOTP enrollment added to their first-login link
+  (<code>CONFIGURE_TOTP</code>).</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method PUT">PUT</span><span class="path">/api/v1/orgs/{orgId}/integrations</span><span class="perm org">org:update</span></div>
   <div class="ep-body"><p>An org override for a provider <code>kind</code> — wins over the platform default (C5), which wins over env
   config. This is how orgs opt for different providers: <code>SMS_PROVIDER</code> → <code>speedamobile</code>

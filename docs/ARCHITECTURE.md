@@ -29,6 +29,8 @@ flowchart TB
         organization["organization\nKeycloak Orgs projection · RBAC authority"]
         audit["audit\nappend-only trail (AuditLog port)"]
         webhooks["webhooks\nper-org outbound subscriptions"]
+        payments["payments\nPSP collections · Pesapal / Yo! adapters"]
+        signup["signup\nself-service org creation (opt-in)"]
     end
 
     settings --> shared
@@ -55,6 +57,11 @@ flowchart TB
     subscription --> shared
     billing --> shared
     billing --> subscription
+    payments --> shared
+    payments --> subscription
+    payments -. "org's PAYMENT_GATEWAY choice" .-> billing
+    signup --> shared
+    signup -- "Organizations port" --> organization
     organization --> subscription
     webhooks --> subscription
     exchange --> subscription

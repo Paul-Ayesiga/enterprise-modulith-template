@@ -1,5 +1,5 @@
 @startuml
-title <size:24>Support</size>
+title <size:24>Signup</size>
 
 set separator none
 top to bottom direction
@@ -18,14 +18,17 @@ top to bottom direction
 System_Boundary("Application_boundary", "Application", $tags="") {
   Container_Boundary("Application.Application_boundary", "Application", $tags="") {
     Component(Application.Application.Notification, "Notification", $techn="Module", $descr="", $tags="", $link="")
-    Component(Application.Application.Support, "Support", $techn="Module", $descr="", $tags="", $link="")
+    Component(Application.Application.Organization, "Organization", $techn="Module", $descr="", $tags="", $link="")
+    Component(Application.Application.Signup, "Signup", $techn="Module", $descr="", $tags="", $link="")
     Component(Application.Application.SharedKernel, "Shared Kernel", $techn="Module", $descr="", $tags="", $link="")
   }
 
 }
 
-Rel(Application.Application.Support, Application.Application.Notification, "uses", $techn="", $tags="", $link="")
-Rel(Application.Application.Support, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Organization, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Signup, Application.Application.Organization, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Signup, Application.Application.Notification, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Signup, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Notification, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 
 SHOW_LEGEND(true)

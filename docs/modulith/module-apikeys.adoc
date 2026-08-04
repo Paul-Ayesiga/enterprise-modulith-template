@@ -7,4 +7,5 @@
 * `u.c.s.s.security.CurrentUserProvider` (in Shared Kernel)
 * `u.c.s.s.audit.AuditLog` (in Shared Kernel)
 * `u.c.s.s.security.ApiKeyAuthenticator` (in Shared Kernel)
+* `u.c.s.s.security.GatewaySecretVerifier` (in Shared Kernel)
 |===

@@ -12,6 +12,7 @@ _Others_
 * `u.c.s.n.NotificationChannelSender` (via `u.c.s.n.internal.EmailChannelSender`)
 * `u.c.s.n.NotificationChannelSender` (via `u.c.s.n.internal.InAppChannelSender`)
 * `u.c.s.n.NotificationChannelSender` (via `u.c.s.n.internal.SlackChannelSender`)
+* `u.c.s.n.NotificationChannelSender` (via `u.c.s.n.internal.SmsChannelRouter`)
 * `u.c.s.n.NotificationChannelSender` (via `u.c.s.n.internal.SmsChannelSender`)
 * `u.c.s.n.NotificationChannelSender` (via `u.c.s.n.internal.WebhookChannelSender`)
 |Bean references

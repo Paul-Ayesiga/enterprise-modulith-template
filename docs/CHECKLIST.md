@@ -726,7 +726,32 @@ have closed the cycle `document → search → organization → exchange`, and `
 
 ---
 
-**Phases 0–4 + notification module complete and gated.** (Next free migration: **V27**.) Completed modules: [COMPLETED_MODULES.md](COMPLETED_MODULES.md).
+**Phases 0–4 + notification module complete and gated.** Completed modules: [COMPLETED_MODULES.md](COMPLETED_MODULES.md). (The next free migration number lives in AGENTS.md §4.5 — the only place it is maintained.)
+
+---
+
+## Post-v1 hardening — the overnight slices (2026-08)
+
+- [x] **Self-service signup** — enumeration-safe `202`, hashed single-use token (24h), slug+suffix
+      org creation, `SIGNUP_ENABLED` off by default, optional PRO trial-on-signup (V42)
+- [x] **Money edges** — completed collection lifts PAST_DUE/PAUSED → ACTIVE; nightly DunningJob
+      pauses past-due beyond grace (7d) with owner e-mails both ways; best-effort receipts;
+      VAT-inclusive breakdown (`vatAmount`/`netAmount`, V43)
+- [x] **Usage → Kill Bill bridge** — edge UsageBuffer → signed `/internal/gateway/usage-report` →
+      additive `api_usage_daily` ledger (V44) → opt-in nightly export, trackingId-deduped
+- [x] **Safety rails** — webhook `rotate-secret` (secret-once); platform org export (secrets dropped
+      at source, capped, audited); feature-flag targeting (percentage rollout + per-org overrides,
+      V45); org `requireMfa` policy (`amr`-checked sessions, TOTP-enrolling invites, V46)
+- [x] **Ops** — four provisioned Grafana alerts each linking a runbook (`docs/runbooks/`);
+      `smsone.payments.outcomes` meter; gateway metrics over OTLP; `docs/SLO.md`; AGENTS §4.6
+      expand-contract migration discipline
+- [x] **Road to prod** — CI (suites, portal builds, SBOM + trivy, helm lint, GHCR images, deploy
+      stub); `deploy/helm/smsone` (prod Keycloak `start --optimized`, external state, four-host
+      ingress, backup CronJob); backup/restore scripts + DR runbook; `docs/PRODUCTION.md`;
+      Playwright login-gate E2E scaffold
+- [x] **Docs (MUST)** — api-guide + system-diagram updated for every slice above; OpenAPI + Postman
+      regenerated (124 paths)
+- [x] **Gate:** full `./gradlew :test` and `:gateway:app:test` green over the final tree
 
 | Reference | What it is |
 |---|---|

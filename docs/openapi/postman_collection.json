@@ -5,7 +5,7 @@
    "description": "Identities across every tenant, and the impersonation sessions that are the only sanctioned way from an operator to tenant data. platform-support reads and may open a session; wearing an account that itself holds a platform role needs platform-superadmin. A session carries no authority of its own, so from inside one this whole group answers 403.",
    "item": [
     {
-     "id": "d5b74708-0b33-425b-b5a3-4f83db04984c",
+     "id": "21027db0-26a7-4cdd-b536-d18e5f1b07f8",
      "name": "List an operator's impersonation sessions",
      "request": {
       "name": "List an operator's impersonation sessions",
@@ -69,7 +69,7 @@
      },
      "response": [
       {
-       "id": "f75b727c-47b0-44fd-9a7f-d20e993babde",
+       "id": "74c2eb49-b7d7-4b39-a1d7-f08c1fdbaf6c",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -161,7 +161,7 @@
      }
     },
     {
-     "id": "9ec21a29-dce0-4f87-88cf-c8807e39fba1",
+     "id": "6a4550ce-b581-4199-b000-ad9ae275b2ad",
      "name": "Open an impersonation session",
      "request": {
       "name": "Open an impersonation session",
@@ -210,7 +210,7 @@
      },
      "response": [
       {
-       "id": "ac680629-9b37-43c7-965b-ebf542cccf9a",
+       "id": "634c295d-cc56-4299-a0e1-c64d8aab0a32",
        "name": "Created",
        "originalRequest": {
         "url": {
@@ -287,7 +287,7 @@
      }
     },
     {
-     "id": "5ff809f5-f4a9-4371-8ea1-b02c4a29f32b",
+     "id": "74ef6e85-ae7d-48d6-9be4-3c78e55e5af3",
      "name": "List provisioned users across the platform",
      "request": {
       "name": "List provisioned users across the platform",
@@ -339,7 +339,7 @@
      },
      "response": [
       {
-       "id": "a3456314-854e-45a0-8fc3-04f6fcd13cca",
+       "id": "b1614fac-fcb8-4c42-b92f-ed2ef55ab029",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -422,7 +422,7 @@
      }
     },
     {
-     "id": "d8bf27c2-186a-4ebc-82c8-6f8bc4035058",
+     "id": "d5f098ed-324c-4f3d-9ac2-a3cffaf936fe",
      "name": "Read a user's profile as the platform",
      "request": {
       "name": "Read a user's profile as the platform",
@@ -468,7 +468,7 @@
      },
      "response": [
       {
-       "id": "f4336f1d-37ae-4ed0-b54d-7a701ed682e4",
+       "id": "686cbafa-7924-457c-9de3-d2574c2fd460",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -545,7 +545,7 @@
      }
     },
     {
-     "id": "35b2a7f0-a41e-40ed-9697-559910a7dcab",
+     "id": "d2612e3b-ffc9-4e05-b971-d90719a33018",
      "name": "List a user's devices as the platform",
      "request": {
       "name": "List a user's devices as the platform",
@@ -610,7 +610,7 @@
      },
      "response": [
       {
-       "id": "c8e593e2-4953-4db8-bcc1-41be32674615",
+       "id": "76df8aed-1f2a-473d-bcbf-a4adfcbd9ae1",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -706,7 +706,7 @@
      }
     },
     {
-     "id": "3ec67ce9-1bb3-4f24-8d41-ad4ddf3d212a",
+     "id": "e3f056af-4144-423f-9ae6-af5e2a2165ff",
      "name": "End an impersonation session",
      "request": {
       "name": "End an impersonation session",
@@ -748,7 +748,7 @@
      },
      "response": [
       {
-       "id": "17364eac-ec2d-44d8-93ca-9c09f93aaddb",
+       "id": "a7913dde-16fc-4a97-9250-6aa5bb420fc3",
        "name": "No Content",
        "originalRequest": {
         "url": {
@@ -821,7 +821,7 @@
    "description": "Creating a tenant, suspending it, reactivating it. These are platform actions ON an organization, not actions inside one, and that is why they are here: a fresh org has no member to hold a permission, and suspension cuts every member's access — neither can be gated on a permission granted inside the org being acted on. Reading and editing the record itself is the tenant's own business: Organization · Profile.",
    "item": [
     {
-     "id": "f80a31ab-c601-48a8-bb42-8e8d3eb9fbe1",
+     "id": "377291b2-791d-408d-9713-f93389806c43",
      "name": "Create an organization and its first owner",
      "request": {
       "name": "Create an organization and its first owner",
@@ -866,7 +866,7 @@
       "method": "POST",
       "body": {
        "mode": "raw",
-       "raw": "{\n  \"alias\": \"slp3h6v308o7swy9wwvqkr6bd82m70ioib8-3xzo56y5ky58cfoekpcdiv6v9q0ofyel2ucxzxe47-u\",\n  \"name\": \"<string>\",\n  \"ownerEmail\": \"<email>\",\n  \"ownerFirstName\": \"<string>\",\n  \"ownerLastName\": \"<string>\"\n}",
+       "raw": "{\n  \"alias\": \"bqzi6kxrw7x9rjx7ow5v4brfew44ius-el573rvxpue69jqgsiyae1wem2xcaxxp6hpvyk26bz6qfzmdir-5dzzl0cff\",\n  \"name\": \"<string>\",\n  \"ownerEmail\": \"<email>\",\n  \"ownerFirstName\": \"<string>\",\n  \"ownerLastName\": \"<string>\"\n}",
        "options": {
         "raw": {
          "headerFamily": "json",
@@ -878,7 +878,7 @@
      },
      "response": [
       {
-       "id": "2b838003-26dc-4b39-840d-7eb41f7e7023",
+       "id": "38ab7e3e-ea74-48db-ac90-8ca380f32fa2",
        "name": "Created",
        "originalRequest": {
         "url": {
@@ -926,7 +926,7 @@
         "method": "POST",
         "body": {
          "mode": "raw",
-         "raw": "{\n  \"alias\": \"slp3h6v308o7swy9wwvqkr6bd82m70ioib8-3xzo56y5ky58cfoekpcdiv6v9q0ofyel2ucxzxe47-u\",\n  \"name\": \"<string>\",\n  \"ownerEmail\": \"<email>\",\n  \"ownerFirstName\": \"<string>\",\n  \"ownerLastName\": \"<string>\"\n}",
+         "raw": "{\n  \"alias\": \"bqzi6kxrw7x9rjx7ow5v4brfew44ius-el573rvxpue69jqgsiyae1wem2xcaxxp6hpvyk26bz6qfzmdir-5dzzl0cff\",\n  \"name\": \"<string>\",\n  \"ownerEmail\": \"<email>\",\n  \"ownerFirstName\": \"<string>\",\n  \"ownerLastName\": \"<string>\"\n}",
          "options": {
           "raw": {
            "headerFamily": "json",
@@ -963,7 +963,7 @@
      }
     },
     {
-     "id": "433ae61d-a68a-4bda-8b9d-2c79fb78c9cf",
+     "id": "150d7fed-9d33-4e40-b3dd-165a04c1c6fb",
      "name": "Suspend an organization",
      "request": {
       "name": "Suspend an organization",
@@ -1020,7 +1020,7 @@
      },
      "response": [
       {
-       "id": "500dc951-72ff-4e13-aa3e-745e13749fca",
+       "id": "db7a6806-d41e-46b6-b5c4-2a0aaa0b571f",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -1105,7 +1105,7 @@
      }
     },
     {
-     "id": "3762fd45-c35e-4bcc-8f80-ebb4af53c6da",
+     "id": "a5a4f523-756b-4399-9edb-7708567436f5",
      "name": "Reactivate a suspended organization",
      "request": {
       "name": "Reactivate a suspended organization",
@@ -1159,7 +1159,7 @@
      },
      "response": [
       {
-       "id": "3e1a3ec8-7822-43b5-87b6-e3678f2cd25e",
+       "id": "e4ef3808-6190-4e15-b53f-42dbf4a2b727",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -1244,7 +1244,7 @@
      }
     },
     {
-     "id": "e99b3b8f-c0ef-4dd2-a06d-885bee6734a0",
+     "id": "fd7b2684-97e8-4b1c-bf6f-a42d7edba259",
      "name": "List every organization on the platform",
      "request": {
       "name": "List every organization on the platform",
@@ -1308,7 +1308,7 @@
      },
      "response": [
       {
-       "id": "41d83e5a-9473-4553-aac8-365d9a2bc8ac",
+       "id": "36f73a9c-88d9-468c-b9d1-e452a80b5806",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -1400,7 +1400,7 @@
      }
     },
     {
-     "id": "9942a2da-12ec-4be7-86eb-411807426fb4",
+     "id": "048332d7-5d3d-4c1a-838c-cbb21b993d21",
      "name": "Inspect one organization as the platform",
      "request": {
       "name": "Inspect one organization as the platform",
@@ -1445,7 +1445,7 @@
      },
      "response": [
       {
-       "id": "5aadb0da-5e98-4d48-8bb1-d34274f7d154",
+       "id": "8593f508-6d1f-40b0-80ec-f3d8b4f15a10",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -1521,7 +1521,7 @@
      }
     },
     {
-     "id": "dae7915e-29fa-4417-9a7e-94ebde2a4400",
+     "id": "6d2ff351-db83-42ee-bc86-6470305de9c6",
      "name": "Delete an organization",
      "request": {
       "name": "Delete an organization",
@@ -1563,7 +1563,7 @@
      },
      "response": [
       {
-       "id": "9be381f2-f547-478d-a340-08fb1c2f650b",
+       "id": "2b0aa1bd-d76c-4a78-bd19-0a9b381dd8b9",
        "name": "No Content",
        "originalRequest": {
         "url": {
@@ -1630,7 +1630,7 @@
      }
     },
     {
-     "id": "23ec6fd3-22b5-46d9-982b-1343c1566161",
+     "id": "bcc761db-6dc7-4fd8-b748-e04ba6f716d8",
      "name": "List an organization's members as the platform",
      "request": {
       "name": "List an organization's members as the platform",
@@ -1698,7 +1698,7 @@
      },
      "response": [
       {
-       "id": "c9881fa6-1287-45c6-b69d-fceff394af6a",
+       "id": "06b06ebf-df61-48a6-b808-439550fe4405",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -1800,7 +1800,7 @@
    "description": "Writing platform-wide configuration: setting values and feature-flag state, platform-admin. The same keys are readable by any authenticated caller under Shared · Settings & flags — same paths, different method, different authority, which is why one controller lands in two groups.",
    "item": [
     {
-     "id": "dc110300-0000-47b0-8e2c-533a53e48d39",
+     "id": "d03020b2-debe-441e-bcff-2eccc315c913",
      "name": "Create or replace a platform setting",
      "request": {
       "name": "Create or replace a platform setting",
@@ -1869,7 +1869,7 @@
      },
      "response": [
       {
-       "id": "cda98fba-900e-4b28-aa8f-095f443746d0",
+       "id": "4c76c772-7e7a-47c7-9ebb-368a5d8bcc83",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -1966,12 +1966,12 @@
      }
     },
     {
-     "id": "12a8be99-6181-4d2c-a4b1-660b1b765eb5",
+     "id": "f5e24d85-5365-4e53-92cd-24123b588e95",
      "name": "Create or toggle a feature flag",
      "request": {
       "name": "Create or toggle a feature flag",
       "description": {
-       "content": "Upsert: a key that does not exist yet is created rather than rejected, so there is no separate create call. Flags are global — there is no per-organization override.",
+       "content": "Upsert: a key that does not exist yet is created rather than rejected, so there is no separate create call. `percentage` (0-100, optional) turns an enabled flag into a gradual rollout bucketed per organization; per-org overrides beat both.",
        "type": "text/plain"
       },
       "url": {
@@ -2023,7 +2023,7 @@
       "method": "PUT",
       "body": {
        "mode": "raw",
-       "raw": "{\n  \"enabled\": \"<boolean>\",\n  \"description\": \"<string>\"\n}",
+       "raw": "{\n  \"enabled\": \"<boolean>\",\n  \"description\": \"<string>\",\n  \"percentage\": \"<integer>\"\n}",
        "options": {
         "raw": {
          "headerFamily": "json",
@@ -2035,7 +2035,7 @@
      },
      "response": [
       {
-       "id": "3e97a340-dec6-4b0d-9b2a-567918836619",
+       "id": "430f0a19-2dba-462e-bf6b-984988922d63",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -2095,7 +2095,7 @@
         "method": "PUT",
         "body": {
          "mode": "raw",
-         "raw": "{\n  \"enabled\": \"<boolean>\",\n  \"description\": \"<string>\"\n}",
+         "raw": "{\n  \"enabled\": \"<boolean>\",\n  \"description\": \"<string>\",\n  \"percentage\": \"<integer>\"\n}",
          "options": {
           "raw": {
            "headerFamily": "json",
@@ -2130,6 +2130,347 @@
      "protocolProfileBehavior": {
       "disableBodyPruning": true
      }
+    },
+    {
+     "id": "8823fa85-2ae6-4048-af80-45d16b6a142e",
+     "name": "Set a per-org override for a flag",
+     "request": {
+      "name": "Set a per-org override for a flag",
+      "description": {
+       "content": "Pins the flag hard ON or OFF for one organization, beating the global value and any percentage rollout. The flag must already exist. Platform-admin only.",
+       "type": "text/plain"
+      },
+      "url": {
+       "path": [
+        "api",
+        "v1",
+        "feature-flags",
+        ":key",
+        "orgs",
+        ":orgId"
+       ],
+       "host": [
+        "localhost"
+       ],
+       "query": [],
+       "variable": [
+        {
+         "type": "any",
+         "value": "<string>",
+         "key": "key",
+         "disabled": false,
+         "description": {
+          "content": "(Required) ",
+          "type": "text/plain"
+         }
+        },
+        {
+         "type": "any",
+         "value": "<uuid>",
+         "key": "orgId",
+         "disabled": false,
+         "description": {
+          "content": "(Required) ",
+          "type": "text/plain"
+         }
+        }
+       ],
+       "protocol": "http",
+       "port": "28080",
+       "raw": "http://localhost:28080/api/v1/feature-flags/:key/orgs/:orgId"
+      },
+      "header": [
+       {
+        "disabled": false,
+        "description": {
+         "content": "Run this request as the target of an impersonation session (its id, from POST /api/v1/admin/impersonations). The session must belong to the calling operator; a READ_ONLY session refuses any unsafe method. Every write is audited against the operator, not the target.",
+         "type": "text/plain"
+        },
+        "key": "X-Impersonate",
+        "value": "<uuid>"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Accept",
+        "value": "*/*"
+       }
+      ],
+      "method": "PUT",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"enabled\": \"<boolean>\"\n}",
+       "options": {
+        "raw": {
+         "headerFamily": "json",
+         "language": "json"
+        }
+       }
+      },
+      "auth": null
+     },
+     "response": [
+      {
+       "id": "daf7c468-66c5-4b3b-8e38-d031d275abc7",
+       "name": "OK",
+       "originalRequest": {
+        "url": {
+         "path": [
+          "api",
+          "v1",
+          "feature-flags",
+          ":key",
+          "orgs",
+          ":orgId"
+         ],
+         "host": [
+          "localhost"
+         ],
+         "query": [],
+         "variable": [
+          {
+           "disabled": false,
+           "description": {
+            "content": "(Required) ",
+            "type": "text/plain"
+           },
+           "type": "any",
+           "value": "<string>",
+           "key": "key"
+          },
+          {
+           "disabled": false,
+           "description": {
+            "content": "(Required) ",
+            "type": "text/plain"
+           },
+           "type": "any",
+           "value": "<uuid>",
+           "key": "orgId"
+          }
+         ],
+         "protocol": "http",
+         "port": "28080",
+         "raw": "http://localhost:28080/api/v1/feature-flags/:key/orgs/:orgId"
+        },
+        "header": [
+         {
+          "disabled": false,
+          "description": {
+           "content": "Run this request as the target of an impersonation session (its id, from POST /api/v1/admin/impersonations). The session must belong to the calling operator; a READ_ONLY session refuses any unsafe method. Every write is audited against the operator, not the target.",
+           "type": "text/plain"
+          },
+          "key": "X-Impersonate",
+          "value": "<uuid>"
+         },
+         {
+          "key": "Content-Type",
+          "value": "application/json"
+         },
+         {
+          "key": "Accept",
+          "value": "*/*"
+         },
+         {
+          "description": {
+           "content": "Added as a part of security scheme: bearer",
+           "type": "text/plain"
+          },
+          "key": "Authorization",
+          "value": "Bearer <token>"
+         }
+        ],
+        "method": "PUT",
+        "body": {
+         "mode": "raw",
+         "raw": "{\n  \"enabled\": \"<boolean>\"\n}",
+         "options": {
+          "raw": {
+           "headerFamily": "json",
+           "language": "json"
+          }
+         }
+        }
+       },
+       "status": "OK",
+       "code": 200,
+       "header": [
+        {
+         "key": "Content-Type",
+         "value": "*/*"
+        },
+        {
+         "disabled": false,
+         "description": {
+          "content": "Public request id (accepted inbound, else minted as a ULID).",
+          "type": "text/plain"
+         },
+         "key": "X-Request-Id",
+         "value": "<string>"
+        }
+       ],
+       "body": "{\n  \"id\": \"<string>\",\n  \"type\": \"<string>\",\n  \"attributes\": {}\n}",
+       "cookie": [],
+       "_postman_previewlanguage": "text"
+      }
+     ],
+     "event": [],
+     "protocolProfileBehavior": {
+      "disableBodyPruning": true
+     }
+    },
+    {
+     "id": "59e7ead3-1371-4486-97de-18014c04aa9d",
+     "name": "Clear a per-org override",
+     "request": {
+      "name": "Clear a per-org override",
+      "description": {
+       "content": "The organization falls back to the global value / percentage rollout.",
+       "type": "text/plain"
+      },
+      "url": {
+       "path": [
+        "api",
+        "v1",
+        "feature-flags",
+        ":key",
+        "orgs",
+        ":orgId"
+       ],
+       "host": [
+        "localhost"
+       ],
+       "query": [],
+       "variable": [
+        {
+         "type": "any",
+         "value": "<string>",
+         "key": "key",
+         "disabled": false,
+         "description": {
+          "content": "(Required) ",
+          "type": "text/plain"
+         }
+        },
+        {
+         "type": "any",
+         "value": "<uuid>",
+         "key": "orgId",
+         "disabled": false,
+         "description": {
+          "content": "(Required) ",
+          "type": "text/plain"
+         }
+        }
+       ],
+       "protocol": "http",
+       "port": "28080",
+       "raw": "http://localhost:28080/api/v1/feature-flags/:key/orgs/:orgId"
+      },
+      "header": [
+       {
+        "disabled": false,
+        "description": {
+         "content": "Run this request as the target of an impersonation session (its id, from POST /api/v1/admin/impersonations). The session must belong to the calling operator; a READ_ONLY session refuses any unsafe method. Every write is audited against the operator, not the target.",
+         "type": "text/plain"
+        },
+        "key": "X-Impersonate",
+        "value": "<uuid>"
+       }
+      ],
+      "method": "DELETE",
+      "body": {},
+      "auth": null
+     },
+     "response": [
+      {
+       "id": "03ced1e0-45c2-4ae6-8e64-6e181eee607e",
+       "name": "No Content",
+       "originalRequest": {
+        "url": {
+         "path": [
+          "api",
+          "v1",
+          "feature-flags",
+          ":key",
+          "orgs",
+          ":orgId"
+         ],
+         "host": [
+          "localhost"
+         ],
+         "query": [],
+         "variable": [
+          {
+           "disabled": false,
+           "description": {
+            "content": "(Required) ",
+            "type": "text/plain"
+           },
+           "type": "any",
+           "value": "<string>",
+           "key": "key"
+          },
+          {
+           "disabled": false,
+           "description": {
+            "content": "(Required) ",
+            "type": "text/plain"
+           },
+           "type": "any",
+           "value": "<uuid>",
+           "key": "orgId"
+          }
+         ],
+         "protocol": "http",
+         "port": "28080",
+         "raw": "http://localhost:28080/api/v1/feature-flags/:key/orgs/:orgId"
+        },
+        "header": [
+         {
+          "disabled": false,
+          "description": {
+           "content": "Run this request as the target of an impersonation session (its id, from POST /api/v1/admin/impersonations). The session must belong to the calling operator; a READ_ONLY session refuses any unsafe method. Every write is audited against the operator, not the target.",
+           "type": "text/plain"
+          },
+          "key": "X-Impersonate",
+          "value": "<uuid>"
+         },
+         {
+          "description": {
+           "content": "Added as a part of security scheme: bearer",
+           "type": "text/plain"
+          },
+          "key": "Authorization",
+          "value": "Bearer <token>"
+         }
+        ],
+        "method": "DELETE",
+        "body": {}
+       },
+       "status": "No Content",
+       "code": 204,
+       "header": [
+        {
+         "disabled": false,
+         "description": {
+          "content": "Public request id (accepted inbound, else minted as a ULID).",
+          "type": "text/plain"
+         },
+         "key": "X-Request-Id",
+         "value": "<string>"
+        }
+       ],
+       "cookie": [],
+       "_postman_previewlanguage": "text"
+      }
+     ],
+     "event": [],
+     "protocolProfileBehavior": {
+      "disableBodyPruning": true
+     }
     }
    ]
   },
@@ -2138,7 +2479,7 @@
    "description": "The cross-tenant support queue (platform-support): work tickets, assign, reply (public or an internal note the tenant never sees), transition status. SLA breaches escalate automatically — a minute job bumps priority, counts the breach, and fires org.ticket.escalated.",
    "item": [
     {
-     "id": "6b5c3166-a84a-4529-8204-514235a2d4ca",
+     "id": "560d7702-8672-4dd6-9cae-6dbc5f233136",
      "name": "Transition the ticket's status",
      "request": {
       "name": "Transition the ticket's status",
@@ -2197,7 +2538,7 @@
      },
      "response": [
       {
-       "id": "721ef6e6-acd0-4bcf-a822-f1b70ba3119b",
+       "id": "08bfbdb5-b838-431f-a8ce-c2828f6f421f",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -2287,7 +2628,7 @@
      }
     },
     {
-     "id": "a4ed07d7-505a-4146-aae3-b39ba49040f8",
+     "id": "fbc580a8-3e58-40f1-b881-4e0b7a376afd",
      "name": "All the ticket's messages, including internal notes",
      "request": {
       "name": "All the ticket's messages, including internal notes",
@@ -2333,7 +2674,7 @@
      },
      "response": [
       {
-       "id": "3b2f6c6f-130a-424a-8680-3d9fd0940890",
+       "id": "f6130c0c-e370-47ef-ac47-9b36134e49b8",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -2410,7 +2751,7 @@
      }
     },
     {
-     "id": "7ea79ae9-a24e-4989-bdea-b4a3fa1c8c3d",
+     "id": "a179f133-bde3-47c2-8525-aeef3f536dc2",
      "name": "Reply (public) or add an internal note",
      "request": {
       "name": "Reply (public) or add an internal note",
@@ -2545,7 +2886,7 @@
      },
      "response": [
       {
-       "id": "0f2af234-a21a-4f22-bf95-800779ce6e7b",
+       "id": "804ff78e-2e41-4324-b514-39d8ba3c002e",
        "name": "Created",
        "originalRequest": {
         "url": {
@@ -2708,7 +3049,7 @@
      }
     },
     {
-     "id": "0487e41f-65d4-4e48-b3bf-e745e11d3060",
+     "id": "ac07c812-3b2f-4638-bf0b-4f936f1bf438",
      "name": "Assign the ticket",
      "request": {
       "name": "Assign the ticket",
@@ -2767,7 +3108,7 @@
      },
      "response": [
       {
-       "id": "0a436735-2ad6-4e8b-90d4-19fc9364d760",
+       "id": "9d9333ea-ada7-4b89-a2a4-f04da5223d98",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -2857,7 +3198,7 @@
      }
     },
     {
-     "id": "08008bcb-1135-4555-9203-faa3c2eec3f5",
+     "id": "30886bf8-13fb-4d4e-92bc-6e26671c925b",
      "name": "The support queue",
      "request": {
       "name": "The support queue",
@@ -2921,7 +3262,7 @@
      },
      "response": [
       {
-       "id": "bbc569d9-c0a1-4346-a901-4c6dbefa4318",
+       "id": "05c2424c-37e3-4ce5-8e16-ac0f856133de",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -3013,7 +3354,7 @@
      }
     },
     {
-     "id": "883f91e6-77dc-42a3-98c6-7cd7f4660dc6",
+     "id": "52cf3e03-60e8-4a0b-9a3b-3757ebdb9331",
      "name": "Get one ticket (any org)",
      "request": {
       "name": "Get one ticket (any org)",
@@ -3058,7 +3399,7 @@
      },
      "response": [
       {
-       "id": "754396f9-f160-492c-b13e-c40078998688",
+       "id": "86538f3e-da6c-47d0-b400-78c45bca1b37",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -3140,7 +3481,7 @@
    "description": "Per-org SLA overrides (platform-admin writes, platform-support reads): set an org's first-response/resolution targets tighter or looser than the seeded per-priority defaults. Consulted at ticket open.",
    "item": [
     {
-     "id": "079ddb9c-f5d5-4165-a43a-244a8f2c470d",
+     "id": "542a23b7-7935-43fb-a261-ee2b1843b3a9",
      "name": "Set an org's SLA target for a priority",
      "request": {
       "name": "Set an org's SLA target for a priority",
@@ -3213,7 +3554,7 @@
      },
      "response": [
       {
-       "id": "02e0eda3-527c-47ba-9ce3-868813d79b77",
+       "id": "26c10737-48be-4bec-9cb4-eb3696eee19e",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -3314,7 +3655,7 @@
      }
     },
     {
-     "id": "012aa549-d962-46bd-9dca-d0e4355c9e16",
+     "id": "87d92117-6e79-4c11-a85b-9feb377087bb",
      "name": "Clear an org's SLA override (fall back to the seeded default)",
      "request": {
       "name": "Clear an org's SLA override (fall back to the seeded default)",
@@ -3365,7 +3706,7 @@
      },
      "response": [
       {
-       "id": "6cfbd82a-fb9e-4c75-a2af-821d6f036c59",
+       "id": "4e0be6d4-8514-4fe8-a5e2-6e66d4109b4d",
        "name": "No Content",
        "originalRequest": {
         "url": {
@@ -3444,7 +3785,7 @@
      }
     },
     {
-     "id": "71fc2f0e-d0ce-49c4-84b7-b80d5fd937e5",
+     "id": "6635871a-83a0-43df-a9c4-115eab6dbc45",
      "name": "List an org's SLA overrides",
      "request": {
       "name": "List an org's SLA overrides",
@@ -3493,7 +3834,7 @@
      },
      "response": [
       {
-       "id": "529b3836-5889-44dd-b277-fd4fc20750ae",
+       "id": "4e9f87c4-2314-41d1-a8bc-f6d6caccf86f",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -3576,7 +3917,7 @@
    "description": "Per-org retention overrides (platform-admin writes, platform-support reads) for the org-scoped logs (webhook-delivery, exchange-job): keep or drop one org's rows on a different schedule than the platform default.",
    "item": [
     {
-     "id": "c146bbce-a7d1-487b-9bf1-a8a3d6154b21",
+     "id": "f15db3f3-f21a-44a9-821b-428ef2f4d688",
      "name": "Set an org's retention for a scope",
      "request": {
       "name": "Set an org's retention for a scope",
@@ -3649,7 +3990,7 @@
      },
      "response": [
       {
-       "id": "2afe8c8f-9b70-486f-891e-7f6b6dec8f4a",
+       "id": "6c46d915-87f2-4b86-9d3f-db1692c039b5",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -3750,7 +4091,7 @@
      }
     },
     {
-     "id": "1e4be377-f5c1-4263-901e-4770abecc0b5",
+     "id": "2be61c9d-3727-44a8-8808-00e41fdac17b",
      "name": "Clear an org's retention override (fall back to the platform default)",
      "request": {
       "name": "Clear an org's retention override (fall back to the platform default)",
@@ -3801,7 +4142,7 @@
      },
      "response": [
       {
-       "id": "3258def2-8a15-4842-8e1e-a4308e3af764",
+       "id": "358d0010-31a9-41a8-91f6-f7e959c18e7c",
        "name": "No Content",
        "originalRequest": {
         "url": {
@@ -3880,7 +4221,7 @@
      }
     },
     {
-     "id": "43922f26-3fa1-46b9-b68e-559e50307db4",
+     "id": "8ab36d62-31cf-4549-acc1-9009bf6d308e",
      "name": "List an org's retention overrides",
      "request": {
       "name": "List an org's retention overrides",
@@ -3929,7 +4270,7 @@
      },
      "response": [
       {
-       "id": "dacc2fbc-569c-43a9-b802-007dc47f9729",
+       "id": "fc975967-6c2d-4721-bd43-3ae5b57a554b",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -4012,7 +4353,7 @@
    "description": "Scheduling maintenance windows (platform-admin), platform-wide or targeted at one org. RESTRICT pauses org writes for the window; ANNOUNCE is banner-only. Distinct from a tenant's lifecycle (Platform · Organizations) — those are permanent, these are time-boxed.",
    "item": [
     {
-     "id": "b9601b9b-2c81-4010-9ab5-0f3d433260f9",
+     "id": "7b2098d9-7dfa-4960-84b3-69665a58009d",
      "name": "List platform-wide maintenance windows",
      "request": {
       "name": "List platform-wide maintenance windows",
@@ -4045,7 +4386,7 @@
      },
      "response": [
       {
-       "id": "46df80aa-7bd1-4f3a-b744-ae9f8229fea0",
+       "id": "97c68e97-4b31-4625-8fda-14a5157ffd77",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -4109,7 +4450,7 @@
      }
     },
     {
-     "id": "5e402df5-dc26-4334-b108-00950208c50a",
+     "id": "cea5f638-743c-41bd-ad79-c4dca9372ec7",
      "name": "Schedule a maintenance window",
      "request": {
       "name": "Schedule a maintenance window",
@@ -4158,7 +4499,7 @@
      },
      "response": [
       {
-       "id": "ee39624e-019c-4ce3-8691-feae55d5b8e1",
+       "id": "0d637f3b-7682-4747-96dd-2d10ea84f93f",
        "name": "Created",
        "originalRequest": {
         "url": {
@@ -4235,7 +4576,7 @@
      }
     },
     {
-     "id": "ec6f2d63-8570-4c6d-9efd-0b5e4a3f2311",
+     "id": "68b8cbf7-edb1-4789-827b-efd64847d710",
      "name": "Cancel a platform maintenance window",
      "request": {
       "name": "Cancel a platform maintenance window",
@@ -4274,7 +4615,7 @@
      },
      "response": [
       {
-       "id": "65d89224-ed9a-4b10-bd4e-6ce3c0ea9305",
+       "id": "a4874ac4-b5b0-4fd4-853d-265cc62f2d70",
        "name": "No Content",
        "originalRequest": {
         "url": {
@@ -4347,7 +4688,7 @@
    "description": "Legal holds and erasure execution. A hold (subject or org) BLOCKS the retention purge and any erasure of the held data until released — placing is platform-admin, listing platform-support. Erasure soft-deletes now, hard-erases at retention (which honors holds).",
    "item": [
     {
-     "id": "1a3daeed-24d9-445f-b99f-072a69ae4837",
+     "id": "3c958f90-ca94-4c3e-bbf9-53c24a0be4e4",
      "name": "Place a legal hold on a subject",
      "request": {
       "name": "Place a legal hold on a subject",
@@ -4471,7 +4812,7 @@
      },
      "response": [
       {
-       "id": "ea41234b-b327-403a-a918-51c66ad9d711",
+       "id": "2b0c4ca6-8689-4e68-8c38-77e4ff1c3d3c",
        "name": "Created",
        "originalRequest": {
         "url": {
@@ -4623,7 +4964,7 @@
      }
     },
     {
-     "id": "c3685740-6db1-427e-b40f-ec583ada6d5b",
+     "id": "b4a19ba3-5424-4029-bbc6-0d6324d30804",
      "name": "Place a legal hold on an organization",
      "request": {
       "name": "Place a legal hold on an organization",
@@ -4744,7 +5085,7 @@
      },
      "response": [
       {
-       "id": "270a51f4-f678-45f7-a58c-a38082654d55",
+       "id": "8c819515-09fb-442e-a28f-20089cc9be4d",
        "name": "Created",
        "originalRequest": {
         "url": {
@@ -4896,7 +5237,7 @@
      }
     },
     {
-     "id": "69b4e54b-9b0f-48f3-80ee-b714aba3cbb7",
+     "id": "ca31ba93-3b8a-42db-97f3-40d595062266",
      "name": "Execute an erasure on a subject's behalf",
      "request": {
       "name": "Execute an erasure on a subject's behalf",
@@ -5019,7 +5360,7 @@
      },
      "response": [
       {
-       "id": "cbb11419-baa9-49ac-968f-42a229880f4e",
+       "id": "420bc646-9ce0-4dea-8e82-873b1604facb",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -5170,7 +5511,135 @@
      }
     },
     {
-     "id": "e878e63e-1988-456c-8b1c-4366a7b45edc",
+     "id": "b322cd75-5853-4571-8495-18f8aea6b758",
+     "name": "Export one organization's records (offboarding bundle)",
+     "request": {
+      "name": "Export one organization's records (offboarding bundle)",
+      "description": {
+       "content": "A JSON bundle of the organization's rows across every org-owned table — membership, roles, subscription, integrations, webhooks, payments, usage, tickets, audit (capped per table; the cap is stated in the payload). Secret-bearing columns never leave the database. Audited as compliance.org_exported.",
+       "type": "text/plain"
+      },
+      "url": {
+       "path": [
+        "api",
+        "v1",
+        "admin",
+        "compliance",
+        "orgs",
+        ":orgId",
+        "export"
+       ],
+       "host": [
+        "localhost"
+       ],
+       "query": [],
+       "variable": [
+        {
+         "type": "any",
+         "value": "<uuid>",
+         "key": "orgId",
+         "disabled": false,
+         "description": {
+          "content": "(Required) ",
+          "type": "text/plain"
+         }
+        }
+       ],
+       "protocol": "http",
+       "port": "28080",
+       "raw": "http://localhost:28080/api/v1/admin/compliance/orgs/:orgId/export"
+      },
+      "header": [
+       {
+        "key": "Accept",
+        "value": "*/*"
+       }
+      ],
+      "method": "GET",
+      "body": {},
+      "auth": null
+     },
+     "response": [
+      {
+       "id": "ce8c7c5d-9919-4249-ae1c-5ef46c3135c3",
+       "name": "OK",
+       "originalRequest": {
+        "url": {
+         "path": [
+          "api",
+          "v1",
+          "admin",
+          "compliance",
+          "orgs",
+          ":orgId",
+          "export"
+         ],
+         "host": [
+          "localhost"
+         ],
+         "query": [],
+         "variable": [
+          {
+           "disabled": false,
+           "description": {
+            "content": "(Required) ",
+            "type": "text/plain"
+           },
+           "type": "any",
+           "value": "<uuid>",
+           "key": "orgId"
+          }
+         ],
+         "protocol": "http",
+         "port": "28080",
+         "raw": "http://localhost:28080/api/v1/admin/compliance/orgs/:orgId/export"
+        },
+        "header": [
+         {
+          "key": "Accept",
+          "value": "*/*"
+         },
+         {
+          "description": {
+           "content": "Added as a part of security scheme: bearer",
+           "type": "text/plain"
+          },
+          "key": "Authorization",
+          "value": "Bearer <token>"
+         }
+        ],
+        "method": "GET",
+        "body": {}
+       },
+       "status": "OK",
+       "code": 200,
+       "header": [
+        {
+         "key": "Content-Type",
+         "value": "*/*"
+        },
+        {
+         "disabled": false,
+         "description": {
+          "content": "Public request id (accepted inbound, else minted as a ULID).",
+          "type": "text/plain"
+         },
+         "key": "X-Request-Id",
+         "value": "<string>"
+        }
+       ],
+       "body": "{\n  \"id\": \"<string>\",\n  \"type\": \"<string>\",\n  \"attributes\": {}\n}",
+       "cookie": [],
+       "_postman_previewlanguage": "text"
+      }
+     ],
+     "event": [],
+     "protocolProfileBehavior": {
+      "disableBodyPruning": true
+     }
+    },
+    {
+     "id": "9763092e-ba35-4b37-8934-791ba58759a7",
      "name": "List active legal holds",
      "request": {
       "name": "List active legal holds",
@@ -5204,7 +5673,7 @@
      },
      "response": [
       {
-       "id": "5dd3b697-f6f2-4971-8517-f39b84bb22c0",
+       "id": "08469d6e-f941-420d-aa83-4bc715f11ebb",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -5269,7 +5738,7 @@
      }
     },
     {
-     "id": "c2735f0a-a198-4543-840c-c46948cdc318",
+     "id": "ee4168ba-47e5-4a4a-95a7-7d183641ac13",
      "name": "Release a legal hold",
      "request": {
       "name": "Release a legal hold",
@@ -5382,7 +5851,7 @@
      },
      "response": [
       {
-       "id": "1df42951-f9ed-4cba-864a-d5708cbe59df",
+       "id": "5c5d78d8-eb7e-4104-945f-60cb276f2a98",
        "name": "No Content",
        "originalRequest": {
         "url": {
@@ -5529,7 +5998,7 @@
    "description": "The PLATFORM-DEFAULT provider configs (platform-admin) — SMS, email, payment gateway — used by any org that has no override of its own. Same encryption and masking as the org surface.",
    "item": [
     {
-     "id": "68b06161-5bcc-4574-8883-86c5a3bfdc5f",
+     "id": "44a0f897-ef4b-4dc4-878a-5b965055a2dc",
      "name": "List platform-default integrations",
      "request": {
       "name": "List platform-default integrations",
@@ -5562,7 +6031,7 @@
      },
      "response": [
       {
-       "id": "d9ca7c07-0017-49ec-9386-67d08c44842a",
+       "id": "3f7d4c28-a54a-41c9-a1fe-11ce9d02e7db",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -5626,7 +6095,7 @@
      }
     },
     {
-     "id": "fa37ae01-f9fb-4490-9b64-d49eb0521f98",
+     "id": "983746ee-5e00-40d8-b27c-82440a5f130f",
      "name": "Configure a platform-default integration",
      "request": {
       "name": "Configure a platform-default integration",
@@ -5660,7 +6129,7 @@
       "method": "PUT",
       "body": {
        "mode": "raw",
-       "raw": "{\n  \"kind\": \"<string>\",\n  \"provider\": \"<string>\",\n  \"enabled\": \"<boolean>\",\n  \"settings\": {\n    \"key_0\": \"<string>\",\n    \"key_1\": \"<string>\",\n    \"key_2\": \"<string>\"\n  }\n}",
+       "raw": "{\n  \"kind\": \"<string>\",\n  \"provider\": \"<string>\",\n  \"enabled\": \"<boolean>\",\n  \"settings\": {\n    \"key_0\": \"<string>\",\n    \"key_1\": \"<string>\"\n  }\n}",
        "options": {
         "raw": {
          "headerFamily": "json",
@@ -5672,7 +6141,7 @@
      },
      "response": [
       {
-       "id": "827a6786-5dca-4f8a-8870-30a9c560a6de",
+       "id": "e6c68e5b-7223-43ba-8b2a-61c0f3235a67",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -5712,7 +6181,7 @@
         "method": "PUT",
         "body": {
          "mode": "raw",
-         "raw": "{\n  \"kind\": \"<string>\",\n  \"provider\": \"<string>\",\n  \"enabled\": \"<boolean>\",\n  \"settings\": {\n    \"key_0\": \"<string>\",\n    \"key_1\": \"<string>\",\n    \"key_2\": \"<string>\"\n  }\n}",
+         "raw": "{\n  \"kind\": \"<string>\",\n  \"provider\": \"<string>\",\n  \"enabled\": \"<boolean>\",\n  \"settings\": {\n    \"key_0\": \"<string>\",\n    \"key_1\": \"<string>\"\n  }\n}",
          "options": {
           "raw": {
            "headerFamily": "json",
@@ -5749,7 +6218,7 @@
      }
     },
     {
-     "id": "d6e5c04e-be7f-477d-a67a-3c02e62514b9",
+     "id": "eee7e4b1-46f7-476c-a0db-b0537070f030",
      "name": "Test a platform-default integration",
      "request": {
       "name": "Test a platform-default integration",
@@ -5795,7 +6264,7 @@
      },
      "response": [
       {
-       "id": "6dddba01-0581-49b1-81b9-0c25ce7d3841",
+       "id": "e2777cb8-febf-4f47-99a4-ddff6a4dedf3",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -5861,7 +6330,7 @@
          "value": "<string>"
         }
        ],
-       "body": "{\n  \"key_0\": \"<string>\",\n  \"key_1\": \"<string>\",\n  \"key_2\": \"<string>\",\n  \"key_3\": \"<string>\"\n}",
+       "body": "{\n  \"key_0\": \"<string>\",\n  \"key_1\": \"<string>\"\n}",
        "cookie": [],
        "_postman_previewlanguage": "text"
       }
@@ -5872,7 +6341,7 @@
      }
     },
     {
-     "id": "7297567e-6158-44d6-b4c3-aa0e1c0a03be",
+     "id": "d41f395d-a260-43ff-838a-649e4cae341b",
      "name": "Remove a platform-default integration",
      "request": {
       "name": "Remove a platform-default integration",
@@ -5911,7 +6380,7 @@
      },
      "response": [
       {
-       "id": "147bb7f4-6a69-4121-9486-3434dcc13585",
+       "id": "9758cf6e-2adf-40ce-89fe-f68399aa575b",
        "name": "No Content",
        "originalRequest": {
         "url": {
@@ -5984,7 +6453,7 @@
    "description": "Platform machine credentials — support-tier keys minted by platform-admin. They read platform surfaces; they never satisfy a higher tier or carry org permissions.",
    "item": [
     {
-     "id": "e304d847-b598-4518-a6ad-1f9474763e9c",
+     "id": "50560678-2fba-400a-8d82-dc7d0ce9b420",
      "name": "List platform API keys",
      "request": {
       "name": "List platform API keys",
@@ -6036,7 +6505,7 @@
      },
      "response": [
       {
-       "id": "073e3002-7e3f-4dd7-b4a9-ebb494c641fb",
+       "id": "16a3a65f-3682-4607-9f79-e664dc718d49",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -6119,7 +6588,7 @@
      }
     },
     {
-     "id": "24e6e4cf-070b-48a2-86ad-c40fe86167e0",
+     "id": "d9d9531d-37ba-4f87-bc8c-e901e8a5ae40",
      "name": "Mint a platform API key (support tier)",
      "request": {
       "name": "Mint a platform API key (support tier)",
@@ -6168,7 +6637,7 @@
      },
      "response": [
       {
-       "id": "e5a53b45-42af-4e9f-966a-594c1a0a043d",
+       "id": "b6de1957-53d5-4a4c-8829-258ce90bfd92",
        "name": "Created",
        "originalRequest": {
         "url": {
@@ -6245,7 +6714,7 @@
      }
     },
     {
-     "id": "324f5748-75b4-4877-aac6-452ff94d49b6",
+     "id": "d88d0e52-8f1d-4043-bc68-576bf6ad98e4",
      "name": "Revoke a platform API key",
      "request": {
       "name": "Revoke a platform API key",
@@ -6284,7 +6753,7 @@
      },
      "response": [
       {
-       "id": "bdd15794-b8c2-4fe7-862a-1c1c137cf4ba",
+       "id": "8573498b-24b9-4476-ae04-be4fcda28898",
        "name": "No Content",
        "originalRequest": {
         "url": {
@@ -6357,7 +6826,7 @@
    "description": "The commercial axis of a tenant: the seeded plan catalogue and each org's subscription. Reading is platform-support; assigning a plan is platform-admin, audited, and bites the very next entitlement gate. A tenant reads its own state under Organization · Profile's surface.",
    "item": [
     {
-     "id": "87fc5c67-2434-427c-870b-7643b6d06611",
+     "id": "5c7b55e9-3774-4ab8-b552-f10f39f4b75e",
      "name": "Update a plan",
      "request": {
       "name": "Update a plan",
@@ -6406,7 +6875,7 @@
       "method": "PUT",
       "body": {
        "mode": "raw",
-       "raw": "{\n  \"name\": \"<string>\",\n  \"rank\": \"<integer>\",\n  \"entitlements\": {\n    \"key_0\": \"<long>\",\n    \"key_1\": \"<long>\"\n  }\n}",
+       "raw": "{\n  \"name\": \"<string>\",\n  \"rank\": \"<integer>\",\n  \"entitlements\": {\n    \"key_0\": \"<long>\",\n    \"key_1\": \"<long>\",\n    \"key_2\": \"<long>\"\n  }\n}",
        "options": {
         "raw": {
          "headerFamily": "json",
@@ -6418,7 +6887,7 @@
      },
      "response": [
       {
-       "id": "b4a48ffc-cb94-4290-8e71-8ea7ba839896",
+       "id": "4f804189-5e09-4450-a2f2-9d365d82d5ba",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -6470,7 +6939,7 @@
         "method": "PUT",
         "body": {
          "mode": "raw",
-         "raw": "{\n  \"name\": \"<string>\",\n  \"rank\": \"<integer>\",\n  \"entitlements\": {\n    \"key_0\": \"<long>\",\n    \"key_1\": \"<long>\"\n  }\n}",
+         "raw": "{\n  \"name\": \"<string>\",\n  \"rank\": \"<integer>\",\n  \"entitlements\": {\n    \"key_0\": \"<long>\",\n    \"key_1\": \"<long>\",\n    \"key_2\": \"<long>\"\n  }\n}",
          "options": {
           "raw": {
            "headerFamily": "json",
@@ -6507,7 +6976,7 @@
      }
     },
     {
-     "id": "bde5402a-6f5d-48aa-904b-7d09734b5cd6",
+     "id": "6137f083-4936-4619-b45b-a02f4386b9bc",
      "name": "Delete a plan",
      "request": {
       "name": "Delete a plan",
@@ -6549,7 +7018,7 @@
      },
      "response": [
       {
-       "id": "33f622d6-1212-4f0a-84ed-a46b760b113a",
+       "id": "272da690-2011-40b1-b3ca-9f807429f8db",
        "name": "No Content",
        "originalRequest": {
         "url": {
@@ -6616,7 +7085,7 @@
      }
     },
     {
-     "id": "24ab15de-8709-4097-95e3-a369e826ee97",
+     "id": "5741cd95-b495-467c-a2cf-e709922f4d87",
      "name": "Inspect a tenant's subscription as the platform",
      "request": {
       "name": "Inspect a tenant's subscription as the platform",
@@ -6662,7 +7131,7 @@
      },
      "response": [
       {
-       "id": "de9f3946-7e7c-45ca-b011-09d635da613d",
+       "id": "87f0de1c-8e6f-45fd-9c1a-346f0cc589fb",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -6739,7 +7208,7 @@
      }
     },
     {
-     "id": "1e0e6def-4074-4611-aea2-96f04d2fec4d",
+     "id": "f78a5f3e-0474-4101-8321-fbb79cdb918a",
      "name": "Assign a tenant's plan",
      "request": {
       "name": "Assign a tenant's plan",
@@ -6801,7 +7270,7 @@
      },
      "response": [
       {
-       "id": "5860314f-b5f4-4a74-b0ff-1b0d6661e8b8",
+       "id": "5fbe4a8b-93d4-4590-9390-892839b358fa",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -6891,7 +7360,7 @@
      }
     },
     {
-     "id": "2ab0288d-d875-4d35-aa7e-e545e97c3f7c",
+     "id": "4c60fea5-1ebe-4e44-8e1c-c2083083fe6e",
      "name": "List the plan catalog",
      "request": {
       "name": "List the plan catalog",
@@ -6927,7 +7396,7 @@
      },
      "response": [
       {
-       "id": "aeb2d328-f2b5-4bd1-bc42-e3c92fe2e0e0",
+       "id": "93ebd5a3-67ef-445b-a987-3697bcd90675",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -6991,7 +7460,7 @@
      }
     },
     {
-     "id": "60bae522-e9a6-4e9e-a51f-40217a300511",
+     "id": "590333d9-8330-4f2f-a9ac-b0a9436b96e6",
      "name": "Create a plan",
      "request": {
       "name": "Create a plan",
@@ -7028,7 +7497,7 @@
       "method": "POST",
       "body": {
        "mode": "raw",
-       "raw": "{\n  \"code\": \"<string>\",\n  \"name\": \"<string>\",\n  \"rank\": \"<integer>\",\n  \"entitlements\": {\n    \"key_0\": \"<long>\"\n  }\n}",
+       "raw": "{\n  \"code\": \"<string>\",\n  \"name\": \"<string>\",\n  \"rank\": \"<integer>\",\n  \"entitlements\": {\n    \"key_0\": \"<long>\",\n    \"key_1\": \"<long>\"\n  }\n}",
        "options": {
         "raw": {
          "headerFamily": "json",
@@ -7040,7 +7509,7 @@
      },
      "response": [
       {
-       "id": "efd4cdb3-c11a-4bf2-a731-3f64cdb4d4b8",
+       "id": "3022027d-7ebf-4e5a-a346-56811b07728a",
        "name": "Created",
        "originalRequest": {
         "url": {
@@ -7080,7 +7549,7 @@
         "method": "POST",
         "body": {
          "mode": "raw",
-         "raw": "{\n  \"code\": \"<string>\",\n  \"name\": \"<string>\",\n  \"rank\": \"<integer>\",\n  \"entitlements\": {\n    \"key_0\": \"<long>\"\n  }\n}",
+         "raw": "{\n  \"code\": \"<string>\",\n  \"name\": \"<string>\",\n  \"rank\": \"<integer>\",\n  \"entitlements\": {\n    \"key_0\": \"<long>\",\n    \"key_1\": \"<long>\"\n  }\n}",
          "options": {
           "raw": {
            "headerFamily": "json",
@@ -7117,7 +7586,7 @@
      }
     },
     {
-     "id": "b8ed044d-2402-463e-949d-e382205284a4",
+     "id": "7580bc7d-754a-420b-a95a-d976655d219c",
      "name": "Start a paid-plan trial",
      "request": {
       "name": "Start a paid-plan trial",
@@ -7180,7 +7649,7 @@
      },
      "response": [
       {
-       "id": "26d61c9e-2c08-45ea-bab6-aca697056490",
+       "id": "014d6d7b-421c-4db6-bdab-20a17f362f24",
        "name": "Created",
        "originalRequest": {
         "url": {
@@ -7269,9 +7738,15 @@
      "protocolProfileBehavior": {
       "disableBodyPruning": true
      }
-    },
+    }
+   ]
+  },
+  {
+   "name": "Platform · Billing accounts",
+   "description": "One org's window into the Kill Bill side: link its account, start a billed subscription, read balance and invoices. The catalogue and the entitlement authority stay in Platform · Billing & plans - money records here, access decisions there.",
+   "item": [
     {
-     "id": "5fe17e76-f1cf-4a78-b413-6733cd6893ca",
+     "id": "889909e0-ae37-4f3c-83a1-998f31633a86",
      "name": "Put a tenant on a billable plan",
      "request": {
       "name": "Put a tenant on a billable plan",
@@ -7334,7 +7809,7 @@
      },
      "response": [
       {
-       "id": "f70e15cf-9869-4148-883c-334f858480c1",
+       "id": "5841b9b6-5d08-4ee2-8212-962471f09255",
        "name": "Accepted",
        "originalRequest": {
         "url": {
@@ -7425,7 +7900,7 @@
      }
     },
     {
-     "id": "10c02b04-ebf0-42b6-a10d-5a3a0a1f8641",
+     "id": "29ec1d41-281f-4a05-94c8-3b244a401118",
      "name": "Provision a tenant's Kill Bill account",
      "request": {
       "name": "Provision a tenant's Kill Bill account",
@@ -7475,7 +7950,7 @@
      },
      "response": [
       {
-       "id": "fd7abdd3-1f5a-4c83-9732-cc950ce51f4a",
+       "id": "2df48c60-de15-447d-ba6a-6e803af4cd11",
        "name": "Created",
        "originalRequest": {
         "url": {
@@ -7553,7 +8028,7 @@
      }
     },
     {
-     "id": "8f411905-95c9-428c-be1b-16ac5a484e09",
+     "id": "c390cb25-c0dc-46ef-95db-af35344a7c81",
      "name": "Inspect a tenant's billing state",
      "request": {
       "name": "Inspect a tenant's billing state",
@@ -7602,7 +8077,7 @@
      },
      "response": [
       {
-       "id": "4449db05-95e3-478c-a2d3-f7851ae40656",
+       "id": "e00734ce-be3e-4627-8ec4-6e7d3e6c05ea",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -7679,7 +8154,7 @@
      }
     },
     {
-     "id": "d0b6a52a-6452-4a72-aacf-ea2eeb1798c8",
+     "id": "c18bd993-14d7-4dad-ae90-77003afdd69b",
      "name": "List a tenant's invoices",
      "request": {
       "name": "List a tenant's invoices",
@@ -7729,7 +8204,7 @@
      },
      "response": [
       {
-       "id": "7b076b5e-eff4-4cad-a021-d4e344bb712c",
+       "id": "3ddecf92-051b-4dde-8572-cb5afd811737",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -7813,7 +8288,7 @@
    "description": "Running the platform: scheduler lock state (proof that clustered jobs fire once), the curated analytics reports, and the cross-tenant audit trail. Read-only and platform-support throughout — investigating is the support job. One tenant's own view of that trail is Organization · Audit.",
    "item": [
     {
-     "id": "d7e8cdd9-b989-4803-8e9a-07013e3cb552",
+     "id": "81c06c56-2104-42b2-98e8-30d416ac5bac",
      "name": "Create or replace a translation",
      "request": {
       "name": "Create or replace a translation",
@@ -7893,7 +8368,7 @@
      },
      "response": [
       {
-       "id": "31fa4368-8222-4067-80c2-b74b30c63458",
+       "id": "ed8dcea8-c65a-43b0-953d-536ef435ef1d",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -8001,7 +8476,7 @@
      }
     },
     {
-     "id": "31b13efa-51c2-40df-9092-176a85149313",
+     "id": "ba3617e4-fa61-4e62-bf84-f566e1b90afb",
      "name": "Delete a translation",
      "request": {
       "name": "Delete a translation",
@@ -8064,7 +8539,7 @@
      },
      "response": [
       {
-       "id": "09136786-a361-4111-8a7f-2c6c4b6ac207",
+       "id": "f36f23f0-f778-4acd-a7a5-42d1adc451b5",
        "name": "No Content",
        "originalRequest": {
         "url": {
@@ -8150,7 +8625,7 @@
      }
     },
     {
-     "id": "6c68bd0e-a0ec-44c2-bdad-13527c8ca249",
+     "id": "6c8ccb39-c5a1-4f7c-812a-ff8a7f7b2428",
      "name": "List scheduled-job lock state across the fleet",
      "request": {
       "name": "List scheduled-job lock state across the fleet",
@@ -8195,7 +8670,7 @@
      },
      "response": [
       {
-       "id": "41af85b6-018d-4aec-8055-60b91c556378",
+       "id": "5d4da5c1-eee7-4af1-b33f-07af89a6b704",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -8268,7 +8743,7 @@
      }
     },
     {
-     "id": "705efe17-a21a-45d5-aa4d-a1a16f1b5cca",
+     "id": "7428cca9-6ca8-4c2f-9b92-ac4eafd96cb0",
      "name": "Search the platform-wide audit trail",
      "request": {
       "name": "Search the platform-wide audit trail",
@@ -8367,7 +8842,7 @@
      },
      "response": [
       {
-       "id": "03245151-5b9b-4969-a956-977525d63924",
+       "id": "6c0488d7-8a53-4b74-b402-04d709d9e202",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -8494,7 +8969,7 @@
      }
     },
     {
-     "id": "3c427c51-0981-4162-b7bd-418296741996",
+     "id": "386a1356-61ce-4615-8a44-15ffa692daff",
      "name": "List the available analytics reports",
      "request": {
       "name": "List the available analytics reports",
@@ -8536,7 +9011,7 @@
      },
      "response": [
       {
-       "id": "84b0b41e-f41d-4a3a-9cf9-205e0b4b9e23",
+       "id": "4d95343d-7822-40a4-b8aa-3949dd566813",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -8609,7 +9084,7 @@
      }
     },
     {
-     "id": "e0915145-ba7a-474c-bc35-c271c6f840d7",
+     "id": "18d2f5ac-c601-4d5c-8be4-50c3e991d6ae",
      "name": "Run an analytics report",
      "request": {
       "name": "Run an analytics report",
@@ -8666,7 +9141,7 @@
      },
      "response": [
       {
-       "id": "a648daca-6d2d-4791-8bdc-4938d3740782",
+       "id": "4d3e5134-e821-4254-8bd7-dd60d92a9f56",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -8751,7 +9226,7 @@
      }
     },
     {
-     "id": "d2e898ba-feec-42d2-80a7-c57801478a93",
+     "id": "097d90ee-ee51-4e45-b859-ea2f6ad1136e",
      "name": "Search across the platform",
      "request": {
       "name": "Search across the platform",
@@ -8833,7 +9308,7 @@
      },
      "response": [
       {
-       "id": "262c4c99-d000-4ea5-8bed-7c9169092613",
+       "id": "b83ebd43-3cd7-4aaa-a43a-5ca16142f372",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -8949,175 +9424,7 @@
    "description": "The organization record as its own members see it: read on org:read, edit on org:update. Lifecycle is deliberately absent — that is Platform · Organizations.",
    "item": [
     {
-     "id": "edd36caa-339f-44d9-b8e1-2493a4f2a611",
-     "name": "Initiate a payment collection",
-     "request": {
-      "name": "Initiate a payment collection",
-      "description": {
-       "content": "Starts a collection. `provider` is optional — omitted, the organization's configured PAYMENT_GATEWAY integration (org override, else platform default) names the gateway. Explicit values: `pesapal` (hosted page — send the payer to the returned `redirectUrl`; card + mobile money) or `yo-uganda` (a mobile-money approval prompt is pushed to `phoneNumber` — no redirect). Whether it runs against the sandbox or live money is the gateway's configured `mode`, echoed on the resource. The outcome converges from the gateway (IPN / on-read refresh) — poll the GET until the status is terminal.",
-       "type": "text/plain"
-      },
-      "url": {
-       "path": [
-        "api",
-        "v1",
-        "orgs",
-        ":orgId",
-        "payments"
-       ],
-       "host": [
-        "localhost"
-       ],
-       "query": [],
-       "variable": [
-        {
-         "type": "any",
-         "value": "<uuid>",
-         "key": "orgId",
-         "disabled": false,
-         "description": {
-          "content": "(Required) ",
-          "type": "text/plain"
-         }
-        }
-       ],
-       "protocol": "http",
-       "port": "28080",
-       "raw": "http://localhost:28080/api/v1/orgs/:orgId/payments"
-      },
-      "header": [
-       {
-        "disabled": false,
-        "description": {
-         "content": "Run this request as the target of an impersonation session (its id, from POST /api/v1/admin/impersonations). The session must belong to the calling operator; a READ_ONLY session refuses any unsafe method. Every write is audited against the operator, not the target.",
-         "type": "text/plain"
-        },
-        "key": "X-Impersonate",
-        "value": "<uuid>"
-       },
-       {
-        "key": "Content-Type",
-        "value": "application/json"
-       },
-       {
-        "key": "Accept",
-        "value": "*/*"
-       }
-      ],
-      "method": "POST",
-      "body": {
-       "mode": "raw",
-       "raw": "{\n  \"amount\": \"<number>\",\n  \"currency\": \"<string>\",\n  \"description\": \"<string>\",\n  \"provider\": \"<string>\",\n  \"phoneNumber\": \"<string>\",\n  \"email\": \"<string>\"\n}",
-       "options": {
-        "raw": {
-         "headerFamily": "json",
-         "language": "json"
-        }
-       }
-      },
-      "auth": null
-     },
-     "response": [
-      {
-       "id": "5b215e91-0906-45ab-8e7b-f8d0d6c91a48",
-       "name": "Created",
-       "originalRequest": {
-        "url": {
-         "path": [
-          "api",
-          "v1",
-          "orgs",
-          ":orgId",
-          "payments"
-         ],
-         "host": [
-          "localhost"
-         ],
-         "query": [],
-         "variable": [
-          {
-           "disabled": false,
-           "description": {
-            "content": "(Required) ",
-            "type": "text/plain"
-           },
-           "type": "any",
-           "value": "<uuid>",
-           "key": "orgId"
-          }
-         ],
-         "protocol": "http",
-         "port": "28080",
-         "raw": "http://localhost:28080/api/v1/orgs/:orgId/payments"
-        },
-        "header": [
-         {
-          "disabled": false,
-          "description": {
-           "content": "Run this request as the target of an impersonation session (its id, from POST /api/v1/admin/impersonations). The session must belong to the calling operator; a READ_ONLY session refuses any unsafe method. Every write is audited against the operator, not the target.",
-           "type": "text/plain"
-          },
-          "key": "X-Impersonate",
-          "value": "<uuid>"
-         },
-         {
-          "key": "Content-Type",
-          "value": "application/json"
-         },
-         {
-          "key": "Accept",
-          "value": "*/*"
-         },
-         {
-          "description": {
-           "content": "Added as a part of security scheme: bearer",
-           "type": "text/plain"
-          },
-          "key": "Authorization",
-          "value": "Bearer <token>"
-         }
-        ],
-        "method": "POST",
-        "body": {
-         "mode": "raw",
-         "raw": "{\n  \"amount\": \"<number>\",\n  \"currency\": \"<string>\",\n  \"description\": \"<string>\",\n  \"provider\": \"<string>\",\n  \"phoneNumber\": \"<string>\",\n  \"email\": \"<string>\"\n}",
-         "options": {
-          "raw": {
-           "headerFamily": "json",
-           "language": "json"
-          }
-         }
-        }
-       },
-       "status": "Created",
-       "code": 201,
-       "header": [
-        {
-         "key": "Content-Type",
-         "value": "*/*"
-        },
-        {
-         "disabled": false,
-         "description": {
-          "content": "Public request id (accepted inbound, else minted as a ULID).",
-          "type": "text/plain"
-         },
-         "key": "X-Request-Id",
-         "value": "<string>"
-        }
-       ],
-       "body": "{\n  \"id\": \"<string>\",\n  \"type\": \"<string>\",\n  \"attributes\": {}\n}",
-       "cookie": [],
-       "_postman_previewlanguage": "text"
-      }
-     ],
-     "event": [],
-     "protocolProfileBehavior": {
-      "disableBodyPruning": true
-     }
-    },
-    {
-     "id": "aa750b3b-277a-4683-8559-a62ebccf1ec4",
+     "id": "9522933e-7c44-4523-a202-46d551c8d5ce",
      "name": "List the organization's documents",
      "request": {
       "name": "List the organization's documents",
@@ -9190,7 +9497,7 @@
      },
      "response": [
       {
-       "id": "dd13f084-eb8b-468f-a643-00cd77754b6d",
+       "id": "44492a35-3f61-443f-bc00-27553e2ee79a",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -9294,7 +9601,7 @@
      }
     },
     {
-     "id": "073ee6aa-d955-44cd-a5d3-7edb14b6c667",
+     "id": "13fcd8fa-2c72-4008-8347-b6410e8033b7",
      "name": "Upload a document into the organization",
      "request": {
       "name": "Upload a document into the organization",
@@ -9437,7 +9744,7 @@
      },
      "response": [
       {
-       "id": "c0ebd1ce-ea7d-4a74-adb6-d7e52548ab0b",
+       "id": "f1bb1ad3-0a63-40be-a0c0-861b71577f17",
        "name": "Created",
        "originalRequest": {
         "url": {
@@ -9608,7 +9915,7 @@
      }
     },
     {
-     "id": "8f646e3d-1100-4131-8cf6-4916ea5bf6ba",
+     "id": "bae4eea7-a2a4-421b-8692-65a4e6321cd4",
      "name": "Get an organization",
      "request": {
       "name": "Get an organization",
@@ -9661,7 +9968,7 @@
      },
      "response": [
       {
-       "id": "1ff33f52-02b4-49ae-a4f8-036afcb9f72a",
+       "id": "f03082de-1944-403b-aef9-9641419ca194",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -9745,7 +10052,7 @@
      }
     },
     {
-     "id": "1a569e06-ebed-4684-a26c-06b443f0d2c5",
+     "id": "a0f18343-1ab6-4b77-931d-db19453e42b0",
      "name": "Rename an organization",
      "request": {
       "name": "Rename an organization",
@@ -9814,7 +10121,7 @@
      },
      "response": [
       {
-       "id": "740faf5e-17b7-415f-adef-c5478f1e9830",
+       "id": "987a855b-8188-406b-ae51-cfb861c4e9d7",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -9911,7 +10218,7 @@
      }
     },
     {
-     "id": "0cb839e2-7a24-4448-b488-2a87d728d59d",
+     "id": "3f15f859-1b63-40d0-a39f-9ba6a796a395",
      "name": "Read the organization's subscription and entitlements",
      "request": {
       "name": "Read the organization's subscription and entitlements",
@@ -9968,7 +10275,7 @@
      },
      "response": [
       {
-       "id": "481b9a52-5fa5-452f-b61e-cb8b3717fe7a",
+       "id": "65401f9e-6955-4df9-a0be-0c7a53f03ed0",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -10053,7 +10360,7 @@
      }
     },
     {
-     "id": "66c71b86-96da-485d-b3de-3fb56ac05b88",
+     "id": "2a04fc3e-f873-4a3f-8fc6-1924deabe6dd",
      "name": "Search within one organization",
      "request": {
       "name": "Search within one organization",
@@ -10147,7 +10454,7 @@
      },
      "response": [
       {
-       "id": "a422f8cf-7412-4525-bff4-5cb18b05a777",
+       "id": "55b797fb-0d85-4e58-9834-607f6ada059b",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -10269,168 +10576,7 @@
      }
     },
     {
-     "id": "ddb666db-2910-4c26-afba-fdc525337019",
-     "name": "Read a payment (refreshes a PENDING one from its gateway)",
-     "request": {
-      "name": "Read a payment (refreshes a PENDING one from its gateway)",
-      "description": {},
-      "url": {
-       "path": [
-        "api",
-        "v1",
-        "orgs",
-        ":orgId",
-        "payments",
-        ":id"
-       ],
-       "host": [
-        "localhost"
-       ],
-       "query": [],
-       "variable": [
-        {
-         "type": "any",
-         "value": "<uuid>",
-         "key": "orgId",
-         "disabled": false,
-         "description": {
-          "content": "(Required) ",
-          "type": "text/plain"
-         }
-        },
-        {
-         "type": "any",
-         "value": "<uuid>",
-         "key": "id",
-         "disabled": false,
-         "description": {
-          "content": "(Required) ",
-          "type": "text/plain"
-         }
-        }
-       ],
-       "protocol": "http",
-       "port": "28080",
-       "raw": "http://localhost:28080/api/v1/orgs/:orgId/payments/:id"
-      },
-      "header": [
-       {
-        "disabled": false,
-        "description": {
-         "content": "Run this request as the target of an impersonation session (its id, from POST /api/v1/admin/impersonations). The session must belong to the calling operator; a READ_ONLY session refuses any unsafe method. Every write is audited against the operator, not the target.",
-         "type": "text/plain"
-        },
-        "key": "X-Impersonate",
-        "value": "<uuid>"
-       },
-       {
-        "key": "Accept",
-        "value": "*/*"
-       }
-      ],
-      "method": "GET",
-      "body": {},
-      "auth": null
-     },
-     "response": [
-      {
-       "id": "6c9bab5b-d714-4c5d-b8ba-54e269e5135d",
-       "name": "OK",
-       "originalRequest": {
-        "url": {
-         "path": [
-          "api",
-          "v1",
-          "orgs",
-          ":orgId",
-          "payments",
-          ":id"
-         ],
-         "host": [
-          "localhost"
-         ],
-         "query": [],
-         "variable": [
-          {
-           "disabled": false,
-           "description": {
-            "content": "(Required) ",
-            "type": "text/plain"
-           },
-           "type": "any",
-           "value": "<uuid>",
-           "key": "orgId"
-          },
-          {
-           "disabled": false,
-           "description": {
-            "content": "(Required) ",
-            "type": "text/plain"
-           },
-           "type": "any",
-           "value": "<uuid>",
-           "key": "id"
-          }
-         ],
-         "protocol": "http",
-         "port": "28080",
-         "raw": "http://localhost:28080/api/v1/orgs/:orgId/payments/:id"
-        },
-        "header": [
-         {
-          "disabled": false,
-          "description": {
-           "content": "Run this request as the target of an impersonation session (its id, from POST /api/v1/admin/impersonations). The session must belong to the calling operator; a READ_ONLY session refuses any unsafe method. Every write is audited against the operator, not the target.",
-           "type": "text/plain"
-          },
-          "key": "X-Impersonate",
-          "value": "<uuid>"
-         },
-         {
-          "key": "Accept",
-          "value": "*/*"
-         },
-         {
-          "description": {
-           "content": "Added as a part of security scheme: bearer",
-           "type": "text/plain"
-          },
-          "key": "Authorization",
-          "value": "Bearer <token>"
-         }
-        ],
-        "method": "GET",
-        "body": {}
-       },
-       "status": "OK",
-       "code": 200,
-       "header": [
-        {
-         "key": "Content-Type",
-         "value": "*/*"
-        },
-        {
-         "disabled": false,
-         "description": {
-          "content": "Public request id (accepted inbound, else minted as a ULID).",
-          "type": "text/plain"
-         },
-         "key": "X-Request-Id",
-         "value": "<string>"
-        }
-       ],
-       "body": "{\n  \"id\": \"<string>\",\n  \"type\": \"<string>\",\n  \"attributes\": {}\n}",
-       "cookie": [],
-       "_postman_previewlanguage": "text"
-      }
-     ],
-     "event": [],
-     "protocolProfileBehavior": {
-      "disableBodyPruning": true
-     }
-    },
-    {
-     "id": "0a40ede7-178f-4756-9bbc-b6d7b5ddf83f",
+     "id": "e8bcc3eb-9b73-4a5b-ad62-46e5936a77eb",
      "name": "Download a document",
      "request": {
       "name": "Download a document",
@@ -10494,7 +10640,7 @@
      },
      "response": [
       {
-       "id": "2889ee67-9bb5-4000-8ddf-97799528a4c6",
+       "id": "8bb8ae14-5740-4b9f-9a5e-3cc561c3db2a",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -10581,7 +10727,7 @@
      }
     },
     {
-     "id": "d0a18b7a-13ac-4ffd-ae21-dc98a5fb7df1",
+     "id": "1f48dd4f-ae49-478d-b587-45b720d00791",
      "name": "Delete a document",
      "request": {
       "name": "Delete a document",
@@ -10645,7 +10791,7 @@
      },
      "response": [
       {
-       "id": "ba95574f-500a-432c-98d4-acde7873193b",
+       "id": "98056a1d-cc8d-48d1-9e24-12aadea7ad6e",
        "name": "No Content",
        "originalRequest": {
         "url": {
@@ -10738,7 +10884,7 @@
    "description": "Who belongs to one tenant and as what: list, invite, re-role, remove. Handing someone a role IS granting its permissions, so invite and re-role are additionally refused when they would grant more than the caller holds.",
    "item": [
     {
-     "id": "926af338-50ba-458d-be69-0be58c3119a0",
+     "id": "5d4c0e10-bd1e-4416-873f-4d04de817bae",
      "name": "Reassign a member's role",
      "request": {
       "name": "Reassign a member's role",
@@ -10820,7 +10966,7 @@
      },
      "response": [
       {
-       "id": "e23d6520-a809-4aab-aaae-d2c84ad26911",
+       "id": "363e392c-5bd4-4012-b3b7-d309a07ccd34",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -10930,7 +11076,7 @@
      }
     },
     {
-     "id": "f9e7564a-2226-4020-97b3-532263f27096",
+     "id": "20cc10d5-164f-400f-8c20-9ce651836a4c",
      "name": "List organization members",
      "request": {
       "name": "List organization members",
@@ -11003,7 +11149,7 @@
      },
      "response": [
       {
-       "id": "ad70566b-afd5-4015-9eab-09f347bc76e6",
+       "id": "b4f0cfbc-98bd-4d04-a3a6-f5e8f7e1a0e4",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -11107,7 +11253,7 @@
      }
     },
     {
-     "id": "03d559b3-6a5b-4842-a144-415be133743d",
+     "id": "6e63820d-79b2-44cd-aa7d-92da324f5b96",
      "name": "Invite a member to the organization",
      "request": {
       "name": "Invite a member to the organization",
@@ -11177,7 +11323,7 @@
      },
      "response": [
       {
-       "id": "f4e683cf-eacd-4a4b-b6be-9f4a78b9f90c",
+       "id": "982cd75c-8490-4985-9bf2-6e468a7f88f2",
        "name": "Created",
        "originalRequest": {
         "url": {
@@ -11275,7 +11421,7 @@
      }
     },
     {
-     "id": "8bb56155-4764-4369-8678-22f8128d6846",
+     "id": "6872f4e8-7911-4b2c-9d6e-b81b44e84da7",
      "name": "Remove a member from the organization",
      "request": {
       "name": "Remove a member from the organization",
@@ -11339,7 +11485,7 @@
      },
      "response": [
       {
-       "id": "936b5e07-4d86-4f93-94a7-490de6d5e676",
+       "id": "8198e7c9-42a2-4a64-a801-1a809463a36a",
        "name": "No Content",
        "originalRequest": {
         "url": {
@@ -11432,7 +11578,7 @@
    "description": "Named funnels that confer one role to their members, unioned with each member's own — the resolver adds the group's permissions, never replaces them. Managing a group is member:role:assign (a group can't grant more than its creator holds); reading is member:read. A group extends a member, it is not a way in.",
    "item": [
     {
-     "id": "fab24ae1-4f5c-4b05-bc85-ab53ef976e38",
+     "id": "ec9b8efb-5ffb-43d7-80a5-e88b86b4cd78",
      "name": "Reassign the group's conferred role",
      "request": {
       "name": "Reassign the group's conferred role",
@@ -11511,7 +11657,7 @@
      },
      "response": [
       {
-       "id": "2e1ff617-588e-4178-b8dd-1789a5bc8d55",
+       "id": "664e7a64-9fd9-41c7-a1c1-069ed7ecf624",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -11621,7 +11767,7 @@
      }
     },
     {
-     "id": "7cd4c58a-369d-431f-9b17-dfb8271082da",
+     "id": "ab179d9b-bd04-4f21-8a94-f5570431f5e9",
      "name": "List the organization's groups",
      "request": {
       "name": "List the organization's groups",
@@ -11694,7 +11840,7 @@
      },
      "response": [
       {
-       "id": "4bc7c4bd-15c3-46db-8f64-5c1fe3b00592",
+       "id": "48b19be1-ade8-4104-a7fc-ff9f599a85db",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -11798,7 +11944,7 @@
      }
     },
     {
-     "id": "3ea9a301-925e-4c70-8bf6-2b1c45c4f5cf",
+     "id": "447834a4-4445-4db4-a0d7-4e3d0ecd12b1",
      "name": "Create a user group",
      "request": {
       "name": "Create a user group",
@@ -11868,7 +12014,7 @@
      },
      "response": [
       {
-       "id": "1c114233-08e7-405e-8d77-3ed7558042dd",
+       "id": "dfaa1865-f942-4ed7-9025-e634073d4345",
        "name": "Created",
        "originalRequest": {
         "url": {
@@ -11966,7 +12112,7 @@
      }
     },
     {
-     "id": "9e7ff1ce-86a6-4b2a-bad7-b3bfad6e58f6",
+     "id": "e99fac22-06e9-40d3-8798-5e3f6c95b9fc",
      "name": "Add a member to the group",
      "request": {
       "name": "Add a member to the group",
@@ -12048,7 +12194,7 @@
      },
      "response": [
       {
-       "id": "18ced434-05de-4b53-8571-bf69bb0ebf30",
+       "id": "fecef1c3-dbc1-413b-9230-aba79ffda279",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -12158,7 +12304,7 @@
      }
     },
     {
-     "id": "94877dac-ed68-411a-aef0-b866a75f4fad",
+     "id": "297c2aba-7b95-4bf8-8acc-f4dc49b71cc9",
      "name": "Get one group with its members",
      "request": {
       "name": "Get one group with its members",
@@ -12223,7 +12369,7 @@
      },
      "response": [
       {
-       "id": "66edf4e4-6baf-4036-9831-e97bc631d7bd",
+       "id": "8f1c0ddc-cbbb-4ade-a4d9-a32baa2a64e3",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -12319,7 +12465,7 @@
      }
     },
     {
-     "id": "75ee5a8b-8bb8-4726-b7f6-1693293bbf5c",
+     "id": "0402419d-8b1f-44e8-a81f-fa4128787625",
      "name": "Delete a group",
      "request": {
       "name": "Delete a group",
@@ -12380,7 +12526,7 @@
      },
      "response": [
       {
-       "id": "eed26b5a-8585-4fdf-b391-7a7a8a5699eb",
+       "id": "538387ea-5f75-4371-b00e-ee30132325e7",
        "name": "No Content",
        "originalRequest": {
         "url": {
@@ -12467,7 +12613,7 @@
      }
     },
     {
-     "id": "e3d2c929-222d-4f94-ade8-16b115f7995d",
+     "id": "76f520a4-4f2b-4197-baa4-a863ca5a87f0",
      "name": "Remove a member from the group",
      "request": {
       "name": "Remove a member from the group",
@@ -12544,7 +12690,7 @@
      },
      "response": [
       {
-       "id": "09587993-1f46-4018-87a7-feea5fa860dd",
+       "id": "e5fe1cf5-9bfa-4ca4-a718-df19f3efc5de",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -12658,7 +12804,7 @@
    "description": "A tenant's roles — named bundles of permission codes from the fixed catalogue (Shared · Reference data). Role codes are inert: no request path resolves authority from a code, only from the permission set. System roles refuse edits.",
    "item": [
     {
-     "id": "51400506-c73b-494c-815c-169b2a75ba83",
+     "id": "fcb0ec5c-bdec-439a-9a36-845c90dc22e7",
      "name": "Get one organization role",
      "request": {
       "name": "Get one organization role",
@@ -12723,7 +12869,7 @@
      },
      "response": [
       {
-       "id": "8844eac6-6a08-4452-9f9c-90e59a7f26ff",
+       "id": "7bc2e82b-2919-479b-b485-aaf3548fde8f",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -12819,7 +12965,7 @@
      }
     },
     {
-     "id": "8febd787-0228-42ca-82fe-f469a71f1cdd",
+     "id": "05b0e1e7-f283-41f6-b841-35bd2d717695",
      "name": "Replace a role's name and permissions",
      "request": {
       "name": "Replace a role's name and permissions",
@@ -12900,7 +13046,7 @@
      },
      "response": [
       {
-       "id": "eda363b8-02c3-48d0-b5c9-387193359d82",
+       "id": "bdff8d5b-a14d-4747-be19-bc9a3f673953",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -13009,7 +13155,7 @@
      }
     },
     {
-     "id": "e3e3642f-c301-4b9b-915a-8483f6342514",
+     "id": "ae6264dd-f90e-4093-9b94-9f604470aebf",
      "name": "Delete a custom organization role",
      "request": {
       "name": "Delete a custom organization role",
@@ -13073,7 +13219,7 @@
      },
      "response": [
       {
-       "id": "812fd210-8b8e-42ff-b1eb-385e00b20093",
+       "id": "5f8a0158-b25f-43a0-8030-b03c9266b129",
        "name": "No Content",
        "originalRequest": {
         "url": {
@@ -13160,7 +13306,7 @@
      }
     },
     {
-     "id": "76da7ebd-0bfc-4fd2-b696-27723122be55",
+     "id": "fa752a9b-577a-40cd-9fae-b4477a007efb",
      "name": "List the organization's roles",
      "request": {
       "name": "List the organization's roles",
@@ -13233,7 +13379,7 @@
      },
      "response": [
       {
-       "id": "6c722507-b8e0-43e2-ba64-426d1c7b53bd",
+       "id": "b5dd2f85-e3e4-4ee4-8861-dc9a04efd89f",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -13337,7 +13483,7 @@
      }
     },
     {
-     "id": "2a86d646-6a29-497b-b1f4-05667d7ba2d0",
+     "id": "9617f6f4-dabd-475d-9b5f-38a742622b52",
      "name": "Create a custom organization role",
      "request": {
       "name": "Create a custom organization role",
@@ -13395,7 +13541,7 @@
       "method": "POST",
       "body": {
        "mode": "raw",
-       "raw": "{\n  \"code\": \"ugE3J46je2SB9LMt3cGsvGCjtmAj9HjtrA45cINPt9_guo_WMa_zK\",\n  \"name\": \"<string>\",\n  \"permissions\": [\n    \"<string>\"\n  ],\n  \"description\": \"<string>\"\n}",
+       "raw": "{\n  \"code\": \"Ofxs4mceUBdCqQqG1mH24Y2pzbH1kUQTVa9mZXqKV9MnA5Cka5sIwMOfd\",\n  \"name\": \"<string>\",\n  \"permissions\": [\n    \"<string>\"\n  ],\n  \"description\": \"<string>\"\n}",
        "options": {
         "raw": {
          "headerFamily": "json",
@@ -13407,7 +13553,7 @@
      },
      "response": [
       {
-       "id": "e2ef290b-d449-43cc-ae13-ca0157381f35",
+       "id": "05ae41c6-1c82-4fc0-b39c-c76782ff127b",
        "name": "Created",
        "originalRequest": {
         "url": {
@@ -13468,7 +13614,7 @@
         "method": "POST",
         "body": {
          "mode": "raw",
-         "raw": "{\n  \"code\": \"ugE3J46je2SB9LMt3cGsvGCjtmAj9HjtrA45cINPt9_guo_WMa_zK\",\n  \"name\": \"<string>\",\n  \"permissions\": [\n    \"<string>\"\n  ],\n  \"description\": \"<string>\"\n}",
+         "raw": "{\n  \"code\": \"Ofxs4mceUBdCqQqG1mH24Y2pzbH1kUQTVa9mZXqKV9MnA5Cka5sIwMOfd\",\n  \"name\": \"<string>\",\n  \"permissions\": [\n    \"<string>\"\n  ],\n  \"description\": \"<string>\"\n}",
          "options": {
           "raw": {
            "headerFamily": "json",
@@ -13511,7 +13657,7 @@
    "description": "One tenant's outbound event subscriptions and their delivery attempts, all on webhook:manage. Endpoint URLs are SSRF-checked before they are stored, and every delivery is signed and retried with backoff before it dead-letters.",
    "item": [
     {
-     "id": "2239eae7-1b4a-4388-ae3e-556285f9b754",
+     "id": "2056ae63-b494-44eb-994d-661fab30b0e8",
      "name": "Get one webhook subscription",
      "request": {
       "name": "Get one webhook subscription",
@@ -13579,7 +13725,7 @@
      },
      "response": [
       {
-       "id": "d3a36b0c-923a-4dfa-b96d-d62547b690b2",
+       "id": "273ce56a-eb98-489a-914f-77da47131d29",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -13675,7 +13821,7 @@
      }
     },
     {
-     "id": "fff985d1-ad92-42f4-9ac5-6f81d728cbf2",
+     "id": "1cff0130-e42d-4c07-978d-295c9582ebfb",
      "name": "Update a webhook subscription",
      "request": {
       "name": "Update a webhook subscription",
@@ -13744,7 +13890,7 @@
       "method": "PUT",
       "body": {
        "mode": "raw",
-       "raw": "{\n  \"events\": [\n    \"org.status_changed\"\n  ],\n  \"url\": \"<string>\",\n  \"status\": \"<string>\"\n}",
+       "raw": "{\n  \"events\": [\n    \"org.member.role_changed\"\n  ],\n  \"url\": \"<string>\",\n  \"status\": \"<string>\"\n}",
        "options": {
         "raw": {
          "headerFamily": "json",
@@ -13756,7 +13902,7 @@
      },
      "response": [
       {
-       "id": "05650f2c-93ab-4ab4-aa15-afa5c78bcdd1",
+       "id": "4d09bc3b-64c2-4e28-b4e5-52ec6aaca525",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -13828,7 +13974,7 @@
         "method": "PUT",
         "body": {
          "mode": "raw",
-         "raw": "{\n  \"events\": [\n    \"org.status_changed\"\n  ],\n  \"url\": \"<string>\",\n  \"status\": \"<string>\"\n}",
+         "raw": "{\n  \"events\": [\n    \"org.member.role_changed\"\n  ],\n  \"url\": \"<string>\",\n  \"status\": \"<string>\"\n}",
          "options": {
           "raw": {
            "headerFamily": "json",
@@ -13865,7 +14011,7 @@
      }
     },
     {
-     "id": "b6018a4c-17a5-46ce-b96f-ef4aa36ed8bb",
+     "id": "e50b37b0-201b-4783-b05a-a9d3cdabbd9a",
      "name": "Delete a webhook subscription",
      "request": {
       "name": "Delete a webhook subscription",
@@ -13929,7 +14075,7 @@
      },
      "response": [
       {
-       "id": "ac9bf830-032f-4990-b120-c58a6240074b",
+       "id": "556b732c-7ec4-4b52-9681-4574a798ba33",
        "name": "No Content",
        "originalRequest": {
         "url": {
@@ -14016,7 +14162,7 @@
      }
     },
     {
-     "id": "84166ffe-d4d6-4817-a6e6-7e13b2ddafbc",
+     "id": "8deb926a-bdeb-41ac-963c-058a23c03104",
      "name": "List the organization's webhook subscriptions",
      "request": {
       "name": "List the organization's webhook subscriptions",
@@ -14089,7 +14235,7 @@
      },
      "response": [
       {
-       "id": "5555f817-ab32-4155-b65c-457202f106d7",
+       "id": "bd733a5a-4772-4f01-a1e1-038eb19213b8",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -14193,7 +14339,7 @@
      }
     },
     {
-     "id": "41fd3cf5-1a29-4be9-bc55-229e97f8639e",
+     "id": "2e3a6db6-e10b-441b-ad58-e76ad7250776",
      "name": "Register a webhook subscription",
      "request": {
       "name": "Register a webhook subscription",
@@ -14251,7 +14397,7 @@
       "method": "POST",
       "body": {
        "mode": "raw",
-       "raw": "{\n  \"events\": [\n    \"org.exchange.job_completed\"\n  ],\n  \"url\": \"<string>\"\n}",
+       "raw": "{\n  \"events\": [\n    \"org.member.added\"\n  ],\n  \"url\": \"<string>\"\n}",
        "options": {
         "raw": {
          "headerFamily": "json",
@@ -14263,7 +14409,7 @@
      },
      "response": [
       {
-       "id": "96b8a1d0-f7f0-43a8-8158-3529b80b4639",
+       "id": "bbdbf7e4-125d-4a29-95cb-8cf14f234a53",
        "name": "Created",
        "originalRequest": {
         "url": {
@@ -14324,7 +14470,7 @@
         "method": "POST",
         "body": {
          "mode": "raw",
-         "raw": "{\n  \"events\": [\n    \"org.exchange.job_completed\"\n  ],\n  \"url\": \"<string>\"\n}",
+         "raw": "{\n  \"events\": [\n    \"org.member.added\"\n  ],\n  \"url\": \"<string>\"\n}",
          "options": {
           "raw": {
            "headerFamily": "json",
@@ -14361,7 +14507,173 @@
      }
     },
     {
-     "id": "ae9942d0-45cb-420a-aa6d-ca9dbaf41df4",
+     "id": "c350da39-e3b1-4efe-9bab-5f655abaed32",
+     "name": "Rotate the signing secret",
+     "request": {
+      "name": "Rotate the signing secret",
+      "description": {
+       "content": "Mints a replacement secret, returned in full exactly once — the old secret stops verifying immediately. Deploy the new secret to your receiver BEFORE rotating, or deliveries in between will fail signature checks (they retry with backoff, so a quick swap loses nothing).",
+       "type": "text/plain"
+      },
+      "url": {
+       "path": [
+        "api",
+        "v1",
+        "orgs",
+        ":orgId",
+        "webhooks",
+        ":id",
+        "rotate-secret"
+       ],
+       "host": [
+        "localhost"
+       ],
+       "query": [],
+       "variable": [
+        {
+         "type": "any",
+         "value": "<uuid>",
+         "key": "orgId",
+         "disabled": false,
+         "description": {
+          "content": "(Required) ",
+          "type": "text/plain"
+         }
+        },
+        {
+         "type": "any",
+         "value": "<uuid>",
+         "key": "id",
+         "disabled": false,
+         "description": {
+          "content": "(Required) ",
+          "type": "text/plain"
+         }
+        }
+       ],
+       "protocol": "http",
+       "port": "28080",
+       "raw": "http://localhost:28080/api/v1/orgs/:orgId/webhooks/:id/rotate-secret"
+      },
+      "header": [
+       {
+        "disabled": false,
+        "description": {
+         "content": "Run this request as the target of an impersonation session (its id, from POST /api/v1/admin/impersonations). The session must belong to the calling operator; a READ_ONLY session refuses any unsafe method. Every write is audited against the operator, not the target.",
+         "type": "text/plain"
+        },
+        "key": "X-Impersonate",
+        "value": "<uuid>"
+       },
+       {
+        "key": "Accept",
+        "value": "*/*"
+       }
+      ],
+      "method": "POST",
+      "body": {},
+      "auth": null
+     },
+     "response": [
+      {
+       "id": "8a3ffdca-3a71-47b4-8b87-54d9dc9edbef",
+       "name": "OK",
+       "originalRequest": {
+        "url": {
+         "path": [
+          "api",
+          "v1",
+          "orgs",
+          ":orgId",
+          "webhooks",
+          ":id",
+          "rotate-secret"
+         ],
+         "host": [
+          "localhost"
+         ],
+         "query": [],
+         "variable": [
+          {
+           "disabled": false,
+           "description": {
+            "content": "(Required) ",
+            "type": "text/plain"
+           },
+           "type": "any",
+           "value": "<uuid>",
+           "key": "orgId"
+          },
+          {
+           "disabled": false,
+           "description": {
+            "content": "(Required) ",
+            "type": "text/plain"
+           },
+           "type": "any",
+           "value": "<uuid>",
+           "key": "id"
+          }
+         ],
+         "protocol": "http",
+         "port": "28080",
+         "raw": "http://localhost:28080/api/v1/orgs/:orgId/webhooks/:id/rotate-secret"
+        },
+        "header": [
+         {
+          "disabled": false,
+          "description": {
+           "content": "Run this request as the target of an impersonation session (its id, from POST /api/v1/admin/impersonations). The session must belong to the calling operator; a READ_ONLY session refuses any unsafe method. Every write is audited against the operator, not the target.",
+           "type": "text/plain"
+          },
+          "key": "X-Impersonate",
+          "value": "<uuid>"
+         },
+         {
+          "key": "Accept",
+          "value": "*/*"
+         },
+         {
+          "description": {
+           "content": "Added as a part of security scheme: bearer",
+           "type": "text/plain"
+          },
+          "key": "Authorization",
+          "value": "Bearer <token>"
+         }
+        ],
+        "method": "POST",
+        "body": {}
+       },
+       "status": "OK",
+       "code": 200,
+       "header": [
+        {
+         "key": "Content-Type",
+         "value": "*/*"
+        },
+        {
+         "disabled": false,
+         "description": {
+          "content": "Public request id (accepted inbound, else minted as a ULID).",
+          "type": "text/plain"
+         },
+         "key": "X-Request-Id",
+         "value": "<string>"
+        }
+       ],
+       "body": "{\n  \"id\": \"<string>\",\n  \"type\": \"<string>\",\n  \"attributes\": {}\n}",
+       "cookie": [],
+       "_postman_previewlanguage": "text"
+      }
+     ],
+     "event": [],
+     "protocolProfileBehavior": {
+      "disableBodyPruning": true
+     }
+    },
+    {
+     "id": "f2b21ce0-91f4-4b06-8961-806fb564feb6",
      "name": "List a subscription's delivery attempts",
      "request": {
       "name": "List a subscription's delivery attempts",
@@ -14449,7 +14761,7 @@
      },
      "response": [
       {
-       "id": "752566cc-a80a-4e1a-b9b2-00c3edfebb3f",
+       "id": "e5b04d0c-85f0-4d56-99f9-7816ad50c83f",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -14571,7 +14883,7 @@
    "description": "The audit trail scoped to one tenant, on audit:read — an org's own admins can review their trail without any platform access. Rows written during an impersonation session name the operator, not the account they wore.",
    "item": [
     {
-     "id": "0c32fa05-17e3-4aa0-abc2-cd298eec82f1",
+     "id": "122b9973-f4fb-4cc0-b433-d228accab66c",
      "name": "Search one organization's audit trail",
      "request": {
       "name": "Search one organization's audit trail",
@@ -14674,7 +14986,7 @@
      },
      "response": [
       {
-       "id": "237ee497-cbd5-4a60-8794-32034aaf70b9",
+       "id": "2ac03bd1-7de4-4770-bed9-e0dbd6f5fd24",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -14811,7 +15123,7 @@
    "description": "Import and export as background jobs inside one tenant: submit answers 202 and the work is polled, never awaited. Submitting is additionally refused without the chosen handler's own permission — the handler is picked at runtime, so no annotation can name that gate. Job metadata reads on org:read; the artifacts (source, error report, result) answer only to the requester or a holder of that same handler permission. The handler catalogue itself is Shared · Exchange catalog.",
    "item": [
     {
-     "id": "1f5f1a17-8dff-4d59-bcd0-4e012685201e",
+     "id": "eebdf0d6-defd-4203-8902-fce8f4f3eb49",
      "name": "Request cancellation of a job",
      "request": {
       "name": "Request cancellation of a job",
@@ -14954,7 +15266,7 @@
      },
      "response": [
       {
-       "id": "f91b9920-ad30-40a4-b2df-7549cb0c58f0",
+       "id": "515c319e-b672-470f-8516-2db1c8422e32",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -15125,7 +15437,7 @@
      }
     },
     {
-     "id": "5e97efe2-4783-41c4-aed5-9b84e98bb816",
+     "id": "653cb140-fc32-4da3-9888-e3c4b5e565ca",
      "name": "Submit an import job",
      "request": {
       "name": "Submit an import job",
@@ -15287,7 +15599,7 @@
      },
      "response": [
       {
-       "id": "d01d8b6e-52d9-4ef1-bbdb-f04fb708acc5",
+       "id": "4e6162a7-84bd-4cfd-8bc6-f42f15fe01a2",
        "name": "Accepted",
        "originalRequest": {
         "url": {
@@ -15477,7 +15789,7 @@
      }
     },
     {
-     "id": "18cfb0e9-f10d-4bd7-a8dc-b29e1521d9bf",
+     "id": "6544fd9d-3990-4f55-8880-55a7933a9259",
      "name": "Submit an export job",
      "request": {
       "name": "Submit an export job",
@@ -15621,7 +15933,7 @@
      },
      "response": [
       {
-       "id": "8383ae57-da43-4542-b012-90b4c80ef775",
+       "id": "f9fc078c-0fa5-4a9d-84d7-47d76356ca66",
        "name": "Accepted",
        "originalRequest": {
         "url": {
@@ -15793,7 +16105,7 @@
      }
     },
     {
-     "id": "9e665afd-2ce9-43cc-9e95-5454279b5780",
+     "id": "d4c9ed1a-9c68-4990-a8e3-b3e64e1eac29",
      "name": "List the organization's exchange jobs",
      "request": {
       "name": "List the organization's exchange jobs",
@@ -15867,7 +16179,7 @@
      },
      "response": [
       {
-       "id": "29d56d0a-8531-486f-8e4e-5be1fb4b0e18",
+       "id": "97d4470a-27a0-4c25-bfa0-72f329d4ee76",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -15972,7 +16284,7 @@
      }
     },
     {
-     "id": "4b31b038-41a7-4daf-a9bc-0dd2f3f62bd6",
+     "id": "1e2daeb8-b82b-42ce-a0c3-24e8ec047ba1",
      "name": "Get one exchange job with its progress",
      "request": {
       "name": "Get one exchange job with its progress",
@@ -16038,7 +16350,7 @@
      },
      "response": [
       {
-       "id": "cddf9e34-870a-48ab-85cf-f783761674f2",
+       "id": "d3a01a7d-2622-407d-8226-fb9e224ee234",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -16135,7 +16447,7 @@
      }
     },
     {
-     "id": "1ca4bf18-9556-437b-a552-fcaf9137b872",
+     "id": "29981733-b8d1-440e-bfa0-2ccf4b5cbf32",
      "name": "Download a completed export's result file",
      "request": {
       "name": "Download a completed export's result file",
@@ -16274,7 +16586,7 @@
      },
      "response": [
       {
-       "id": "aca337a0-f766-4912-b990-2eed543947ec",
+       "id": "74e4b624-4c35-4f08-834c-f8e5bac0749d",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -16436,7 +16748,7 @@
      }
     },
     {
-     "id": "a2fe8aaf-14a0-4557-9964-bf797452a5b1",
+     "id": "5951ad84-690c-459e-9c52-0eadac23ceb3",
      "name": "Download a job's row-addressed error report",
      "request": {
       "name": "Download a job's row-addressed error report",
@@ -16575,7 +16887,7 @@
      },
      "response": [
       {
-       "id": "a3978964-0945-4950-a398-349be3908e6a",
+       "id": "1dd7059b-0c20-4e95-a057-8c23cbc2ed28",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -16743,7 +17055,7 @@
    "description": "An organization's machine credentials (apikey:manage). A key carries a SUBSET of its creator's permissions — it can never out-rank them — and authenticates as X-Api-Key. The secret shows once, at mint.",
    "item": [
     {
-     "id": "2470f93f-d9c9-482a-8ba4-2e4f00f2b48b",
+     "id": "2d3ef208-1668-408d-a880-bd58ae66d659",
      "name": "List the organization's API keys (secrets never shown)",
      "request": {
       "name": "List the organization's API keys (secrets never shown)",
@@ -16816,7 +17128,7 @@
      },
      "response": [
       {
-       "id": "1bda30e5-ba01-4549-b0e3-554e30ac1165",
+       "id": "52d0de06-4b71-4a7b-9dd2-481c4f0df43c",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -16920,7 +17232,7 @@
      }
     },
     {
-     "id": "5332bd5d-36f3-4010-a0f8-e3ebddb8d1d3",
+     "id": "778d1a03-5678-4be3-a0ef-a5edbe6581d9",
      "name": "Mint an organization API key",
      "request": {
       "name": "Mint an organization API key",
@@ -16990,7 +17302,7 @@
      },
      "response": [
       {
-       "id": "260e4100-d733-45d6-99c2-5a34eb8d7cb5",
+       "id": "7b39ef96-99fd-479a-beb0-99d68c1988f1",
        "name": "Created",
        "originalRequest": {
         "url": {
@@ -17088,7 +17400,7 @@
      }
     },
     {
-     "id": "a993ccd2-70c5-4fe6-bff3-c854ba404579",
+     "id": "0c5809e3-3c1a-400d-91bb-c4ad72669cc2",
      "name": "Rotate an API key",
      "request": {
       "name": "Rotate an API key",
@@ -17157,7 +17469,7 @@
      },
      "response": [
       {
-       "id": "a3908f87-86ed-495b-a565-106904828a59",
+       "id": "6ed8056c-4989-4ac8-a936-220cb1789416",
        "name": "Created",
        "originalRequest": {
         "url": {
@@ -17254,7 +17566,7 @@
      }
     },
     {
-     "id": "3c07ea17-57fb-4ec3-a422-fb8c9d391276",
+     "id": "70db100f-d04e-4439-9587-34a822c5beb5",
      "name": "Revoke an API key",
      "request": {
       "name": "Revoke an API key",
@@ -17318,7 +17630,7 @@
      },
      "response": [
       {
-       "id": "e09caa10-367b-4529-9122-c3d1ad1ef9dd",
+       "id": "628a1d55-b02a-466c-9727-b05bd249910a",
        "name": "No Content",
        "originalRequest": {
         "url": {
@@ -17411,7 +17723,7 @@
    "description": "The tenant's support tickets — open, read, reply (org:read). Internal platform notes are never shown here; escalation and assignment are the platform's job (Platform · Support queue). A public reply notifies the opener in-app.",
    "item": [
     {
-     "id": "c9c9518f-efa2-43e6-8a60-c4d972ad0dda",
+     "id": "50f0b660-fbdc-4959-ba5a-7f60ac2ac635",
      "name": "List the organization's tickets",
      "request": {
       "name": "List the organization's tickets",
@@ -17484,7 +17796,7 @@
      },
      "response": [
       {
-       "id": "5f704a1f-2253-46ae-a8d5-1ae26d13c46f",
+       "id": "4ccf968c-f06a-42b7-ba06-aeb8c66019d2",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -17588,7 +17900,7 @@
      }
     },
     {
-     "id": "f02c872a-f281-4fd1-8fe7-50aa3dab21df",
+     "id": "dc913e5d-e7e8-49e2-b71c-74d65e2da125",
      "name": "Open a support ticket",
      "request": {
       "name": "Open a support ticket",
@@ -17728,7 +18040,7 @@
      },
      "response": [
       {
-       "id": "87ed085b-1312-4aca-95bb-545942926851",
+       "id": "2340ac26-9e81-423b-a83c-d940fb57947a",
        "name": "Created",
        "originalRequest": {
         "url": {
@@ -17899,7 +18211,7 @@
      }
     },
     {
-     "id": "3c773fc4-81f5-4072-8521-3683c086be85",
+     "id": "8f000f1e-0d83-4ffd-b323-1a35f5c22e52",
      "name": "The ticket's public messages",
      "request": {
       "name": "The ticket's public messages",
@@ -17968,7 +18280,7 @@
      },
      "response": [
       {
-       "id": "a11ebf75-b7cc-4d70-9129-8e5567a0c268",
+       "id": "ae482390-2197-41c5-a74c-c20e3309b3df",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -18065,7 +18377,7 @@
      }
     },
     {
-     "id": "16cd6f0d-157a-43ae-872b-8025eade992e",
+     "id": "4310179e-7778-4b78-8aab-f71af2ea8a79",
      "name": "Reply to your ticket",
      "request": {
       "name": "Reply to your ticket",
@@ -18217,7 +18529,7 @@
      },
      "response": [
       {
-       "id": "61e6907b-e352-4117-98c2-5b5fa79b004f",
+       "id": "1593b4e7-fd13-4830-9291-f9fe5d04f611",
        "name": "Created",
        "originalRequest": {
         "url": {
@@ -18400,7 +18712,7 @@
      }
     },
     {
-     "id": "aab949e7-ebea-40cb-9ff8-073762ef15cc",
+     "id": "98d00019-cf25-48ce-9240-169ae2fc6e24",
      "name": "Get one ticket",
      "request": {
       "name": "Get one ticket",
@@ -18465,7 +18777,7 @@
      },
      "response": [
       {
-       "id": "e679f57c-ad44-4c1c-9fed-10aaf25f2f0e",
+       "id": "65dd5ea0-4300-40c8-af3c-558609469f94",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -18567,7 +18879,7 @@
    "description": "The maintenance windows in effect for this tenant (platform-wide plus its own), read on org:read for a client banner. During a RESTRICT window this org's writes answer 503 + Retry-After; reads pass. Scheduling is Platform · Maintenance.",
    "item": [
     {
-     "id": "11edec48-ef40-467e-b9ec-8c928c7dd3fe",
+     "id": "cc4d276f-e915-42f7-88d8-4889327fbc49",
      "name": "List maintenance windows affecting the organization",
      "request": {
       "name": "List maintenance windows affecting the organization",
@@ -18634,7 +18946,7 @@
      },
      "response": [
       {
-       "id": "a7e85d85-8276-4d0b-8c33-6eccc96f70ad",
+       "id": "91f6af09-24b8-459f-b897-529f95a0c324",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -18735,7 +19047,7 @@
    "description": "The organization's provider overrides (org:update) — SMS, email, payment gateway. An override wins over the platform default for that capability. Secret values are encrypted at rest and masked on read; the platform defaults are Platform · Integrations.",
    "item": [
     {
-     "id": "84b3d1ad-3d15-4fcb-90ae-02a1036b09a7",
+     "id": "97432cb1-15e4-4e79-aa57-0acfb8fa0026",
      "name": "List the organization's integrations (secrets masked)",
      "request": {
       "name": "List the organization's integrations (secrets masked)",
@@ -18789,7 +19101,7 @@
      },
      "response": [
       {
-       "id": "ad35bd33-1561-42f2-81c5-e18b0ad2fe1d",
+       "id": "d26639ca-9c58-4400-a95c-20088a4338b8",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -18874,7 +19186,7 @@
      }
     },
     {
-     "id": "e44e939b-bf2c-4843-b40e-d64c75f8804f",
+     "id": "ba5c24c1-8e8d-49f7-94b8-130372f32ea4",
      "name": "Configure an integration for the organization",
      "request": {
       "name": "Configure an integration for the organization",
@@ -18932,7 +19244,7 @@
       "method": "PUT",
       "body": {
        "mode": "raw",
-       "raw": "{\n  \"kind\": \"<string>\",\n  \"provider\": \"<string>\",\n  \"enabled\": \"<boolean>\",\n  \"settings\": {\n    \"key_0\": \"<string>\",\n    \"key_1\": \"<string>\",\n    \"key_2\": \"<string>\"\n  }\n}",
+       "raw": "{\n  \"kind\": \"<string>\",\n  \"provider\": \"<string>\",\n  \"enabled\": \"<boolean>\",\n  \"settings\": {\n    \"key_0\": \"<string>\",\n    \"key_1\": \"<string>\"\n  }\n}",
        "options": {
         "raw": {
          "headerFamily": "json",
@@ -18944,7 +19256,7 @@
      },
      "response": [
       {
-       "id": "1834f10f-ca4c-46f2-adf5-5898111926ce",
+       "id": "835c6ba7-927e-4e0c-9542-f6152384edb9",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -19005,7 +19317,7 @@
         "method": "PUT",
         "body": {
          "mode": "raw",
-         "raw": "{\n  \"kind\": \"<string>\",\n  \"provider\": \"<string>\",\n  \"enabled\": \"<boolean>\",\n  \"settings\": {\n    \"key_0\": \"<string>\",\n    \"key_1\": \"<string>\",\n    \"key_2\": \"<string>\"\n  }\n}",
+         "raw": "{\n  \"kind\": \"<string>\",\n  \"provider\": \"<string>\",\n  \"enabled\": \"<boolean>\",\n  \"settings\": {\n    \"key_0\": \"<string>\",\n    \"key_1\": \"<string>\"\n  }\n}",
          "options": {
           "raw": {
            "headerFamily": "json",
@@ -19042,7 +19354,7 @@
      }
     },
     {
-     "id": "f6c47c85-807f-4018-976e-3c5c8ebe2730",
+     "id": "0397d6d1-3825-46cb-b31c-241499ac420c",
      "name": "Test an integration's configuration completeness",
      "request": {
       "name": "Test an integration's configuration completeness",
@@ -19108,7 +19420,7 @@
      },
      "response": [
       {
-       "id": "07ef7d3d-80b4-4eb6-87b1-9867221ecd3b",
+       "id": "b6f4b7cb-f9ef-4a1a-a025-781d4b71d1d0",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -19194,7 +19506,7 @@
          "value": "<string>"
         }
        ],
-       "body": "{\n  \"key_0\": \"<string>\",\n  \"key_1\": \"<string>\",\n  \"key_2\": \"<string>\",\n  \"key_3\": \"<string>\"\n}",
+       "body": "{\n  \"key_0\": \"<string>\",\n  \"key_1\": \"<string>\"\n}",
        "cookie": [],
        "_postman_previewlanguage": "text"
       }
@@ -19205,7 +19517,7 @@
      }
     },
     {
-     "id": "1eed9cef-201b-4f47-860d-05b4f0f02c5c",
+     "id": "43cdab58-f0e2-499d-b4a0-961657f6df38",
      "name": "Remove an integration",
      "request": {
       "name": "Remove an integration",
@@ -19266,7 +19578,7 @@
      },
      "response": [
       {
-       "id": "00d5d29e-515a-4a10-8bf8-9f567d3360ee",
+       "id": "6cff852d-fbef-4690-a10a-41c16edbd7c2",
        "name": "No Content",
        "originalRequest": {
         "url": {
@@ -19359,7 +19671,7 @@
    "description": "The organization's security policy (org:update to set, org:read to view): IP allowlist, require-a-trusted-device, session max age. Every field TIGHTENS access over the open default; a denial is a 403 naming the rule, distinct from RBAC. Blessing a member's device as trusted lives here too — trust is the org's grant, not a self-claim.",
    "item": [
     {
-     "id": "e3d55616-b161-438d-867d-3f9ea8941a76",
+     "id": "4698e2d0-609d-4a0c-bc1d-ee895e909138",
      "name": "Read the organization's security policy",
      "request": {
       "name": "Read the organization's security policy",
@@ -19416,7 +19728,7 @@
      },
      "response": [
       {
-       "id": "22b768fb-630f-4bac-abb6-5901a52ff952",
+       "id": "9b902aba-670a-4349-9cd4-2d2324b45ec9",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -19501,12 +19813,12 @@
      }
     },
     {
-     "id": "7f4d1161-df93-45fd-a28f-bbfc5ba52703",
+     "id": "df38a8a8-6bc7-49d9-8dfd-028595be3664",
      "name": "Set the organization's security policy",
      "request": {
       "name": "Set the organization's security policy",
       "description": {
-       "content": "Every field TIGHTENS access. `ipAllowlist` is comma-joined CIDRs (blank clears it); `requireTrustedDevice` needs an org-blessed `X-Device-Id`; `sessionMaxAgeSeconds` refuses tokens older than it for this org. A denial is a 403 naming the rule.",
+       "content": "Every field TIGHTENS access. `ipAllowlist` is comma-joined CIDRs (blank clears it); `requireTrustedDevice` needs an org-blessed `X-Device-Id`; `sessionMaxAgeSeconds` refuses tokens older than it for this org; `requireMfa` refuses human sessions whose token carries no multi-factor `amr` claim (API keys are machine credentials and exempt) and enrolls new invitees in TOTP. A denial is a 403 naming the rule.",
        "type": "text/plain"
       },
       "url": {
@@ -19559,7 +19871,7 @@
       "method": "PUT",
       "body": {
        "mode": "raw",
-       "raw": "{\n  \"ipAllowlist\": \"<string>\",\n  \"requireTrustedDevice\": \"<boolean>\",\n  \"sessionMaxAgeSeconds\": \"<long>\"\n}",
+       "raw": "{\n  \"ipAllowlist\": \"<string>\",\n  \"requireTrustedDevice\": \"<boolean>\",\n  \"sessionMaxAgeSeconds\": \"<long>\",\n  \"requireMfa\": \"<boolean>\"\n}",
        "options": {
         "raw": {
          "headerFamily": "json",
@@ -19571,7 +19883,7 @@
      },
      "response": [
       {
-       "id": "9d271b63-a8dc-4b05-b1b2-77c7e902a754",
+       "id": "6882eb8d-1113-41ec-b61e-64b078c14cf6",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -19632,7 +19944,7 @@
         "method": "PUT",
         "body": {
          "mode": "raw",
-         "raw": "{\n  \"ipAllowlist\": \"<string>\",\n  \"requireTrustedDevice\": \"<boolean>\",\n  \"sessionMaxAgeSeconds\": \"<long>\"\n}",
+         "raw": "{\n  \"ipAllowlist\": \"<string>\",\n  \"requireTrustedDevice\": \"<boolean>\",\n  \"sessionMaxAgeSeconds\": \"<long>\",\n  \"requireMfa\": \"<boolean>\"\n}",
          "options": {
           "raw": {
            "headerFamily": "json",
@@ -19669,7 +19981,7 @@
      }
     },
     {
-     "id": "7e2d19a2-9206-48f6-a5e5-034d0801880b",
+     "id": "f59ad916-61d5-412d-8c62-9cf3514ec2ba",
      "name": "Bless (or unbless) a member's device as trusted",
      "request": {
       "name": "Bless (or unbless) a member's device as trusted",
@@ -19740,7 +20052,7 @@
      },
      "response": [
       {
-       "id": "df62368d-ad3f-4a08-95c1-799c7680c18b",
+       "id": "f3789324-32d5-4d34-8b92-8a9196a13b2f",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -19845,7 +20157,7 @@
    "description": "The tenant's own money view — invoices, proxied from Kill Bill on org:read. Plans, balances and billing actions are the platform's surface: Platform · Billing & plans.",
    "item": [
     {
-     "id": "5ddf05cd-825e-4131-96c0-97719960e3e8",
+     "id": "d0ed0d43-a827-44be-9d28-0d3c998bbd7e",
      "name": "Make a payment method the default",
      "request": {
       "name": "Make a payment method the default",
@@ -19908,7 +20220,7 @@
      },
      "response": [
       {
-       "id": "0de8fcd2-2cd5-4495-9597-c42ff3d6c5f9",
+       "id": "0c7c85cc-acb5-4544-bd86-6589c3a207b0",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -19997,7 +20309,175 @@
      }
     },
     {
-     "id": "3a294d22-a1dc-41d3-8654-9fc2c5cf65be",
+     "id": "ebe70df7-af7f-420a-bd48-9ac75d070085",
+     "name": "Initiate a payment collection",
+     "request": {
+      "name": "Initiate a payment collection",
+      "description": {
+       "content": "Starts a collection. `provider` is optional — omitted, the organization's configured PAYMENT_GATEWAY integration (org override, else platform default) names the gateway. Explicit values: `pesapal` (hosted page — send the payer to the returned `redirectUrl`; card + mobile money) or `yo-uganda` (a mobile-money approval prompt is pushed to `phoneNumber` — no redirect). Whether it runs against the sandbox or live money is the gateway's configured `mode`, echoed on the resource. The outcome converges from the gateway (IPN / on-read refresh) — poll the GET until the status is terminal.",
+       "type": "text/plain"
+      },
+      "url": {
+       "path": [
+        "api",
+        "v1",
+        "orgs",
+        ":orgId",
+        "payments"
+       ],
+       "host": [
+        "localhost"
+       ],
+       "query": [],
+       "variable": [
+        {
+         "type": "any",
+         "value": "<uuid>",
+         "key": "orgId",
+         "disabled": false,
+         "description": {
+          "content": "(Required) ",
+          "type": "text/plain"
+         }
+        }
+       ],
+       "protocol": "http",
+       "port": "28080",
+       "raw": "http://localhost:28080/api/v1/orgs/:orgId/payments"
+      },
+      "header": [
+       {
+        "disabled": false,
+        "description": {
+         "content": "Run this request as the target of an impersonation session (its id, from POST /api/v1/admin/impersonations). The session must belong to the calling operator; a READ_ONLY session refuses any unsafe method. Every write is audited against the operator, not the target.",
+         "type": "text/plain"
+        },
+        "key": "X-Impersonate",
+        "value": "<uuid>"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Accept",
+        "value": "*/*"
+       }
+      ],
+      "method": "POST",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"amount\": \"<number>\",\n  \"currency\": \"<string>\",\n  \"description\": \"<string>\",\n  \"provider\": \"<string>\",\n  \"phoneNumber\": \"<string>\",\n  \"email\": \"<string>\"\n}",
+       "options": {
+        "raw": {
+         "headerFamily": "json",
+         "language": "json"
+        }
+       }
+      },
+      "auth": null
+     },
+     "response": [
+      {
+       "id": "130b4577-0f1d-4587-903c-628a877e71eb",
+       "name": "Created",
+       "originalRequest": {
+        "url": {
+         "path": [
+          "api",
+          "v1",
+          "orgs",
+          ":orgId",
+          "payments"
+         ],
+         "host": [
+          "localhost"
+         ],
+         "query": [],
+         "variable": [
+          {
+           "disabled": false,
+           "description": {
+            "content": "(Required) ",
+            "type": "text/plain"
+           },
+           "type": "any",
+           "value": "<uuid>",
+           "key": "orgId"
+          }
+         ],
+         "protocol": "http",
+         "port": "28080",
+         "raw": "http://localhost:28080/api/v1/orgs/:orgId/payments"
+        },
+        "header": [
+         {
+          "disabled": false,
+          "description": {
+           "content": "Run this request as the target of an impersonation session (its id, from POST /api/v1/admin/impersonations). The session must belong to the calling operator; a READ_ONLY session refuses any unsafe method. Every write is audited against the operator, not the target.",
+           "type": "text/plain"
+          },
+          "key": "X-Impersonate",
+          "value": "<uuid>"
+         },
+         {
+          "key": "Content-Type",
+          "value": "application/json"
+         },
+         {
+          "key": "Accept",
+          "value": "*/*"
+         },
+         {
+          "description": {
+           "content": "Added as a part of security scheme: bearer",
+           "type": "text/plain"
+          },
+          "key": "Authorization",
+          "value": "Bearer <token>"
+         }
+        ],
+        "method": "POST",
+        "body": {
+         "mode": "raw",
+         "raw": "{\n  \"amount\": \"<number>\",\n  \"currency\": \"<string>\",\n  \"description\": \"<string>\",\n  \"provider\": \"<string>\",\n  \"phoneNumber\": \"<string>\",\n  \"email\": \"<string>\"\n}",
+         "options": {
+          "raw": {
+           "headerFamily": "json",
+           "language": "json"
+          }
+         }
+        }
+       },
+       "status": "Created",
+       "code": 201,
+       "header": [
+        {
+         "key": "Content-Type",
+         "value": "*/*"
+        },
+        {
+         "disabled": false,
+         "description": {
+          "content": "Public request id (accepted inbound, else minted as a ULID).",
+          "type": "text/plain"
+         },
+         "key": "X-Request-Id",
+         "value": "<string>"
+        }
+       ],
+       "body": "{\n  \"id\": \"<string>\",\n  \"type\": \"<string>\",\n  \"attributes\": {}\n}",
+       "cookie": [],
+       "_postman_previewlanguage": "text"
+      }
+     ],
+     "event": [],
+     "protocolProfileBehavior": {
+      "disableBodyPruning": true
+     }
+    },
+    {
+     "id": "ff7f2214-0662-4b99-a98d-f4eff3452991",
      "name": "List the organization's payment methods (from Kill Bill)",
      "request": {
       "name": "List the organization's payment methods (from Kill Bill)",
@@ -20052,7 +20532,7 @@
      },
      "response": [
       {
-       "id": "5d47d8b9-22f8-416b-8c69-d3e6844ca124",
+       "id": "b822f8cd-be83-4520-b42c-3d1b629a1e72",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -20138,7 +20618,7 @@
      }
     },
     {
-     "id": "f000fb76-d3e8-402a-aaf9-911282675176",
+     "id": "6ccb99a6-2826-4add-b448-7900bfae3b98",
      "name": "Add a payment method",
      "request": {
       "name": "Add a payment method",
@@ -20209,7 +20689,7 @@
      },
      "response": [
       {
-       "id": "73319c08-9cee-4be5-9281-33e210775ba8",
+       "id": "1f6cf071-db72-457a-9c6d-b82860b7a017",
        "name": "Created",
        "originalRequest": {
         "url": {
@@ -20308,7 +20788,168 @@
      }
     },
     {
-     "id": "c0b9560f-ce23-4666-b373-d17537355d83",
+     "id": "3ab2a060-ea01-4718-b2ff-47b68c1b4665",
+     "name": "Read a payment (refreshes a PENDING one from its gateway)",
+     "request": {
+      "name": "Read a payment (refreshes a PENDING one from its gateway)",
+      "description": {},
+      "url": {
+       "path": [
+        "api",
+        "v1",
+        "orgs",
+        ":orgId",
+        "payments",
+        ":id"
+       ],
+       "host": [
+        "localhost"
+       ],
+       "query": [],
+       "variable": [
+        {
+         "type": "any",
+         "value": "<uuid>",
+         "key": "orgId",
+         "disabled": false,
+         "description": {
+          "content": "(Required) ",
+          "type": "text/plain"
+         }
+        },
+        {
+         "type": "any",
+         "value": "<uuid>",
+         "key": "id",
+         "disabled": false,
+         "description": {
+          "content": "(Required) ",
+          "type": "text/plain"
+         }
+        }
+       ],
+       "protocol": "http",
+       "port": "28080",
+       "raw": "http://localhost:28080/api/v1/orgs/:orgId/payments/:id"
+      },
+      "header": [
+       {
+        "disabled": false,
+        "description": {
+         "content": "Run this request as the target of an impersonation session (its id, from POST /api/v1/admin/impersonations). The session must belong to the calling operator; a READ_ONLY session refuses any unsafe method. Every write is audited against the operator, not the target.",
+         "type": "text/plain"
+        },
+        "key": "X-Impersonate",
+        "value": "<uuid>"
+       },
+       {
+        "key": "Accept",
+        "value": "*/*"
+       }
+      ],
+      "method": "GET",
+      "body": {},
+      "auth": null
+     },
+     "response": [
+      {
+       "id": "781cb6a7-03d6-473c-afea-b829b4c007f3",
+       "name": "OK",
+       "originalRequest": {
+        "url": {
+         "path": [
+          "api",
+          "v1",
+          "orgs",
+          ":orgId",
+          "payments",
+          ":id"
+         ],
+         "host": [
+          "localhost"
+         ],
+         "query": [],
+         "variable": [
+          {
+           "disabled": false,
+           "description": {
+            "content": "(Required) ",
+            "type": "text/plain"
+           },
+           "type": "any",
+           "value": "<uuid>",
+           "key": "orgId"
+          },
+          {
+           "disabled": false,
+           "description": {
+            "content": "(Required) ",
+            "type": "text/plain"
+           },
+           "type": "any",
+           "value": "<uuid>",
+           "key": "id"
+          }
+         ],
+         "protocol": "http",
+         "port": "28080",
+         "raw": "http://localhost:28080/api/v1/orgs/:orgId/payments/:id"
+        },
+        "header": [
+         {
+          "disabled": false,
+          "description": {
+           "content": "Run this request as the target of an impersonation session (its id, from POST /api/v1/admin/impersonations). The session must belong to the calling operator; a READ_ONLY session refuses any unsafe method. Every write is audited against the operator, not the target.",
+           "type": "text/plain"
+          },
+          "key": "X-Impersonate",
+          "value": "<uuid>"
+         },
+         {
+          "key": "Accept",
+          "value": "*/*"
+         },
+         {
+          "description": {
+           "content": "Added as a part of security scheme: bearer",
+           "type": "text/plain"
+          },
+          "key": "Authorization",
+          "value": "Bearer <token>"
+         }
+        ],
+        "method": "GET",
+        "body": {}
+       },
+       "status": "OK",
+       "code": 200,
+       "header": [
+        {
+         "key": "Content-Type",
+         "value": "*/*"
+        },
+        {
+         "disabled": false,
+         "description": {
+          "content": "Public request id (accepted inbound, else minted as a ULID).",
+          "type": "text/plain"
+         },
+         "key": "X-Request-Id",
+         "value": "<string>"
+        }
+       ],
+       "body": "{\n  \"id\": \"<string>\",\n  \"type\": \"<string>\",\n  \"attributes\": {}\n}",
+       "cookie": [],
+       "_postman_previewlanguage": "text"
+      }
+     ],
+     "event": [],
+     "protocolProfileBehavior": {
+      "disableBodyPruning": true
+     }
+    },
+    {
+     "id": "496de3cc-2347-452c-9b61-48b75e4b70cf",
      "name": "List the organization's invoices",
      "request": {
       "name": "List the organization's invoices",
@@ -20366,7 +21007,7 @@
      },
      "response": [
       {
-       "id": "b1330dd9-6f64-42d1-b376-5ccc984bf45f",
+       "id": "41bf672b-4068-49d8-80af-bdd151f6f83c",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -20452,7 +21093,7 @@
      }
     },
     {
-     "id": "1e5e4715-cff4-42f7-b125-0a97067d83de",
+     "id": "1c604aee-0118-4a6d-9b78-d918ab9cbb6a",
      "name": "Remove a payment method",
      "request": {
       "name": "Remove a payment method",
@@ -20514,7 +21155,7 @@
      },
      "response": [
       {
-       "id": "aaae1438-7eb6-40a6-8a04-608cbd038be0",
+       "id": "626fc3d5-c453-4b2e-b8b0-b7b895f3985a",
        "name": "No Content",
        "originalRequest": {
         "url": {
@@ -20608,7 +21249,7 @@
    "description": "Recurring exports on a cron (UTC), firing as their creator — whose export permission is re-checked at every fire, so a revocation stops the schedule loudly instead of letting it keep exporting. One-off jobs and their artifacts are Organization · Exchange.",
    "item": [
     {
-     "id": "f55e0c76-e735-4ffe-a9a8-e0fe628c7eae",
+     "id": "9630eef3-9232-4aba-a216-7315f85b65f6",
      "name": "List the organization's recurring exports",
      "request": {
       "name": "List the organization's recurring exports",
@@ -20682,7 +21323,7 @@
      },
      "response": [
       {
-       "id": "6055e185-026b-4085-bd81-25671672b2b5",
+       "id": "9d5846d1-1923-4aee-a51b-6312a3513469",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -20787,7 +21428,7 @@
      }
     },
     {
-     "id": "2e05aec0-50d1-4320-aac2-0f30f3ff5209",
+     "id": "15f0927a-98b3-4e30-9032-829fa71898e1",
      "name": "Create a recurring export",
      "request": {
       "name": "Create a recurring export",
@@ -20931,7 +21572,7 @@
      },
      "response": [
       {
-       "id": "5b5e2f54-4337-46fe-8044-f32a26625662",
+       "id": "3af89199-8886-444f-8d76-f6ee280c908d",
        "name": "Created",
        "originalRequest": {
         "url": {
@@ -21103,7 +21744,7 @@
      }
     },
     {
-     "id": "9024c563-4245-42eb-b96c-2462c91cb406",
+     "id": "0a1a779d-468b-4f0a-896e-ea666a9e54b0",
      "name": "Delete a recurring export",
      "request": {
       "name": "Delete a recurring export",
@@ -21241,7 +21882,7 @@
      },
      "response": [
       {
-       "id": "d581ded7-80fa-474c-a75f-2bcd789ecfb2",
+       "id": "cab344e7-345e-4711-b11c-7da96efb696f",
        "name": "No Content",
        "originalRequest": {
         "url": {
@@ -21408,7 +22049,7 @@
    "description": "The caller's own identity and in-app notifications; no axis owns them because a tenant member and a platform operator both legitimately arrive here. GET /me is the one path the provisioning gate lets through for an un-provisioned subject (onboarding), and still a hard stop for a disabled one.",
    "item": [
     {
-     "id": "5505b26a-c626-48ed-a1db-28dcb7b9b2ff",
+     "id": "26bb7864-9e5a-4c6d-92b0-18c3a58befa2",
      "name": "Mark one of your notifications as read",
      "request": {
       "name": "Mark one of your notifications as read",
@@ -21465,7 +22106,7 @@
      },
      "response": [
       {
-       "id": "d9cc6f26-a5f9-4774-adca-033965a10092",
+       "id": "13d79c25-e9dd-4c00-b275-60f73eedb1ea",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -21550,7 +22191,7 @@
      }
     },
     {
-     "id": "faaa67c5-82e5-469b-a029-2bc38d5bebb1",
+     "id": "0eaed119-70c5-4717-8353-69b56891ee1b",
      "name": "List your in-app notifications",
      "request": {
       "name": "List your in-app notifications",
@@ -21610,7 +22251,7 @@
      },
      "response": [
       {
-       "id": "95af7825-fba2-4426-ad7d-868e57df80a7",
+       "id": "ca76b52b-892e-4a90-904e-25a4b7dc808c",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -21701,7 +22342,7 @@
      }
     },
     {
-     "id": "e51d81f4-bf32-4f53-9df9-a03897982b6a",
+     "id": "44559951-dfb7-4314-a6d0-4fd227c6fcaf",
      "name": "Get the current user's profile and access",
      "request": {
       "name": "Get the current user's profile and access",
@@ -21745,7 +22386,7 @@
      },
      "response": [
       {
-       "id": "cef20314-f528-408f-99dc-2007d9879621",
+       "id": "889dafdc-f6b6-414f-88e7-1d5724c55f40",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -21817,7 +22458,7 @@
      }
     },
     {
-     "id": "1c3c427b-f2f8-4b94-a761-7364971c4ef1",
+     "id": "cf13bac5-a52e-4d4c-8fef-1981b6650a62",
      "name": "List the organizations you belong to",
      "request": {
       "name": "List the organizations you belong to",
@@ -21935,7 +22576,7 @@
      },
      "response": [
       {
-       "id": "fd0670ec-d5d7-496a-9bae-c8d5dc2ec538",
+       "id": "b4847166-f673-4b25-8a38-e276881724cf",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -22087,7 +22728,7 @@
    "description": "Upload, download, delete, presign. The one group whose rule lives in the handler rather than in an annotation, which is exactly why neither axis claims it: your own namespace always, someone else's only with a platform tier (support to read, admin to delete).",
    "item": [
     {
-     "id": "91976e42-4cd6-4b2d-a44b-7ae81349de89",
+     "id": "f1bfb9fb-de7a-4e01-8d44-697d64152975",
      "name": "Upload a file",
      "request": {
       "name": "Upload a file",
@@ -22217,7 +22858,7 @@
      },
      "response": [
       {
-       "id": "f1fd96f8-6a2c-4d09-8791-a145a6b18c65",
+       "id": "f0f87642-c1b9-4d64-9649-f9ff33411c0f",
        "name": "Created",
        "originalRequest": {
         "url": {
@@ -22375,7 +23016,7 @@
      }
     },
     {
-     "id": "4776ba39-2605-4ebb-abf4-62ed4d5791ec",
+     "id": "ee145455-5e60-4951-84a8-3aaa9c675d14",
      "name": "Mint a presigned upload or download URL",
      "request": {
       "name": "Mint a presigned upload or download URL",
@@ -22506,7 +23147,7 @@
      },
      "response": [
       {
-       "id": "f9d827e8-b2d8-4ad4-ae49-9092c83bdfa8",
+       "id": "9005b4b5-715c-4707-ac04-b931833b3913",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -22665,7 +23306,7 @@
      }
     },
     {
-     "id": "c3ecaac0-79f5-4d27-bed5-efcf5e8da8c3",
+     "id": "8b840dd5-20b6-4a50-8adf-f85ba43a6bfb",
      "name": "Download a file by key",
      "request": {
       "name": "Download a file by key",
@@ -22790,7 +23431,7 @@
      },
      "response": [
       {
-       "id": "f29495c9-b164-4ff8-afd4-bb41b3e5b39d",
+       "id": "37540807-f43e-4029-b3ed-4929d6534c73",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -22938,7 +23579,7 @@
      }
     },
     {
-     "id": "33483709-7d8b-4aa2-9248-5f1903d0608b",
+     "id": "b36e499d-161f-40dd-847e-619eb511565f",
      "name": "Delete a file by key",
      "request": {
       "name": "Delete a file by key",
@@ -23060,7 +23701,7 @@
      },
      "response": [
       {
-       "id": "cfff0de1-34df-41bc-a928-0806d3649828",
+       "id": "539ae561-2c3a-46b5-acb5-0e07a3ef34c5",
        "name": "No Content",
        "originalRequest": {
         "url": {
@@ -23214,7 +23855,7 @@
    "description": "Reading platform configuration — settings and feature-flag state are visible to any authenticated caller, because how the application behaves is not a secret. Writing them is Platform · Settings & flags.",
    "item": [
     {
-     "id": "5ad717e3-02c3-438f-8340-60e41011ef10",
+     "id": "6ca28b09-b905-4fc8-b026-7c228439884b",
      "name": "Get one platform setting by key",
      "request": {
       "name": "Get one platform setting by key",
@@ -23267,7 +23908,7 @@
      },
      "response": [
       {
-       "id": "8c7d0442-38cb-4570-a159-e2bc0b4cc90a",
+       "id": "0aff1c06-82f4-468e-a174-4d693a244b47",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -23351,7 +23992,7 @@
      }
     },
     {
-     "id": "b19b80c7-c973-4775-a749-e6c639bf6c09",
+     "id": "3f5c2a6a-febf-4ac0-91f0-1d2f93cc50f2",
      "name": "Get one feature flag by key",
      "request": {
       "name": "Get one feature flag by key",
@@ -23404,7 +24045,7 @@
      },
      "response": [
       {
-       "id": "35d827e5-db71-47ef-9b0b-50cfe90c8464",
+       "id": "c20dbb62-63f3-4ebe-a018-398c568ad293",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -23488,7 +24129,171 @@
      }
     },
     {
-     "id": "8b62d4ce-5259-478f-9244-f7648eb6ef67",
+     "id": "c9f62b64-2994-4dff-adf9-54b3f4dec964",
+     "name": "Evaluate a flag for one organization",
+     "request": {
+      "name": "Evaluate a flag for one organization",
+      "description": {
+       "content": "The effective answer this org gets: org override, else percentage bucket, else the global value. Unknown flags evaluate to false, never an error.",
+       "type": "text/plain"
+      },
+      "url": {
+       "path": [
+        "api",
+        "v1",
+        "feature-flags",
+        ":key",
+        "orgs",
+        ":orgId"
+       ],
+       "host": [
+        "localhost"
+       ],
+       "query": [],
+       "variable": [
+        {
+         "type": "any",
+         "value": "<string>",
+         "key": "key",
+         "disabled": false,
+         "description": {
+          "content": "(Required) ",
+          "type": "text/plain"
+         }
+        },
+        {
+         "type": "any",
+         "value": "<uuid>",
+         "key": "orgId",
+         "disabled": false,
+         "description": {
+          "content": "(Required) ",
+          "type": "text/plain"
+         }
+        }
+       ],
+       "protocol": "http",
+       "port": "28080",
+       "raw": "http://localhost:28080/api/v1/feature-flags/:key/orgs/:orgId"
+      },
+      "header": [
+       {
+        "disabled": false,
+        "description": {
+         "content": "Run this request as the target of an impersonation session (its id, from POST /api/v1/admin/impersonations). The session must belong to the calling operator; a READ_ONLY session refuses any unsafe method. Every write is audited against the operator, not the target.",
+         "type": "text/plain"
+        },
+        "key": "X-Impersonate",
+        "value": "<uuid>"
+       },
+       {
+        "key": "Accept",
+        "value": "*/*"
+       }
+      ],
+      "method": "GET",
+      "body": {},
+      "auth": null
+     },
+     "response": [
+      {
+       "id": "e3d8120b-5a95-47f8-ac93-7b229c76e619",
+       "name": "OK",
+       "originalRequest": {
+        "url": {
+         "path": [
+          "api",
+          "v1",
+          "feature-flags",
+          ":key",
+          "orgs",
+          ":orgId"
+         ],
+         "host": [
+          "localhost"
+         ],
+         "query": [],
+         "variable": [
+          {
+           "disabled": false,
+           "description": {
+            "content": "(Required) ",
+            "type": "text/plain"
+           },
+           "type": "any",
+           "value": "<string>",
+           "key": "key"
+          },
+          {
+           "disabled": false,
+           "description": {
+            "content": "(Required) ",
+            "type": "text/plain"
+           },
+           "type": "any",
+           "value": "<uuid>",
+           "key": "orgId"
+          }
+         ],
+         "protocol": "http",
+         "port": "28080",
+         "raw": "http://localhost:28080/api/v1/feature-flags/:key/orgs/:orgId"
+        },
+        "header": [
+         {
+          "disabled": false,
+          "description": {
+           "content": "Run this request as the target of an impersonation session (its id, from POST /api/v1/admin/impersonations). The session must belong to the calling operator; a READ_ONLY session refuses any unsafe method. Every write is audited against the operator, not the target.",
+           "type": "text/plain"
+          },
+          "key": "X-Impersonate",
+          "value": "<uuid>"
+         },
+         {
+          "key": "Accept",
+          "value": "*/*"
+         },
+         {
+          "description": {
+           "content": "Added as a part of security scheme: bearer",
+           "type": "text/plain"
+          },
+          "key": "Authorization",
+          "value": "Bearer <token>"
+         }
+        ],
+        "method": "GET",
+        "body": {}
+       },
+       "status": "OK",
+       "code": 200,
+       "header": [
+        {
+         "key": "Content-Type",
+         "value": "*/*"
+        },
+        {
+         "disabled": false,
+         "description": {
+          "content": "Public request id (accepted inbound, else minted as a ULID).",
+          "type": "text/plain"
+         },
+         "key": "X-Request-Id",
+         "value": "<string>"
+        }
+       ],
+       "body": "{\n  \"id\": \"<string>\",\n  \"type\": \"<string>\",\n  \"attributes\": {}\n}",
+       "cookie": [],
+       "_postman_previewlanguage": "text"
+      }
+     ],
+     "event": [],
+     "protocolProfileBehavior": {
+      "disableBodyPruning": true
+     }
+    },
+    {
+     "id": "1e7df610-ab3c-4812-b75e-5a8c28a09048",
      "name": "List platform settings",
      "request": {
       "name": "List platform settings",
@@ -23548,7 +24353,7 @@
      },
      "response": [
       {
-       "id": "8575a8af-a8d9-4e99-9564-dcffe8b1937a",
+       "id": "ff895fbe-ffd6-4e60-964e-17a2422f7654",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -23639,7 +24444,7 @@
      }
     },
     {
-     "id": "7cc112da-aa09-4935-8cda-111bf076b565",
+     "id": "790ccaf5-1bc8-42aa-9c83-12f5b6f1cca9",
      "name": "List feature flags",
      "request": {
       "name": "List feature flags",
@@ -23699,7 +24504,7 @@
      },
      "response": [
       {
-       "id": "985ccf9a-eae9-4495-b526-74d8980f0ad2",
+       "id": "c44a0fbf-083f-46c1-a095-9d883cebd064",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -23796,7 +24601,7 @@
    "description": "Fixed vocabularies any authenticated caller may read — today the permission catalogue that Organization · Roles is composed from. A new shared read lands here until it earns a group of its own.",
    "item": [
     {
-     "id": "51b41faf-24fe-4f9e-8ed5-22dd2acebcb3",
+     "id": "638296d5-6cfa-4387-a2c3-d5e503530c14",
      "name": "Get one translation",
      "request": {
       "name": "Get one translation",
@@ -23860,7 +24665,7 @@
      },
      "response": [
       {
-       "id": "e340113e-90bd-47bf-8e67-0b0a574acc01",
+       "id": "8a66fb7e-bd83-4f20-a62d-f385cfe6483c",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -23955,7 +24760,7 @@
      }
     },
     {
-     "id": "c03d4001-594d-403a-82d5-a456995d0a7f",
+     "id": "a76483b0-e5c1-4287-8087-bd248979ff78",
      "name": "List your personal documents",
      "request": {
       "name": "List your personal documents",
@@ -24087,7 +24892,7 @@
      },
      "response": [
       {
-       "id": "c71f473b-f4e2-4488-a622-a5e0003bbc73",
+       "id": "5e336f67-5612-4435-ac15-5b8b6c965976",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -24250,7 +25055,7 @@
      }
     },
     {
-     "id": "4a2e5128-aa59-4e14-848d-2478570562b1",
+     "id": "95053afd-e23e-4dce-b2e5-8421e0920412",
      "name": "Upload a personal document",
      "request": {
       "name": "Upload a personal document",
@@ -24377,7 +25182,7 @@
      },
      "response": [
       {
-       "id": "bf429f43-d720-415e-aacf-448bffe4c767",
+       "id": "94fc559d-9fa1-486a-ad9f-7343bbf735af",
        "name": "Created",
        "originalRequest": {
         "url": {
@@ -24535,7 +25340,7 @@
      }
     },
     {
-     "id": "5e98bd11-a1a6-47de-83b5-32ef3584d1be",
+     "id": "bba1754f-3404-44a0-b98c-09c9af39dc89",
      "name": "List translations, optionally for one locale",
      "request": {
       "name": "List translations, optionally for one locale",
@@ -24604,7 +25409,7 @@
      },
      "response": [
       {
-       "id": "b95cd5de-4743-4afd-8596-83939b9b21d4",
+       "id": "87fddddd-c765-4521-9022-3cee2a030bc7",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -24704,7 +25509,7 @@
      }
     },
     {
-     "id": "b01cf0dc-6440-4780-91c4-c623b054a7d6",
+     "id": "d53fa355-70de-4758-b3f4-007444700f5b",
      "name": "List every permission a role can grant",
      "request": {
       "name": "List every permission a role can grant",
@@ -24748,7 +25553,7 @@
      },
      "response": [
       {
-       "id": "0d3bc5e5-fded-41ae-beb7-c2eea13399ea",
+       "id": "4470a6bf-bb8b-4976-9f3f-9406dfe13dc0",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -24820,7 +25625,7 @@
      }
     },
     {
-     "id": "688a9be4-e0cd-468f-9694-1bf1e2395a5c",
+     "id": "2038c9de-9589-43f9-98b9-af78e413068e",
      "name": "Download a personal document",
      "request": {
       "name": "Download a personal document",
@@ -24945,7 +25750,7 @@
      },
      "response": [
       {
-       "id": "cf2251ca-5e88-4efc-9d9f-d0247747a783",
+       "id": "d385b054-bcd6-4cbc-8597-78dfe6020898",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -25093,7 +25898,7 @@
      }
     },
     {
-     "id": "0b75cc8f-47ab-42d8-a44b-eb8d2f8961a0",
+     "id": "4f17e513-0a5d-4c0f-87d8-da4e8e8e0f48",
      "name": "Delete a personal document",
      "request": {
       "name": "Delete a personal document",
@@ -25218,7 +26023,7 @@
      },
      "response": [
       {
-       "id": "319a3cdd-6e95-4509-95f8-70b51458d178",
+       "id": "f418fa3f-b06b-4591-b7fd-175ef82871ae",
        "name": "No Content",
        "originalRequest": {
         "url": {
@@ -25368,11 +26173,438 @@
    ]
   },
   {
+   "name": "Shared · Sign-up",
+   "description": "Self-service organization creation, off unless SIGNUP_ENABLED: request a verification e-mail (always 202 - enumeration-safe), then redeem the single-use token to mint the org and its first OWNER. The only unauthenticated write surface, and deliberately this small.",
+   "item": [
+    {
+     "id": "1a42d486-11d8-4ea9-9120-095c65043c6a",
+     "name": "Start a self-service signup",
+     "request": {
+      "name": "Start a self-service signup",
+      "description": {
+       "content": "Sends a verification email for creating a new organization. Always answers 202 with the same message whether or not the address is known anywhere — the email is the only channel that learns more. The link is single-use and expires; a new request supersedes a pending one for the same address. Disabled platforms answer 403 (SIGNUP_ENABLED).",
+       "type": "text/plain"
+      },
+      "url": {
+       "path": [
+        "api",
+        "v1",
+        "signup"
+       ],
+       "host": [
+        "localhost"
+       ],
+       "query": [],
+       "variable": [],
+       "protocol": "http",
+       "port": "28080",
+       "raw": "http://localhost:28080/api/v1/signup"
+      },
+      "header": [
+       {
+        "disabled": false,
+        "description": {
+         "content": "Run this request as the target of an impersonation session (its id, from POST /api/v1/admin/impersonations). The session must belong to the calling operator; a READ_ONLY session refuses any unsafe method. Every write is audited against the operator, not the target.",
+         "type": "text/plain"
+        },
+        "key": "X-Impersonate",
+        "value": "<uuid>"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Accept",
+        "value": "*/*"
+       }
+      ],
+      "method": "POST",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"email\": \"<string>\",\n  \"organizationName\": \"<string>\",\n  \"firstName\": \"<string>\",\n  \"lastName\": \"<string>\"\n}",
+       "options": {
+        "raw": {
+         "headerFamily": "json",
+         "language": "json"
+        }
+       }
+      },
+      "auth": null
+     },
+     "response": [
+      {
+       "id": "9c3382ca-fba4-4052-bbc9-142645a87df6",
+       "name": "Accepted",
+       "originalRequest": {
+        "url": {
+         "path": [
+          "api",
+          "v1",
+          "signup"
+         ],
+         "host": [
+          "localhost"
+         ],
+         "query": [],
+         "variable": [],
+         "protocol": "http",
+         "port": "28080",
+         "raw": "http://localhost:28080/api/v1/signup"
+        },
+        "header": [
+         {
+          "disabled": false,
+          "description": {
+           "content": "Run this request as the target of an impersonation session (its id, from POST /api/v1/admin/impersonations). The session must belong to the calling operator; a READ_ONLY session refuses any unsafe method. Every write is audited against the operator, not the target.",
+           "type": "text/plain"
+          },
+          "key": "X-Impersonate",
+          "value": "<uuid>"
+         },
+         {
+          "key": "Content-Type",
+          "value": "application/json"
+         },
+         {
+          "key": "Accept",
+          "value": "*/*"
+         },
+         {
+          "description": {
+           "content": "Added as a part of security scheme: bearer",
+           "type": "text/plain"
+          },
+          "key": "Authorization",
+          "value": "Bearer <token>"
+         }
+        ],
+        "method": "POST",
+        "body": {
+         "mode": "raw",
+         "raw": "{\n  \"email\": \"<string>\",\n  \"organizationName\": \"<string>\",\n  \"firstName\": \"<string>\",\n  \"lastName\": \"<string>\"\n}",
+         "options": {
+          "raw": {
+           "headerFamily": "json",
+           "language": "json"
+          }
+         }
+        }
+       },
+       "status": "Accepted",
+       "code": 202,
+       "header": [
+        {
+         "key": "Content-Type",
+         "value": "*/*"
+        },
+        {
+         "disabled": false,
+         "description": {
+          "content": "Public request id (accepted inbound, else minted as a ULID).",
+          "type": "text/plain"
+         },
+         "key": "X-Request-Id",
+         "value": "<string>"
+        }
+       ],
+       "body": "{\n  \"id\": \"<string>\",\n  \"type\": \"<string>\",\n  \"attributes\": {}\n}",
+       "cookie": [],
+       "_postman_previewlanguage": "text"
+      }
+     ],
+     "event": [],
+     "protocolProfileBehavior": {
+      "disableBodyPruning": true
+     }
+    },
+    {
+     "id": "d4d019df-7b09-421e-920d-4a815937aae5",
+     "name": "Complete a signup from the emailed link",
+     "request": {
+      "name": "Complete a signup from the emailed link",
+      "description": {
+       "content": "Spends the single-use token: the organization is created through the standard provisioning path — the owner receives the set-password invite, the trial (when enabled) starts, and billing auto-provisions. Invalid, spent, and expired tokens all answer the same 422.",
+       "type": "text/plain"
+      },
+      "url": {
+       "path": [
+        "api",
+        "v1",
+        "signup",
+        "verify"
+       ],
+       "host": [
+        "localhost"
+       ],
+       "query": [
+        {
+         "disabled": false,
+         "description": {
+          "content": "(Required) ",
+          "type": "text/plain"
+         },
+         "key": "token",
+         "value": "<string>"
+        }
+       ],
+       "variable": [],
+       "protocol": "http",
+       "port": "28080",
+       "raw": "http://localhost:28080/api/v1/signup/verify"
+      },
+      "header": [
+       {
+        "disabled": false,
+        "description": {
+         "content": "Run this request as the target of an impersonation session (its id, from POST /api/v1/admin/impersonations). The session must belong to the calling operator; a READ_ONLY session refuses any unsafe method. Every write is audited against the operator, not the target.",
+         "type": "text/plain"
+        },
+        "key": "X-Impersonate",
+        "value": "<uuid>"
+       },
+       {
+        "key": "Accept",
+        "value": "*/*"
+       }
+      ],
+      "method": "GET",
+      "body": {},
+      "auth": null
+     },
+     "response": [
+      {
+       "id": "a8d98a49-d5af-4f93-879f-2b132bd3b1b8",
+       "name": "OK",
+       "originalRequest": {
+        "url": {
+         "path": [
+          "api",
+          "v1",
+          "signup",
+          "verify"
+         ],
+         "host": [
+          "localhost"
+         ],
+         "query": [
+          {
+           "disabled": false,
+           "description": {
+            "content": "(Required) ",
+            "type": "text/plain"
+           },
+           "key": "token",
+           "value": "<string>"
+          }
+         ],
+         "variable": [],
+         "protocol": "http",
+         "port": "28080",
+         "raw": "http://localhost:28080/api/v1/signup/verify"
+        },
+        "header": [
+         {
+          "disabled": false,
+          "description": {
+           "content": "Run this request as the target of an impersonation session (its id, from POST /api/v1/admin/impersonations). The session must belong to the calling operator; a READ_ONLY session refuses any unsafe method. Every write is audited against the operator, not the target.",
+           "type": "text/plain"
+          },
+          "key": "X-Impersonate",
+          "value": "<uuid>"
+         },
+         {
+          "key": "Accept",
+          "value": "*/*"
+         },
+         {
+          "description": {
+           "content": "Added as a part of security scheme: bearer",
+           "type": "text/plain"
+          },
+          "key": "Authorization",
+          "value": "Bearer <token>"
+         }
+        ],
+        "method": "GET",
+        "body": {}
+       },
+       "status": "OK",
+       "code": 200,
+       "header": [
+        {
+         "key": "Content-Type",
+         "value": "*/*"
+        },
+        {
+         "disabled": false,
+         "description": {
+          "content": "Public request id (accepted inbound, else minted as a ULID).",
+          "type": "text/plain"
+         },
+         "key": "X-Request-Id",
+         "value": "<string>"
+        }
+       ],
+       "body": "{\n  \"id\": \"<string>\",\n  \"type\": \"<string>\",\n  \"attributes\": {}\n}",
+       "cookie": [],
+       "_postman_previewlanguage": "text"
+      }
+     ],
+     "event": [],
+     "protocolProfileBehavior": {
+      "disableBodyPruning": true
+     }
+    },
+    {
+     "id": "5789a8a3-a743-45e4-8eaf-767645849090",
+     "name": "Complete a signup (programmatic form)",
+     "request": {
+      "name": "Complete a signup (programmatic form)",
+      "description": {},
+      "url": {
+       "path": [
+        "api",
+        "v1",
+        "signup",
+        "verify"
+       ],
+       "host": [
+        "localhost"
+       ],
+       "query": [],
+       "variable": [],
+       "protocol": "http",
+       "port": "28080",
+       "raw": "http://localhost:28080/api/v1/signup/verify"
+      },
+      "header": [
+       {
+        "disabled": false,
+        "description": {
+         "content": "Run this request as the target of an impersonation session (its id, from POST /api/v1/admin/impersonations). The session must belong to the calling operator; a READ_ONLY session refuses any unsafe method. Every write is audited against the operator, not the target.",
+         "type": "text/plain"
+        },
+        "key": "X-Impersonate",
+        "value": "<uuid>"
+       },
+       {
+        "key": "Content-Type",
+        "value": "application/json"
+       },
+       {
+        "key": "Accept",
+        "value": "*/*"
+       }
+      ],
+      "method": "POST",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"token\": \"<string>\"\n}",
+       "options": {
+        "raw": {
+         "headerFamily": "json",
+         "language": "json"
+        }
+       }
+      },
+      "auth": null
+     },
+     "response": [
+      {
+       "id": "407651cb-5246-43cb-8062-f8bdd002a799",
+       "name": "OK",
+       "originalRequest": {
+        "url": {
+         "path": [
+          "api",
+          "v1",
+          "signup",
+          "verify"
+         ],
+         "host": [
+          "localhost"
+         ],
+         "query": [],
+         "variable": [],
+         "protocol": "http",
+         "port": "28080",
+         "raw": "http://localhost:28080/api/v1/signup/verify"
+        },
+        "header": [
+         {
+          "disabled": false,
+          "description": {
+           "content": "Run this request as the target of an impersonation session (its id, from POST /api/v1/admin/impersonations). The session must belong to the calling operator; a READ_ONLY session refuses any unsafe method. Every write is audited against the operator, not the target.",
+           "type": "text/plain"
+          },
+          "key": "X-Impersonate",
+          "value": "<uuid>"
+         },
+         {
+          "key": "Content-Type",
+          "value": "application/json"
+         },
+         {
+          "key": "Accept",
+          "value": "*/*"
+         },
+         {
+          "description": {
+           "content": "Added as a part of security scheme: bearer",
+           "type": "text/plain"
+          },
+          "key": "Authorization",
+          "value": "Bearer <token>"
+         }
+        ],
+        "method": "POST",
+        "body": {
+         "mode": "raw",
+         "raw": "{\n  \"token\": \"<string>\"\n}",
+         "options": {
+          "raw": {
+           "headerFamily": "json",
+           "language": "json"
+          }
+         }
+        }
+       },
+       "status": "OK",
+       "code": 200,
+       "header": [
+        {
+         "key": "Content-Type",
+         "value": "*/*"
+        },
+        {
+         "disabled": false,
+         "description": {
+          "content": "Public request id (accepted inbound, else minted as a ULID).",
+          "type": "text/plain"
+         },
+         "key": "X-Request-Id",
+         "value": "<string>"
+        }
+       ],
+       "body": "{\n  \"id\": \"<string>\",\n  \"type\": \"<string>\",\n  \"attributes\": {}\n}",
+       "cookie": [],
+       "_postman_previewlanguage": "text"
+      }
+     ],
+     "event": [],
+     "protocolProfileBehavior": {
+      "disableBodyPruning": true
+     }
+    }
+   ]
+  },
+  {
    "name": "Shared · Exchange catalog",
    "description": "The exchange handler catalogue and its downloadable templates — which datasets can move, what each file must look like, which permissions gate it. Readable by any authenticated caller; running one is Organization · Exchange.",
    "item": [
     {
-     "id": "e9196702-4ef1-4055-ae75-775f340e900a",
+     "id": "e5da81cd-c94c-4ae9-9c2b-7ad68ec0b1bb",
      "name": "List the available exchange handlers",
      "request": {
       "name": "List the available exchange handlers",
@@ -25417,7 +26649,7 @@
      },
      "response": [
       {
-       "id": "08f3db01-26e9-4081-807a-172569074f8b",
+       "id": "d56f8926-3462-4665-9a20-aa5120689283",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -25490,7 +26722,7 @@
      }
     },
     {
-     "id": "b3391e1b-93b3-4851-8c6e-51296328e096",
+     "id": "86d85b8d-e16e-4d0a-a78c-c7731ea7dd8a",
      "name": "Download a handler's import template",
      "request": {
       "name": "Download a handler's import template",
@@ -25558,7 +26790,7 @@
      },
      "response": [
       {
-       "id": "3d1aa81e-8b65-47f5-a293-878762682219",
+       "id": "b2786661-59a8-484d-9f51-d5322e44212b",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -25660,7 +26892,7 @@
    "description": "The caller's own record — profile, contacts, preferences, avatar, linked identity providers. No axis owns it: every row answers about YOU, whichever axis you arrived from. Support's read-only view of a user's profile is Platform · Users & impersonation.",
    "item": [
     {
-     "id": "eceefdc4-a5d6-414e-9336-5b4bbeb83801",
+     "id": "0a308617-e8e4-4c85-a0dc-51e2c4a3ba00",
      "name": "Read your profile",
      "request": {
       "name": "Read your profile",
@@ -25778,7 +27010,7 @@
      },
      "response": [
       {
-       "id": "54ed08b2-2b9a-4a11-9a3f-8dbb16ac476c",
+       "id": "f1d92eb1-69e5-4bf2-bc8e-057611451cf9",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -25924,7 +27156,7 @@
      }
     },
     {
-     "id": "579193bd-c1bf-4ebc-b359-e99331362e0e",
+     "id": "dfe98218-22c6-463b-833a-fdf6cb5bf637",
      "name": "Update your profile",
      "request": {
       "name": "Update your profile",
@@ -26055,7 +27287,7 @@
      },
      "response": [
       {
-       "id": "f43cd460-869c-427c-b6d7-3995f8d59745",
+       "id": "129cc5c2-7e2a-499a-a0eb-3793e678aab7",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -26214,7 +27446,7 @@
      }
     },
     {
-     "id": "b99a205f-3702-4354-aea8-1d54a6944196",
+     "id": "0f8d4b88-f668-48b2-b08d-a4d8d4996dc2",
      "name": "Read your preferences (small key/value pairs)",
      "request": {
       "name": "Read your preferences (small key/value pairs)",
@@ -26329,7 +27561,7 @@
      },
      "response": [
       {
-       "id": "6b201c97-429d-44ac-89bf-d6136c2aa5f9",
+       "id": "96e43039-7507-41d3-a83c-31012b434031",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -26464,7 +27696,7 @@
          "value": "<string>"
         }
        ],
-       "body": "{\n  \"key_0\": \"<string>\",\n  \"key_1\": \"<string>\",\n  \"key_2\": \"<string>\",\n  \"key_3\": \"<string>\"\n}",
+       "body": "{\n  \"key_0\": \"<string>\",\n  \"key_1\": \"<string>\"\n}",
        "cookie": [],
        "_postman_previewlanguage": "text"
       }
@@ -26475,7 +27707,7 @@
      }
     },
     {
-     "id": "08efa27b-360b-4006-b67c-af72356de4a0",
+     "id": "67b2461e-2ec9-4b36-803d-76aac3f03947",
      "name": "Update preferences additively",
      "request": {
       "name": "Update preferences additively",
@@ -26594,7 +27826,7 @@
       "method": "PUT",
       "body": {
        "mode": "raw",
-       "raw": "{\n  \"key_0\": \"<string>\",\n  \"key_1\": \"<string>\",\n  \"key_2\": \"<string>\",\n  \"key_3\": \"<string>\"\n}",
+       "raw": "{\n  \"key_0\": \"<string>\",\n  \"key_1\": \"<string>\"\n}",
        "options": {
         "raw": {
          "headerFamily": "json",
@@ -26606,7 +27838,7 @@
      },
      "response": [
       {
-       "id": "d682cb5d-0fbc-4e21-85e5-b9b791caa1ee",
+       "id": "b3691c3f-4b20-4ddb-9b61-7cdf3d273cc4",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -26728,7 +27960,7 @@
         "method": "PUT",
         "body": {
          "mode": "raw",
-         "raw": "{\n  \"key_0\": \"<string>\",\n  \"key_1\": \"<string>\",\n  \"key_2\": \"<string>\",\n  \"key_3\": \"<string>\"\n}",
+         "raw": "{\n  \"key_0\": \"<string>\",\n  \"key_1\": \"<string>\"\n}",
          "options": {
           "raw": {
            "headerFamily": "json",
@@ -26754,7 +27986,7 @@
          "value": "<string>"
         }
        ],
-       "body": "{\n  \"key_0\": \"<string>\",\n  \"key_1\": \"<string>\",\n  \"key_2\": \"<string>\",\n  \"key_3\": \"<string>\"\n}",
+       "body": "{\n  \"key_0\": \"<string>\",\n  \"key_1\": \"<string>\"\n}",
        "cookie": [],
        "_postman_previewlanguage": "text"
       }
@@ -26765,7 +27997,7 @@
      }
     },
     {
-     "id": "3d3f9276-07e0-471f-9061-b00ef7e1046c",
+     "id": "0fe0a5b5-9273-4f91-9397-43505845d90c",
      "name": "Download your avatar",
      "request": {
       "name": "Download your avatar",
@@ -26879,7 +28111,7 @@
      },
      "response": [
       {
-       "id": "4567b7cb-c94c-45c7-8b5d-41385ca54d4b",
+       "id": "d799c8fb-3273-427a-b95e-7b73f7bf183b",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -27016,7 +28248,7 @@
      }
     },
     {
-     "id": "26bf0598-a4fb-4e08-b966-85389995994a",
+     "id": "ad2e8f88-cad8-4421-9fb0-81435025e87f",
      "name": "Upload your avatar",
      "request": {
       "name": "Upload your avatar",
@@ -27147,7 +28379,7 @@
      },
      "response": [
       {
-       "id": "aae55bcb-c798-42bf-8346-abb3a6f59690",
+       "id": "1ebc813a-cb9e-469c-9941-a86210475bac",
        "name": "Created",
        "originalRequest": {
         "url": {
@@ -27306,7 +28538,7 @@
      }
     },
     {
-     "id": "8528f6ea-14df-4f0d-9564-69e93f76a008",
+     "id": "264e2773-7b7b-459e-a54c-4ec0745a49f9",
      "name": "Remove your avatar",
      "request": {
       "name": "Remove your avatar",
@@ -27417,7 +28649,7 @@
      },
      "response": [
       {
-       "id": "c840829d-7f25-4f4d-af92-04ce734f87af",
+       "id": "366c8a94-9cd9-410c-beaa-1aa18e6909bf",
        "name": "No Content",
        "originalRequest": {
         "url": {
@@ -27554,7 +28786,7 @@
      }
     },
     {
-     "id": "c7d7ecfc-61c9-4245-aedc-fc0f93e1d56e",
+     "id": "1f8d8c06-7b89-453c-954c-a67e0aac0c98",
      "name": "List your linked identity providers",
      "request": {
       "name": "List your linked identity providers",
@@ -27672,7 +28904,7 @@
      },
      "response": [
       {
-       "id": "7a336968-7cba-45bf-af10-dd72ec3807a6",
+       "id": "0f0654c7-e214-4dae-b05b-1ffcdf357d79",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -27824,7 +29056,7 @@
    "description": "The caller's own devices — register (idempotent per X-Device-Id), list, revoke. Marking one TRUSTED is not here: trust is an organization's grant (its security policy), not a self-claim.",
    "item": [
     {
-     "id": "03b01273-bfc3-41b2-9173-2de9c59a0e3d",
+     "id": "c8a68e3c-06c1-430b-9205-033b7d013ff0",
      "name": "List your devices",
      "request": {
       "name": "List your devices",
@@ -27957,7 +29189,7 @@
      },
      "response": [
       {
-       "id": "8c5775ec-b8e1-4748-b457-dcb3574c9725",
+       "id": "5fb9c582-3a9e-41a1-8ad5-8861881ee74e",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -28121,7 +29353,7 @@
      }
     },
     {
-     "id": "eba8d9f2-28e4-4d5d-b4c0-0f0d66541f3a",
+     "id": "6631ab24-0633-4b4e-a473-3bc375b07266",
      "name": "Register (or update) a device",
      "request": {
       "name": "Register (or update) a device",
@@ -28252,7 +29484,7 @@
      },
      "response": [
       {
-       "id": "2890eeb1-e9ac-43e0-a726-e6ad7602e912",
+       "id": "1930f1b3-e1c0-41a1-aa13-cbd56eb74d21",
        "name": "Created",
        "originalRequest": {
         "url": {
@@ -28411,7 +29643,7 @@
      }
     },
     {
-     "id": "314e50e0-a950-4e43-8425-b9995fa8c745",
+     "id": "7be73ac5-4586-4e1d-a274-9559f7a2af00",
      "name": "Revoke a device",
      "request": {
       "name": "Revoke a device",
@@ -28534,7 +29766,7 @@
      },
      "response": [
       {
-       "id": "7e87c33c-8142-486e-9778-1796da1731c6",
+       "id": "5471a164-95de-45e9-9377-853362cd5414",
        "name": "No Content",
        "originalRequest": {
         "url": {
@@ -28689,7 +29921,7 @@
    "description": "Your own compliance controls — consent history (append-only), a data export of your record (portability), and requesting your own erasure (GDPR art. 17; deferred while a legal hold is in force).",
    "item": [
     {
-     "id": "5d0f6b6f-89a7-40ee-9c1c-854714e6499c",
+     "id": "09a9f069-3c0f-4ce8-8949-fac27f76511a",
      "name": "Request erasure of your data (GDPR art. 17)",
      "request": {
       "name": "Request erasure of your data (GDPR art. 17)",
@@ -28807,7 +30039,7 @@
      },
      "response": [
       {
-       "id": "01da5ec4-8e46-4257-b083-8050bb149c8e",
+       "id": "df159772-ca2e-4f6b-8058-a05e76d8bdc2",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -28953,7 +30185,7 @@
      }
     },
     {
-     "id": "2af74cde-998f-4d5b-9dcf-7b85c243ec40",
+     "id": "9d80b21e-bf4f-4943-b045-4e86f8f800e7",
      "name": "Your consent history (append-only, newest first)",
      "request": {
       "name": "Your consent history (append-only, newest first)",
@@ -29068,7 +30300,7 @@
      },
      "response": [
       {
-       "id": "aebbc683-2be9-4cbd-8c41-ead581759ad7",
+       "id": "50cfdc8d-05ac-473b-b56d-5a81f692b112",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -29214,7 +30446,7 @@
      }
     },
     {
-     "id": "481789ad-3d29-4443-b40c-37bbde375a3d",
+     "id": "bb58cb68-5907-460e-8cdf-b89cacb50095",
      "name": "Record a consent decision",
      "request": {
       "name": "Record a consent decision",
@@ -29345,7 +30577,7 @@
      },
      "response": [
       {
-       "id": "fd20e3df-8e7b-45d4-860c-3b88b24b4595",
+       "id": "e21454f6-0021-4487-a99e-79040b3743d3",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -29504,7 +30736,7 @@
      }
     },
     {
-     "id": "8afc9abf-625d-459c-8296-feba5c2c313a",
+     "id": "186ac300-f5ce-478d-be47-bea419453aea",
      "name": "Export your own data (portability)",
      "request": {
       "name": "Export your own data (portability)",
@@ -29622,7 +30854,7 @@
      },
      "response": [
       {
-       "id": "37ccb5c3-be1c-488c-a185-21a262a5d07a",
+       "id": "59cd68aa-161b-4c9b-b75c-ffc1f740ff9f",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -29757,7 +30989,7 @@
          "value": "<string>"
         }
        ],
-       "body": "{\n  \"key_0\": {},\n  \"key_1\": {}\n}",
+       "body": "{\n  \"key_0\": {}\n}",
        "cookie": [],
        "_postman_previewlanguage": "text"
       }
@@ -29774,7 +31006,7 @@
    "description": "The subscribable webhook event vocabulary — the codes the subscription endpoints' events array accepts, with what each means. Managing subscriptions is Organization · Webhooks.",
    "item": [
     {
-     "id": "95e252a4-c746-4aa5-9b7f-558a35fd126e",
+     "id": "c83c36cb-1424-4c85-933f-eb89bd33828d",
      "name": "List every subscribable webhook event type",
      "request": {
       "name": "List every subscribable webhook event type",
@@ -29819,7 +31051,7 @@
      },
      "response": [
       {
-       "id": "245bd510-f86b-4893-a05f-46b4fa6e7e58",
+       "id": "c51e2b7a-a5cb-43ad-bb2c-d681306e0c3f",
        "name": "OK",
        "originalRequest": {
         "url": {
@@ -29912,7 +31144,7 @@
   }
  ],
  "info": {
-  "_postman_id": "da63d157-90c3-40c6-b135-422b19f6a915",
+  "_postman_id": "b64af95a-ab88-4390-913c-82386b74fe01",
   "name": "SMSOne Enterprise API",
   "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
   "description": {
