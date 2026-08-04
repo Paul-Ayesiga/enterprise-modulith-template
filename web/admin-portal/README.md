@@ -19,7 +19,7 @@ port**, and can **mutate** the live route table.
 The gateway must be up (`make gateway`, admin on `:29090`). Then:
 
 ```bash
-cd admin-portal
+cd web/admin-portal
 npm install
 npm run dev          # http://localhost:3002
 ```
