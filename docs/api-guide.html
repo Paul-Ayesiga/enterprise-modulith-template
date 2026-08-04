@@ -237,40 +237,41 @@ replaying one against another collection is a <code>422</code>, not a 500.</p>
 
 <h2 id="limits">A4 · Rate limits &amp; plan quotas</h2>
 <p>There are <strong>two</strong> rate controls in front of you, at different layers, protecting different things. Both
-answer <code>429</code>, but for different reasons — so they speak through <em>different headers</em>, and the right
-response to each is different. Don't confuse them.</p>
+answer <code>429</code>, but for different reasons — so they speak through <em>different headers</em>, and each calls
+for a different response. Treat them separately.</p>
 <table class="compare">
   <tr><th>&nbsp;</th><th>Edge burst limiter</th><th>Plan quota</th></tr>
-  <tr><td>The question</td><td>“Are you spiking too fast, right now?”</td><td>“Have you used what your plan entitles you to?”</td></tr>
-  <tr><td>Purpose</td><td>Infrastructure protection / burst-smoothing — stop any one caller from slamming the front door.</td><td>Commercial fairness — enforce the volume your subscription buys, shared fairly across tenants.</td></tr>
-  <tr><td>Unit</td><td>Rate over <b>seconds</b> — a token bucket, ~20 req/s sustained, 40 burst.</td><td>Volume over a <b>window</b> — e.g. 600 reads/min, 60 writes/min (per your plan).</td></tr>
-  <tr><td>Scope</td><td>Per caller (principal → tenant → IP), applied to everyone.</td><td>Per organization, tied to your subscription tier.</td></tr>
+  <tr><td>Triggers when</td><td>A single caller exceeds the short-term request rate.</td><td>An organization exceeds the volume its subscription allows.</td></tr>
+  <tr><td>Purpose</td><td>Protect the platform and backends from traffic spikes (burst-smoothing), applied to every caller.</td><td>Enforce the subscription tier and share capacity fairly across tenants.</td></tr>
+  <tr><td>Measured over</td><td><b>Seconds</b> — a token bucket: ~20 requests/second sustained, burst of 40.</td><td>A fixed <b>window</b> — e.g. 600 reads/min, 60 writes/min, per plan.</td></tr>
+  <tr><td>Scope</td><td>Per caller (principal, else tenant, else IP).</td><td>Per organization, by subscription tier.</td></tr>
   <tr><td>Headers</td><td><code>X-Edge-RateLimit-Remaining</code> · <code>-Burst-Capacity</code> · <code>-Replenish-Rate</code></td><td><code>X-RateLimit-Limit/Remaining/Reset</code> + draft-IETF <code>RateLimit</code> / <code>RateLimit-Policy</code></td></tr>
-  <tr><td>On <code>429</code>, do</td><td><b>Slow your request rate.</b> Back off and retry after <code>Retry-After</code>.</td><td><b>Upgrade the plan, or wait for the window.</b> Envelope <code>RATE_LIMITED</code> + <code>Retry-After</code>.</td></tr>
+  <tr><td>Recommended response</td><td>Reduce the request rate; retry after <code>Retry-After</code>.</td><td>Wait for the window, or upgrade the plan; the response carries the <code>RATE_LIMITED</code> envelope and <code>Retry-After</code>.</td></tr>
 </table>
-<p>They're deliberately kept apart — defense in depth: a caller comfortably inside their plan still can't fire thousands
-of requests in one second (the edge bucket stops that), and a caller under the edge burst still can't exceed the plan's
-per-window allowance (the quota stops that). The <b>namespaced</b> headers are what let your client tell which limit it hit.</p>
+<p>The two limits are complementary (defense in depth): a caller within its plan allowance is still held to the per-second
+edge limit, and a caller within the edge burst is still held to its plan's per-window allowance. Because the headers are
+namespaced, a client can determine which limit it reached.</p>
 <pre><code># A normal 200 through the gateway carries BOTH sets — they never collide:
 X-RateLimit-Limit: 600     X-RateLimit-Remaining: 599     RateLimit: "read";r=599;t=60     ← plan quota
 X-Edge-RateLimit-Remaining: 39     X-Edge-RateLimit-Burst-Capacity: 40                      ← edge burst bucket
 
-# Edge burst 429 — you sent a spike; slow down (retry in a second):
+# Edge burst 429 — the caller exceeded the burst rate; reduce the rate and retry shortly:
 HTTP/1.1 429     Retry-After: 1     X-Edge-RateLimit-Remaining: 0
 
-# Plan quota 429 — you used your plan's allowance; upgrade or wait for the window:
+# Plan quota 429 — the plan's allowance for this window is exhausted; wait or upgrade:
 HTTP/1.1 429     Retry-After: 30     RateLimit: "read";r=0;t=30
 { "errors": [ { "code":"RATE_LIMITED", "detail":"Rate limit exceeded for 'read'. Retry after 30s." } ] }</code></pre>
-<div class="card tip"><strong>How to react in code.</strong> Always honour <code>Retry-After</code>. If you keep hitting the
-<b>edge</b> limit (<code>X-Edge-RateLimit-*</code>) you're bursting — add client-side pacing / exponential backoff. If you
-keep hitting the <b>plan</b> quota (<code>X-RateLimit-*</code> / <code>RateLimit</code>) you're at your subscription
-ceiling — spread the work across the window or <a href="#plans">upgrade the plan</a>.</div>
+<div class="card tip"><strong>How to react in code.</strong> Always honour <code>Retry-After</code>. Repeated <b>edge</b>-limit responses (<code>X-Edge-RateLimit-*</code>) indicate
+bursty traffic — add client-side pacing or exponential backoff. Repeated <b>plan</b>-quota responses
+(<code>X-RateLimit-*</code> / <code>RateLimit</code>) indicate the subscription ceiling — spread work across the window,
+or <a href="#plans">upgrade the plan</a>.</div>
 <h3 id="retries">Automatic retries (safe methods only)</h3>
-<p>Separately from rate limiting: when a backend momentarily fails with a <code>5xx</code>, a route configured for retries
-has the gateway <strong>retry automatically — <code>GET</code> only</strong> (attempt 1 → 2 → 3, then it gives up). Writes are
-never auto-retried: replaying a <code>POST</code>/<code>PUT</code>/<code>DELETE</code> could duplicate a side effect. To make
-a write safely retryable, send an <a href="#idem"><code>Idempotency-Key</code></a> — then a retry replays the stored
-response instead of running the operation twice.</p>
+<p>Independent of rate limiting: when a backend fails transiently with a <code>5xx</code>, a route configured for retries
+has the gateway retry it automatically — <strong><code>GET</code> requests only</strong> (up to three attempts, then it
+returns the error). Write methods are never retried automatically, because replaying a <code>POST</code>, <code>PUT</code>,
+or <code>DELETE</code> may duplicate a side effect. To make a write safely retryable, send an
+<a href="#idem"><code>Idempotency-Key</code></a>: a retry then replays the stored response rather than executing the
+operation again.</p>
 
 <h2 id="idem">A5 · Idempotency keys</h2>
 <p>Any unsafe request may carry <code>Idempotency-Key: &lt;your-uuid&gt;</code>. Same principal + same key + same body ⇒ the
