@@ -20,6 +20,11 @@ gateway:
   security:
     jwk-set-uri: "${jwks.uri:http://localhost:1/jwks}"   # SecurityTest points this at the stub's JWKS
     tenant-claim: tenant
+    # Auto-blocking OFF in the shared test baseline — the abuse guard would otherwise trip on the
+    # many deliberate 401/403s the auth tests fire. AutoBlockTest opts back in with its own Valkey.
+    blocklist:
+      auto:
+        enabled: false
     cors:
       allowed-origins:
         - http://example.com

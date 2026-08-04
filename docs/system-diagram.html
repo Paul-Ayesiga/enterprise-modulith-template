@@ -211,8 +211,12 @@ flowchart TB
         <span class="fail"><span class="pill">headers</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox"><span class="ord">+3</span>
-        <span class="what"><b>IP blocklist</b> — the front-door deny-list, cheapest possible "no": a match refuses before auth (no JWKS work), quotas, or routing. Two tiers like the route table — YAML-seeded (durable, boot-validated) + runtime via <code>gatewayblocklist</code> / the admin portal (until restart). Judged address = socket peer unless <code>trusted-proxy-hops</code> declares an ingress; X-Forwarded-For is never believed otherwise. Denials counted (<code>gateway.blocklist.denied</code>), security-logged, edge-audited.</span>
-        <span class="fail"><span class="pill bad">403</span><span class="pill">in-memory set</span></span></div>
+        <span class="what"><b>IP allow/deny</b> — the front-door list, cheapest possible "no": a match refuses before auth (no JWKS work), quotas, or routing. Three layers, in order — <b>allow-set</b> (trusted infra, wins over every block) → <b>manual deny</b> (YAML-durable + runtime <code>gatewayblocklist</code>/portal) → <b>dynamic auto-block</b> (see +4). Judged address = socket peer unless <code>trusted-proxy-hops</code> declares an ingress; X-Forwarded-For never believed otherwise. Denials counted by tier (<code>gateway.blocklist.denied</code>), security-logged, edge-audited.</span>
+        <span class="fail"><span class="pill bad">403</span><span class="pill">in-memory + Valkey ZSET</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox"><span class="ord">+4</span>
+        <span class="what"><b>Abuse guard</b> — fail2ban at the edge: watches each request's OUTCOME and counts denied statuses (<code>401/403</code> by default, tunable) per source in a <b>Valkey window</b> — shared, so an attacker across replicas is still caught. Cross the platform's <code>threshold</code>/<code>window</code> and the source is <b>auto-blocked</b> for a TTL (default 20/min → 15&nbsp;min); the +3 filter refuses it from the next request. Allow-listed sources never accrue strikes.</span>
+        <span class="fail"><span class="pill">gateway.blocklist.autoblocked</span><span class="pill store">Valkey</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox"><span class="ord">+10</span>
         <span class="what"><b>EdgeAuthorization</b> — Bearer JWTs validated against Keycloak's <b>JWKS</b> (cached, no IdP round-trip); <code>X-Api-Key</code> resolved via the modulith introspection seam. Enforces the route's <code>AuthPolicy</code>: authenticated · required scopes · tenant-path template (path tenant must equal token tenant). Denials → security log + edge-audit seam.</span>

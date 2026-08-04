@@ -39,7 +39,19 @@ gateway:
     blocklist:
       # Comma-separated CIDRs/IPs, e.g. "203.0.113.0/24,198.51.100.7". Empty = nothing blocked.
       cidrs: ${GATEWAY_BLOCKLIST:}
+      # Trusted infra never blocked and never counted for abuse (health checkers, office, internal).
+      allow: ${GATEWAY_ALLOWLIST:}
       trusted-proxy-hops: ${GATEWAY_TRUSTED_PROXY_HOPS:0}
+      # Dynamic auto-blocking (fail2ban at the edge): a source earning `threshold` denied responses
+      # of `statuses` within `window` is blocked for `block-duration`. Counted per source in Valkey
+      # (shared across replicas). Conservative defaults; widen `statuses` to 429/404 to also catch
+      # burst-abuse / scanning. Allowlisted sources are exempt.
+      auto:
+        enabled: ${GATEWAY_AUTOBLOCK:true}
+        window: ${GATEWAY_AUTOBLOCK_WINDOW:PT1M}
+        threshold: ${GATEWAY_AUTOBLOCK_THRESHOLD:20}
+        block-duration: ${GATEWAY_AUTOBLOCK_DURATION:PT15M}
+        statuses: ${GATEWAY_AUTOBLOCK_STATUSES:401,403}
   # The platform seam: resolve an X-Api-Key by calling the modulith's introspection endpoint with the
   # shared secret. Unset the uri to turn API-key auth off (the bearer path still works).
   platform:

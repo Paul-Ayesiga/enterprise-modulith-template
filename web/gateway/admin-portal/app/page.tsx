@@ -123,10 +123,15 @@ export default async function AdminHome() {
               <div className="section__head">
                 <h2 className="section__title">IP blocklist</h2>
                 <span className="section__hint">
-                  refused before auth, quotas, and routing · trusted proxy hops: {blocklist.trustedProxyHops}
+                  refused before auth, quotas, and routing · {blocklist.autoBlock.enabled ? "auto-blocking on" : "manual only"} · trusted proxy hops: {blocklist.trustedProxyHops}
                 </span>
               </div>
-              <BlocklistPanel entries={blocklist.entries} error={blocklist.error} />
+              <BlocklistPanel
+                entries={blocklist.entries}
+                allow={blocklist.allow}
+                autoBlock={blocklist.autoBlock}
+                error={blocklist.error}
+              />
             </section>
 
             <section className="section">

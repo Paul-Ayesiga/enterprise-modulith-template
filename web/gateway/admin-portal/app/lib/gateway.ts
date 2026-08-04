@@ -32,15 +32,27 @@ export type UsageRow = {
   resetSeconds: number;
 };
 
-/** One deny-list entry from the gatewayblocklist endpoint. */
+/** One deny-list entry from the gatewayblocklist endpoint. Auto entries carry a TTL. */
 export type BlocklistEntry = {
   cidr: string;
-  source: "config" | "runtime" | string;
+  source: "config" | "runtime" | "auto" | string;
+  expiresInSeconds?: number;
+};
+
+/** The live auto-blocking rules, as the endpoint reports them. */
+export type AutoBlockRules = {
+  enabled: boolean;
+  window: string;
+  threshold: number;
+  blockDuration: string;
+  statuses: number[];
 };
 
 export type Blocklist = {
   entries: BlocklistEntry[];
+  allow: string[];
   trustedProxyHops: number;
+  autoBlock: AutoBlockRules;
   error: string | null;
 };
 
@@ -152,15 +164,38 @@ export async function fetchOverview(): Promise<Overview> {
 }
 
 /** Live per-consumer usage — never throws; an unreachable endpoint renders as an error state. */
+const AUTO_RULES_OFF: AutoBlockRules = {
+  enabled: false,
+  window: "PT1M",
+  threshold: 0,
+  blockDuration: "PT15M",
+  statuses: []
+};
+
 /** The edge deny-list — every entry refuses matching sources before auth, quotas, or routing. */
 export async function fetchBlocklist(): Promise<Blocklist> {
   try {
-    const raw = await getJson<{ entries: BlocklistEntry[]; trustedProxyHops: number }>(
-      "/actuator/gatewayblocklist"
-    );
-    return { entries: raw.entries, trustedProxyHops: raw.trustedProxyHops, error: null };
+    const raw = await getJson<{
+      entries: BlocklistEntry[];
+      allow: string[];
+      trustedProxyHops: number;
+      autoBlock: AutoBlockRules;
+    }>("/actuator/gatewayblocklist");
+    return {
+      entries: raw.entries,
+      allow: raw.allow ?? [],
+      trustedProxyHops: raw.trustedProxyHops,
+      autoBlock: raw.autoBlock ?? AUTO_RULES_OFF,
+      error: null
+    };
   } catch (e) {
-    return { entries: [], trustedProxyHops: 0, error: e instanceof Error ? e.message : String(e) };
+    return {
+      entries: [],
+      allow: [],
+      trustedProxyHops: 0,
+      autoBlock: AUTO_RULES_OFF,
+      error: e instanceof Error ? e.message : String(e)
+    };
   }
 }
 
