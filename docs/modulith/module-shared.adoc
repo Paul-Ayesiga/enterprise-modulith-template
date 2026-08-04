@@ -10,6 +10,7 @@
 * `u.c.s.s.keycloak.KeycloakAdminProperties`
 * `u.c.s.s.persistence.SoftDeleteProperties`
 * `u.c.s.s.ratelimit.RateLimitProperties`
+* `u.c.s.s.web.ForwardedClientIp.HttpForwardingProperties`
 
 _Others_
 
@@ -24,6 +25,7 @@ _Others_
 * `u.c.s.s.events.EventInbox`
 * `u.c.s.s.idempotency.IdempotencyFilter`
 * `u.c.s.s.idempotency.IdempotencyStore`
+* `u.c.s.s.persistence.DbDialect`
 * `u.c.s.s.persistence.JpaAuditingConfig`
 * `u.c.s.s.persistence.SoftDeleteRecovery`
 * `u.c.s.s.ratelimit.DistributedRateLimiter`
@@ -43,6 +45,7 @@ _Others_
 * `u.c.s.s.web.CursorPageRequestArgumentResolver`
 * `u.c.s.s.web.EnvelopeErrorWriter`
 * `u.c.s.s.web.EnvelopeResponseBodyAdvice`
+* `u.c.s.s.web.ForwardedClientIp`
 * `u.c.s.s.web.OpenApiConfig`
 * `u.c.s.s.web.RequestIdFilter`
 * `u.c.s.s.web.WebMvcConfig`

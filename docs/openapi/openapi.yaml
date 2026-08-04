@@ -150,6 +150,11 @@ tags:
     \ export permission is re-checked at every fire, so a revocation stops the schedule\
     \ loudly instead of letting it keep exporting. One-off jobs and their artifacts\
     \ are Organization · Exchange."
+- name: Organization · Geolocation
+  description: "Geolocation stamps on a tenant's records, and the per-record-type\
+    \ capture policy. Attaching a fix needs geo:capture; reading needs geo:read (coordinates\
+    \ coarsened to ~1.1 km) or geo:read_precise (exact); configuring a record-type's\
+    \ OFF/OPTIONAL/REQUIRED policy needs geo:policy:manage."
 - name: Shared · Me & notifications
   description: "The caller's own identity and in-app notifications; no axis owns them\
     \ because a tenant member and a platform operator both legitimately arrive here.\
@@ -932,6 +937,95 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}/geo/policies/{subjectType}:
+    get:
+      tags:
+      - Organization · Geolocation
+      summary: Read the capture policy for a record-type
+      operationId: get_5
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: subjectType
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+    put:
+      tags:
+      - Organization · Geolocation
+      summary: Set the capture policy for a record-type
+      description: OFF ignores fixes; OPTIONAL allows them; REQUIRED makes a valid
+        fix mandatory for the record.
+      operationId: set_1
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: subjectType
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PolicyRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/orgs/{orgId}/billing/payment-methods/{paymentMethodId}/default:
     put:
       tags:
@@ -1135,7 +1229,7 @@ paths:
       tags:
       - Shared · Settings & flags
       summary: Get one feature flag by key
-      operationId: get_5
+      operationId: get_6
       parameters:
       - name: key
         in: path
@@ -1173,7 +1267,7 @@ paths:
         \ so there is no separate create call. `percentage` (0-100, optional) turns\
         \ an enabled flag into a gradual rollout bucketed per organization; per-org\
         \ overrides beat both."
-      operationId: set_1
+      operationId: set_2
       parameters:
       - name: key
         in: path
@@ -1432,7 +1526,7 @@ paths:
       tags:
       - Platform · Billing & plans
       summary: Inspect a tenant's subscription as the platform
-      operationId: get_6
+      operationId: get_7
       parameters:
       - name: orgId
         in: path
@@ -1495,7 +1589,7 @@ paths:
       summary: Set an org's SLA target for a priority
       description: "Upserts the org's first-response and resolution minutes for `priority`\
         \ (P1–P4), overriding the seeded default. Takes effect on tickets opened after."
-      operationId: set_2
+      operationId: set_3
       parameters:
       - name: orgId
         in: path
@@ -1561,7 +1655,7 @@ paths:
       description: Overrides the platform default with `days` (positive) for `scope`
         (`webhook-delivery` | `exchange-job`). May keep rows longer OR shorter than
         the default. Applies on the next retention run.
-      operationId: set_3
+      operationId: set_4
       parameters:
       - name: orgId
         in: path
@@ -2719,12 +2813,126 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}/geo/stamps:
+    get:
+      tags:
+      - Organization · Geolocation
+      summary: Query geo stamps
+      description: "Newest first, filterable by subject (`subjectType`+`subjectId`)\
+        \ or a `bbox=minLat,minLng,maxLat,maxLng`. Exact coordinates require `geo:read_precise`;\
+        \ otherwise positions are coarsened."
+      operationId: list_7
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: subjectType
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: subjectId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: bbox
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: "page[size]"
+        in: query
+        description: "Items per page, 1–100. Defaults to 20."
+        required: false
+        schema:
+          maximum: 100
+          minimum: 1
+          type: integer
+          format: int32
+          default: 20
+      - name: "page[after]"
+        in: query
+        description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
+          Omit for the first page.
+        required: false
+        schema:
+          type: string
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/WindowedResultResourceObject"
+    post:
+      tags:
+      - Organization · Geolocation
+      summary: Attach a location to a record
+      description: "Validates the fix against this org's capture policy for the record-type,\
+        \ then stores it."
+      operationId: attach
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StampRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/orgs/{orgId}/exchange/schedules:
     get:
       tags:
       - Organization · Exchange schedules
       summary: List the organization's recurring exports
-      operationId: list_7
+      operationId: list_8
       parameters:
       - name: orgId
         in: path
@@ -2993,7 +3201,7 @@ paths:
       tags:
       - Organization · Profile
       summary: List the organization's documents
-      operationId: list_8
+      operationId: list_9
       parameters:
       - name: orgId
         in: path
@@ -3184,7 +3392,7 @@ paths:
       tags:
       - Organization · API keys
       summary: List the organization's API keys (secrets never shown)
-      operationId: list_9
+      operationId: list_10
       parameters:
       - name: orgId
         in: path
@@ -3401,7 +3609,7 @@ paths:
       tags:
       - Shared · My devices
       summary: List your devices
-      operationId: list_10
+      operationId: list_11
       parameters:
       - name: user
         in: query
@@ -3778,7 +3986,7 @@ paths:
       tags:
       - Shared · Reference data
       summary: List your personal documents
-      operationId: list_11
+      operationId: list_12
       parameters:
       - name: user
         in: query
@@ -4125,7 +4333,7 @@ paths:
       tags:
       - Platform · Maintenance
       summary: List platform-wide maintenance windows
-      operationId: list_12
+      operationId: list_13
       responses:
         "200":
           description: OK
@@ -4204,7 +4412,7 @@ paths:
         \ `actor=<subject>` names another operator's instead and requires platform-admin.\
         \ `active` is computed when the row is read, so a lapsed session reports inactive\
         \ with no sweep job involved."
-      operationId: list_13
+      operationId: list_14
       parameters:
       - name: actor
         in: query
@@ -4371,7 +4579,7 @@ paths:
       tags:
       - Platform · API keys
       summary: List platform API keys
-      operationId: list_14
+      operationId: list_15
       parameters:
       - name: "page[size]"
         in: query
@@ -4434,7 +4642,7 @@ paths:
       tags:
       - Organization · Profile
       summary: Get an organization
-      operationId: get_7
+      operationId: get_8
       parameters:
       - name: orgId
         in: path
@@ -4515,7 +4723,7 @@ paths:
       description: "The fixed vocabulary the subscription endpoints' `events` array\
         \ accepts. Payloads always carry `event`, `orgId` and `occurredAt`, signed\
         \ HMAC-SHA256 in `X-Webhook-Signature`."
-      operationId: list_15
+      operationId: list_16
       parameters:
       - name: X-Impersonate
         in: header
@@ -4547,7 +4755,7 @@ paths:
       tags:
       - Shared · Reference data
       summary: "List translations, optionally for one locale"
-      operationId: list_16
+      operationId: list_17
       parameters:
       - name: locale
         in: query
@@ -4599,7 +4807,7 @@ paths:
       tags:
       - Shared · Settings & flags
       summary: List platform settings
-      operationId: list_17
+      operationId: list_18
       parameters:
       - name: "page[size]"
         in: query
@@ -4650,7 +4858,7 @@ paths:
         \ held) its lock and until when — the evidence that a job fires once cluster-wide.\
         \ Read-only: there is no endpoint to trigger a job, they are time-driven by\
         \ design."
-      operationId: list_18
+      operationId: list_19
       parameters:
       - name: X-Impersonate
         in: header
@@ -4685,7 +4893,7 @@ paths:
       description: The fixed vocabulary for composing custom roles — the `code` values
         are what the role endpoints accept. The catalog is global and identical for
         every organization.
-      operationId: list_19
+      operationId: list_20
       parameters:
       - name: X-Impersonate
         in: header
@@ -4780,7 +4988,7 @@ paths:
       tags:
       - Organization · Support
       summary: Get one ticket
-      operationId: get_8
+      operationId: get_9
       parameters:
       - name: orgId
         in: path
@@ -4824,7 +5032,7 @@ paths:
       summary: Read the organization's subscription and entitlements
       description: "No subscription row means the seeded FREE plan. `entitlements`:\
         \ null value = feature on, number = cap, absent key = off/unlimited."
-      operationId: get_9
+      operationId: get_10
       parameters:
       - name: orgId
         in: path
@@ -4927,7 +5135,7 @@ paths:
       tags:
       - Organization · Billing
       summary: Read a payment (refreshes a PENDING one from its gateway)
-      operationId: get_10
+      operationId: get_11
       parameters:
       - name: orgId
         in: path
@@ -4970,7 +5178,7 @@ paths:
       - Organization · Maintenance
       summary: List maintenance windows affecting the organization
       description: '`?active=true` narrows to windows in effect right now (for a banner).'
-      operationId: list_20
+      operationId: list_21
       parameters:
       - name: orgId
         in: path
@@ -5014,7 +5222,7 @@ paths:
       tags:
       - Organization · Groups
       summary: Get one group with its members
-      operationId: get_11
+      operationId: get_12
       parameters:
       - name: orgId
         in: path
@@ -5093,7 +5301,7 @@ paths:
       tags:
       - Organization · Exchange
       summary: List the organization's exchange jobs
-      operationId: list_21
+      operationId: list_22
       parameters:
       - name: orgId
         in: path
@@ -5146,7 +5354,7 @@ paths:
       tags:
       - Organization · Exchange
       summary: Get one exchange job with its progress
-      operationId: get_12
+      operationId: get_13
       parameters:
       - name: orgId
         in: path
@@ -5468,7 +5676,7 @@ paths:
       tags:
       - Shared · Me & notifications
       summary: List your in-app notifications
-      operationId: list_22
+      operationId: list_23
       parameters:
       - name: "page[size]"
         in: query
@@ -5740,7 +5948,7 @@ paths:
       tags:
       - Shared · Settings & flags
       summary: List feature flags
-      operationId: list_23
+      operationId: list_24
       parameters:
       - name: "page[size]"
         in: query
@@ -5790,7 +5998,7 @@ paths:
       description: "Each handler names the dataset it moves, the permissions its imports\
         \ and exports require, `header` — the exact column order its files use — and\
         \ the current `templateVersion`. Download a ready-to-fill file from `/handlers/{id}/template`."
-      operationId: list_24
+      operationId: list_25
       parameters:
       - name: X-Impersonate
         in: header
@@ -6085,7 +6293,7 @@ paths:
       tags:
       - Platform · Users & impersonation
       summary: List provisioned users across the platform
-      operationId: list_25
+      operationId: list_26
       parameters:
       - name: "page[size]"
         in: query
@@ -6147,7 +6355,7 @@ paths:
       tags:
       - Platform · Users & impersonation
       summary: List a user's devices as the platform
-      operationId: list_26
+      operationId: list_27
       parameters:
       - name: subject
         in: path
@@ -6232,7 +6440,7 @@ paths:
       tags:
       - Platform · Support queue
       summary: Get one ticket (any org)
-      operationId: get_13
+      operationId: get_14
       parameters:
       - name: id
         in: path
@@ -6314,7 +6522,7 @@ paths:
       - Platform · Organizations
       summary: List every organization on the platform
       description: Newest first; narrow with `status` (ACTIVE or SUSPENDED).
-      operationId: list_27
+      operationId: list_28
       parameters:
       - name: status
         in: query
@@ -6356,7 +6564,7 @@ paths:
       tags:
       - Platform · Organizations
       summary: Inspect one organization as the platform
-      operationId: get_14
+      operationId: get_15
       parameters:
       - name: orgId
         in: path
@@ -6408,7 +6616,7 @@ paths:
       - Platform · SLA policies
       summary: List an org's SLA overrides
       description: Priorities not listed fall back to the seeded per-priority default.
-      operationId: list_28
+      operationId: list_29
       parameters:
       - name: orgId
         in: path
@@ -6437,7 +6645,7 @@ paths:
       - Platform · Retention
       summary: List an org's retention overrides
       description: Scopes not listed use the platform default retention for that log.
-      operationId: list_29
+      operationId: list_30
       parameters:
       - name: orgId
         in: path
@@ -7421,6 +7629,37 @@ components:
       type: object
       properties:
         subject:
+          type: string
+    StampRequest:
+      type: object
+      properties:
+        subjectType:
+          type: string
+        subjectId:
+          type: string
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+        accuracyM:
+          type: number
+          format: double
+        altitudeM:
+          type: number
+          format: double
+        source:
+          type: string
+          enum:
+          - DEVICE_GPS
+          - NETWORK
+          - MANUAL
+          - IP
+        capturedAt:
+          type: string
+          format: date-time
+        consentRef:
           type: string
     ExportRequest:
       type: object

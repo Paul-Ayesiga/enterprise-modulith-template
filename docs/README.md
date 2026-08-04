@@ -39,6 +39,7 @@ document is.
 | [0005](adr/0005-idempotency-keys.md) | Per-principal HTTP idempotency keys, claim-first with lease |
 | [0006](adr/0006-embedded-duckdb.md) | Embedded DuckDB for analytics, UTC marts, exact decimals |
 | [0007](adr/0007-api-gateway.md) | API gateway: a reactive Spring Cloud Gateway as a hexagonal platform product |
+| [0008](adr/0008-geolocation-storage.md) | Geolocation stored as numeric lat/lng behind a spatial port (`GeoSearch`), PostGIS deferred |
 
 ## Project management — where work stands
 
@@ -46,6 +47,7 @@ document is.
 |---|---|
 | [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) | The living plan: pinned versions, contracts, phases — and the Boot-4/Testcontainers-2 gotchas (§10) |
 | [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md) | The active build-out plan: localization → search → document → exchange → observability, plus the carried backlog |
+| [GEOLOCATION_PLAN.md](GEOLOCATION_PLAN.md) | The `geo` module: PostGIS-backed geolocation stamps, per-record-type capture policy, a pluggable geocoder SPI, and the phased rollout |
 | [GATEWAY_ARCHITECTURE.md](GATEWAY_ARCHITECTURE.md) | The gateway north star: a stateless reactive Spring Cloud Gateway, hexagonal ports & adapters, the request pipeline, coarse-vs-fine authZ |
 | [GATEWAY_PLAN.md](GATEWAY_PLAN.md) | The phased gateway build (Core → Security → Traffic → Observability → Extensibility → Admin → Enterprise), each with its gate |
 | [reusable-data-exchange-platform-guidelines.md](reusable-data-exchange-platform-guidelines.md) | Principles for the exchange (import/export) platform — the spec the `exchange` module implements |

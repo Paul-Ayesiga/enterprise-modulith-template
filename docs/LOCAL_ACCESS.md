@@ -188,6 +188,8 @@ Keycloak admin: `admin` / `admin`. SeaweedFS creds live in `docker/seaweedfs/s3-
 | `GET` | `/api/v1/orgs/{orgId}/audit` | `audit:read` | That org's audit trail (org admins) |
 | `GET`/`POST`/`PUT`/`DELETE` | `/api/v1/orgs/{orgId}/webhooks[/{id}]` | `webhook:manage` | Outbound webhook subscriptions (secret shown once) |
 | `GET` | `/api/v1/orgs/{orgId}/webhooks/{id}/deliveries` | `webhook:manage` | Delivery log for a subscription |
+| `POST`/`GET` | `/api/v1/orgs/{orgId}/geo/stamps` | `geo:capture` / `geo:read` | Attach a location to a record; query by subject or `bbox` (exact coords need `geo:read_precise`, else coarsened) |
+| `GET`/`PUT` | `/api/v1/orgs/{orgId}/geo/policies/{subjectType}` | `geo:policy:manage` | Per-record-type capture policy (OFF/OPTIONAL/REQUIRED) |
 | `GET` | `/api/v1/scheduler/locks` | **platform-support** | ShedLock rows (clustered-job observability) |
 | `GET` | `/api/v1/analytics/reports` | **platform-support** | Curated report catalog |
 | `GET` | `/api/v1/analytics/reports/{code}` | **platform-support** | Run a report (Postgres → DuckDB → aggregate) |

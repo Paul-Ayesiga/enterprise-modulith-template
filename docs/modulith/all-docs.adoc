@@ -25,6 +25,10 @@ include::module-compliance.adoc[]
 plantuml::module-files.puml[,,format=svg]
 include::module-files.adoc[]
 
+== Geolocation
+plantuml::module-geo.puml[,,format=svg]
+include::module-geo.adoc[]
+
 == Identity
 plantuml::module-identity.puml[,,format=svg]
 include::module-identity.adoc[]

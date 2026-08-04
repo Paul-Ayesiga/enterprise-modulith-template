@@ -155,7 +155,7 @@ flowchart TB
   subgraph CORE["SPRING MODULITH :28080 — servlet + JDBC"]
     direction TB
     chain["filter chain −100…5: security → impersonation → MDC →<br/>rate limit → idempotency → provisioning gate → org policy →<br/>maintenance → subscription access"]
-    modules["25 modules · ArchUnit-enforced boundaries · shared kernel ports"]
+    modules["26 modules · ArchUnit-enforced boundaries · shared kernel ports"]
     outbox["event publication registry (outbox, same TX)"]
     chain --> modules --> outbox
   end
@@ -378,11 +378,11 @@ flowchart TB
 
   <!-- ============================================================ 05 -->
   <section>
-    <div class="sec-head"><span class="sec-num">05</span><h2>The 25 modules</h2></div>
+    <div class="sec-head"><span class="sec-num">05</span><h2>The 26 modules</h2></div>
     <p class="sec-sub">One deployable, hard internal boundaries: <code>internal</code> packages are
       inaccessible across modules (ArchUnit + ModularityTests fail the build), cross-module calls go through
       shared-kernel <b>ports</b> (<code>Entitlements</code>, <code>OrgAuthorization</code>, <code>LegalHolds</code>,
-      <code>PlatformAdmins</code>, <code>Subscriptions</code>, <code>AuditLog</code>, <code>UserProvisioning</code>…)
+      <code>PlatformAdmins</code>, <code>Subscriptions</code>, <code>AuditLog</code>, <code>GeoStamps</code>, <code>UserProvisioning</code>…)
       or <b>events</b>.</p>
     <div class="diagram">
       <pre class="mermaid">
@@ -405,7 +405,7 @@ flowchart TB
   end
   subgraph GOV["Ops &amp; Governance"]
     direction LR
-    audit; compliance; settings; integration; analytics; scheduler
+    audit; compliance; settings; integration; analytics; scheduler; geo
   end
   shared["shared kernel — envelope · errors · security context · cursor paging · idempotency · rate limit · two-level cache · ports"]
   IAM --- TEN --- DATA --- COMM --- GOV --- shared

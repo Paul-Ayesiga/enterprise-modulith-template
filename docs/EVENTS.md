@@ -31,6 +31,8 @@ message id from business identity — among the live ones:
 | `ug.co.smsone.subscription.SubscriptionChanged` | subscription | `orgId, planCode, status, occurredAt` | a tenant's plan is assigned or changed |
 | `ug.co.smsone.exchange.JobCompleted` | exchange | `jobId, orgId, requester, handler, jobType, outcome, processed, failed, occurredAt` | an exchange job reaches a terminal state — published explicitly from the worker's terminal read (the job row stays authoritative; a crash between the write and the publish loses only the event) |
 | `ug.co.smsone.support.TicketEscalated` | support | `ticketId, orgId, priority, occurredAt` | a support ticket breached its SLA and was escalated (published by the minute escalation job) |
+| `ug.co.smsone.geo.GeoStampRecorded` | geo | `orgId, stampId, subjectType, subjectId, capturedBy, occurredAt` | a location is attached to a record (published explicitly after save, so `stampId` is set) |
+| `ug.co.smsone.geo.GeoPolicyChanged` | geo | `orgId, subjectType, mode, occurredAt` | an org's capture policy for a record-type changes |
 
 Every event carries `occurredAt` — uniformly, since `SettingChanged` (the one late joiner) gained
 it ahead of its first consumer. It lets an idempotent consumer dedupe redelivery of the *same*
@@ -59,8 +61,9 @@ The webhooks consumer maps each organization event to its outbound wire code
 `org.ticket.escalated`. The full subscribable
 vocabulary is on the wire at `GET /api/v1/webhooks/event-types`.
 
-Four events currently have **no consumer**: `SettingChanged`, `UserActivated`,
-`TranslationChanged` and `DocumentRegistered` (all now carry `occurredAt`, so their first
+Six events currently have **no consumer**: `SettingChanged`, `UserActivated`,
+`TranslationChanged`, `DocumentRegistered`, and geo's `GeoStampRecorded` (its reverse-geocode
+consumer lands in Phase 2) and `GeoPolicyChanged` (all now carry `occurredAt`, so their first
 consumers have the dedup key ready). They are still published through the registry (and appear in the generated
 module canvases); a first consumer must follow the `EventInbox` idempotency rule above.
 
