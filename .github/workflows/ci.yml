@@ -42,14 +42,14 @@ jobs:
         portal: [developer-portal, admin-portal]
     defaults:
       run:
-        working-directory: web/${{ matrix.portal }}
+        working-directory: web/gateway/${{ matrix.portal }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: npm
-          cache-dependency-path: web/${{ matrix.portal }}/package-lock.json
+          cache-dependency-path: web/gateway/${{ matrix.portal }}/package-lock.json
       - run: npm ci
       - name: Typecheck
         run: npx tsc --noEmit
@@ -123,7 +123,7 @@ jobs:
       - name: Build and push portal images
         run: |
           for portal in developer-portal admin-portal; do
-            docker build -t "$IMAGE_BASE/$portal:${GITHUB_SHA}" "web/$portal"
+            docker build -t "$IMAGE_BASE/$portal:${GITHUB_SHA}" "web/gateway/$portal"
             docker push "$IMAGE_BASE/$portal:${GITHUB_SHA}"
           done
       - name: Move the main tags
