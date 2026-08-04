@@ -85,6 +85,17 @@ class TrafficTest {
     }
 
     @Test
+    void edgeLimiterHeadersAreNamespacedSoTheyNeverCollideWithThePlanQuota() {
+        // The edge burst limiter advertises its bucket under X-Edge-RateLimit-*, leaving the plain
+        // X-RateLimit-* names for the modulith's per-tenant plan quota — so a caller never sees two
+        // conflicting X-RateLimit-Remaining values through the gateway.
+        client().get().uri("/rl/x").exchange()
+                .expectHeader().exists("X-Edge-RateLimit-Remaining")
+                .expectHeader().exists("X-Edge-RateLimit-Burst-Capacity")
+                .expectHeader().doesNotExist("X-RateLimit-Remaining");
+    }
+
+    @Test
     void slowBackendTimesOutAt504() {
         client().get().uri("/slow/x").exchange()
                 .expectStatus().isEqualTo(504)

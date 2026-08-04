@@ -235,7 +235,7 @@ flowchart TB
         <span class="fail"><span class="pill bad">404</span><span class="pill">in-memory map</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox"><span class="ord">traffic</span>
-        <span class="what"><b>Rate limiter — token bucket</b> (SCG <code>RedisRateLimiter</code>): replenish <b>20 tokens/s</b>, burst <b>40</b>, per caller — key falls back <code>principal → tenant → IP</code>. Draft-IETF <code>RateLimit-*</code> headers on every response; a denial adds <code>Retry-After</code>. The burst guard, distinct from the plan quota above.</span>
+        <span class="what"><b>Rate limiter — token bucket</b> (SCG <code>RedisRateLimiter</code>): replenish <b>20 tokens/s</b>, burst <b>40</b>, per caller — key falls back <code>principal → tenant → IP</code>. Advertises its bucket under a <b>namespaced</b> <code>X-Edge-RateLimit-*</code> so it never collides with the plan quota's standard <code>X-RateLimit-*</code>; a denial adds <code>Retry-After</code>. The burst guard, distinct from the plan quota above.</span>
         <span class="fail"><span class="pill bad">429</span><span class="pill store">Valkey</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox"><span class="ord">traffic</span>
@@ -280,7 +280,7 @@ flowchart TB
           <tr><td>algorithm</td><td>token bucket (SCG RedisRateLimiter, Lua on Valkey — atomic across gateway instances)</td></tr>
           <tr><td>refill / burst</td><td>20 tokens/s · burst 40 (<code>GATEWAY_RATE_REPLENISH/BURST</code>)</td></tr>
           <tr><td>key</td><td>principal → tenant → client IP (first available)</td></tr>
-          <tr><td>surface</td><td><code>RateLimit-Policy</code>/<code>RateLimit</code> headers · 429 + <code>Retry-After</code></td></tr>
+          <tr><td>surface</td><td><code>X-Edge-RateLimit-*</code> headers (namespaced, never collides with the plan quota's <code>X-RateLimit-*</code>) · 429 + <code>Retry-After</code></td></tr>
           <tr><td>job</td><td>absorb bursts fairly; protect the backend second-to-second</td></tr>
         </table></div>
       <div class="card c-edge"><h3>Fixed window — plan ceiling</h3><span class="tag">consumer quota</span>
