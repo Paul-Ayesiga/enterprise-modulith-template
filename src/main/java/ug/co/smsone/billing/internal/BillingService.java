@@ -32,16 +32,19 @@ class BillingService {
     private final Subscriptions subscriptions;
     private final TransactionTemplate transactionTemplate;
     private final AuditLog auditLog;
+    private final org.springframework.beans.factory.ObjectProvider<BillingReceipts> receipts;
 
     BillingService(BillingAccountRepository accounts, KillBillGateway killBill,
             KillBillProperties properties, Subscriptions subscriptions,
-            TransactionTemplate transactionTemplate, AuditLog auditLog) {
+            TransactionTemplate transactionTemplate, AuditLog auditLog,
+            org.springframework.beans.factory.ObjectProvider<BillingReceipts> receipts) {
         this.accounts = accounts;
         this.killBill = killBill;
         this.properties = properties;
         this.subscriptions = subscriptions;
         this.transactionTemplate = transactionTemplate;
         this.auditLog = auditLog;
+        this.receipts = receipts;
     }
 
     record BillingView(UUID orgId, UUID kbAccountId, java.math.BigDecimal balance, String currency,
@@ -159,6 +162,12 @@ class BillingService {
             subscriptions.markStatus(account.getOrgId(), success ? "ACTIVE" : "PAST_DUE");
             auditLog.record(success ? "billing.payment_succeeded" : "billing.payment_failed",
                     account.getOrgId(), kbAccountId.toString(), null, null);
+            if (success) {
+                BillingReceipts receiptSender = receipts.getIfAvailable();
+                if (receiptSender != null) {
+                    receiptSender.paymentReceived(account.getOrgId()); // best-effort, never throws
+                }
+            }
         }, () -> log.warn("Kill Bill payment event for unknown account {}", kbAccountId));
     }
 

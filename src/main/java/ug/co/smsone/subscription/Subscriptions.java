@@ -28,6 +28,13 @@ public interface Subscriptions {
     void startTrialForNewOrg(UUID organizationId, String planCode, int trialDays);
 
     /**
+     * Dunning's teeth: pause every subscription that has sat {@code PAST_DUE} longer than
+     * {@code grace} — the org goes read-only until a payment lands or a plan is assigned. Idempotent
+     * (a paused row is no longer PAST_DUE); returns how many were paused.
+     */
+    int pauseLapsedPastDue(java.time.Duration grace);
+
+    /**
      * Flip the standing without touching the plan — {@code ACTIVE} | {@code PAST_DUE} |
      * {@code CANCELLED} (payment outcomes). Unknown org: a no-op with a log line, not an error —
      * billing events can race provisioning.

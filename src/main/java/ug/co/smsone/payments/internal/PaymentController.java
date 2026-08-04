@@ -39,8 +39,9 @@ class PaymentController {
     }
 
     record PaymentAttributes(String provider, String mode, String status, String statusDetail,
-            BigDecimal amount, String currency, String description, String merchantReference,
-            String gatewayReference, String redirectUrl, String confirmationCode) {
+            BigDecimal amount, BigDecimal vatAmount, BigDecimal netAmount, String currency,
+            String description, String merchantReference, String gatewayReference, String redirectUrl,
+            String confirmationCode) {
     }
 
     @PostMapping
@@ -72,8 +73,9 @@ class PaymentController {
     private static ResourceObject toResource(Payment payment) {
         return new ResourceObject(payment.getId().toString(), RESOURCE_TYPE, new PaymentAttributes(
                 payment.getProvider(), payment.getMode(), payment.getStatus().name(),
-                payment.getStatusDetail(), payment.getAmount(), payment.getCurrency(),
-                payment.getDescription(), payment.getMerchantReference(), payment.getGatewayReference(),
+                payment.getStatusDetail(), payment.getAmount(), payment.getVatAmount(),
+                payment.getNetAmount(), payment.getCurrency(), payment.getDescription(),
+                payment.getMerchantReference(), payment.getGatewayReference(),
                 payment.getRedirectUrl(), payment.getConfirmationCode()));
     }
 }

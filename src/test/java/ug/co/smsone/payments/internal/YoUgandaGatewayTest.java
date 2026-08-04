@@ -29,7 +29,7 @@ class YoUgandaGatewayTest {
     private static final String BASE = "https://yo.test/task.php";
 
     private final PaymentsProperties properties = new PaymentsProperties(null,
-            new PaymentsProperties.Yo("sandbox", "yo-user", "yo-pass", BASE, "https://live.invalid"));
+            new PaymentsProperties.Yo("sandbox", "yo-user", "yo-pass", BASE, "https://live.invalid"), null);
 
     private MockRestServiceServer server;
     private YoUgandaGateway gateway;

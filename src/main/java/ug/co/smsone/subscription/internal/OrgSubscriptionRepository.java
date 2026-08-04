@@ -12,6 +12,9 @@ interface OrgSubscriptionRepository extends JpaRepository<OrgSubscription, UUID>
 
     Optional<OrgSubscription> findByOrgId(UUID orgId);
 
+    java.util.List<OrgSubscription> findByStatusAndUpdatedAtBefore(OrgSubscription.Status status,
+            java.time.Instant cutoff);
+
     /** Is any organization on this plan? Guards a plan delete against orphaning subscriptions. */
     boolean existsByPlanId(UUID planId);
 

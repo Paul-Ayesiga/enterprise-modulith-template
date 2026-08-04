@@ -10,7 +10,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * real sandbox calls work out of the box; live always needs your merchant credentials.
  */
 @ConfigurationProperties(prefix = "app.payments")
-record PaymentsProperties(Pesapal pesapal, Yo yo) {
+record PaymentsProperties(Pesapal pesapal, Yo yo, Tax tax) {
 
     static final String SANDBOX = "sandbox";
     static final String LIVE = "live";
@@ -21,6 +21,22 @@ record PaymentsProperties(Pesapal pesapal, Yo yo) {
         }
         if (yo == null) {
             yo = new Yo(null, null, null, null, null);
+        }
+        if (tax == null) {
+            tax = new Tax(null);
+        }
+    }
+
+    /** VAT on collections, prices treated as inclusive. Rate 0 (default) = no tax lines at all. */
+    record Tax(java.math.BigDecimal ratePercent) {
+        Tax {
+            if (ratePercent == null || ratePercent.signum() < 0) {
+                ratePercent = java.math.BigDecimal.ZERO;
+            }
+        }
+
+        boolean enabled() {
+            return ratePercent.signum() > 0;
         }
     }
 

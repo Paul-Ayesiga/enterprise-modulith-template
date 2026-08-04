@@ -13,6 +13,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import ug.co.smsone.integration.Integrations;
 import org.springframework.transaction.annotation.Transactional;
+import ug.co.smsone.subscription.Subscriptions;
 import ug.co.smsone.shared.audit.AuditLog;
 import ug.co.smsone.shared.error.NotFoundException;
 import ug.co.smsone.shared.error.ValidationException;
@@ -32,15 +33,20 @@ class PaymentService {
     private final PaymentRepository payments;
     private final Map<String, PaymentGateway> gateways;
     private final ObjectProvider<Integrations> integrations;
+    private final ObjectProvider<Subscriptions> subscriptions;
+    private final PaymentsProperties properties;
     private final AuditLog auditLog;
     private final Clock clock;
 
     PaymentService(PaymentRepository payments, List<PaymentGateway> gateways,
-            ObjectProvider<Integrations> integrations, AuditLog auditLog, Clock clock) {
+            ObjectProvider<Integrations> integrations, ObjectProvider<Subscriptions> subscriptions,
+            PaymentsProperties properties, AuditLog auditLog, Clock clock) {
         this.payments = payments;
         this.gateways = gateways.stream()
                 .collect(Collectors.toUnmodifiableMap(PaymentGateway::provider, Function.identity()));
         this.integrations = integrations;
+        this.subscriptions = subscriptions;
+        this.properties = properties;
         this.auditLog = auditLog;
         this.clock = clock;
     }
@@ -66,6 +72,7 @@ class PaymentService {
         Payment payment = Payment.initiate(orgId, gateway.provider(), gateway.mode(orgId), amount,
                 currency.toUpperCase(), description.trim(), blankToNull(phoneNumber), blankToNull(email),
                 clock.instant());
+        applyTax(payment, amount);
         // Remote first: only a gateway-accepted collection gets a row.
         PaymentGateway.Initiation initiation = gateway.initiate(orgId, payment);
         payment.initiated(initiation.gatewayReference(), initiation.redirectUrl(), initiation.status(),
@@ -105,6 +112,14 @@ class PaymentService {
             auditLog.record("payment." + saved.getStatus().name().toLowerCase(), saved.getOrgId(),
                     saved.getId().toString(), "status=" + before, "status=" + saved.getStatus()
                             + (saved.getConfirmationCode() == null ? "" : " confirmation=" + saved.getConfirmationCode()));
+            if (saved.getStatus() == PaymentStatus.COMPLETED) {
+                // A completed collection is money in: lift a PAST_DUE/PAUSED standing (and convert a
+                // trial) through the same audited port billing events use. Unknown orgs no-op there.
+                Subscriptions standings = subscriptions.getIfAvailable();
+                if (standings != null) {
+                    standings.markStatus(saved.getOrgId(), "ACTIVE");
+                }
+            }
         }
         return saved;
     }
@@ -130,6 +145,18 @@ class PaymentService {
         Integrations hub = integrations.getIfAvailable();
         return hub == null ? null : hub.resolve(orgId, Integrations.Kind.PAYMENT_GATEWAY)
                 .map(Integrations.ResolvedIntegration::provider).orElse(null);
+    }
+
+    /** Prices are VAT-inclusive: vat = amount × r/(100+r). Rate 0 leaves the fields null. */
+    private void applyTax(Payment payment, BigDecimal amount) {
+        PaymentsProperties.Tax tax = properties.tax();
+        if (!tax.enabled()) {
+            return;
+        }
+        BigDecimal divisor = java.math.BigDecimal.valueOf(100).add(tax.ratePercent());
+        BigDecimal vat = amount.multiply(tax.ratePercent())
+                .divide(divisor, 2, java.math.RoundingMode.HALF_UP);
+        payment.taxBreakdown(vat, amount.subtract(vat));
     }
 
     private static String blankToNull(String value) {

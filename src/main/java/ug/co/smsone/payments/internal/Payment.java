@@ -59,6 +59,12 @@ class Payment {
     @Column(name = "confirmation_code", length = 64)
     private String confirmationCode;
 
+    @Column(name = "vat_amount", precision = 19, scale = 2)
+    private BigDecimal vatAmount;
+
+    @Column(name = "net_amount", precision = 19, scale = 2)
+    private BigDecimal netAmount;
+
     @Column(name = "redirect_url", length = 1024)
     private String redirectUrl;
 
@@ -168,6 +174,19 @@ class Payment {
 
     String getConfirmationCode() {
         return confirmationCode;
+    }
+
+    void taxBreakdown(BigDecimal vatAmount, BigDecimal netAmount) {
+        this.vatAmount = vatAmount;
+        this.netAmount = netAmount;
+    }
+
+    BigDecimal getVatAmount() {
+        return vatAmount;
+    }
+
+    BigDecimal getNetAmount() {
+        return netAmount;
     }
 
     String getRedirectUrl() {

@@ -150,6 +150,26 @@ class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
         return view(orgId);
     }
 
+    /** Port form — billing's dunning job. PAST_DUE older than the grace window goes read-only. */
+    @Override
+    @Transactional
+    public int pauseLapsedPastDue(Duration grace) {
+        List<OrgSubscription> lapsed = subscriptions.findByStatusAndUpdatedAtBefore(
+                OrgSubscription.Status.PAST_DUE, clock.instant().minus(grace));
+        for (OrgSubscription subscription : lapsed) {
+            subscription.pause();
+            subscriptions.save(subscription);
+            Plan plan = plans.findById(subscription.getPlanId()).orElse(null);
+            events.publishEvent(new SubscriptionChanged(subscription.getOrgId(),
+                    plan == null ? null : plan.getCode(),
+                    OrgSubscription.Status.PAUSED.name(), clock.instant()));
+            auditLog.record("subscription.past_due_lapsed", subscription.getOrgId(),
+                    subscription.getOrgId().toString(), "status=PAST_DUE", "status=PAUSED");
+            meters.counter("smsone.subscription.past_due_lapsed").increment();
+        }
+        return lapsed.size();
+    }
+
     /**
      * Pause every trial that has lapsed — the org goes READ-ONLY (writes answer 402) until a plan
      * is assigned or a payment lands. Idempotent: a paused row is no longer TRIALING, so a re-run

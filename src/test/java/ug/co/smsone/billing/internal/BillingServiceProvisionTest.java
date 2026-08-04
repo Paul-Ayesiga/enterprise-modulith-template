@@ -37,8 +37,23 @@ class BillingServiceProvisionTest {
         given(tx.execute(any())).willThrow(new DataIntegrityViolationException("uq_billing_account_org"));
 
         BillingService service = new BillingService(accounts, killBill,
-                mock(KillBillProperties.class), mock(Subscriptions.class), tx, mock(AuditLog.class));
+                mock(KillBillProperties.class), mock(Subscriptions.class), tx, mock(AuditLog.class),
+                absentReceipts());
 
         assertThat(service.provision(orgId)).isSameAs(winner);
+    }
+
+    private static org.springframework.beans.factory.ObjectProvider<BillingReceipts> absentReceipts() {
+        return new org.springframework.beans.factory.ObjectProvider<>() {
+            @Override
+            public BillingReceipts getObject() {
+                throw new IllegalStateException("absent");
+            }
+
+            @Override
+            public BillingReceipts getIfAvailable() {
+                return null;
+            }
+        };
     }
 }

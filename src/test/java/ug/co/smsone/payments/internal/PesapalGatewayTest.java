@@ -32,7 +32,7 @@ class PesapalGatewayTest {
     private final PaymentsProperties properties = new PaymentsProperties(
             new PaymentsProperties.Pesapal("sandbox", "ck", "cs", BASE, "https://live.invalid",
                     "https://app.test/callback", "https://app.test/ipn", null),
-            null);
+            null, null);
 
     private MockRestServiceServer server;
     private PesapalGateway gateway;

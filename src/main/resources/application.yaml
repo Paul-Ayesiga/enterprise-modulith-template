@@ -257,6 +257,10 @@ app:
       enabled: ${TRIAL_ON_SIGNUP:false}
       plan: ${TRIAL_ON_SIGNUP_PLAN:PRO}
       days: ${TRIAL_ON_SIGNUP_DAYS:30}
+    dunning:
+      # Days a subscription may sit PAST_DUE (full access, owners warned) before the nightly job
+      # pauses it read-only. Recovery: any successful payment or a plan assignment.
+      grace-days: ${BILLING_DUNNING_GRACE_DAYS:7}
     currency: ${BILLING_CURRENCY:USD}
     # OUR plan code -> Kill Bill catalog plan name. FREE is deliberately unmapped (no money, no KB
     # subscription). Production maps to its uploaded catalog.
@@ -285,6 +289,9 @@ app:
       mode: ${YO_MODE:sandbox}
       api-username: ${YO_API_USERNAME:}
       api-password: ${YO_API_PASSWORD:}
+    tax:
+      # VAT on collections, prices VAT-INCLUSIVE (UG standard rate is 18). 0 = no tax lines.
+      rate-percent: ${PAYMENTS_VAT_PERCENT:0}
   document:
     # Presigned-download lifetime: long enough to follow the 302, short enough not to be a durable
     # capability. Bytes never pass through the API.
