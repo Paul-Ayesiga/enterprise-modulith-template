@@ -14,6 +14,7 @@ export type RouteRow = {
   lifecycle: Lifecycle;
   sunset: string | null;
   rateLimited: boolean;
+  persistent: boolean;
   product: string | null;
 };
 
@@ -108,6 +109,7 @@ type RawRoute = {
   lifecycle?: string;
   rateLimited?: boolean;
   sunset?: string | null;
+  persistent?: boolean;
 };
 type CatalogProduct = { id: string; name: string; routes: { id: string; paths: string[]; lifecycle: string }[] };
 
@@ -140,6 +142,7 @@ export async function fetchOverview(): Promise<Overview> {
           lifecycle: r.lifecycle ?? meta?.lifecycle ?? "PUBLISHED",
           sunset: r.sunset ?? null,
           rateLimited: r.rateLimited ?? false,
+          persistent: r.persistent ?? false,
           product: meta?.product ?? null
         };
       })

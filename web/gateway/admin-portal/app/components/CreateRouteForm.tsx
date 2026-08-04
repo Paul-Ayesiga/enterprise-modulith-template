@@ -108,6 +108,11 @@ export function CreateRouteForm({ services, defaultId, defaultPath, defaultOrder
           <input type="hidden" name="rateLimited" value="false" />
           Rate limit <span className="field__hint">(shared token bucket, 429 over it)</span>
         </label>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+          <input type="checkbox" name="persist" value="true" defaultChecked={carving} />
+          <input type="hidden" name="persist" value="false" />
+          Keep after restart <span className="field__hint">(durable — survives a gateway restart)</span>
+        </label>
       </div>
       <div className="form__actions">
         <SubmitButton />
@@ -122,9 +127,10 @@ export function CreateRouteForm({ services, defaultId, defaultPath, defaultOrder
         )}
       </div>
       <p className="field__hint">
-        <strong>Runtime tier:</strong> changes made here take effect instantly but live in gateway memory —
-        a restart re-seeds from YAML. Durable topology (and scopes, tenant templates, timeouts, caching,
-        product grouping) belongs in <code>gateway/app/…/application.yml</code>.
+        <strong>Runtime vs durable:</strong> a route takes effect instantly. Without “keep after restart” it
+        lives only in gateway memory and a restart re-seeds it away; with it, the route is stored durably
+        and re-applied on every boot. Richer topology (scopes, tenant templates, timeouts, caching, product
+        grouping) still belongs in <code>gateway/app/…/application.yml</code>.
       </p>
     </form>
   );

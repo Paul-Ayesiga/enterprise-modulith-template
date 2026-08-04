@@ -35,15 +35,21 @@ public class GatewayRoutesEndpoint {
     private final RouteSource routeSource;
     private final ServiceRegistry services;
     private final RouteRegistrar registrar;
+    private final org.springframework.beans.factory.ObjectProvider<
+            ug.co.smsone.gateway.route.PersistentRouteStore> persistentRoutes;
 
-    public GatewayRoutesEndpoint(RouteSource routeSource, ServiceRegistry services, RouteRegistrar registrar) {
+    public GatewayRoutesEndpoint(RouteSource routeSource, ServiceRegistry services, RouteRegistrar registrar,
+            org.springframework.beans.factory.ObjectProvider<
+                    ug.co.smsone.gateway.route.PersistentRouteStore> persistentRoutes) {
         this.routeSource = routeSource;
         this.services = services;
         this.registrar = registrar;
+        this.persistentRoutes = persistentRoutes;
     }
 
     @ReadOperation
     public List<Map<String, Object>> routes() {
+        ug.co.smsone.gateway.route.PersistentRouteStore store = persistentRoutes.getIfAvailable();
         return routeSource.routes().stream().map(route -> {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("id", route.id());
@@ -57,6 +63,7 @@ public class GatewayRoutesEndpoint {
             row.put("lifecycle", route.lifecycle().status().name());
             row.put("sunset", route.lifecycle().sunset());
             row.put("rateLimited", route.traffic().rateLimited());
+            row.put("persistent", store != null && store.isPersistent(route.id())); // survives restart?
             return row;
         }).toList();
     }
@@ -68,7 +75,8 @@ public class GatewayRoutesEndpoint {
      */
     @WriteOperation
     public Map<String, Object> createRoute(String id, String path, String serviceId,
-            @Nullable Integer order, @Nullable Boolean authenticated, @Nullable Boolean rateLimited) {
+            @Nullable Integer order, @Nullable Boolean authenticated, @Nullable Boolean rateLimited,
+            @Nullable Boolean persist) {
         if (services.find(serviceId).isEmpty()) {
             throw new IllegalArgumentException("Unknown service '" + serviceId + "'");
         }
@@ -79,11 +87,25 @@ public class GatewayRoutesEndpoint {
         // Order decides who wins when paths overlap (lower first) — a carved single-endpoint route
         // needs a lower order than the coarse product route it splits out of. Default 1000 keeps a
         // plain registration behind the seeded product routes.
-        registrar.register(new RouteDefinition(id, order == null ? 1000 : order,
+        RouteDefinition definition = new RouteDefinition(id, order == null ? 1000 : order,
                 List.of(new RoutePredicate(RoutePredicate.Kind.PATH, List.of(path))),
-                serviceId, auth, traffic, TransformPolicy.NONE,
-                LifecyclePolicy.PUBLISHED, Map.of()));
-        return Map.of("status", "registered", "id", id, "order", order == null ? 1000 : order);
+                serviceId, auth, traffic, TransformPolicy.NONE, LifecyclePolicy.PUBLISHED, Map.of());
+        registrar.register(definition);
+        boolean durable = false;
+        ug.co.smsone.gateway.route.PersistentRouteStore store = persistentRoutes.getIfAvailable();
+        if (Boolean.TRUE.equals(persist) && store != null) {
+            store.save(definition); // survives a restart, overlaid on the YAML seed
+            durable = true;
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("status", "registered");
+        result.put("id", id);
+        result.put("order", order == null ? 1000 : order);
+        result.put("persistent", durable);
+        if (Boolean.TRUE.equals(persist) && store == null) {
+            result.put("warning", "Durable routes are disabled; registered as a runtime route (until restart).");
+        }
+        return result;
     }
 
     /**
@@ -135,6 +157,11 @@ public class GatewayRoutesEndpoint {
                 auth, traffic, existing.transform(),
                 lifecyclePolicy, existing.metadata());
         registrar.register(updated);
+        // A durable route stays durable through an edit — re-persist the updated spec.
+        ug.co.smsone.gateway.route.PersistentRouteStore store = persistentRoutes.getIfAvailable();
+        if (store != null && store.isPersistent(id)) {
+            store.save(updated);
+        }
         return Map.of("status", "updated", "id", id,
                 "lifecycle", lifecyclePolicy.status().name(),
                 "authenticated", auth.requiresToken(),
@@ -144,6 +171,10 @@ public class GatewayRoutesEndpoint {
     @DeleteOperation
     public void deleteRoute(@Selector String id) {
         registrar.remove(id);
+        ug.co.smsone.gateway.route.PersistentRouteStore store = persistentRoutes.getIfAvailable();
+        if (store != null) {
+            store.delete(id); // also drop it from the durable set so it does not come back on restart
+        }
     }
 
     private static String firstPath(RouteDefinition route) {

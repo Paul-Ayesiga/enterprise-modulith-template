@@ -14,6 +14,15 @@ export function RouteTableRow({ route, services }: { route: RouteRow; services: 
       <tr>
         <td>
           <span className="mono route-id">{route.id}</span>
+          {route.persistent && (
+            <span
+              className="badge badge--published"
+              style={{ marginLeft: 6, verticalAlign: "middle" }}
+              title="Durable — survives a gateway restart"
+            >
+              durable
+            </span>
+          )}
           {route.product && <div className="field__hint">{route.product}</div>}
         </td>
         <td className="num">{route.order}</td>

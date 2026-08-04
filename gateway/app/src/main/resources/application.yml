@@ -29,6 +29,11 @@ management:
 gateway:
   # Edge security: validate bearer JWTs against the IdP's JWKS (no platform call), and which claim
   # carries the tenant. CORS is off by default — set gateway.security.cors.allowed-origins per deploy.
+  # UI-registered routes are runtime by default (re-seeded from YAML on restart). With this on, a
+  # route registered with persist=true is stored in Valkey and re-applied on every boot (durable).
+  persistent-routes:
+    enabled: ${GATEWAY_PERSISTENT_ROUTES:true}
+
   security:
     jwk-set-uri: ${KEYCLOAK_JWKS:http://localhost:8081/realms/smsone/protocol/openid-connect/certs}
     tenant-claim: ${GATEWAY_TENANT_CLAIM:tenant}

@@ -23,6 +23,7 @@ export async function createRoute(_prev: ActionState, formData: FormData): Promi
   // Checkbox-before-hidden pattern: get() sees "true" when checked, the hidden "false" otherwise.
   const authenticated = String(formData.get("authenticated") ?? "") === "true";
   const rateLimited = String(formData.get("rateLimited") ?? "") === "true";
+  const persist = String(formData.get("persist") ?? "") === "true";
   const orderRaw = String(formData.get("order") ?? "").trim();
   const order = orderRaw === "" ? undefined : Number(orderRaw);
   if (order !== undefined && (!Number.isInteger(order) || order < 0)) {
@@ -33,15 +34,21 @@ export async function createRoute(_prev: ActionState, formData: FormData): Promi
     const res = await fetch(`${adminBaseUrl()}/actuator/gatewayroutes`, {
       method: "POST",
       headers: { "content-type": "application/json", ...adminHeaders() },
-      body: JSON.stringify({ id, path, serviceId, order, authenticated, rateLimited }),
+      body: JSON.stringify({ id, path, serviceId, order, authenticated, rateLimited, persist }),
       cache: "no-store"
     });
     if (!res.ok) {
       const detail = await safeMessage(res);
       return { ok: false, message: `Gateway rejected the route (${res.status})${detail ? `: ${detail}` : ""}.` };
     }
+    const body = (await res.json()) as { persistent?: boolean; warning?: string };
     revalidatePath("/");
-    return { ok: true, message: `Route "${id}" registered — live now. Runtime change: it survives until the gateway restarts; add it to the gateway YAML to keep it.` };
+    if (body.warning) {
+      return { ok: true, message: `Route "${id}" registered — live now. ${body.warning}` };
+    }
+    return body.persistent
+      ? { ok: true, message: `Route "${id}" registered permanently — survives a gateway restart.` }
+      : { ok: true, message: `Route "${id}" registered — live now (runtime; tick "keep after restart" to make it durable).` };
   } catch (e) {
     return { ok: false, message: `Can't reach the gateway admin API: ${msg(e)}` };
   }

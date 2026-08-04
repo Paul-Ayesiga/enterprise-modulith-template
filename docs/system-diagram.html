@@ -231,7 +231,7 @@ flowchart TB
         <span class="fail"><span class="pill">extension</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox"><span class="ord">route</span>
-        <span class="what"><b>Route match</b> — <code>RouteCatalog</code>: two tiers in one table — YAML-seeded (durable, git-reviewed) + runtime-registered via <code>gatewayroutes</code> (instant, survives until restart). Most-specific wins by ascending <code>order</code>; 8 API products; <code>platform-api</code> catch-all keeps ungrouped paths working.</span>
+        <span class="what"><b>Route match</b> — <code>RouteCatalog</code>: YAML-seeded (durable, git-reviewed) + runtime-registered via <code>gatewayroutes</code> (instant). A runtime route can be marked <b>durable</b> ("keep after restart") — stored in Valkey and re-applied on every boot over the YAML seed. Most-specific wins by ascending <code>order</code>; 8 API products; <code>platform-api</code> catch-all keeps ungrouped paths working.</span>
         <span class="fail"><span class="pill bad">404</span><span class="pill">in-memory map</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox"><span class="ord">traffic</span>

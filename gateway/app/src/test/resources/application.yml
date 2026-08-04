@@ -17,6 +17,9 @@ management:
 # One backend stub (its uri + the JWKS uri are set per-run to the test server's random port), plus
 # routes for the predicate tests (Phase 1) and the auth-policy tests (Phase 2).
 gateway:
+  persistent-routes:
+    enabled: false
+
   security:
     jwk-set-uri: "${jwks.uri:http://localhost:1/jwks}"   # SecurityTest points this at the stub's JWKS
     tenant-claim: tenant
