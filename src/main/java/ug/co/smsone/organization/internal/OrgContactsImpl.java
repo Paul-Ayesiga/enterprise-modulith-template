@@ -11,18 +11,22 @@ import ug.co.smsone.organization.OrgContacts;
 class OrgContactsImpl implements OrgContacts {
 
     private final MembershipRepository memberships;
+    private final RoleRepository roles;
     private final UserDirectory users;
 
-    OrgContactsImpl(MembershipRepository memberships, UserDirectory users) {
+    OrgContactsImpl(MembershipRepository memberships, RoleRepository roles, UserDirectory users) {
         this.memberships = memberships;
+        this.roles = roles;
         this.users = users;
     }
 
     @Override
     public List<String> ownerEmails(UUID orgId) {
-        List<String> subjects = memberships.findByOrgIdAndRoleCode(orgId, "OWNER").stream()
-                .map(Membership::getUserSubject)
-                .toList();
+        List<String> subjects = roles.findByOrgIdAndCode(orgId, "OWNER")
+                .map(owner -> memberships.findByOrgIdAndRoleId(orgId, owner.getId()).stream()
+                        .map(Membership::getUserSubject)
+                        .toList())
+                .orElse(List.of());
         return subjects.isEmpty() ? List.of()
                 : List.copyOf(users.emailsBySubjects(subjects).values());
     }

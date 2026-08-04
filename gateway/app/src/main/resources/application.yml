@@ -48,6 +48,10 @@ gateway:
     # the uri to turn quota enforcement off.
     quota:
       uri: ${GATEWAY_QUOTA_URI:http://localhost:8080/internal/gateway/quota}
+    # Flush metered per-consumer request counts to the platform's usage ledger (metered billing).
+    # Unset the uri to keep metering edge-local.
+    usage-report:
+      uri: ${GATEWAY_USAGE_URI:http://localhost:8080/internal/gateway/usage-report}
   # Traffic management: the shared token-bucket rate (per caller — principal, else tenant, else IP),
   # the default for any route with rate-limited:true.
   traffic:

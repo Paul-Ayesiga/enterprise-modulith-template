@@ -31,5 +31,5 @@ interface MembershipRepository extends JpaRepository<Membership, UUID>, JpaSpeci
     /** Whether any membership references a role — blocks deleting a role that is still assigned. */
     boolean existsByRoleId(UUID roleId);
 
-    java.util.List<Membership> findByOrgIdAndRoleCode(java.util.UUID orgId, String roleCode);
+    java.util.List<Membership> findByOrgIdAndRoleId(java.util.UUID orgId, java.util.UUID roleId);
 }

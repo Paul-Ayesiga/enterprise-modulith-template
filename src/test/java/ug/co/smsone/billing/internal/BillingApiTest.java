@@ -53,7 +53,7 @@ class BillingApiTest extends AbstractIntegrationTest {
         given(killBill.ensureAccount(any(), anyString())).willReturn(kbAccountId);
         given(killBill.createSubscription(any(), anyString())).willReturn(UUID.randomUUID());
         given(killBill.subscriptions(kbAccountId)).willReturn(
-                List.of(new KillBillGateway.KbSubscription("pro-monthly", "ACTIVE")));
+                List.of(new KillBillGateway.KbSubscription("11111111-1111-1111-1111-111111111111", "pro-monthly", "ACTIVE")));
         given(killBill.accountView(kbAccountId)).willReturn(
                 new KillBillGateway.KbAccountView(kbAccountId, BigDecimal.ZERO, "USD"));
 

@@ -42,6 +42,7 @@ GATEWAY_RUN_ENV = set -a; . $(ENV_FILE); set +a; \
 	GATEWAY_INTROSPECTION_URI=http://localhost:$$MODULITH_PORT/internal/gateway/api-key/introspect \
 	GATEWAY_AUDIT_URI=http://localhost:$$MODULITH_PORT/internal/gateway/audit \
 	GATEWAY_QUOTA_URI=http://localhost:$$MODULITH_PORT/internal/gateway/quota \
+	GATEWAY_USAGE_URI=http://localhost:$$MODULITH_PORT/internal/gateway/usage-report \
 	KEYCLOAK_JWKS=http://localhost:$${KEYCLOAK_PORT:-8081}/realms/smsone/protocol/openid-connect/certs
 
 .DEFAULT_GOAL := help

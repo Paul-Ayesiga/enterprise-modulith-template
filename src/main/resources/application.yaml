@@ -261,6 +261,11 @@ app:
       # Days a subscription may sit PAST_DUE (full access, owners warned) before the nightly job
       # pauses it read-only. Recovery: any successful payment or a plan assignment.
       grace-days: ${BILLING_DUNNING_GRACE_DAYS:7}
+    usage-export:
+      # Metered billing: ship closed days from api_usage_daily to Kill Bill as usage records.
+      # Opt-in — only prices when the KB catalog defines the unit for the org's plan.
+      enabled: ${BILLING_USAGE_EXPORT:false}
+      unit: ${BILLING_USAGE_UNIT:api-requests}
     currency: ${BILLING_CURRENCY:USD}
     # OUR plan code -> Kill Bill catalog plan name. FREE is deliberately unmapped (no money, no KB
     # subscription). Production maps to its uploaded catalog.

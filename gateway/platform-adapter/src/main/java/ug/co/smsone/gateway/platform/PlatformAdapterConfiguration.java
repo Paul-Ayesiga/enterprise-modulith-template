@@ -16,13 +16,19 @@ import ug.co.smsone.gateway.core.security.ApiKeyIntrospector;
  */
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties({PlatformProperties.class, IntrospectionProperties.class,
-        EdgeAuditProperties.class, EdgeQuotaProperties.class})
+        EdgeAuditProperties.class, EdgeQuotaProperties.class, EdgeUsageProperties.class})
 class PlatformAdapterConfiguration {
 
     @Bean
     @ConditionalOnProperty("gateway.platform.introspection.uri")
     ApiKeyIntrospector modulithApiKeyIntrospector(IntrospectionProperties properties, PlatformProperties platform) {
         return new ModulithApiKeyIntrospector(properties.uri(), platform.secret());
+    }
+
+    @Bean
+    @ConditionalOnProperty("gateway.platform.usage-report.uri")
+    ug.co.smsone.gateway.core.usage.UsageSink usageSink(EdgeUsageProperties properties, PlatformProperties platform) {
+        return new ModulithUsageSink(properties.uri(), platform.secret());
     }
 
     @Bean
