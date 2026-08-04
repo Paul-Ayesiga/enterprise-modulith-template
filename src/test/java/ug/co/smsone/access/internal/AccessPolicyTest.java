@@ -23,10 +23,11 @@ import org.springframework.test.web.servlet.MvcResult;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
 /**
- * Devices self-serve and register idempotently; the org security policy enforces its three rules
- * through the REAL filter — an IP outside the allowlist, an over-age token, and a call with no
- * trusted device each get a policy-named 403, while a compliant call passes. Trust is the org's
- * grant, and a policy denial names its rule so it never reads as RBAC.
+ * Devices self-serve and register idempotently; the org security policy enforces its four rules
+ * through the REAL filter — an IP outside the allowlist, an over-age token, a call with no trusted
+ * device, and a single-factor session under require-MFA each get a policy-named 403, while a
+ * compliant call passes. Trust is the org's grant, and a policy denial names its rule so it never
+ * reads as RBAC.
  */
 @AutoConfigureMockMvc
 class AccessPolicyTest extends AbstractIntegrationTest {
@@ -109,6 +110,30 @@ class AccessPolicyTest extends AbstractIntegrationTest {
         assertThat(jdbc.queryForObject(
                 "select count(*) from user_device where fingerprint = 'trusted-fp' and last_seen_at is not null",
                 Integer.class)).isEqualTo(1);
+    }
+
+    @Test
+    void mfaRuleRefusesSingleFactorSessionsButExemptsThePolicyEndpoint() throws Exception {
+        UUID orgId = UUID.randomUUID();
+        seedMember(orgId, "policed-mfa", "ORG_READ", "ORG_UPDATE");
+        setPolicy(orgId, "policed-mfa", "{\"requireTrustedDevice\":false,\"requireMfa\":true}");
+
+        // Single-factor session (no amr claim): refused, naming the rule.
+        mockMvc.perform(get("/api/v1/orgs/{orgId}/subscription", orgId).with(member(orgId, "policed-mfa")))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errors[0].detail", org.hamcrest.Matchers.containsString("mfa")));
+
+        // A session that carried a second factor (amr lists otp) passes.
+        var mfa = jwt().jwt(t -> t.subject("policed-mfa")
+                .claim("amr", java.util.List.of("pwd", "otp"))
+                .claim("organization", Map.of("acme", Map.of("id", orgId.toString()))));
+        mockMvc.perform(get("/api/v1/orgs/{orgId}/subscription", orgId).with(mfa))
+                .andExpect(status().isOk());
+
+        // Recovery hatch: the policy's own surface stays reachable to loosen the rule.
+        mockMvc.perform(get("/api/v1/orgs/{orgId}/security-policy", orgId).with(member(orgId, "policed-mfa")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.attributes.requireMfa").value(true));
     }
 
     private void setPolicy(UUID orgId, String subject, String body) throws Exception {

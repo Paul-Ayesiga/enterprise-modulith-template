@@ -36,6 +36,8 @@ public class IdempotencyStore {
      */
     public Optional<Instant> claim(String principal, String key, String requestHash, Duration lease) {
         Instant now = clock.instant();
+        // PORTING: Postgres UPSERT with a conditional DO UPDATE. On another RDBMS this is a whole-
+        // statement rewrite (Oracle/SQL Server MERGE, MySQL ON DUPLICATE KEY) — see docs/PORTING.md.
         int changed = jdbcTemplate.update("""
                 insert into idempotency_key (principal, idem_key, request_hash, created_at)
                 values (?, ?, ?, ?)

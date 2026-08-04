@@ -21,17 +21,20 @@ System_Boundary("Application_boundary", "Application", $tags="") {
     Component(Application.Application.Exchange, "Exchange", $techn="Module", $descr="", $tags="", $link="")
     Component(Application.Application.Organization, "Organization", $techn="Module", $descr="", $tags="", $link="")
     Component(Application.Application.SharedKernel, "Shared Kernel", $techn="Module", $descr="", $tags="", $link="")
+    Component(Application.Application.Access, "Access", $techn="Module", $descr="", $tags="", $link="")
     Component(Application.Application.Identity, "Identity", $techn="Module", $descr="", $tags="", $link="")
   }
 
 }
 
-Rel(Application.Application.Identity, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
-Rel(Application.Application.Subscription, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Organization, Application.Application.Access, "depends on", $techn="", $tags="", $link="")
 Rel(Application.Application.Organization, Application.Application.Exchange, "depends on", $techn="", $tags="", $link="")
 Rel(Application.Application.Organization, Application.Application.Identity, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Organization, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Organization, Application.Application.Subscription, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Subscription, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Access, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Identity, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Exchange, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Exchange, Application.Application.Subscription, "uses", $techn="", $tags="", $link="")
 

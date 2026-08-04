@@ -1,0 +1,62 @@
+{{- if .Values.backup.enabled }}
+# Nightly logical backup of the app database: pg_dump custom format onto a PVC, pruned by age.
+# Restore procedure (tested BEFORE you need it): docs/runbooks/restore.md. Managed-Postgres
+# snapshots, when available, are the first line; this dump is the portable second line.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: smsone-backups
+  labels:
+    {{- include "smsone.labels" . | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- if .Values.backup.storageClassName }}
+  storageClassName: {{ .Values.backup.storageClassName }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.backup.storage }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: smsone-pg-backup
+  labels:
+    {{- include "smsone.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: pg-dump
+              image: {{ .Values.backup.image }}
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  ts="$(date +%Y%m%d-%H%M%S)"
+                  out="/backups/{{ .Values.postgres.database }}-${ts}.dump"
+                  echo "dumping to ${out}"
+                  pg_dump -h {{ .Values.postgres.host }} -p {{ .Values.postgres.port }} \
+                    -U "${PGUSER}" -d {{ .Values.postgres.database }} -Fc -f "${out}"
+                  echo "pruning dumps older than {{ .Values.backup.retentionDays }} days"
+                  find /backups -name '*.dump' -mtime +{{ .Values.backup.retentionDays }} -delete
+                  ls -lh /backups | tail -5
+              env:
+                - name: PGUSER
+                  valueFrom: { secretKeyRef: { name: {{ .Values.credentials.secretName }}, key: postgres-user } }
+                - name: PGPASSWORD
+                  valueFrom: { secretKeyRef: { name: {{ .Values.credentials.secretName }}, key: postgres-password } }
+              volumeMounts:
+                - { name: backups, mountPath: /backups }
+          volumes:
+            - name: backups
+              persistentVolumeClaim:
+                claimName: smsone-backups
+{{- end }}

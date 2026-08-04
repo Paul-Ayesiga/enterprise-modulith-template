@@ -70,6 +70,9 @@ class SearchQueryService {
 
     private List<SearchHit> run(String mode, UUID orgScope, boolean platformWide, String type,
             String q, Cursor cursor, int limit) {
+        // PORTING: native Postgres full-text search (websearch_to_tsquery / ts_rank_cd) + pg_trgm
+        // word_similarity fallback. No portable equivalent — a non-Postgres product swaps the search
+        // adapter for an external engine (OpenSearch/Elasticsearch). See docs/PORTING.md.
         boolean fts = MODE_FTS.equals(mode);
         // Params are appended in the placeholders' TEXTUAL order — JDBC binds positionally, and the
         // two modes differ: FTS's first ? is the tsquery in the FROM clause; trigram's is the

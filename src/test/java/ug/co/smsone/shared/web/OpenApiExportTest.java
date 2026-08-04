@@ -13,7 +13,8 @@ import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRe
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
 /**
- * Exports the OpenAPI 3.1 spec to docs/openapi/ (committed, Postman-importable) and doubles as the
+ * Exports the OpenAPI 3.0.1 spec to docs/openapi/ (committed; imports into Postman AND stricter
+ * clients like HTTPie, which reject 3.1) and doubles as the
  * API-contract smoke check. Runs in the normal build and via {@code ./gradlew exportOpenApi}.
  */
 @Tag("openapi-export")
@@ -31,7 +32,7 @@ class OpenApiExportTest extends AbstractIntegrationTest {
         String yaml = restTemplate.getForObject("/v3/api-docs.yaml", String.class);
         String json = restTemplate.getForObject("/v3/api-docs", String.class);
 
-        assertThat(yaml).isNotBlank().contains("openapi: 3.1");
+        assertThat(yaml).isNotBlank().contains("openapi: 3.0.1"); // 3.1 breaks HTTPie-class importers
         assertThat(json).isNotBlank().contains("\"openapi\"");
         assertThat(yaml).contains("bearerAuth").contains("keycloak");
 

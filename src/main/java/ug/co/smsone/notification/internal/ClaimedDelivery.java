@@ -13,5 +13,5 @@ import ug.co.smsone.notification.NotificationChannel;
  * deferred by its channel's provider rate limit.
  */
 record ClaimedDelivery(UUID id, NotificationChannel channel, String recipient, String subject,
-        String body, int attempts, int maxAttempts, Instant createdAt, Instant throttledSince) {
+        String body, UUID orgId, int attempts, int maxAttempts, Instant createdAt, Instant throttledSince) {
 }

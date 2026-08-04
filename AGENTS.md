@@ -300,8 +300,8 @@ step by step; copy that reasoning, not just the shape.
 
 ### 4.5 Migrations
 
-- `src/main/resources/db/migration/V<n>__<snake_name>.sql`. **V39 is taken; the next free number is
-  V40.** Never edit an applied migration; never renumber.
+- `src/main/resources/db/migration/V<n>__<snake_name>.sql`. **V46 is taken; the next free number is
+  V47.** Never edit an applied migration; never renumber.
 - `ddl-auto: validate`. The schema is the migration's job, always.
 - Head the file with a comment explaining the *decision*, not the statements — `V17__soft_delete.sql`
   and `V11__organization_rbac.sql` are the reference voice.
@@ -312,9 +312,30 @@ step by step; copy that reasoning, not just the shape.
   selective — `where deleted_at is not null` for retention scans (live rows are the majority and
   would be dead weight on every write).
 
----
+### 4.6 Zero-downtime: expand-contract
 
-## 5. Security
+Production deploys are rolling: for a window, the **previous** application version runs against the
+**new** schema — and a rollback re-lengthens that window. Every migration must therefore be
+**expand-contract**, and rollback must never need a down-migration (we do not write them):
+
+- **Expand (ship N):** additive only — new tables, new *nullable* columns (or `not null` with a
+  `default`, which Postgres 11+ applies without a table rewrite), new indexes. The old code must run
+  unchanged against the expanded schema. Everything through V46 is expand-shaped; keep it that way.
+- **Migrate (ship N or a job):** code writes both old and new shapes / backfills. Backfills that
+  touch big tables run batched (`update ... where id in (select ... limit 10000)` in a loop, or a
+  ShedLock job), never one statement holding a lock across millions of rows.
+- **Contract (ship N+1, at the earliest):** only after no running version reads the old shape may a
+  migration drop/rename/add-strict-constraint. Renames are always add-new + migrate + drop-old —
+  `alter table ... rename` is a contract step wearing an expand costume, and it breaks version N−1
+  instantly.
+- Forbidden in a single release: rename column/table used by live code; add `not null` without
+  default to a written table; change a column's type in place; drop anything the previous version
+  still selects. Each of these is fine as the *contract* half a release later.
+- Locks: `create index concurrently` cannot run inside Flyway's transaction — index-only migrations
+  on hot tables set `-- flyway:executeInTransaction=false` in the header. Adding a FK to a big
+  table uses `not valid` + `validate constraint` (two statements, short locks).
+- The safety net is real, not aspirational: this is why the http-5xx runbook can say "roll back
+  first, diagnose second" — the previous image always runs against the current schema.
 
 ### 5.1 Two disjoint authorization axes
 
@@ -659,6 +680,14 @@ Run top to bottom on every change.
 - [ ] No new `ErrorCode` renames; additions only.
 - [ ] New collection endpoint: stable unique `Sort`, `page.scrollPosition(SORT)`, no totals/offset.
 - [ ] Caller-supplied outbound URL passes `SafeOutboundUrl`.
+
+**Documentation (MUST — no exceptions)**
+- [ ] Any change to the API surface (new/changed endpoint, parameter, permission, error code,
+      provider, or behavior a caller can observe) updates **`docs/api-guide.html`** in the same
+      change-set. The guide is self-indexing — nav, "On this page", and search all generate from
+      the content — so adding/editing the `.ep` blocks in the right Part section is the whole job.
+- [ ] Architecture-level changes (a new module, store, filter, gateway stage, integration, or
+      delivery flow) update **`docs/system-diagram.html`** the same way.
 
 **Data**
 - [ ] Correct base class (`BaseEntity` / `AggregateRoot` / `SoftDeletableEntity`).

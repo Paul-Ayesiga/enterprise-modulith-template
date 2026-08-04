@@ -27,7 +27,8 @@ class SupportNotifier {
     void ticketReplied(Ticket ticket) {
         notifications.dispatch(new NotificationRequest(
                 "Reply on your support ticket", "Support replied to your ticket: " + ticket.getSubject(),
-                List.of(new Recipient(NotificationChannel.IN_APP, ticket.getOpenerSubject())), Map.of()));
+                List.of(new Recipient(NotificationChannel.IN_APP, ticket.getOpenerSubject())),
+                Map.of("orgId", ticket.getOrgId().toString())));
     }
 
     void ticketEscalated(Ticket ticket) {

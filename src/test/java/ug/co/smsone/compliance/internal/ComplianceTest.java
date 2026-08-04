@@ -1,6 +1,7 @@
 package ug.co.smsone.compliance.internal;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.BDDMockito.given;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -15,7 +16,9 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import ug.co.smsone.shared.security.PlatformAdmins;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
 /**
@@ -32,6 +35,10 @@ class ComplianceTest extends AbstractIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbc;
+
+    // The role data lives in Keycloak; stub the port so the guard's refusal is tested without a live IdP.
+    @MockitoBean
+    private PlatformAdmins platformAdmins;
 
     @Test
     void consentIsAppendOnlyAndErasureSoftDeletes() throws Exception {
@@ -76,6 +83,20 @@ class ComplianceTest extends AbstractIntegrationTest {
         assertThat(jdbc.queryForObject(
                 "select count(*) from app_user where subject = ? and deleted_at is null",
                 Integer.class, subject)).isEqualTo(1);
+    }
+
+    @Test
+    void erasingTheLastPlatformSuperAdminIsRefused() throws Exception {
+        String subject = "super-" + UUID.randomUUID();
+        seedUser(subject);
+        given(platformAdmins.isSoleSuperAdmin(subject)).willReturn(true);
+
+        mockMvc.perform(post("/api/v1/me/erasure-request").with(jwt().jwt(t -> t.subject(subject))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.attributes.status").value("REFUSED"));
+        assertThat(jdbc.queryForObject(
+                "select count(*) from app_user where subject = ? and deleted_at is null",
+                Integer.class, subject)).as("the last super-admin must not be erased").isEqualTo(1);
     }
 
     private static org.springframework.test.web.servlet.request.RequestPostProcessor admin() {

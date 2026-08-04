@@ -35,7 +35,7 @@ class KillBillGateway {
         this.properties = properties;
     }
 
-    record KbSubscription(String planName, String state) {
+    record KbSubscription(String subscriptionId, String planName, String state) {
     }
 
     record KbInvoice(String invoiceId, String invoiceNumber, BigDecimal amount, BigDecimal balance,
@@ -67,6 +67,27 @@ class KillBillGateway {
             // Lost a create race: the winner's account is the account.
             return findAccountByExternalKey(orgId).orElseThrow(() -> conflict);
         }
+    }
+
+    /**
+     * Push one day's metered usage onto a KB subscription. {@code trackingId} is the idempotency
+     * key — Kill Bill silently ignores a duplicate, so a re-exported day can never double-bill.
+     * The subscription's plan must define {@code unitType} in its catalog for rating to price it.
+     */
+    void recordUsage(UUID subscriptionId, String unitType, java.time.LocalDate date, long amount, String trackingId) {
+        killBill.post()
+                .uri("/1.0/kb/usages")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of(
+                        "subscriptionId", subscriptionId,
+                        "trackingId", trackingId,
+                        "unitUsageRecords", List.of(Map.of(
+                                "unitType", unitType,
+                                "usageRecords", List.of(Map.of(
+                                        "recordDate", date.toString(),
+                                        "amount", amount))))))
+                .retrieve()
+                .toBodilessEntity();
     }
 
     Optional<UUID> findAccountByExternalKey(UUID orgId) {
@@ -119,6 +140,7 @@ class KillBillGateway {
                 for (Object sub : subs) {
                     if (sub instanceof Map<?, ?> s) {
                         result.add(new KbSubscription(
+                                String.valueOf(s.get("subscriptionId")),
                                 String.valueOf(s.get("planName")), String.valueOf(s.get("state"))));
                     }
                 }

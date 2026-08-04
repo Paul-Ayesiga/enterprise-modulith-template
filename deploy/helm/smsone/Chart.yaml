@@ -1,0 +1,6 @@
+apiVersion: v2
+name: smsone
+description: SMSOne platform — modulith API, edge gateway, portals, Keycloak (prod mode), backups
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

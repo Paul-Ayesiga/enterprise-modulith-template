@@ -1,0 +1,10 @@
+# dependencies / build output — never committed
+/node_modules
+/.next
+/out
+next-env.d.ts
+
+# misc
+*.tsbuildinfo
+.DS_Store
+.env*.local

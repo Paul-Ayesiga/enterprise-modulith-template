@@ -34,9 +34,12 @@ class NotificationService implements Notifications {
         if (request.recipients().isEmpty()) {
             return;
         }
+        // The org context (metadata "orgId") rides each row so channel senders can resolve the
+        // org's own integration choice (e.g. WHICH SMS provider) at send time.
+        java.util.UUID orgId = parseOrgId(request.metadata().get("orgId"));
         List<NewDelivery> deliveries = request.recipients().stream()
                 .map(recipient -> new NewDelivery(recipient.channel(), recipient.address(),
-                        request.subject(), request.body()))
+                        request.subject(), request.body(), orgId))
                 .toList();
         queue.enqueue(deliveries, properties.delivery().maxAttempts());
     }
@@ -56,5 +59,16 @@ class NotificationService implements Notifications {
             return;
         }
         dispatch(new NotificationRequest(subject, body, recipients, Map.of()));
+    }
+
+    private static java.util.UUID parseOrgId(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return java.util.UUID.fromString(value.trim());
+        } catch (IllegalArgumentException ex) {
+            return null; // metadata is caller-supplied — a bad id degrades to platform-default routing
+        }
     }
 }

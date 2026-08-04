@@ -26,10 +26,14 @@ import ug.co.smsone.shared.web.ResourceObject;
 @RequestMapping("/api/v1/admin/compliance")
 class AdminComplianceController {
 
+    // -- org export (tenant offboarding) --
+    private final OrgExportService orgExport;
+
     private final ComplianceService compliance;
 
-    AdminComplianceController(ComplianceService compliance) {
+    AdminComplianceController(ComplianceService compliance, OrgExportService orgExport) {
         this.compliance = compliance;
+        this.orgExport = orgExport;
     }
 
     record SubjectHoldRequest(String subject, String reason) {
@@ -93,5 +97,17 @@ class AdminComplianceController {
         return new ResourceObject(erasure.getId().toString(), "erasure-request",
                 Map.of("status", erasure.getStatus(),
                         "detail", erasure.getDetail() == null ? "" : erasure.getDetail()));
+    }
+
+    @org.springframework.web.bind.annotation.GetMapping("/orgs/{orgId}/export")
+    @io.swagger.v3.oas.annotations.Operation(summary = "Export one organization's records (offboarding bundle)",
+            description = """
+                    A JSON bundle of the organization's rows across every org-owned table — membership, \
+                    roles, subscription, integrations, webhooks, payments, usage, tickets, audit (capped \
+                    per table; the cap is stated in the payload). Secret-bearing columns never leave the \
+                    database. Audited as compliance.org_exported.""")
+    @PreAuthorize("hasRole('platform-admin')")
+    ug.co.smsone.shared.web.ResourceObject exportOrg(@org.springframework.web.bind.annotation.PathVariable java.util.UUID orgId) {
+        return new ug.co.smsone.shared.web.ResourceObject(orgId.toString(), "org-export", orgExport.export(orgId));
     }
 }

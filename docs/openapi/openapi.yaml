@@ -1,4 +1,4 @@
-openapi: 3.1.0
+openapi: 3.0.1
 info:
   title: SMSOne Enterprise API
   description: |-
@@ -75,6 +75,11 @@ tags:
     \ org's subscription. Reading is platform-support; assigning a plan is platform-admin,\
     \ audited, and bites the very next entitlement gate. A tenant reads its own state\
     \ under Organization · Profile's surface."
+- name: Platform · Billing accounts
+  description: "One org's window into the Kill Bill side: link its account, start\
+    \ a billed subscription, read balance and invoices. The catalogue and the entitlement\
+    \ authority stay in Platform · Billing & plans - money records here, access decisions\
+    \ there."
 - name: Platform · Ops
   description: "Running the platform: scheduler lock state (proof that clustered jobs\
     \ fire once), the curated analytics reports, and the cross-tenant audit trail.\
@@ -163,6 +168,11 @@ tags:
   description: Fixed vocabularies any authenticated caller may read — today the permission
     catalogue that Organization · Roles is composed from. A new shared read lands
     here until it earns a group of its own.
+- name: Shared · Sign-up
+  description: "Self-service organization creation, off unless SIGNUP_ENABLED: request\
+    \ a verification e-mail (always 202 - enumeration-safe), then redeem the single-use\
+    \ token to mint the org and its first OWNER. The only unauthenticated write surface,\
+    \ and deliberately this small."
 - name: Shared · Exchange catalog
   description: "The exchange handler catalogue and its downloadable templates — which\
     \ datasets can move, what each file must look like, which permissions gate it.\
@@ -568,8 +578,10 @@ paths:
       summary: Set the organization's security policy
       description: Every field TIGHTENS access. `ipAllowlist` is comma-joined CIDRs
         (blank clears it); `requireTrustedDevice` needs an org-blessed `X-Device-Id`;
-        `sessionMaxAgeSeconds` refuses tokens older than it for this org. A denial
-        is a 403 naming the rule.
+        `sessionMaxAgeSeconds` refuses tokens older than it for this org; `requireMfa`
+        refuses human sessions whose token carries no multi-factor `amr` claim (API
+        keys are machine credentials and exempt) and enrolls new invitees in TOTP.
+        A denial is a 403 naming the rule.
       operationId: set
       parameters:
       - name: orgId
@@ -1158,8 +1170,9 @@ paths:
       - Platform · Settings & flags
       summary: Create or toggle a feature flag
       description: "Upsert: a key that does not exist yet is created rather than rejected,\
-        \ so there is no separate create call. Flags are global — there is no per-organization\
-        \ override."
+        \ so there is no separate create call. `percentage` (0-100, optional) turns\
+        \ an enabled flag into a gradual rollout bucketed per organization; per-org\
+        \ overrides beat both."
       operationId: set_1
       parameters:
       - name: key
@@ -1196,6 +1209,136 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/feature-flags/{key}/orgs/{orgId}:
+    get:
+      tags:
+      - Shared · Settings & flags
+      summary: Evaluate a flag for one organization
+      description: "The effective answer this org gets: org override, else percentage\
+        \ bucket, else the global value. Unknown flags evaluate to false, never an\
+        \ error."
+      operationId: effective
+      parameters:
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+    put:
+      tags:
+      - Platform · Settings & flags
+      summary: Set a per-org override for a flag
+      description: "Pins the flag hard ON or OFF for one organization, beating the\
+        \ global value and any percentage rollout. The flag must already exist. Platform-admin\
+        \ only."
+      operationId: setOrgOverride
+      parameters:
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrgOverrideRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+    delete:
+      tags:
+      - Platform · Settings & flags
+      summary: Clear a per-org override
+      description: The organization falls back to the global value / percentage rollout.
+      operationId: clearOrgOverride
+      parameters:
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "204":
+          description: No Content
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
   /api/v1/admin/tickets/{id}/status:
     put:
       tags:
@@ -1228,6 +1371,62 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/plans/{code}:
+    put:
+      tags:
+      - Platform · Billing & plans
+      summary: Update a plan
+      description: "Replaces the name, rank, and entitlements of an existing plan\
+        \ (its `code` is the identity and cannot change). Editing entitlements re-gates\
+        \ every org on the plan on the next check. platform-admin; audited."
+      operationId: updatePlan
+      parameters:
+      - name: code
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePlanRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+    delete:
+      tags:
+      - Platform · Billing & plans
+      summary: Delete a plan
+      description: Removes a plan from the catalog. Refused (409) for the FREE fallback
+        or a plan assigned to any organization. platform-admin; audited.
+      operationId: deletePlan
+      parameters:
+      - name: code
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: No Content
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
   /api/v1/admin/orgs/{orgId}/subscription:
     get:
       tags:
@@ -1465,6 +1664,121 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/signup:
+    post:
+      tags:
+      - Shared · Sign-up
+      summary: Start a self-service signup
+      description: Sends a verification email for creating a new organization. Always
+        answers 202 with the same message whether or not the address is known anywhere
+        — the email is the only channel that learns more. The link is single-use and
+        expires; a new request supersedes a pending one for the same address. Disabled
+        platforms answer 403 (SIGNUP_ENABLED).
+      operationId: request
+      parameters:
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignupBody"
+        required: true
+      responses:
+        "202":
+          description: Accepted
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+  /api/v1/signup/verify:
+    get:
+      tags:
+      - Shared · Sign-up
+      summary: Complete a signup from the emailed link
+      description: "Spends the single-use token: the organization is created through\
+        \ the standard provisioning path — the owner receives the set-password invite,\
+        \ the trial (when enabled) starts, and billing auto-provisions. Invalid, spent,\
+        \ and expired tokens all answer the same 422."
+      operationId: verifyGet
+      parameters:
+      - name: token
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+    post:
+      tags:
+      - Shared · Sign-up
+      summary: Complete a signup (programmatic form)
+      operationId: verifyPost
+      parameters:
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerifyBody"
+        required: true
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/orgs:
     post:
       tags:
@@ -1524,11 +1838,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -1604,6 +1918,52 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}/webhooks/{id}/rotate-secret:
+    post:
+      tags:
+      - Organization · Webhooks
+      summary: Rotate the signing secret
+      description: "Mints a replacement secret, returned in full exactly once — the\
+        \ old secret stops verifying immediately. Deploy the new secret to your receiver\
+        \ BEFORE rotating, or deliveries in between will fail signature checks (they\
+        \ retry with backoff, so a quick swap loses nothing)."
+      operationId: rotateSecret
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/orgs/{orgId}/tickets:
     get:
       tags:
@@ -1622,11 +1982,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -1902,11 +2262,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -2019,6 +2379,56 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}/payments:
+    post:
+      tags:
+      - Organization · Billing
+      summary: Initiate a payment collection
+      description: "Starts a collection. `provider` is optional — omitted, the organization's\
+        \ configured PAYMENT_GATEWAY integration (org override, else platform default)\
+        \ names the gateway. Explicit values: `pesapal` (hosted page — send the payer\
+        \ to the returned `redirectUrl`; card + mobile money) or `yo-uganda` (a mobile-money\
+        \ approval prompt is pushed to `phoneNumber` — no redirect). Whether it runs\
+        \ against the sandbox or live money is the gateway's configured `mode`, echoed\
+        \ on the resource. The outcome converges from the gateway (IPN / on-read refresh)\
+        \ — poll the GET until the status is terminal."
+      operationId: initiate
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InitiatePaymentRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/orgs/{orgId}/members:
     get:
       tags:
@@ -2037,11 +2447,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -2182,11 +2592,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -2327,11 +2737,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -2509,13 +2919,13 @@ paths:
         content:
           application/json:
             schema:
+              required:
+              - file
               type: object
               properties:
                 file:
                   type: string
                   format: binary
-              required:
-              - file
       responses:
         "202":
           description: Accepted
@@ -2596,11 +3006,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -2665,13 +3075,13 @@ paths:
         content:
           application/json:
             schema:
+              required:
+              - file
               type: object
               properties:
                 file:
                   type: string
                   format: binary
-              required:
-              - file
       responses:
         "201":
           description: Created
@@ -2787,11 +3197,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -3003,11 +3413,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -3216,13 +3626,13 @@ paths:
         content:
           application/json:
             schema:
+              required:
+              - file
               type: object
               properties:
                 file:
                   type: string
                   format: binary
-              required:
-              - file
       responses:
         "201":
           description: Created
@@ -3297,13 +3707,13 @@ paths:
         content:
           application/json:
             schema:
+              required:
+              - file
               type: object
               properties:
                 file:
                   type: string
                   format: binary
-              required:
-              - file
       responses:
         "201":
           description: Created
@@ -3380,11 +3790,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -3440,13 +3850,13 @@ paths:
         content:
           application/json:
             schema:
+              required:
+              - file
               type: object
               properties:
                 file:
                   type: string
                   format: binary
-              required:
-              - file
       responses:
         "201":
           description: Created
@@ -3558,6 +3968,56 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/plans:
+    get:
+      tags:
+      - Platform · Billing & plans
+      summary: List the plan catalog
+      description: "Rank-ordered. `entitlements` encoding: `-1` = feature on, a positive\
+        \ number = a cap, an absent key = off / unlimited."
+      operationId: plans
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceObject"
+    post:
+      tags:
+      - Platform · Billing & plans
+      summary: Create a plan
+      description: "Adds a plan to the catalog. `entitlements`: send `null` (or `-1`)\
+        \ for feature-on, a positive number for a cap, omit the key for off / unlimited;\
+        \ unknown keys are refused. platform-admin; audited."
+      operationId: createPlan
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePlanRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/admin/orgs/{orgId}/subscription/trial:
     post:
       tags:
@@ -3598,7 +4058,7 @@ paths:
   /api/v1/admin/orgs/{orgId}/billing/subscription:
     post:
       tags:
-      - Platform · Billing & plans
+      - Platform · Billing accounts
       summary: Put a tenant on a billable plan
       description: Creates the Kill Bill subscription for the mapped catalog plan
         and reconciles entitlements immediately (the push notification converges the
@@ -3634,7 +4094,7 @@ paths:
   /api/v1/admin/orgs/{orgId}/billing/account:
     post:
       tags:
-      - Platform · Billing & plans
+      - Platform · Billing accounts
       summary: Provision a tenant's Kill Bill account
       description: Creates (or resolves — idempotent by `externalKey` = org id) the
         Kill Bill account and records the linkage. A tenant needs one before any billable
@@ -3756,11 +4216,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -3918,11 +4378,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -4099,11 +4559,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -4146,11 +4606,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -4280,11 +4740,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -4427,11 +4887,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -4462,6 +4922,48 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/WindowedResultResourceObject"
+  /api/v1/orgs/{orgId}/payments/{id}:
+    get:
+      tags:
+      - Organization · Billing
+      summary: Read a payment (refreshes a PENDING one from its gateway)
+      operationId: get_10
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/orgs/{orgId}/maintenance:
     get:
       tags:
@@ -4512,7 +5014,7 @@ paths:
       tags:
       - Organization · Groups
       summary: Get one group with its members
-      operationId: get_10
+      operationId: get_11
       parameters:
       - name: orgId
         in: path
@@ -4604,11 +5106,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -4644,7 +5146,7 @@ paths:
       tags:
       - Organization · Exchange
       summary: Get one exchange job with its progress
-      operationId: get_11
+      operationId: get_12
       parameters:
       - name: orgId
         in: path
@@ -4926,11 +5428,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -4973,11 +5475,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -5157,7 +5659,8 @@ paths:
             '*/*':
               schema:
                 type: object
-                additionalProperties: {}
+                additionalProperties:
+                  type: object
   /api/v1/files/{key}:
     get:
       tags:
@@ -5244,11 +5747,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -5472,11 +5975,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -5589,11 +6092,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -5656,11 +6159,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -5699,11 +6202,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -5729,7 +6232,7 @@ paths:
       tags:
       - Platform · Support queue
       summary: Get one ticket (any org)
-      operationId: get_12
+      operationId: get_13
       parameters:
       - name: id
         in: path
@@ -5780,11 +6283,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -5805,29 +6308,6 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/WindowedResultResourceObject"
-  /api/v1/admin/plans:
-    get:
-      tags:
-      - Platform · Billing & plans
-      summary: List the plan catalog
-      description: "Seeded vocabulary, rank-ordered. `entitlements` uses the module's\
-        \ encoding: null value = feature on, number = cap, absent key = off/unlimited."
-      operationId: plans
-      responses:
-        "200":
-          description: OK
-          headers:
-            X-Request-Id:
-              description: "Public request id (accepted inbound, else minted as a\
-                \ ULID)."
-              schema:
-                type: string
-          content:
-            '*/*':
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/ResourceObject"
   /api/v1/admin/orgs:
     get:
       tags:
@@ -5846,11 +6326,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -5876,7 +6356,7 @@ paths:
       tags:
       - Platform · Organizations
       summary: Inspect one organization as the platform
-      operationId: get_13
+      operationId: get_14
       parameters:
       - name: orgId
         in: path
@@ -6000,11 +6480,11 @@ paths:
         description: "Items per page, 1–100. Defaults to 20."
         required: false
         schema:
+          maximum: 100
+          minimum: 1
           type: integer
           format: int32
           default: 20
-          maximum: 100
-          minimum: 1
       - name: "page[after]"
         in: query
         description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
@@ -6028,7 +6508,7 @@ paths:
   /api/v1/admin/orgs/{orgId}/billing:
     get:
       tags:
-      - Platform · Billing & plans
+      - Platform · Billing accounts
       summary: Inspect a tenant's billing state
       description: "Balance and live Kill Bill subscriptions, read straight from Kill\
         \ Bill."
@@ -6056,7 +6536,7 @@ paths:
   /api/v1/admin/orgs/{orgId}/billing/invoices:
     get:
       tags:
-      - Platform · Billing & plans
+      - Platform · Billing accounts
       summary: List a tenant's invoices
       description: "Proxied from Kill Bill, un-paged — the billing UI of record is\
         \ Kaui."
@@ -6083,6 +6563,36 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/compliance/orgs/{orgId}/export:
+    get:
+      tags:
+      - Platform · Compliance
+      summary: Export one organization's records (offboarding bundle)
+      description: "A JSON bundle of the organization's rows across every org-owned\
+        \ table — membership, roles, subscription, integrations, webhooks, payments,\
+        \ usage, tickets, audit (capped per table; the cap is stated in the payload).\
+        \ Secret-bearing columns never leave the database. Audited as compliance.org_exported."
+      operationId: exportOrg
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/admin/compliance/legal-holds:
     get:
       tags:
@@ -6511,13 +7021,13 @@ paths:
 components:
   schemas:
     UpsertTranslationRequest:
+      required:
+      - value
       type: object
       properties:
         value:
-          type: string
           minLength: 1
-      required:
-      - value
+          type: string
     ResourceObject:
       type: object
       properties:
@@ -6525,24 +7035,30 @@ components:
           type: string
         type:
           type: string
-        attributes: {}
+        attributes:
+          type: object
     UpsertSettingRequest:
+      required:
+      - value
       type: object
       properties:
         value:
-          type: string
           minLength: 1
+          type: string
         description:
           type: string
-      required:
-      - value
     UpdateWebhookRequest:
+      required:
+      - events
+      - url
       type: object
       properties:
         url:
-          type: string
           minLength: 1
+          type: string
         events:
+          minItems: 1
+          uniqueItems: true
           type: array
           items:
             type: string
@@ -6557,13 +7073,8 @@ components:
             - org.subscription_changed
             - org.exchange.job_completed
             - org.ticket.escalated
-          minItems: 1
-          uniqueItems: true
         status:
           type: string
-      required:
-      - events
-      - url
     PolicyRequest:
       type: object
       properties:
@@ -6574,32 +7085,34 @@ components:
         sessionMaxAgeSeconds:
           type: integer
           format: int64
+        requireMfa:
+          type: boolean
     UpdateRoleRequest:
-      type: object
-      properties:
-        name:
-          type: string
-          maxLength: 120
-          minLength: 0
-        description:
-          type: string
-        permissions:
-          type: array
-          items:
-            type: string
-          minItems: 1
-          uniqueItems: true
       required:
       - name
       - permissions
+      type: object
+      properties:
+        name:
+          maxLength: 120
+          minLength: 0
+          type: string
+        description:
+          type: string
+        permissions:
+          minItems: 1
+          uniqueItems: true
+          type: array
+          items:
+            type: string
     AssignRoleRequest:
+      required:
+      - roleCode
       type: object
       properties:
         roleCode:
-          type: string
           minLength: 1
-      required:
-      - roleCode
+          type: string
     UpsertRequest:
       type: object
       properties:
@@ -6654,10 +7167,10 @@ components:
         email:
           type: string
         roles:
+          uniqueItems: true
           type: array
           items:
             type: string
-          uniqueItems: true
         activeOrgAlias:
           type: string
         activeOrgId:
@@ -6676,19 +7189,48 @@ components:
         actorSubject:
           type: string
     ToggleFeatureFlagRequest:
+      required:
+      - enabled
       type: object
       properties:
         enabled:
           type: boolean
         description:
           type: string
+        percentage:
+          maximum: 100
+          minimum: 0
+          type: integer
+          format: int32
+    OrgOverrideRequest:
       required:
       - enabled
+      type: object
+      properties:
+        enabled:
+          type: boolean
     StatusRequest:
       type: object
       properties:
         status:
           type: string
+    UpdatePlanRequest:
+      required:
+      - name
+      type: object
+      properties:
+        name:
+          maxLength: 100
+          minLength: 0
+          type: string
+        rank:
+          type: integer
+          format: int32
+        entitlements:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
     AssignRequest:
       type: object
       properties:
@@ -6709,37 +7251,66 @@ components:
         days:
           type: integer
           format: int32
-    CreateOrganizationRequest:
+    SignupBody:
+      required:
+      - email
+      - organizationName
       type: object
       properties:
-        alias:
-          type: string
-          maxLength: 120
-          minLength: 0
-          pattern: "^[a-z0-9][a-z0-9-]{0,118}[a-z0-9]$"
-        name:
-          type: string
-          maxLength: 200
-          minLength: 0
-        ownerEmail:
-          type: string
-          format: email
+        organizationName:
           minLength: 1
-        ownerFirstName:
           type: string
-        ownerLastName:
+        email:
+          minLength: 1
           type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+    VerifyBody:
+      required:
+      - token
+      type: object
+      properties:
+        token:
+          minLength: 1
+          type: string
+    CreateOrganizationRequest:
       required:
       - alias
       - name
       - ownerEmail
+      type: object
+      properties:
+        alias:
+          maxLength: 120
+          minLength: 0
+          pattern: "^[a-z0-9][a-z0-9-]{0,118}[a-z0-9]$"
+          type: string
+        name:
+          maxLength: 200
+          minLength: 0
+          type: string
+        ownerEmail:
+          minLength: 1
+          type: string
+          format: email
+        ownerFirstName:
+          type: string
+        ownerLastName:
+          type: string
     CreateWebhookRequest:
+      required:
+      - events
+      - url
       type: object
       properties:
         url:
-          type: string
           minLength: 1
+          type: string
         events:
+          minItems: 1
+          uniqueItems: true
           type: array
           items:
             type: string
@@ -6754,11 +7325,6 @@ components:
             - org.subscription_changed
             - org.exchange.job_completed
             - org.ticket.escalated
-          minItems: 1
-          uniqueItems: true
-      required:
-      - events
-      - url
     OpenRequest:
       type: object
       properties:
@@ -6783,46 +7349,67 @@ components:
         trusted:
           type: boolean
     CreateRoleRequest:
-      type: object
-      properties:
-        code:
-          type: string
-          maxLength: 64
-          minLength: 0
-          pattern: "^[A-Za-z][A-Za-z0-9_]{1,62}$"
-        name:
-          type: string
-          maxLength: 120
-          minLength: 0
-        description:
-          type: string
-        permissions:
-          type: array
-          items:
-            type: string
-          minItems: 1
-          uniqueItems: true
       required:
       - code
       - name
       - permissions
+      type: object
+      properties:
+        code:
+          maxLength: 64
+          minLength: 0
+          pattern: "^[A-Za-z][A-Za-z0-9_]{1,62}$"
+          type: string
+        name:
+          maxLength: 120
+          minLength: 0
+          type: string
+        description:
+          type: string
+        permissions:
+          minItems: 1
+          uniqueItems: true
+          type: array
+          items:
+            type: string
+    InitiatePaymentRequest:
+      required:
+      - amount
+      - currency
+      - description
+      type: object
+      properties:
+        provider:
+          type: string
+        amount:
+          type: number
+        currency:
+          minLength: 1
+          type: string
+        description:
+          minLength: 1
+          type: string
+        phoneNumber:
+          type: string
+        email:
+          type: string
     InviteMemberRequest:
+      required:
+      - email
+      - roleCode
       type: object
       properties:
         email:
+          minLength: 1
           type: string
           format: email
-          minLength: 1
         firstName:
           type: string
         lastName:
           type: string
         roleCode:
-          type: string
           minLength: 1
-      required:
-      - email
-      - roleCode
+          type: string
     CreateRequest:
       type: object
       properties:
@@ -6851,7 +7438,8 @@ components:
           type: boolean
         pluginProperties:
           type: object
-          additionalProperties: {}
+          additionalProperties:
+            type: object
     RegisterRequest:
       type: object
       properties:
@@ -6873,17 +7461,39 @@ components:
         source:
           type: string
     PresignRequest:
+      required:
+      - operation
       type: object
       properties:
         operation:
-          type: string
           minLength: 1
+          type: string
         key:
           type: string
         contentType:
           type: string
+    CreatePlanRequest:
       required:
-      - operation
+      - code
+      - name
+      type: object
+      properties:
+        code:
+          maxLength: 30
+          minLength: 0
+          type: string
+        name:
+          maxLength: 100
+          minLength: 0
+          type: string
+        rank:
+          type: integer
+          format: int32
+        entitlements:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
     TrialRequest:
       type: object
       properties:
@@ -6913,24 +7523,24 @@ components:
         message:
           type: string
     OpenImpersonationRequest:
+      required:
+      - reason
+      - targetSubject
       type: object
       properties:
         targetSubject:
-          type: string
           minLength: 1
+          type: string
         orgId:
           type: string
           format: uuid
         reason:
-          type: string
           minLength: 1
+          type: string
         mode:
           type: string
         ttl:
           type: string
-      required:
-      - reason
-      - targetSubject
     SubjectHoldRequest:
       type: object
       properties:
@@ -6951,14 +7561,14 @@ components:
         subject:
           type: string
     UpdateOrganizationRequest:
+      required:
+      - name
       type: object
       properties:
         name:
-          type: string
           maxLength: 200
           minLength: 0
-      required:
-      - name
+          type: string
     PageMeta:
       type: object
       properties:

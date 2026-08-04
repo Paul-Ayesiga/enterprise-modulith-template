@@ -20,14 +20,21 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.7.0
-    command: ["start-dev", "--import-realm"]
+    # The --spi-theme-* flags disable theme caching so edits under docker/keycloak/themes
+    # show on refresh (dev loop); production serves themes cached.
+    command: ["start-dev", "--import-realm",
+              "--spi-theme-static-max-age=-1", "--spi-theme-cache-themes=false", "--spi-theme-cache-templates=false"]
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:-admin}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      # Substituted into realm-smsone.json's displayName at import — the brand name the
+      # smsone login/email theme renders everywhere (realm.displayName / realmName).
+      BRAND_NAME: ${BRAND_NAME:-SMSONE}
     ports:
       - "${KEYCLOAK_PORT:-8081}:8080"
     volumes:
       - ./keycloak:/opt/keycloak/data/import:ro
+      - ./keycloak/themes:/opt/keycloak/themes:ro
 
   valkey:
     image: valkey/valkey:8-alpine
@@ -91,6 +98,14 @@ services:
       - KAUI_CONFIG_DAO_USER=root
       - KAUI_CONFIG_DAO_PASSWORD=killbill
       - KAUI_KILLBILL_URL=http://killbill:8080
+      # Kaui 3.x is Rails 7 running in 'production', which aborts on boot without a secret_key_base
+      # (it signs the admin UI's session cookies). A dev default is baked in so `make run` just works;
+      # override per-machine with KAUI_SECRET_KEY_BASE in docker/.env — generate one with `openssl rand -hex 64`.
+      - SECRET_KEY_BASE=${KAUI_SECRET_KEY_BASE:-e50f45d81c557432df35f9c8f094070473dac79805ebc26729796ea3b322f6d08aeb57d3a269935e97c6e7912078c1e96902b93ac4f2f3d66437a2f11eaa52e5}
+      # Point Kaui at the same KB tenant the app bootstraps (BILLING_BOOTSTRAP), reading the very vars
+      # the app reads — so the UI opens on that tenant's accounts/invoices, not an empty login.
+      - KAUI_KILLBILL_API_KEY=${KILLBILL_API_KEY:-smsone}
+      - KAUI_KILLBILL_API_SECRET=${KILLBILL_API_SECRET:-smsone-secret}
 
   otel-lgtm:
     image: grafana/otel-lgtm:0.28.0
@@ -102,6 +117,8 @@ services:
       # File-provisioned SMSOne dashboards (folder "SMSOne" in the UI) — see docker/grafana/README.md
       - ./grafana/provisioning-dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/smsone.yaml:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards/smsone:ro
+      # Alerts-as-code (folder "SMSOne"): thresholds live in git; each rule links its runbook.
+      - ./grafana/provisioning-alerts.yaml:/otel-lgtm/grafana/conf/provisioning/alerting/smsone.yaml:ro
 
 volumes:
   postgres-data:

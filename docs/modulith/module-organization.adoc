@@ -2,6 +2,9 @@
 |===
 |Base package
 |`ug.co.smsone.organization`
+|Spring components
+|* `u.c.s.o.OrgContacts` (via `u.c.s.o.internal.OrgContactsImpl`)
+* `u.c.s.o.Organizations` (via `u.c.s.o.internal.OrganizationsImpl`)
 |Bean references
 |* `u.c.s.i.UserProvisioning` (in Identity)
 * `u.c.s.s.audit.AuditLog` (in Shared Kernel)

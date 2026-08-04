@@ -1,0 +1,98 @@
+# One chart, four deployables + prod Keycloak + a backup CronJob. The rule throughout: STATE IS
+# EXTERNAL. Postgres, Valkey, SeaweedFS and Kill Bill are services this chart points at, never pods
+# it runs — a template that runs its own database is a demo, not a deployment. Credentials come from
+# a pre-created Secret (`credentials.secretName`), never from values.
+
+global:
+  imageBase: ghcr.io/paul-ayesiga/enterprise-modulith-template
+  imageTag: main            # deploys pin the commit SHA; `main` is only a dev convenience
+  imagePullPolicy: IfNotPresent
+
+# The operator-created Secret every credentialed env var reads from (see NOTES.txt for the exact
+# `kubectl create secret` incantation and docs/PRODUCTION.md for the full key list).
+credentials:
+  secretName: smsone-credentials
+
+# External state — endpoints only.
+postgres:
+  host: postgres.example.internal
+  port: 5432
+  database: modulith
+valkey:
+  host: valkey.example.internal
+seaweedfs:
+  s3Endpoint: http://seaweedfs.example.internal:8333
+killbill:
+  url: http://killbill.example.internal:8080
+smtp:
+  host: smtp.example.internal
+
+keycloak:
+  enabled: true
+  image: quay.io/keycloak/keycloak:26.0
+  replicas: 1
+  # Public URL of the realm (also what API tokens carry as issuer).
+  hostname: https://auth.example.com
+  # Keycloak's OWN database (never shared with the app schema).
+  db:
+    host: postgres.example.internal
+    port: 5432
+    database: keycloak
+  resources:
+    requests: { cpu: 250m, memory: 768Mi }
+    limits: { memory: 1536Mi }
+
+modulith:
+  replicas: 2
+  port: 8080
+  issuerUri: https://auth.example.com/realms/smsone
+  env: []                    # extra env — [{name: ..., value: ...}]
+  resources:
+    requests: { cpu: 500m, memory: 1Gi }
+    limits: { memory: 2Gi }
+
+gateway:
+  enabled: true
+  replicas: 2
+  port: 8080
+  adminPort: 9090
+  env: []
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { memory: 1Gi }
+
+developerPortal:
+  enabled: true
+  replicas: 1
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 512Mi }
+
+adminPortal:
+  enabled: true
+  replicas: 1
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 512Mi }
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations: {}
+  tlsSecretName: ""          # set to enable TLS on all hosts
+  hosts:
+    api: api.example.com          # → gateway (the edge)
+    auth: auth.example.com        # → keycloak
+    portal: portal.example.com    # → developer portal
+    admin: admin.example.com      # → admin portal
+
+# Nightly pg_dump of the app database to a PVC (custom format — restore with pg_restore; see
+# docs/runbooks/restore.md). Keycloak/Kill Bill DBs: run the same job with their values, or use
+# the managed-Postgres provider's snapshots and keep this as belt-and-braces.
+backup:
+  enabled: true
+  schedule: "10 2 * * *"
+  image: postgres:17-alpine
+  retentionDays: 14
+  storage: 20Gi
+  storageClassName: ""

@@ -71,6 +71,22 @@ class WebhookSubscriptionService {
         return new CreatedSubscription(created, secret);
     }
 
+    /**
+     * Mint a replacement signing secret — shown once, exactly like create; the old secret stops
+     * verifying immediately (deliveries claimed after commit sign with the new one). The safe
+     * rotation dance: deploy the new secret to the receiver FIRST, then rotate here.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    CreatedSubscription rotateSecret(java.util.UUID orgId, java.util.UUID id) {
+        WebhookSubscription subscription = subscriptions.findByIdAndOrgId(id, orgId)
+                .orElseThrow(() -> new ug.co.smsone.shared.error.NotFoundException("Webhook not found."));
+        String secret = "whsec_" + randomHex();
+        subscription.rotateSecret(cipher.encrypt(secret));
+        subscriptions.save(subscription);
+        auditLog.record("webhook.secret_rotated", orgId, id.toString(), null, null);
+        return new CreatedSubscription(subscription, secret);
+    }
+
     /** The one moment the plaintext secret exists outside the cipher: the create response. */
     record CreatedSubscription(WebhookSubscription subscription, String plainSecret) {
     }

@@ -71,17 +71,34 @@ class TrafficTest {
     void rateLimitedRouteTrips429OnABurst() {
         int limited = 0;
         int allowed = 0;
+        boolean sawRetryAfter = false;
         for (int i = 0; i < 12; i++) {
-            int status = client().get().uri("/rl/x").exchange().returnResult(String.class)
-                    .getStatus().value();
+            var result = client().get().uri("/rl/x").exchange().returnResult(String.class);
+            int status = result.getStatus().value();
             if (status == 429) {
                 limited++;
+                // The edge 429 tells the caller how long to back off, like the plan-quota 429 does.
+                if (result.getResponseHeaders().getFirst("Retry-After") != null) {
+                    sawRetryAfter = true;
+                }
             } else if (status == 200) {
                 allowed++;
             }
         }
         assertThat(allowed).as("the burst capacity lets a few through").isGreaterThanOrEqualTo(1);
         assertThat(limited).as("the rest are rate limited").isGreaterThanOrEqualTo(1);
+        assertThat(sawRetryAfter).as("an edge 429 carries Retry-After").isTrue();
+    }
+
+    @Test
+    void edgeLimiterHeadersAreNamespacedSoTheyNeverCollideWithThePlanQuota() {
+        // The edge burst limiter advertises its bucket under X-Edge-RateLimit-*, leaving the plain
+        // X-RateLimit-* names for the modulith's per-tenant plan quota — so a caller never sees two
+        // conflicting X-RateLimit-Remaining values through the gateway.
+        client().get().uri("/rl/x").exchange()
+                .expectHeader().exists("X-Edge-RateLimit-Remaining")
+                .expectHeader().exists("X-Edge-RateLimit-Burst-Capacity")
+                .expectHeader().doesNotExist("X-RateLimit-Remaining");
     }
 
     @Test

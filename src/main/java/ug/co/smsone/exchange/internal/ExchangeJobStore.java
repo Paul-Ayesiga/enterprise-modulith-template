@@ -18,6 +18,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.KeysetScrollPosition;
 import org.springframework.jdbc.core.JdbcTemplate;
+import ug.co.smsone.shared.persistence.DbDialect;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -69,11 +70,13 @@ class ExchangeJobStore {
     private final JdbcTemplate jdbc;
     private final TransactionTemplate transactions;
     private final Clock clock;
+    private final DbDialect dialect;
 
-    ExchangeJobStore(JdbcTemplate jdbc, TransactionTemplate transactions, Clock clock) {
+    ExchangeJobStore(JdbcTemplate jdbc, TransactionTemplate transactions, Clock clock, DbDialect dialect) {
         this.jdbc = jdbc;
         this.transactions = transactions;
         this.clock = clock;
+        this.dialect = dialect;
     }
 
     UUID submit(UUID orgId, String requester, String jobType, String handler, int handlerVersion,
@@ -104,11 +107,11 @@ class ExchangeJobStore {
                       and (locked_at is null or locked_at < now() - (? * interval '1 millisecond'))
                     order by created_at
                     limit 1
-                    for update skip locked
+                    %s
                 ) c
                 where j.id = c.id
                 returning j.*
-                """, JOB, staleLock.toMillis());
+                """.formatted(dialect.skipLocked()), JOB, staleLock.toMillis());
         return claimed.stream().findFirst();
     }
 

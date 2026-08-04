@@ -18,15 +18,23 @@ top to bottom direction
 System_Boundary("Application_boundary", "Application", $tags="") {
   Container_Boundary("Application.Application_boundary", "Application", $tags="") {
     Component(Application.Application.Subscription, "Subscription", $techn="Module", $descr="", $tags="", $link="")
+    Component(Application.Application.Notification, "Notification", $techn="Module", $descr="", $tags="", $link="")
+    Component(Application.Application.Organization, "Organization", $techn="Module", $descr="", $tags="", $link="")
     Component(Application.Application.Billing, "Billing", $techn="Module", $descr="", $tags="", $link="")
     Component(Application.Application.SharedKernel, "Shared Kernel", $techn="Module", $descr="", $tags="", $link="")
   }
 
 }
 
+Rel(Application.Application.Organization, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Organization, Application.Application.Subscription, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Subscription, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Notification, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Billing, Application.Application.Subscription, "listens to", $techn="", $tags="", $link="")
+Rel(Application.Application.Billing, Application.Application.Organization, "listens to", $techn="", $tags="", $link="")
+Rel(Application.Application.Billing, Application.Application.Notification, "depends on", $techn="", $tags="", $link="")
 Rel(Application.Application.Billing, Application.Application.Subscription, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Billing, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
-Rel(Application.Application.Subscription, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 
 SHOW_LEGEND(true)
 hide stereotypes

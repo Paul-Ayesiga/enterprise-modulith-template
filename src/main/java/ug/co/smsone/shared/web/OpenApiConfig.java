@@ -74,6 +74,7 @@ public class OpenApiConfig {
     private static final String TAG_ORG_API_KEYS = AXIS_ORGANIZATION + AXIS_SEPARATOR + "API keys";
     private static final String TAG_PLATFORM_API_KEYS = AXIS_PLATFORM + AXIS_SEPARATOR + "API keys";
     private static final String TAG_PLATFORM_BILLING = AXIS_PLATFORM + AXIS_SEPARATOR + "Billing & plans";
+    private static final String TAG_PLATFORM_BILLING_ACCOUNTS = AXIS_PLATFORM + AXIS_SEPARATOR + "Billing accounts";
     private static final String TAG_SHARED_EXCHANGE = AXIS_SHARED + AXIS_SEPARATOR + "Exchange catalog";
     private static final String TAG_SHARED_WEBHOOK_EVENTS = AXIS_SHARED + AXIS_SEPARATOR + "Webhook events";
     private static final String TAG_SHARED_PROFILE = AXIS_SHARED + AXIS_SEPARATOR + "My profile";
@@ -93,6 +94,7 @@ public class OpenApiConfig {
     private static final String TAG_SHARED_FILES = AXIS_SHARED + AXIS_SEPARATOR + "Files";
     private static final String TAG_SHARED_SETTINGS = AXIS_SHARED + AXIS_SEPARATOR + "Settings & flags";
     private static final String TAG_SHARED_REFERENCE = AXIS_SHARED + AXIS_SEPARATOR + "Reference data";
+    private static final String TAG_SHARED_SIGNUP = AXIS_SHARED + AXIS_SEPARATOR + "Sign-up";
 
     /**
      * The curated half: which resource a controller's operations are FILED under, keyed by simple class
@@ -124,8 +126,10 @@ public class OpenApiConfig {
             Map.entry("ExchangeHandlersController", "Exchange catalog"),
             Map.entry("AdminOrganizationController", "Organizations"),
             Map.entry("AdminSubscriptionController", "Billing & plans"),
-            Map.entry("AdminBillingController", "Billing & plans"),
+            Map.entry("AdminBillingController", "Billing accounts"),
             Map.entry("OrgBillingController", "Billing"),
+            Map.entry("PaymentController", "Billing"),
+            Map.entry("SignupController", "Sign-up"),
             Map.entry("OrgApiKeyController", "API keys"),
             Map.entry("AdminApiKeyController", "API keys"),
             Map.entry("OrgIntegrationController", "Integrations"),
@@ -289,6 +293,11 @@ public class OpenApiConfig {
                                 + "org's subscription. Reading is platform-support; assigning a plan is "
                                 + "platform-admin, audited, and bites the very next entitlement gate. A "
                                 + "tenant reads its own state under " + TAG_ORG_PROFILE + "'s surface."),
+                        new Tag().name(TAG_PLATFORM_BILLING_ACCOUNTS).description(
+                                "One org's window into the Kill Bill side: link its account, start a "
+                                + "billed subscription, read balance and invoices. The catalogue and the "
+                                + "entitlement authority stay in " + TAG_PLATFORM_BILLING + " - money "
+                                + "records here, access decisions there."),
                         new Tag().name(TAG_PLATFORM_OPS).description(
                                 "Running the platform: scheduler lock state (proof that clustered jobs fire "
                                 + "once), the curated analytics reports, and the cross-tenant audit trail. "
@@ -381,6 +390,11 @@ public class OpenApiConfig {
                                 "Fixed vocabularies any authenticated caller may read — today the permission "
                                 + "catalogue that " + TAG_ORG_ROLES + " is composed from. A new shared "
                                 + "read lands here until it earns a group of its own."),
+                        new Tag().name(TAG_SHARED_SIGNUP).description(
+                                "Self-service organization creation, off unless SIGNUP_ENABLED: request a "
+                                + "verification e-mail (always 202 - enumeration-safe), then redeem the "
+                                + "single-use token to mint the org and its first OWNER. The only "
+                                + "unauthenticated write surface, and deliberately this small."),
                         new Tag().name(TAG_SHARED_EXCHANGE).description(
                                 "The exchange handler catalogue and its downloadable templates — which "
                                 + "datasets can move, what each file must look like, which permissions "

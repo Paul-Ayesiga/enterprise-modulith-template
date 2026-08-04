@@ -5,6 +5,7 @@ import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -101,6 +102,71 @@ class SubscriptionGatingTest extends AbstractIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].id").value("FREE"))
                 .andExpect(jsonPath("$.data[2].id").value("ENTERPRISE"));
+    }
+
+    @Test
+    void aPlanIsCreatedUpdatedListedAndDeleted() throws Exception {
+        // Create — a null entitlement value means "feature on", a number is a cap; the code upper-normalizes.
+        mockMvc.perform(post("/api/v1/admin/plans")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"code\":\"scale\",\"name\":\"Scale\",\"rank\":5,"
+                                + "\"entitlements\":{\"exchange.enabled\":null,\"members.max\":500}}")
+                        .with(admin()))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.id").value("SCALE"))
+                .andExpect(jsonPath("$.data.attributes.entitlements['exchange.enabled']").value(-1)) // feature-on sentinel
+                .andExpect(jsonPath("$.data.attributes.entitlements['members.max']").value(500));
+
+        mockMvc.perform(get("/api/v1/admin/plans").with(admin()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[?(@.id == 'SCALE')]").exists());
+
+        mockMvc.perform(put("/api/v1/admin/plans/{code}", "SCALE")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Scale Plus\",\"rank\":6,\"entitlements\":{\"members.max\":900}}")
+                        .with(admin()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.attributes.name").value("Scale Plus"))
+                .andExpect(jsonPath("$.data.attributes.entitlements['members.max']").value(900));
+
+        mockMvc.perform(delete("/api/v1/admin/plans/{code}", "SCALE").with(admin()))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(get("/api/v1/admin/plans").with(admin()))
+                .andExpect(jsonPath("$.data[?(@.id == 'SCALE')]").doesNotExist());
+    }
+
+    @Test
+    void planDeletionIsGuardedAndInputIsValidated() throws Exception {
+        // FREE is the fallback default — never deletable.
+        mockMvc.perform(delete("/api/v1/admin/plans/{code}", "FREE").with(admin()))
+                .andExpect(status().isConflict());
+
+        // A plan assigned to an org cannot be deleted out from under it.
+        UUID orgId = UUID.randomUUID();
+        mockMvc.perform(post("/api/v1/admin/plans")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"code\":\"temp\",\"name\":\"Temp\",\"rank\":7}")
+                        .with(admin()))
+                .andExpect(status().isCreated());
+        mockMvc.perform(put("/api/v1/admin/orgs/{orgId}/subscription", orgId)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"plan\":\"TEMP\"}").with(admin()))
+                .andExpect(status().isOk());
+        mockMvc.perform(delete("/api/v1/admin/plans/{code}", "TEMP").with(admin()))
+                .andExpect(status().isConflict());
+
+        // An unknown entitlement key is a typo, not a silent no-op.
+        mockMvc.perform(post("/api/v1/admin/plans")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"code\":\"bad\",\"name\":\"Bad\",\"rank\":9,\"entitlements\":{\"nope.max\":1}}")
+                        .with(admin()))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.errors[0].code").value("VALIDATION_FAILED"));
+
+        // Duplicate code conflicts.
+        mockMvc.perform(post("/api/v1/admin/plans")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"code\":\"FREE\",\"name\":\"Dup\",\"rank\":1}").with(admin()))
+                .andExpect(status().isConflict());
     }
 
     private static org.springframework.test.web.servlet.request.RequestPostProcessor admin() {

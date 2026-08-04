@@ -23,6 +23,7 @@ import ug.co.smsone.shared.error.ErrorCode;
 import ug.co.smsone.shared.security.CurrentUser;
 import ug.co.smsone.shared.security.CurrentUserProvider;
 import ug.co.smsone.shared.web.EnvelopeErrorWriter;
+import ug.co.smsone.shared.web.ForwardedClientIp;
 import ug.co.smsone.shared.web.RequestPaths;
 
 /**
@@ -32,6 +33,8 @@ import ug.co.smsone.shared.web.RequestPaths;
  * org — a mismatch is RBAC's 403 to give, not ours. A denial is a distinct 403 whose detail NAMES
  * the policy (IP allowlist / trusted device / session age) so it never reads as a permission bug,
  * and is counted. No policy row, or an absent field, means the platform default (open) applies.
+ * {@code require_mfa} holds human JWT sessions to a multi-factor {@code amr} claim; machine
+ * principals (API keys, impersonation exchanges) are exempt by construction.
  * The device fingerprint header doubles as the throttled last-seen stamp.
  */
 @Component
@@ -48,15 +51,18 @@ public class OrgPolicyEnforcementFilter extends OncePerRequestFilter {
     private final EnvelopeErrorWriter errorWriter;
     private final MeterRegistry meters;
     private final Clock clock;
+    private final ForwardedClientIp forwardedClientIp;
 
     public OrgPolicyEnforcementFilter(OrgSecurityPolicyRepository policies, DeviceService devices,
-            CurrentUserProvider currentUser, EnvelopeErrorWriter errorWriter, MeterRegistry meters, Clock clock) {
+            CurrentUserProvider currentUser, EnvelopeErrorWriter errorWriter, MeterRegistry meters, Clock clock,
+            ForwardedClientIp forwardedClientIp) {
         this.policies = policies;
         this.devices = devices;
         this.currentUser = currentUser;
         this.errorWriter = errorWriter;
         this.meters = meters;
         this.clock = clock;
+        this.forwardedClientIp = forwardedClientIp;
     }
 
     @Override
@@ -97,8 +103,10 @@ public class OrgPolicyEnforcementFilter extends OncePerRequestFilter {
 
     /** @return the violated rule name, or null when the request satisfies the policy. */
     private String evaluate(OrgSecurityPolicy policy, CurrentUser caller, HttpServletRequest request) {
+        // The judged address honors app.http.trusted-proxy-hops — behind the gateway/ingress the raw
+        // socket peer is OUR proxy, and an allowlist judging it would block everyone or no one.
         if (policy.getIpAllowlist() != null && !policy.getIpAllowlist().isBlank()
-                && !CidrMatcher.matchesAny(policy.getIpAllowlist(), request.getRemoteAddr())) {
+                && !CidrMatcher.matchesAny(policy.getIpAllowlist(), forwardedClientIp.clientIp(request))) {
             return "ip-allowlist";
         }
         if (policy.getSessionMaxAgeSeconds() != null) {
@@ -107,6 +115,9 @@ public class OrgPolicyEnforcementFilter extends OncePerRequestFilter {
                     && issuedAt.plusSeconds(policy.getSessionMaxAgeSeconds()).isBefore(clock.instant())) {
                 return "session-max-age";
             }
+        }
+        if (policy.isRequireMfa() && lacksMfa()) {
+            return "mfa";
         }
         if (policy.isRequireTrustedDevice()) {
             String fingerprint = request.getHeader(DEVICE_HEADER);
@@ -124,6 +135,22 @@ public class OrgPolicyEnforcementFilter extends OncePerRequestFilter {
             devices.stampLastSeen(caller.subject(), fingerprint.trim(),
                     clock.instant(), clock.instant().minus(TOUCH_THROTTLE));
         }
+    }
+
+    /**
+     * The token's {@code amr} claim (RFC 8176) must name a second factor. Only HUMAN sessions are
+     * held to it: an API key is a machine credential with no MFA to have, and an impersonated
+     * principal was minted by a platform admin whose own session already passed the platform's
+     * rules — both carry no JWT here and are exempt by construction.
+     */
+    private static boolean lacksMfa() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (!(authentication instanceof JwtAuthenticationToken jwt)) {
+            return false;
+        }
+        java.util.List<String> amr = jwt.getToken().getClaimAsStringList("amr");
+        return amr == null || amr.stream().map(String::toLowerCase)
+                .noneMatch(java.util.Set.of("otp", "totp", "mfa", "hwk", "webauthn", "swk")::contains);
     }
 
     private static Instant issuedAt() {

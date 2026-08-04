@@ -12,14 +12,24 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus,metrics,gatewayroutes,gatewaycatalog,gatewayopenapi
+        include: health,info,prometheus,metrics,gatewayroutes,gatewaycatalog,gatewayopenapi,gatewayusage,gatewayblocklist
 
 # One backend stub (its uri + the JWKS uri are set per-run to the test server's random port), plus
 # routes for the predicate tests (Phase 1) and the auth-policy tests (Phase 2).
 gateway:
+  persistent-routes:
+    enabled: false
+
   security:
     jwk-set-uri: "${jwks.uri:http://localhost:1/jwks}"   # SecurityTest points this at the stub's JWKS
     tenant-claim: tenant
+    # Auto-blocking OFF in the shared test baseline — the abuse guard would otherwise trip on the
+    # many deliberate 401/403s the auth tests fire. AutoBlockTest opts back in with its own Valkey.
+    blocklist:
+      auto:
+        enabled: false
+      persistent:
+        enabled: false
     cors:
       allowed-origins:
         - http://example.com
@@ -226,6 +236,7 @@ gateway:
           args: [/gone/**]
       lifecycle:
         status: retired
+        sunset: "Sun, 30 Jun 2024 23:59:59 GMT"
     - id: v1-route                            # versioning by header; v1 is deprecated
       order: 43
       service-id: backend

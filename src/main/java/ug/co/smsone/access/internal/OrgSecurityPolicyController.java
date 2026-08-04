@@ -29,10 +29,12 @@ class OrgSecurityPolicyController {
         this.policies = policies;
     }
 
-    record PolicyAttributes(String ipAllowlist, boolean requireTrustedDevice, Long sessionMaxAgeSeconds) {
+    record PolicyAttributes(String ipAllowlist, boolean requireTrustedDevice, Long sessionMaxAgeSeconds,
+            boolean requireMfa) {
     }
 
-    record PolicyRequest(String ipAllowlist, boolean requireTrustedDevice, Long sessionMaxAgeSeconds) {
+    record PolicyRequest(String ipAllowlist, boolean requireTrustedDevice, Long sessionMaxAgeSeconds,
+            Boolean requireMfa) { // boxed: an absent field means the platform default (off)
     }
 
     record TrustRequest(String subject, String deviceId, boolean trusted) {
@@ -51,12 +53,14 @@ class OrgSecurityPolicyController {
             description = """
                     Every field TIGHTENS access. `ipAllowlist` is comma-joined CIDRs (blank clears \
                     it); `requireTrustedDevice` needs an org-blessed `X-Device-Id`; \
-                    `sessionMaxAgeSeconds` refuses tokens older than it for this org. A denial is a \
-                    403 naming the rule.""")
+                    `sessionMaxAgeSeconds` refuses tokens older than it for this org; `requireMfa` \
+                    refuses human sessions whose token carries no multi-factor `amr` claim (API keys \
+                    are machine credentials and exempt) and enrolls new invitees in TOTP. A denial \
+                    is a 403 naming the rule.""")
     @PreAuthorize("hasPermission(#orgId, 'organization', 'org:update')")
     ResourceObject set(@PathVariable UUID orgId, @RequestBody PolicyRequest request) {
         return toResource(policies.upsert(orgId, request.ipAllowlist(), request.requireTrustedDevice(),
-                request.sessionMaxAgeSeconds()));
+                request.sessionMaxAgeSeconds(), Boolean.TRUE.equals(request.requireMfa())));
     }
 
     @PostMapping("/trusted-devices")
@@ -71,6 +75,6 @@ class OrgSecurityPolicyController {
     private static ResourceObject toResource(OrgSecurityPolicy policy) {
         return new ResourceObject(policy.getOrgId().toString(), RESOURCE_TYPE,
                 new PolicyAttributes(policy.getIpAllowlist(), policy.isRequireTrustedDevice(),
-                        policy.getSessionMaxAgeSeconds()));
+                        policy.getSessionMaxAgeSeconds(), policy.isRequireMfa()));
     }
 }

@@ -1,0 +1,7 @@
+[%autowidth.stretch, cols="h,a"]
+|===
+|Base package
+|`ug.co.smsone.payments`
+|Bean references
+|* `u.c.s.s.audit.AuditLog` (in Shared Kernel)
+|===

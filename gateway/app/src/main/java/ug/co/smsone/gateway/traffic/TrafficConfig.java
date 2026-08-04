@@ -23,7 +23,17 @@ class TrafficConfig {
     @Bean
     RedisRateLimiter edgeRateLimiter(TrafficProperties properties) {
         TrafficProperties.RateLimit limit = properties.rateLimit();
-        return new RedisRateLimiter(limit.replenishRate(), limit.burstCapacity(), limit.requestedTokens());
+        RedisRateLimiter rateLimiter =
+                new RedisRateLimiter(limit.replenishRate(), limit.burstCapacity(), limit.requestedTokens());
+        // The EDGE burst limiter and the modulith's per-tenant PLAN quota both answer 429, but for
+        // different reasons (burst-smoothing vs plan allowance). Give the edge its own header
+        // namespace so both are fully visible and never collide: the standard X-RateLimit-* /
+        // RateLimit stay the plan-quota signal a consumer reads, and these expose the edge bucket.
+        rateLimiter.setRemainingHeader("X-Edge-RateLimit-Remaining");
+        rateLimiter.setBurstCapacityHeader("X-Edge-RateLimit-Burst-Capacity");
+        rateLimiter.setReplenishRateHeader("X-Edge-RateLimit-Replenish-Rate");
+        rateLimiter.setRequestedTokensHeader("X-Edge-RateLimit-Requested-Tokens");
+        return rateLimiter;
     }
 
     @Bean

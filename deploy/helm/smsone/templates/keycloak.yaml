@@ -1,0 +1,67 @@
+{{- if .Values.keycloak.enabled }}
+# PRODUCTION Keycloak: `start --optimized` against its own Postgres — never `start-dev`, and never
+# `--import-realm` (a re-import on restart resets users; realm changes in prod go through the admin
+# API/console and are captured by DB backups). First-boot realm setup: docs/PRODUCTION.md §Keycloak.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-keycloak
+  labels:
+    app.kubernetes.io/name: keycloak
+    {{- include "smsone.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.keycloak.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: keycloak
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: keycloak
+        {{- include "smsone.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: keycloak
+          image: {{ .Values.keycloak.image }}
+          args: ["start", "--optimized"]
+          ports:
+            - containerPort: 8080
+          env:
+            - { name: KC_DB, value: postgres }
+            - { name: KC_DB_URL, value: {{ printf "jdbc:postgresql://%s:%v/%s" .Values.keycloak.db.host .Values.keycloak.db.port .Values.keycloak.db.database | quote }} }
+            - { name: KC_HOSTNAME, value: {{ .Values.keycloak.hostname | quote }} }
+            - { name: KC_PROXY_HEADERS, value: xforwarded }
+            - { name: KC_HTTP_ENABLED, value: "true" }   # TLS terminates at the ingress
+            - { name: KC_HEALTH_ENABLED, value: "true" }
+            - name: KC_DB_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.credentials.secretName }}, key: keycloak-db-user } }
+            - name: KC_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.credentials.secretName }}, key: keycloak-db-password } }
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.credentials.secretName }}, key: keycloak-admin-user } }
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.credentials.secretName }}, key: keycloak-admin-password } }
+          readinessProbe:
+            httpGet: { path: /health/ready, port: 9000 }
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health/live, port: 9000 }
+            initialDelaySeconds: 90
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.keycloak.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-keycloak
+  labels:
+    {{- include "smsone.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: keycloak
+  ports:
+    - port: 8080
+      targetPort: 8080
+{{- end }}

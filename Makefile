@@ -25,6 +25,7 @@ RUN_ENV = set -a; . $(ENV_FILE); set +a; \
 	KEYCLOAK_ISSUER_URI=http://localhost:$${KEYCLOAK_PORT:-8081}/realms/smsone \
 	KEYCLOAK_URL=http://localhost:$${KEYCLOAK_PORT:-8081} \
 	S3_ENDPOINT=http://localhost:$${S3_PORT:-8333} \
+	KILLBILL_URL=http://localhost:$${KILLBILL_PORT:-8082} \
 	SMTP_HOST=localhost SMTP_PORT=$${SMTP_PORT:-1025}
 
 # Gateway env: the edge fronts the modulith and shares its infra. Sourced from docker/.env so the
@@ -41,6 +42,7 @@ GATEWAY_RUN_ENV = set -a; . $(ENV_FILE); set +a; \
 	GATEWAY_INTROSPECTION_URI=http://localhost:$$MODULITH_PORT/internal/gateway/api-key/introspect \
 	GATEWAY_AUDIT_URI=http://localhost:$$MODULITH_PORT/internal/gateway/audit \
 	GATEWAY_QUOTA_URI=http://localhost:$$MODULITH_PORT/internal/gateway/quota \
+	GATEWAY_USAGE_URI=http://localhost:$$MODULITH_PORT/internal/gateway/usage-report \
 	KEYCLOAK_JWKS=http://localhost:$${KEYCLOAK_PORT:-8081}/realms/smsone/protocol/openid-connect/certs
 
 .DEFAULT_GOAL := help
@@ -75,8 +77,11 @@ logs: ## Tail stack logs — `make logs S=keycloak` for a single service
 run: env ## Run the app + auto-started stack (Ctrl-C stops both); seeds the platform admin
 	@$(RUN_ENV) ./gradlew :bootRun
 
-seed: env ## Like `run`, but also seeds the demo org (acme, owner paul) at startup
-	@$(RUN_ENV) ORG_DEV_BOOTSTRAP_ENABLED=true ./gradlew :bootRun
+seed: env ## Like `run`, but also seeds the demo org (acme, owner paul) + Kill Bill tenant & catalog
+	@$(RUN_ENV) ORG_DEV_BOOTSTRAP_ENABLED=true BILLING_BOOTSTRAP=true ./gradlew :bootRun
+
+killbill-init: env ## Create the Kill Bill 'smsone' tenant + simple catalog via the KB API (no app boot)
+	@set -a; . $(ENV_FILE); set +a; bash scripts/killbill-init.sh
 
 gateway: env ## Run the API gateway (:8090, admin :9090) fronting the modulith — `make run` first, this in a 2nd terminal
 	@$(GATEWAY_RUN_ENV) ./gradlew :gateway:app:bootRun
@@ -96,8 +101,15 @@ build: ## Compile + assemble the app (skips tests) — modulith only; `gateway-b
 test: ## Run the modulith test suite (real Testcontainers) — `gateway-test` for the edge
 	./gradlew :test
 
-openapi: ## Regenerate docs/openapi/*.{yaml,json} from the running app
+# Base URL baked into the Postman collection (HTTPie shows empty URLs for {{baseUrl}} variables).
+# Default = the modulith direct; `make openapi POSTMAN_BASE=http://localhost:28090` for the gateway.
+POSTMAN_BASE ?= http://localhost:28080
+
+openapi: ## Regenerate docs/openapi/*.{yaml,json} + the Postman collection (HTTPie/Insomnia import this)
 	./gradlew :exportOpenApi
+	npx --yes openapi-to-postmanv2 -s docs/openapi/openapi.json -o docs/openapi/postman_collection.json -p \
+		-O folderStrategy=Tags,requestNameSource=Fallback
+	python3 scripts/postman-baseurl.py docs/openapi/postman_collection.json $(POSTMAN_BASE)
 
 clean: ## Drop local build caches (keeps downloaded deps and Docker images — both slow to refetch)
 	@./gradlew --stop >/dev/null 2>&1 || true

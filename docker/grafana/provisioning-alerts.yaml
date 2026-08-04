@@ -1,0 +1,161 @@
+# Alerts-as-code, file-provisioned into the otel-lgtm Grafana (folder "SMSOne") the same way the
+# dashboards are. Each rule names its runbook in docs/runbooks/ — an alert nobody knows how to act
+# on is noise. Thresholds are deliberate small-print: change them here, in review, not in the UI
+# (file-provisioned rules are read-only in the UI, which is the point).
+#
+# Metric names are the OTLP→Prometheus forms the dashboards already use (smsone_*_total,
+# http_server_requests_milliseconds_*); the gateway exports over OTLP too (see gateway/app deps).
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: smsone-critical
+    folder: SMSOne
+    interval: 1m
+    rules:
+      - uid: smsone-http-5xx
+        title: API 5xx ratio above 5%
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: sum(rate(http_server_requests_milliseconds_count{status=~"5.."}[5m])) / sum(rate(http_server_requests_milliseconds_count[5m]))
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0.05], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              refId: C
+              type: threshold
+        noDataState: OK          # no traffic ≠ an outage; the SLO doc covers blind spots
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: More than 5% of API requests are failing with 5xx (5m window, sustained 5m).
+          runbook_url: https://github.com/Paul-Ayesiga/enterprise-modulith-template/blob/main/docs/runbooks/http-5xx.md
+        labels:
+          severity: critical
+
+      - uid: smsone-dead-letters
+        title: Deliveries dead-lettered
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: sum(increase(smsone_deliveries_dead_lettered_total[15m]))
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 0s                  # a DEAD row already exhausted 5 attempts — page on the first one
+        annotations:
+          summary: A webhook or notification delivery exhausted its retries and was dead-lettered.
+          runbook_url: https://github.com/Paul-Ayesiga/enterprise-modulith-template/blob/main/docs/runbooks/dead-letters.md
+        labels:
+          severity: critical
+
+      - uid: smsone-breaker-open
+        title: Gateway circuit breaker open
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: max by (name) (resilience4j_circuitbreaker_state{state="open"})
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [1], type: ge }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 1m
+        annotations:
+          summary: A gateway circuit breaker opened — a backend is failing more than half its calls.
+          runbook_url: https://github.com/Paul-Ayesiga/enterprise-modulith-template/blob/main/docs/runbooks/breaker-open.md
+        labels:
+          severity: critical
+
+      - uid: smsone-payment-failures
+        title: Payment failures clustering
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 1800, to: 0 }
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: sum by (provider) (increase(smsone_payments_outcomes_total{status="FAILED"}[30m]))
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [3], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        annotations:
+          summary: More than 3 payments FAILED at one provider inside 30 minutes — likely a PSP-side or credentials problem, not payer behavior.
+          runbook_url: https://github.com/Paul-Ayesiga/enterprise-modulith-template/blob/main/docs/runbooks/payment-failures.md
+        labels:
+          severity: critical

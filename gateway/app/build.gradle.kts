@@ -39,6 +39,11 @@ dependencies {
     implementation("org.springframework.cloud:spring-cloud-starter-loadbalancer")
     // Phase 4 — observability: Prometheus registry for the gateway's metrics (scraped at /actuator/prometheus).
     implementation("io.micrometer:micrometer-registry-prometheus")
+    // Pushes METRICS (incl. resilience4j breaker state) over OTLP to the LGTM stack — the breaker-open
+    // alert reads them; without this only the unscraped /prometheus endpoint had them. Deliberately the
+    // metrics-only registry, NOT the full OTel starter: the app already has its own tracer, and a second
+    // tracing SDK forks the trace ids the edge propagates (TracingTest guards this).
+    implementation("io.micrometer:micrometer-registry-otlp")
 
     testImplementation(libs.boot.test)
     testImplementation(libs.testcontainers.junit)

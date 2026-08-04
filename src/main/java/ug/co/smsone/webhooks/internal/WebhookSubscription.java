@@ -51,6 +51,11 @@ class WebhookSubscription extends SoftDeletableEntity {
         return subscription;
     }
 
+    /** Swap the signing secret atomically — the old one stops verifying the instant this commits. */
+    void rotateSecret(String encryptedSecret) {
+        this.secret = encryptedSecret;
+    }
+
     void update(String url, Set<String> eventTypes, SubscriptionStatus status) {
         this.url = url;
         this.eventTypes = join(eventTypes);

@@ -221,7 +221,8 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
             return;
         }
         try {
-            sender.send(new NotificationMessage(delivery.recipient(), delivery.subject(), delivery.body(), Map.of()));
+            sender.send(new NotificationMessage(delivery.recipient(), delivery.subject(), delivery.body(),
+                    delivery.orgId() == null ? Map.of() : Map.of("orgId", delivery.orgId().toString())));
         } catch (RuntimeException ex) {
             // The send may never have reached the provider — refund the channel token so a retry
             // storm doesn't burn provider quota and starve healthy messages.

@@ -148,6 +148,12 @@ app:
       owner-email: ${ORG_DEV_BOOTSTRAP_OWNER_EMAIL:ayesigapo@gmail.com}
       owner-first-name: ${ORG_DEV_BOOTSTRAP_OWNER_FIRST:Paul}
       owner-last-name: ${ORG_DEV_BOOTSTRAP_OWNER_LAST:Ayesiga}
+  http:
+    # How many of OUR proxies stand in front, each appending one X-Forwarded-For entry: 0 = hit
+    # directly (trust only the socket peer — the safe dev default), 1 = behind the gateway,
+    # 2 = behind ingress -> gateway (the Helm chart topology). Governs every client-IP decision
+    # (org ip-allowlist, rate-limit IP keys); XFF is NEVER believed while this is 0.
+    trusted-proxy-hops: ${TRUSTED_PROXY_HOPS:0}
   rate-limit:
     enabled: ${RATE_LIMIT_ENABLED:true}
     key-prefix: rl
@@ -155,7 +161,8 @@ app:
     # fallback for non-org IdPs; if neither is present, keying falls back to sub then IP.
     tenant-claim: ${RATE_LIMIT_TENANT_CLAIM:tenant}
     backend-timeout: ${RATE_LIMIT_BACKEND_TIMEOUT:PT0.25S}
-    trust-forwarded-for: ${RATE_LIMIT_TRUST_XFF:false} # only true behind a trusted proxy/gateway
+    # Predecessor of app.http.trusted-proxy-hops (single-hop only) — still honored; the hops knob wins.
+    trust-forwarded-for: ${RATE_LIMIT_TRUST_XFF:false}
     tiers:
       - id: write
         path-pattern: /api/**
@@ -193,6 +200,17 @@ app:
     secret-encryption-key: ${WEBHOOKS_SECRET_KEY:smsone-dev-webhook-secret-key}
   notification:
     from: ${NOTIFICATION_FROM:no-reply@smsone.co.ug}
+    sms:
+      # DEV default: a logging stub. Set SMS_STUB=false (with SPEEDA_* creds, or an SMS_PROVIDER
+      # integration with provider 'speedamobile') to send real SMS through Speeda Mobile.
+      stub: ${SMS_STUB:true}
+      speeda:
+        base-url: ${SPEEDA_BASE_URL:http://apidocs.speedamobile.com}
+        api-id: ${SPEEDA_API_ID:}
+        api-password: ${SPEEDA_API_PASSWORD:}
+        sender-id: ${SPEEDA_SENDER_ID:}
+        sms-type: ${SPEEDA_SMS_TYPE:T}
+        encoding: ${SPEEDA_ENCODING:T}
     slack-webhook-url: ${NOTIFICATION_SLACK_WEBHOOK:}
     webhook-timeout-seconds: ${NOTIFICATION_WEBHOOK_TIMEOUT:5}
     # Async fan-out worker (durable delivery queue).
@@ -235,12 +253,57 @@ app:
     callback-url: ${BILLING_CALLBACK_URL:}
     # Dev opt-in: creates the KB tenant + simple catalog plans so compose bills out of the box.
     bootstrap: ${BILLING_BOOTSTRAP:false}
+    # Dev opt-in: when true, a newly registered org auto-provisions a Kill Bill account (one under
+    # the single 'smsone' tenant). Presumes a reachable, bootstrapped Kill Bill; off by default so
+    # environments without billing don't accrue retrying events.
+    auto-provision-accounts: ${BILLING_AUTO_PROVISION:false}
+    # Opt-in: a newly registered org auto-starts a TRIALING trial of `plan` for `days` — unless it
+    # already has a subscription (a straight-to-paid assignment wins). Entitlement-only (no invoice
+    # until it converts); the TrialExpiryJob pauses it read-only if it lapses. The plan must be PAID.
+    trial-on-signup:
+      enabled: ${TRIAL_ON_SIGNUP:false}
+      plan: ${TRIAL_ON_SIGNUP_PLAN:PRO}
+      days: ${TRIAL_ON_SIGNUP_DAYS:30}
+    dunning:
+      # Days a subscription may sit PAST_DUE (full access, owners warned) before the nightly job
+      # pauses it read-only. Recovery: any successful payment or a plan assignment.
+      grace-days: ${BILLING_DUNNING_GRACE_DAYS:7}
+    usage-export:
+      # Metered billing: ship closed days from api_usage_daily to Kill Bill as usage records.
+      # Opt-in — only prices when the KB catalog defines the unit for the org's plan.
+      enabled: ${BILLING_USAGE_EXPORT:false}
+      unit: ${BILLING_USAGE_UNIT:api-requests}
     currency: ${BILLING_CURRENCY:USD}
     # OUR plan code -> Kill Bill catalog plan name. FREE is deliberately unmapped (no money, no KB
     # subscription). Production maps to its uploaded catalog.
     plan-mapping:
       PRO: ${BILLING_PLAN_PRO:pro-monthly}
       ENTERPRISE: ${BILLING_PLAN_ENTERPRISE:enterprise-monthly}
+  signup:
+    # Self-service signup (the public front door). OFF by default — the enterprise baseline stays
+    # admin-provisioned; flip SIGNUP_ENABLED=true to open it. verify-url is the link the email
+    # carries: point it at a front-end page in production; the API's own GET works out of the box.
+    enabled: ${SIGNUP_ENABLED:false}
+    token-ttl: ${SIGNUP_TOKEN_TTL:PT24H}
+    verify-url: ${SIGNUP_VERIFY_URL:http://localhost:28080/api/v1/signup/verify}
+  payments:
+    # Payment collection gateways. mode switches sandbox <-> live per gateway; nothing touches real
+    # money until a mode is explicitly 'live'. Pesapal sandbox defaults are Pesapal's PUBLISHED
+    # Ugandan demo merchant keys, so sandbox works out of the box; Yo! needs your API account.
+    pesapal:
+      mode: ${PESAPAL_MODE:sandbox}
+      consumer-key: ${PESAPAL_CONSUMER_KEY:}
+      consumer-secret: ${PESAPAL_CONSUMER_SECRET:}
+      callback-url: ${PESAPAL_CALLBACK_URL:http://localhost:28080/api/v1/payments/pesapal/callback}
+      ipn-url: ${PESAPAL_IPN_URL:http://localhost:28080/api/v1/payments/pesapal/ipn}
+      ipn-id: ${PESAPAL_IPN_ID:}
+    yo:
+      mode: ${YO_MODE:sandbox}
+      api-username: ${YO_API_USERNAME:}
+      api-password: ${YO_API_PASSWORD:}
+    tax:
+      # VAT on collections, prices VAT-INCLUSIVE (UG standard rate is 18). 0 = no tax lines.
+      rate-percent: ${PAYMENTS_VAT_PERCENT:0}
   document:
     # Presigned-download lifetime: long enough to follow the 302, short enough not to be a durable
     # capability. Bytes never pass through the API.
@@ -333,6 +396,10 @@ resilience4j:
           - ug.co.smsone.files.FileNotFoundException   # business not-found never trips the breaker
 
 springdoc:
+  api-docs:
+    # Emit OpenAPI 3.0.1 rather than 3.1: 3.1 switched JSON-Schema dialects and several importers
+    # (HTTPie among them) reject it as "unknown format", while every 3.1 consumer reads 3.0 fine.
+    version: openapi_3_0
   paths-to-exclude: /test/**   # test-classpath contract endpoints must never reach the spec
 
 management:

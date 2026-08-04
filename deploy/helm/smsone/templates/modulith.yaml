@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: modulith
+  labels:
+    app.kubernetes.io/name: modulith
+    {{- include "smsone.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.modulith.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: modulith
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: modulith
+        {{- include "smsone.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: modulith
+          image: {{ include "smsone.image" (dict "root" . "name" "modulith") }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - containerPort: {{ .Values.modulith.port }}
+          env:
+            - { name: POSTGRES_HOST, value: {{ .Values.postgres.host | quote }} }
+            - { name: POSTGRES_PORT, value: {{ .Values.postgres.port | quote }} }
+            - { name: POSTGRES_DB, value: {{ .Values.postgres.database | quote }} }
+            - { name: VALKEY_HOST, value: {{ .Values.valkey.host | quote }} }
+            - { name: S3_ENDPOINT, value: {{ .Values.seaweedfs.s3Endpoint | quote }} }
+            - { name: KILLBILL_URL, value: {{ .Values.killbill.url | quote }} }
+            - { name: SMTP_HOST, value: {{ .Values.smtp.host | quote }} }
+            - { name: KEYCLOAK_ISSUER_URI, value: {{ .Values.modulith.issuerUri | quote }} }
+            - { name: KEYCLOAK_URL, value: {{ printf "http://%s-keycloak:8080" .Release.Name | quote }} }
+            # This chart's topology is client -> ingress -> gateway -> modulith: two of OUR proxies
+            # append X-Forwarded-For entries, so client-IP decisions (org ip-allowlist, rate-limit
+            # IP keys) read the 2nd-from-right entry.
+            - { name: TRUSTED_PROXY_HOPS, value: "2" }
+            # Every credential comes from the operator-created Secret — see NOTES.txt.
+            - name: POSTGRES_USER
+              valueFrom: { secretKeyRef: { name: {{ .Values.credentials.secretName }}, key: postgres-user } }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.credentials.secretName }}, key: postgres-password } }
+            - name: KILLBILL_USER
+              valueFrom: { secretKeyRef: { name: {{ .Values.credentials.secretName }}, key: killbill-user } }
+            - name: KILLBILL_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.credentials.secretName }}, key: killbill-password } }
+            {{- with .Values.modulith.env }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: {{ .Values.modulith.port }} }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: {{ .Values.modulith.port }} }
+            initialDelaySeconds: 60
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.modulith.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: modulith
+  labels:
+    {{- include "smsone.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: modulith
+  ports:
+    - port: 8080
+      targetPort: {{ .Values.modulith.port }}

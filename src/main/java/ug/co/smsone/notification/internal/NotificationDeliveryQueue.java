@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.BatchPreparedStatementSetter;
 import org.springframework.jdbc.core.JdbcTemplate;
+import ug.co.smsone.shared.persistence.DbDialect;
 import org.springframework.stereotype.Component;
 import ug.co.smsone.notification.NotificationChannel;
 
@@ -31,17 +32,20 @@ class NotificationDeliveryQueue {
 
     private final JdbcTemplate jdbc;
     private final io.micrometer.core.instrument.MeterRegistry meters;
+    private final DbDialect dialect;
 
-    NotificationDeliveryQueue(JdbcTemplate jdbc, io.micrometer.core.instrument.MeterRegistry meters) {
+    NotificationDeliveryQueue(JdbcTemplate jdbc, io.micrometer.core.instrument.MeterRegistry meters,
+            DbDialect dialect) {
         this.jdbc = jdbc;
         this.meters = meters;
+        this.dialect = dialect;
     }
 
     void enqueue(List<NewDelivery> deliveries, int maxAttempts) {
         jdbc.batchUpdate("""
                 insert into notification_delivery
-                    (id, channel, recipient, subject, body, status, attempts, max_attempts, next_attempt_at, created_at)
-                values (?, ?, ?, ?, ?, 'PENDING', 0, ?, now(), now())
+                    (id, channel, recipient, subject, body, org_id, status, attempts, max_attempts, next_attempt_at, created_at)
+                values (?, ?, ?, ?, ?, ?, 'PENDING', 0, ?, now(), now())
                 """, new BatchPreparedStatementSetter() {
             @Override
             public void setValues(PreparedStatement ps, int i) throws SQLException {
@@ -51,7 +55,8 @@ class NotificationDeliveryQueue {
                 ps.setString(3, d.recipient());
                 ps.setString(4, truncate(d.subject() == null ? "" : d.subject(), 255)); // subject is NOT NULL
                 ps.setString(5, d.body());
-                ps.setInt(6, maxAttempts);
+                ps.setObject(6, d.orgId());
+                ps.setInt(7, maxAttempts);
             }
 
             @Override
@@ -77,12 +82,12 @@ class NotificationDeliveryQueue {
                        or (status = 'PROCESSING' and locked_at < now() - (? * interval '1 millisecond'))
                     order by next_attempt_at
                     limit ?
-                    for update skip locked
+                    %s
                 ) c
                 where d.id = c.id
-                returning d.id, d.channel, d.recipient, d.subject, d.body, d.attempts, d.max_attempts,
-                          d.created_at, d.throttled_since
-                """,
+                returning d.id, d.channel, d.recipient, d.subject, d.body, d.org_id, d.attempts,
+                          d.max_attempts, d.created_at, d.throttled_since
+                """.formatted(dialect.skipLocked()),
                 (rs, rowNum) -> {
                     Timestamp throttledSince = rs.getTimestamp("throttled_since");
                     return new ClaimedDelivery(
@@ -91,6 +96,7 @@ class NotificationDeliveryQueue {
                             rs.getString("recipient"),
                             rs.getString("subject"),
                             rs.getString("body"),
+                            rs.getObject("org_id", UUID.class),
                             rs.getInt("attempts"),
                             rs.getInt("max_attempts"),
                             rs.getTimestamp("created_at").toInstant(),

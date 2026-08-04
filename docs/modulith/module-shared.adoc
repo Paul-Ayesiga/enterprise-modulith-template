@@ -35,6 +35,7 @@ _Others_
 * `u.c.s.s.security.ApiPermissionEvaluator`
 * `u.c.s.s.security.CurrentUserArgumentResolver`
 * `u.c.s.s.security.CurrentUserProvider`
+* `u.c.s.s.security.GatewaySecretVerifier`
 * `u.c.s.s.security.KeycloakJwtAuthenticationConverter`
 * `u.c.s.s.security.OrgMdcFilter`
 * `u.c.s.s.security.SecurityConfig`

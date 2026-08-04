@@ -7,7 +7,7 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties(KillBillProperties.class)
+@EnableConfigurationProperties({KillBillProperties.class, TrialOnSignupProperties.class})
 class BillingConfig {
 
     /**

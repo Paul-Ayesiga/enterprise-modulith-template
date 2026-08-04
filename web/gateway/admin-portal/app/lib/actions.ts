@@ -1,0 +1,228 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { adminBaseUrl, adminHeaders, fetchEndpoints, type Endpoint } from "./gateway";
+
+export type ActionState = { ok: boolean; message: string } | null;
+
+/**
+ * The documented endpoints a given route serves today — every operation whose lowest-order matching
+ * route is this one. Called on demand when a route row is expanded (progressive load), so the Routes
+ * page never pays for the whole OpenAPI↔route mapping unless the operator drills in.
+ */
+export async function endpointsForRoute(routeId: string): Promise<{ endpoints: Endpoint[]; error: string | null }> {
+  const view = await fetchEndpoints();
+  if (view.error) {
+    return { endpoints: [], error: view.error };
+  }
+  return { endpoints: view.endpoints.filter((e) => e.route?.id === routeId), error: null };
+}
+
+/** Register (or replace) a route via the gatewayroutes write operation. Takes effect on the edge live. */
+export async function createRoute(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const id = String(formData.get("id") ?? "").trim();
+  const path = String(formData.get("path") ?? "").trim();
+  const serviceId = String(formData.get("serviceId") ?? "").trim();
+
+  if (!id || !path || !serviceId) {
+    return { ok: false, message: "id, path, and service are all required." };
+  }
+  if (!/^[a-z0-9][a-z0-9-]*$/i.test(id)) {
+    return { ok: false, message: "id must be alphanumeric with dashes, e.g. reports-api." };
+  }
+  if (!path.startsWith("/")) {
+    return { ok: false, message: "path must start with '/', e.g. /api/v1/reports/**." };
+  }
+  // Checkbox-before-hidden pattern: get() sees "true" when checked, the hidden "false" otherwise.
+  const authenticated = String(formData.get("authenticated") ?? "") === "true";
+  const rateLimited = String(formData.get("rateLimited") ?? "") === "true";
+  const persist = String(formData.get("persist") ?? "") === "true";
+  const orderRaw = String(formData.get("order") ?? "").trim();
+  const order = orderRaw === "" ? undefined : Number(orderRaw);
+  if (order !== undefined && (!Number.isInteger(order) || order < 0)) {
+    return { ok: false, message: "order must be a non-negative whole number (lower wins when paths overlap)." };
+  }
+
+  try {
+    const res = await fetch(`${adminBaseUrl()}/actuator/gatewayroutes`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...adminHeaders() },
+      body: JSON.stringify({ id, path, serviceId, order, authenticated, rateLimited, persist }),
+      cache: "no-store"
+    });
+    if (!res.ok) {
+      const detail = await safeMessage(res);
+      return { ok: false, message: `Gateway rejected the route (${res.status})${detail ? `: ${detail}` : ""}.` };
+    }
+    const body = (await res.json()) as { persistent?: boolean; warning?: string };
+    revalidatePath("/");
+    if (body.warning) {
+      return { ok: true, message: `Route "${id}" registered — live now. ${body.warning}` };
+    }
+    return body.persistent
+      ? { ok: true, message: `Route "${id}" registered permanently — survives a gateway restart.` }
+      : { ok: true, message: `Route "${id}" registered — live now (runtime; tick "keep after restart" to make it durable).` };
+  } catch (e) {
+    return { ok: false, message: `Can't reach the gateway admin API: ${msg(e)}` };
+  }
+}
+
+/**
+ * Edit a route in place via POST gatewayroutes/{id}. Only the provided fields change — the gateway
+ * preserves auth/traffic/transform policies, exactly what delete-and-recreate would lose.
+ */
+export async function updateRoute(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const id = String(formData.get("id") ?? "").trim();
+  const path = String(formData.get("path") ?? "").trim();
+  const serviceId = String(formData.get("serviceId") ?? "").trim();
+  const orderRaw = String(formData.get("order") ?? "").trim();
+  const lifecycle = String(formData.get("lifecycle") ?? "").trim();
+  const sunset = String(formData.get("sunset") ?? "").trim();
+
+  if (!id) {
+    return { ok: false, message: "Missing route id." };
+  }
+  if (path && !path.startsWith("/")) {
+    return { ok: false, message: "path must start with '/', e.g. /api/v1/reports/**." };
+  }
+  const order = orderRaw === "" ? null : Number(orderRaw);
+  if (order !== null && (!Number.isInteger(order) || order < 0)) {
+    return { ok: false, message: "order must be a non-negative integer (lower wins)." };
+  }
+
+  const patch: Record<string, unknown> = {};
+  if (path) patch.path = path;
+  if (serviceId) patch.serviceId = serviceId;
+  if (order !== null) patch.order = order;
+  if (lifecycle) patch.lifecycle = lifecycle;
+  if (sunset) patch.sunset = sunset;
+  patch.authenticated = String(formData.get("authenticated") ?? "") === "true";
+  patch.rateLimited = String(formData.get("rateLimited") ?? "") === "true";
+  if (Object.keys(patch).length === 0) {
+    return { ok: false, message: "Nothing to change." };
+  }
+
+  try {
+    const res = await fetch(`${adminBaseUrl()}/actuator/gatewayroutes/${encodeURIComponent(id)}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...adminHeaders() },
+      body: JSON.stringify(patch),
+      cache: "no-store"
+    });
+    if (!res.ok) {
+      const detail = await safeMessage(res);
+      return { ok: false, message: `Gateway rejected the update (${res.status})${detail ? `: ${detail}` : ""}.` };
+    }
+    revalidatePath("/");
+    return { ok: true, message: `Route "${id}" updated — live now. Runtime change: a gateway restart reverts to the YAML-configured route.` };
+  } catch (e) {
+    return { ok: false, message: `Can't reach the gateway admin API: ${msg(e)}` };
+  }
+}
+
+/** Move a route one step along its lifecycle: DEPRECATED (warns), RETIRED (410 Gone), PUBLISHED (serves). */
+export async function setLifecycle(id: string, lifecycle: string): Promise<ActionState> {
+  try {
+    const res = await fetch(`${adminBaseUrl()}/actuator/gatewayroutes/${encodeURIComponent(id)}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...adminHeaders() },
+      body: JSON.stringify({ lifecycle }),
+      cache: "no-store"
+    });
+    if (!res.ok) {
+      const detail = await safeMessage(res);
+      return { ok: false, message: `Lifecycle change failed (${res.status})${detail ? `: ${detail}` : ""}.` };
+    }
+    revalidatePath("/");
+    const verb =
+      lifecycle === "RETIRED"
+        ? "retired — the edge now answers 410 Gone"
+        : lifecycle === "DEPRECATED"
+          ? "deprecated — still serving, but callers get Deprecation + Sunset warnings"
+          : "republished — serving normally again";
+    return {
+      ok: true,
+      message: `Route "${id}" ${verb}. Runtime change: a gateway restart reverts to the YAML lifecycle.`
+    };
+  } catch (e) {
+    return { ok: false, message: `Can't reach the gateway admin API: ${msg(e)}` };
+  }
+}
+
+/** Remove a route via the gatewayroutes delete operation. */
+export async function deleteRoute(id: string): Promise<ActionState> {
+  try {
+    const res = await fetch(`${adminBaseUrl()}/actuator/gatewayroutes/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: adminHeaders(),
+      cache: "no-store"
+    });
+    if (!res.ok && res.status !== 404) {
+      return { ok: false, message: `Delete failed (${res.status}).` };
+    }
+    revalidatePath("/");
+    return { ok: true, message: `Route "${id}" removed.` };
+  } catch (e) {
+    return { ok: false, message: `Can't reach the gateway admin API: ${msg(e)}` };
+  }
+}
+
+async function safeMessage(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as { message?: string; error?: string };
+    return body?.message ?? body?.error ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function msg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+/**
+ * Block or unblock a source CIDR via the gatewayblocklist write operation. Bites the very next
+ * request — the filter runs before auth and routing. Runtime change: durable blocks belong in
+ * gateway.security.blocklist.cidrs.
+ */
+export async function updateBlocklist(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const cidr = String(formData.get("cidr") ?? "").trim();
+  const blocked = String(formData.get("blocked") ?? "true") === "true";
+  const persist = String(formData.get("persist") ?? "") === "true";
+  if (!cidr) {
+    return { ok: false, message: "An IP or CIDR is required, e.g. 203.0.113.0/24." };
+  }
+  try {
+    const res = await fetch(`${adminBaseUrl()}/actuator/gatewayblocklist`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...adminHeaders() },
+      body: JSON.stringify({ cidr, blocked, persist }),
+      cache: "no-store"
+    });
+    if (!res.ok) {
+      return { ok: false, message: `Gateway refused the change (${res.status}).` };
+    }
+    const body = (await res.json()) as {
+      error?: string;
+      cidr?: string;
+      source?: string;
+      removed?: boolean;
+      warning?: string;
+    };
+    if (body.error) {
+      return { ok: false, message: body.error };
+    }
+    revalidatePath("/");
+    if (!blocked) {
+      return { ok: true, message: body.removed ? `${cidr} unblocked.` : `${cidr} was not on the list.` };
+    }
+    if (body.warning) {
+      return { ok: true, message: `${body.cidr} blocked. ${body.warning}` };
+    }
+    return body.source === "persistent"
+      ? { ok: true, message: `${body.cidr} is blocked permanently — survives a gateway restart.` }
+      : { ok: true, message: `${body.cidr} is blocked — live now (runtime; check "make permanent" to survive a restart).` };
+  } catch (e) {
+    return { ok: false, message: `Can't reach the gateway admin API: ${msg(e)}` };
+  }
+}

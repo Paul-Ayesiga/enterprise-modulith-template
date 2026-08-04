@@ -23,6 +23,7 @@ record KillBillProperties(
         String callbackToken,
         String callbackUrl,
         Boolean bootstrap,
+        Boolean autoProvisionAccounts,
         String currency,
         Duration connectTimeout,
         Duration readTimeout,
@@ -57,6 +58,9 @@ record KillBillProperties(
         }
         if (bootstrap == null) {
             bootstrap = Boolean.FALSE; // dev opt-in, like the org dev-bootstrap
+        }
+        if (autoProvisionAccounts == null) {
+            autoProvisionAccounts = Boolean.FALSE; // opt-in: an org registered -> a KB account
         }
         if (currency == null || currency.isBlank()) {
             currency = "USD";

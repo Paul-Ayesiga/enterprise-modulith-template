@@ -1,0 +1,9 @@
+[%autowidth.stretch, cols="h,a"]
+|===
+|Base package
+|`ug.co.smsone.signup`
+|Bean references
+|* `u.c.s.o.Organizations` (in Organization)
+* `u.c.s.n.Notifications` (in Notification)
+* `u.c.s.s.audit.AuditLog` (in Shared Kernel)
+|===

@@ -1,0 +1,36 @@
+@startuml
+title <size:24>Payments</size>
+
+set separator none
+top to bottom direction
+
+<style>
+  root {
+    BackgroundColor: #ffffff
+    FontColor: #444444
+  }
+</style>
+
+!include <C4/C4>
+!include <C4/C4_Context>
+!include <C4/C4_Component>
+
+System_Boundary("Application_boundary", "Application", $tags="") {
+  Container_Boundary("Application.Application_boundary", "Application", $tags="") {
+    Component(Application.Application.IntegrationHub, "Integration Hub", $techn="Module", $descr="", $tags="", $link="")
+    Component(Application.Application.Subscription, "Subscription", $techn="Module", $descr="", $tags="", $link="")
+    Component(Application.Application.Payments, "Payments", $techn="Module", $descr="", $tags="", $link="")
+    Component(Application.Application.SharedKernel, "Shared Kernel", $techn="Module", $descr="", $tags="", $link="")
+  }
+
+}
+
+Rel(Application.Application.Subscription, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.IntegrationHub, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Payments, Application.Application.IntegrationHub, "depends on", $techn="", $tags="", $link="")
+Rel(Application.Application.Payments, Application.Application.Subscription, "depends on", $techn="", $tags="", $link="")
+Rel(Application.Application.Payments, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+
+SHOW_LEGEND(true)
+hide stereotypes
+@enduml

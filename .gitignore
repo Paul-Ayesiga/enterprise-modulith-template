@@ -23,3 +23,6 @@ out/
 
 # Logs
 *.log
+
+# k6 load-test run outputs (the scripts are committed; their results are not)
+/perf/out/

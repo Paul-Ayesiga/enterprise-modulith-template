@@ -14,6 +14,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.BatchPreparedStatementSetter;
 import org.springframework.jdbc.core.JdbcTemplate;
+import ug.co.smsone.shared.persistence.DbDialect;
 import org.springframework.stereotype.Component;
 
 /**
@@ -31,9 +32,11 @@ class WebhookDeliveryQueue {
     private static final int MAX_ERROR = 1000;
 
     private final JdbcTemplate jdbc;
+    private final DbDialect dialect;
 
-    WebhookDeliveryQueue(JdbcTemplate jdbc) {
+    WebhookDeliveryQueue(JdbcTemplate jdbc, DbDialect dialect) {
         this.jdbc = jdbc;
+        this.dialect = dialect;
     }
 
     void enqueue(List<NewWebhookDelivery> deliveries, int maxAttempts) {
@@ -82,12 +85,12 @@ class WebhookDeliveryQueue {
                        or (status = 'PROCESSING' and locked_at < now() - (? * interval '1 millisecond'))
                     order by next_attempt_at
                     limit ?
-                    for update skip locked
+                    %s
                 ) c, webhook_subscription s
                 where d.id = c.id and s.id = d.subscription_id and s.deleted_at is null
                   and s.status = 'ACTIVE'
                 returning d.id, s.url, s.secret, d.event_type, d.payload, d.attempts, d.max_attempts
-                """,
+                """.formatted(dialect.skipLocked()),
                 (rs, rowNum) -> new ClaimedWebhookDelivery(
                         rs.getObject("id", UUID.class),
                         rs.getString("url"),

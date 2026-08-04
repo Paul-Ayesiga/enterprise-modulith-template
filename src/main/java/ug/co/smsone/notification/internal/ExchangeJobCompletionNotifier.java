@@ -42,7 +42,8 @@ class ExchangeJobCompletionNotifier {
                 + event.outcome() + ": " + event.processed() + " records processed, "
                 + event.failed() + " failed.";
         notifications.dispatch(new NotificationRequest(subject, body,
-                List.of(new Recipient(NotificationChannel.IN_APP, event.requester())), Map.of()));
+                List.of(new Recipient(NotificationChannel.IN_APP, event.requester())),
+                Map.of("orgId", event.orgId().toString())));
     }
 
     private static String humanize(String outcome) {

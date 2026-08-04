@@ -49,6 +49,15 @@ class Plan extends BaseEntity {
         return plan;
     }
 
+    /** Update the mutable facets — code is the immutable identity. Mutates the collection in place so
+     *  Hibernate keeps managing the {@code plan_entitlement} rows (replacing the instance would orphan them). */
+    void update(String name, int rank, Map<String, Long> entitlements) {
+        this.name = name;
+        this.rank = rank;
+        this.entitlements.clear();
+        this.entitlements.putAll(entitlements);
+    }
+
     String getCode() {
         return code;
     }

@@ -5,4 +5,9 @@
 |Bean references
 |* `u.c.s.s.Subscriptions` (in Subscription)
 * `u.c.s.s.audit.AuditLog` (in Shared Kernel)
+* `u.c.s.s.security.GatewaySecretVerifier` (in Shared Kernel)
+|Events listened to
+|* `u.c.s.s.SubscriptionChanged` (async) 
+* `u.c.s.o.OrganizationRegistered` (async) 
+* `u.c.s.o.OrganizationRegistered` (async) 
 |===

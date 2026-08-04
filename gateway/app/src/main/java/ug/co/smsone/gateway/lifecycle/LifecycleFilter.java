@@ -54,7 +54,16 @@ public class LifecycleFilter implements GlobalFilter, Ordered, ApplicationListen
             return chain.filter(exchange);
         }
         if (lifecycle.isRetired()) {
-            return Mono.error(new ResponseStatusException(HttpStatus.GONE, "This API version is retired."));
+            boolean hasSunset = lifecycle.sunset() != null && !lifecycle.sunset().isBlank();
+            if (hasSunset) {
+                // Even a 410 tells callers WHEN it went — the response is not yet committed, so the
+                // header survives onto the error envelope the exception handler writes.
+                exchange.getResponse().getHeaders().set("Sunset", lifecycle.sunset());
+            }
+            return Mono.error(new ResponseStatusException(HttpStatus.GONE,
+                    "This API route was retired at the gateway"
+                            + (hasSunset ? " (sunset " + lifecycle.sunset() + ")" : "")
+                            + " and is no longer served."));
         }
         if (lifecycle.isDeprecated()) {
             exchange.getResponse().beforeCommit(() -> {

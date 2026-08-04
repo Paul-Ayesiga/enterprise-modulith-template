@@ -7,13 +7,18 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ug.co.smsone.shared.audit.AuditLog;
+import ug.co.smsone.shared.error.ConflictException;
 import ug.co.smsone.shared.error.NotFoundException;
 import ug.co.smsone.shared.error.ValidationException;
+import ug.co.smsone.shared.web.ApiSource;
+import ug.co.smsone.subscription.EntitlementKeys;
 import ug.co.smsone.subscription.SubscriptionChanged;
 
 /**
@@ -82,6 +87,16 @@ class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
         beginTrial(organizationId, planCode, trialDays);
     }
 
+    /** Port form — the trial-on-signup listener drives this; an org already on a plan is left alone. */
+    @Override
+    @Transactional
+    public void startTrialForNewOrg(UUID organizationId, String planCode, int trialDays) {
+        if (subscriptions.findByOrgId(organizationId).isPresent()) {
+            return; // already on a plan (e.g. a straight-to-paid assignment) — do not override it
+        }
+        beginTrial(organizationId, planCode, trialDays);
+    }
+
     @Transactional
     SubscriptionView assign(UUID orgId, String planCode) {
         String normalized = planCode == null ? "" : planCode.trim().toUpperCase();
@@ -135,6 +150,26 @@ class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
         return view(orgId);
     }
 
+    /** Port form — billing's dunning job. PAST_DUE older than the grace window goes read-only. */
+    @Override
+    @Transactional
+    public int pauseLapsedPastDue(Duration grace) {
+        List<OrgSubscription> lapsed = subscriptions.findByStatusAndUpdatedAtBefore(
+                OrgSubscription.Status.PAST_DUE, clock.instant().minus(grace));
+        for (OrgSubscription subscription : lapsed) {
+            subscription.pause();
+            subscriptions.save(subscription);
+            Plan plan = plans.findById(subscription.getPlanId()).orElse(null);
+            events.publishEvent(new SubscriptionChanged(subscription.getOrgId(),
+                    plan == null ? null : plan.getCode(),
+                    OrgSubscription.Status.PAUSED.name(), clock.instant()));
+            auditLog.record("subscription.past_due_lapsed", subscription.getOrgId(),
+                    subscription.getOrgId().toString(), "status=PAST_DUE", "status=PAUSED");
+            meters.counter("smsone.subscription.past_due_lapsed").increment();
+        }
+        return lapsed.size();
+    }
+
     /**
      * Pause every trial that has lapsed — the org goes READ-ONLY (writes answer 402) until a plan
      * is assigned or a payment lands. Idempotent: a paused row is no longer TRIALING, so a re-run
@@ -160,6 +195,88 @@ class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
 
     java.util.List<Plan> catalog() {
         return plans.findAllByOrderByRankAsc();
+    }
+
+    private static final Set<String> KNOWN_ENTITLEMENTS = Set.of(
+            EntitlementKeys.MEMBERS_MAX, EntitlementKeys.WEBHOOKS_MAX, EntitlementKeys.EXCHANGE_ENABLED,
+            EntitlementKeys.EXCHANGE_SCHEDULES_MAX, EntitlementKeys.API_REQUESTS_PER_MINUTE);
+
+    @Transactional
+    Plan createPlan(String code, String name, int rank, Map<String, Long> entitlements) {
+        String normalized = normalizeCode(code);
+        if (plans.findByCode(normalized).isPresent()) {
+            throw new ConflictException("A plan named '" + normalized + "' already exists.");
+        }
+        Plan plan = plans.save(Plan.of(normalized, name.trim(), rank, toStored(entitlements)));
+        auditLog.record("subscription.plan_created", null, normalized, null,
+                "name=" + plan.getName() + " rank=" + rank);
+        return plan;
+    }
+
+    /** Editing a plan changes what EVERY org on it may do, so evict the per-org entitlement cache. */
+    @Transactional
+    @CacheEvict(cacheNames = EntitlementResolver.CACHE, allEntries = true)
+    Plan updatePlan(String code, String name, int rank, Map<String, Long> entitlements) {
+        Plan plan = requirePlan(normalizeCode(code));
+        plan.update(name.trim(), rank, toStored(entitlements));
+        plans.save(plan);
+        auditLog.record("subscription.plan_updated", null, plan.getCode(), null,
+                "name=" + plan.getName() + " rank=" + rank);
+        return plan;
+    }
+
+    @Transactional
+    @CacheEvict(cacheNames = EntitlementResolver.CACHE, allEntries = true)
+    void deletePlan(String code) {
+        Plan plan = requirePlan(normalizeCode(code));
+        if ("FREE".equals(plan.getCode())) {
+            throw new ConflictException("FREE is the default fallback plan and cannot be deleted.");
+        }
+        if (subscriptions.existsByPlanId(plan.getId())) {
+            throw new ConflictException("This plan is assigned to organizations — reassign them before deleting it.");
+        }
+        plans.delete(plan);
+        auditLog.record("subscription.plan_deleted", null, plan.getCode(), "name=" + plan.getName(), null);
+    }
+
+    private Plan requirePlan(String code) {
+        return plans.findByCode(code).orElseThrow(() -> new NotFoundException("No plan named '" + code + "'."));
+    }
+
+    private static String normalizeCode(String code) {
+        String normalized = code == null ? "" : code.trim().toUpperCase();
+        if (normalized.isBlank()) {
+            throw new ValidationException("A plan code is required.", ApiSource.pointer("/code"));
+        }
+        return normalized;
+    }
+
+    /**
+     * Validate the entitlement map and encode it for STORAGE: a null value means "feature on" (kept as
+     * the negative sentinel so Hibernate doesn't drop it), a number is a cap, an unknown key is refused
+     * (a typo would otherwise silently do nothing), and an absent key stays off / unlimited.
+     */
+    private static Map<String, Long> toStored(Map<String, Long> entitlements) {
+        Map<String, Long> stored = new LinkedHashMap<>();
+        if (entitlements == null) {
+            return stored;
+        }
+        entitlements.forEach((key, value) -> {
+            if (!KNOWN_ENTITLEMENTS.contains(key)) {
+                throw new ValidationException("Unknown entitlement '" + key + "'.",
+                        ApiSource.pointer("/entitlements/" + key));
+            }
+            if (value == null) {
+                stored.put(key, PlanSeeder.FEATURE_ON);
+            } else if (value < 0) {
+                throw new ValidationException(
+                        "An entitlement cap cannot be negative — omit the key for off, or send null for on.",
+                        ApiSource.pointer("/entitlements/" + key));
+            } else {
+                stored.put(key, value);
+            }
+        });
+        return stored;
     }
 
     @Override
