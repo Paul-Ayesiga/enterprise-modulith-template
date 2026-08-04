@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { Sidebar } from "./components/Sidebar";
+import { ToastProvider } from "./components/Toast";
 import { getSession } from "./lib/auth";
 import { adminBaseUrl, fetchHealth, grafanaUrl } from "./lib/gateway";
 import "./globals.css";
@@ -34,13 +35,15 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
         <a className="skip-link" href="#main">
           Skip to content
         </a>
-        <Sidebar
-          health={health}
-          grafanaUrl={grafanaUrl()}
-          routesUrl={`${adminBaseUrl()}/actuator/gatewayroutes`}
-          user={session ? session.name ?? session.email ?? session.sub : null}
-        />
-        <div className="shell__main">{children}</div>
+        <ToastProvider>
+          <Sidebar
+            health={health}
+            grafanaUrl={grafanaUrl()}
+            routesUrl={`${adminBaseUrl()}/actuator/gatewayroutes`}
+            user={session ? session.name ?? session.email ?? session.sub : null}
+          />
+          <div className="shell__main">{children}</div>
+        </ToastProvider>
       </body>
     </html>
   );

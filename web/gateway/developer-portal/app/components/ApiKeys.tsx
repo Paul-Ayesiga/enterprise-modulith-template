@@ -4,11 +4,14 @@ import { useEffect, useState, useTransition } from "react";
 import { useFormState, useFormStatus } from "react-dom";
 import { createKeyAction, revokeKeyAction, rotateKeyAction, type MintState } from "../credentials/actions";
 import type { ApiKey, Minted } from "../lib/credentials";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { CheckIcon, CopyIcon } from "./Icons";
+import { useActionToast, useToast } from "./Toast";
 
 export function ApiKeys({ keys }: { keys: ApiKey[] }) {
   const [state, formAction] = useFormState<MintState, FormData>(createKeyAction, null);
   const [revealed, setRevealed] = useState<Minted | null>(null);
+  useActionToast(state);
 
   // Surface a newly-created key's secret (once). Rotation sets `revealed` directly from its row.
   useEffect(() => {
@@ -41,11 +44,6 @@ export function ApiKeys({ keys }: { keys: ApiKey[] }) {
             </div>
             <div className="form__actions">
               <MintButton />
-              {state && !state.ok && (
-                <p className="form__msg form__msg--err" role="alert">
-                  {state.message}
-                </p>
-              )}
             </div>
           </form>
         </div>
@@ -132,29 +130,27 @@ function SecretReveal({ minted, onDismiss }: { minted: Minted; onDismiss: () => 
 }
 
 function KeyRow({ apiKey, onRotated }: { apiKey: ApiKey; onRotated: (m: Minted) => void }) {
+  const toast = useToast();
   const [pending, start] = useTransition();
-  const [confirmRevoke, setConfirmRevoke] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   function revoke() {
-    setError(null);
-    if (!confirmRevoke) {
-      setConfirmRevoke(true);
-      return;
-    }
     start(async () => {
       const result = await revokeKeyAction(apiKey.id);
-      if (!result.ok) setError(result.message);
-      setConfirmRevoke(false);
+      toast(result.ok ? "success" : "error", result.message);
+      setConfirmOpen(false);
     });
   }
 
   function rotate() {
-    setError(null);
     start(async () => {
       const result = await rotateKeyAction(apiKey.id);
-      if (result.ok && result.minted) onRotated(result.minted);
-      else setError(result.message);
+      if (result.ok && result.minted) {
+        onRotated(result.minted);
+        toast("success", result.message);
+      } else {
+        toast("error", result.message);
+      }
     });
   }
 
@@ -185,17 +181,29 @@ function KeyRow({ apiKey, onRotated }: { apiKey: ApiKey; onRotated: (m: Minted) 
         <button
           className="btn btn--sm btn--danger"
           type="button"
-          onClick={revoke}
-          onBlur={() => setConfirmRevoke(false)}
+          onClick={() => setConfirmOpen(true)}
           disabled={pending}
         >
-          {confirmRevoke ? "Confirm?" : "Revoke"}
+          Revoke
         </button>
-        {error && (
-          <div className="form__msg--err" style={{ fontSize: "0.75rem", marginTop: 4 }}>
-            {error}
-          </div>
-        )}
+        <ConfirmDialog
+          open={confirmOpen}
+          danger
+          title={`Revoke "${apiKey.name}"?`}
+          confirmLabel="Revoke key"
+          pending={pending}
+          onConfirm={revoke}
+          onCancel={() => {
+            if (!pending) setConfirmOpen(false);
+          }}
+          body={
+            <>
+              Any client still sending <code className="mono">{apiKey.prefix}…</code> will start getting{" "}
+              <strong>401 Unauthorized</strong> immediately. This can&rsquo;t be undone — you&rsquo;d have to mint a
+              new key. Rotate instead if you only want to replace the secret.
+            </>
+          }
+        />
       </td>
     </tr>
   );

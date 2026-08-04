@@ -3,6 +3,7 @@
 import { useFormState, useFormStatus } from "react-dom";
 import { createRoute, type ActionState } from "../lib/actions";
 import { PlusIcon } from "./Icons";
+import { useActionToast } from "./Toast";
 
 type CreateRouteFormProps = {
   services: string[];
@@ -14,6 +15,7 @@ type CreateRouteFormProps = {
 
 export function CreateRouteForm({ services, defaultId, defaultPath, defaultOrder }: CreateRouteFormProps) {
   const [state, formAction] = useFormState<ActionState, FormData>(createRoute, null);
+  useActionToast(state);
   const carving = Boolean(defaultPath);
 
   return (
@@ -116,15 +118,6 @@ export function CreateRouteForm({ services, defaultId, defaultPath, defaultOrder
       </div>
       <div className="form__actions">
         <SubmitButton />
-        {state && (
-          <p
-            className={`form__msg ${state.ok ? "form__msg--ok" : "form__msg--err"}`}
-            role="status"
-            aria-live="polite"
-          >
-            {state.message}
-          </p>
-        )}
       </div>
       <p className="field__hint">
         <strong>Runtime vs durable:</strong> a route takes effect instantly. Without “keep after restart” it

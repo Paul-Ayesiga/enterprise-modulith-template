@@ -5,6 +5,8 @@ import { useState, useTransition } from "react";
 import { useFormState, useFormStatus } from "react-dom";
 import { createWebhookAction, deleteWebhookAction, type CreateState } from "../webhooks/actions";
 import type { EventType, Webhook } from "../lib/webhooks";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { useActionToast, useToast } from "./Toast";
 
 /** Create form + subscription list. The signing secret appears exactly once, in the create result. */
 export function Webhooks({
@@ -17,6 +19,7 @@ export function Webhooks({
   activeId: string | null;
 }) {
   const [state, formAction] = useFormState<CreateState, FormData>(createWebhookAction, null);
+  useActionToast(state);
 
   return (
     <>
@@ -53,11 +56,6 @@ export function Webhooks({
         </div>
         <div className="form__actions">
           <CreateButton />
-          {state && !state.created && (
-            <p className={`form__msg ${state.ok ? "form__msg--ok" : "form__msg--err"}`} role="status">
-              {state.message}
-            </p>
-          )}
         </div>
       </form>
 
@@ -109,20 +107,15 @@ export function Webhooks({
 }
 
 function WebhookRow({ webhook, active }: { webhook: Webhook; active: boolean }) {
+  const toast = useToast();
   const [pending, start] = useTransition();
-  const [confirming, setConfirming] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   function onDelete() {
-    setError(null);
-    if (!confirming) {
-      setConfirming(true);
-      return;
-    }
     start(async () => {
       const result = await deleteWebhookAction(webhook.id);
-      if (!result.ok) setError(result.message);
-      setConfirming(false);
+      toast(result.ok ? "success" : "error", result.message);
+      setConfirmOpen(false);
     });
   }
 
@@ -147,17 +140,28 @@ function WebhookRow({ webhook, active }: { webhook: Webhook; active: boolean }) 
         <button
           type="button"
           className="btn btn--sm btn--danger"
-          onClick={onDelete}
-          onBlur={() => setConfirming(false)}
+          onClick={() => setConfirmOpen(true)}
           disabled={pending}
         >
-          {pending ? "Removing…" : confirming ? "Confirm?" : "Delete"}
+          {pending ? "Removing…" : "Delete"}
         </button>
-        {error && (
-          <div className="form__msg--err" role="alert" style={{ fontSize: "0.78rem" }}>
-            {error}
-          </div>
-        )}
+        <ConfirmDialog
+          open={confirmOpen}
+          danger
+          title="Delete this webhook?"
+          confirmLabel="Delete webhook"
+          pending={pending}
+          onConfirm={onDelete}
+          onCancel={() => {
+            if (!pending) setConfirmOpen(false);
+          }}
+          body={
+            <>
+              We&rsquo;ll stop delivering events to <code className="mono">{webhook.url}</code>. Any events fired
+              after this are not queued or replayed — re-subscribe to start receiving them again.
+            </>
+          }
+        />
       </td>
     </tr>
   );

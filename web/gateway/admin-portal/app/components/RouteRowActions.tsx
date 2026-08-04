@@ -1,11 +1,13 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useFormState, useFormStatus } from "react-dom";
 import { deleteRoute, setLifecycle, updateRoute, type ActionState } from "../lib/actions";
 import type { RouteRow } from "../lib/gateway";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { CopyIcon, PencilIcon, PauseIcon, PlayIcon, TrashIcon } from "./Icons";
 import { RowMenu } from "./RowMenu";
+import { useActionToast, useToast } from "./Toast";
 
 /**
  * The route as a `gateway.routes` YAML snippet — paste it into application.yml to promote a runtime
@@ -38,8 +40,8 @@ function routeToYaml(route: RouteRow): string {
  * The per-route actions, collapsed into one "⋯" menu so the row height stays fixed. It follows the
  * lifecycle PROGRESSION so nothing jumps straight to 410: a Published route can only be Deprecated
  * (still serves, warns with Deprecation + Sunset); a Deprecated route can then be Retired (410) or
- * Republished; a Retired route can be Republished. Edit expands an in-place editor; Delete is a
- * two-click confirm inside the menu.
+ * Republished; a Retired route can be Republished. The two irreversible-on-the-edge actions — Retire
+ * and Delete — open a confirm dialog; every action's result is announced as a toast.
  */
 export function RouteRowActions({
   route,
@@ -51,51 +53,48 @@ export function RouteRowActions({
   editing: boolean;
   onToggleEdit: () => void;
 }) {
+  const toast = useToast();
   const [pending, start] = useTransition();
-  const [error, setError] = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [dialog, setDialog] = useState<null | "retire" | "delete">(null);
   const lifecycle = route.lifecycle.toUpperCase();
 
   function copyYaml() {
     navigator.clipboard
       .writeText(routeToYaml(route))
-      .then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1600);
-      })
-      .catch(() => setError("Couldn't copy to the clipboard."));
+      .then(() => toast("success", `Copied the ${route.id} YAML — paste it into application.yml.`))
+      .catch(() => toast("error", "Couldn't copy to the clipboard."));
   }
 
-  function move(to: "PUBLISHED" | "DEPRECATED" | "RETIRED") {
-    setError(null);
+  function move(to: "PUBLISHED" | "DEPRECATED") {
     start(async () => {
       const result = await setLifecycle(route.id, to);
-      if (result && !result.ok) setError(result.message);
+      if (result) toast(result.ok ? "success" : "error", result.message);
     });
   }
 
-  function remove() {
-    setError(null);
+  function confirmRetire() {
+    start(async () => {
+      const result = await setLifecycle(route.id, "RETIRED");
+      if (result) toast(result.ok ? "success" : "error", result.message);
+      setDialog(null);
+    });
+  }
+
+  function confirmDelete() {
     start(async () => {
       const result = await deleteRoute(route.id);
-      if (result && !result.ok) setError(result.message);
+      if (result) toast(result.ok ? "success" : "error", result.message);
+      setDialog(null);
     });
   }
 
+  const closeDialog = () => {
+    if (!pending) setDialog(null);
+  };
+
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
-      {copied && (
-        <span className="form__msg--ok" role="status" style={{ fontSize: "0.76rem" }}>
-          Copied YAML
-        </span>
-      )}
-      {error && (
-        <span className="form__msg--err" role="alert" style={{ fontSize: "0.76rem" }}>
-          {error}
-        </span>
-      )}
-      <RowMenu label={`Actions for route ${route.id}`} onClose={() => setConfirmDelete(false)}>
+    <>
+      <RowMenu label={`Actions for route ${route.id}`}>
         {(close) => (
           <>
             {lifecycle === "PUBLISHED" && (
@@ -129,7 +128,7 @@ export function RouteRowActions({
                   role="menuitem"
                   className="rowmenu__item rowmenu__item--danger"
                   onClick={() => {
-                    move("RETIRED");
+                    setDialog("retire");
                     close();
                   }}
                 >
@@ -178,26 +177,62 @@ export function RouteRowActions({
               role="menuitem"
               className="rowmenu__item rowmenu__item--danger"
               onClick={() => {
-                if (!confirmDelete) {
-                  setConfirmDelete(true);
-                  return;
-                }
-                remove();
+                setDialog("delete");
                 close();
               }}
             >
-              <TrashIcon /> {confirmDelete ? "Click again to delete" : "Delete"}
+              <TrashIcon /> Delete
             </button>
           </>
         )}
       </RowMenu>
-    </span>
+
+      <ConfirmDialog
+        open={dialog === "retire"}
+        danger
+        title={`Retire ${route.id}?`}
+        confirmLabel="Retire — answer 410"
+        pending={pending}
+        onConfirm={confirmRetire}
+        onCancel={closeDialog}
+        body={
+          <>
+            The edge will answer <strong>410 Gone</strong> to every call on this route&rsquo;s paths (
+            {route.paths.join(", ") || "—"}). This is the hard cutoff, past deprecation warnings — you can
+            Republish it later. Runtime change: a gateway restart reverts to the YAML lifecycle.
+          </>
+        }
+      />
+      <ConfirmDialog
+        open={dialog === "delete"}
+        danger
+        title={`Delete ${route.id}?`}
+        confirmLabel="Delete route"
+        pending={pending}
+        onConfirm={confirmDelete}
+        onCancel={closeDialog}
+        body={
+          <>
+            Removes <code className="mono">{route.id}</code> from the live edge immediately — its paths fall
+            back to whatever lower-priority route matches (usually the <code className="mono">platform-api</code>{" "}
+            catch-all). A durable route is also dropped from the durable store.
+          </>
+        }
+      />
+    </>
   );
 }
 
 /** The expanded editor — rendered as a full-width row directly under the route it edits. */
 export function EditRouteForm({ route, services, onDone }: { route: RouteRow; services: string[]; onDone: () => void }) {
   const [state, formAction] = useFormState<ActionState, FormData>(updateRoute, null);
+  useActionToast(state);
+
+  // A successful save has already revalidated the table; fold the editor away so the row settles.
+  useEffect(() => {
+    if (state?.ok) onDone();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state]);
 
   return (
     <form className="form" action={formAction}>
@@ -293,15 +328,6 @@ export function EditRouteForm({ route, services, onDone }: { route: RouteRow; se
         <button type="button" className="btn btn--ghost" onClick={onDone}>
           Close
         </button>
-        {state && (
-          <p
-            className={`form__msg ${state.ok ? "form__msg--ok" : "form__msg--err"}`}
-            role="status"
-            aria-live="polite"
-          >
-            {state.message}
-          </p>
-        )}
       </div>
       <p className="field__hint">
         Runtime tier: edits apply instantly and last until the gateway restarts — YAML is the durable truth.

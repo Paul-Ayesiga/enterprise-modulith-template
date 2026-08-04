@@ -1,9 +1,22 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { adminBaseUrl, adminHeaders } from "./gateway";
+import { adminBaseUrl, adminHeaders, fetchEndpoints, type Endpoint } from "./gateway";
 
 export type ActionState = { ok: boolean; message: string } | null;
+
+/**
+ * The documented endpoints a given route serves today — every operation whose lowest-order matching
+ * route is this one. Called on demand when a route row is expanded (progressive load), so the Routes
+ * page never pays for the whole OpenAPI↔route mapping unless the operator drills in.
+ */
+export async function endpointsForRoute(routeId: string): Promise<{ endpoints: Endpoint[]; error: string | null }> {
+  const view = await fetchEndpoints();
+  if (view.error) {
+    return { endpoints: [], error: view.error };
+  }
+  return { endpoints: view.endpoints.filter((e) => e.route?.id === routeId), error: null };
+}
 
 /** Register (or replace) a route via the gatewayroutes write operation. Takes effect on the edge live. */
 export async function createRoute(_prev: ActionState, formData: FormData): Promise<ActionState> {

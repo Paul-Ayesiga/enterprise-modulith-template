@@ -3,6 +3,7 @@
 import { useFormState, useFormStatus } from "react-dom";
 import { updateBlocklist, type ActionState } from "../lib/actions";
 import type { AutoBlockRules, BlocklistEntry } from "../lib/gateway";
+import { useActionToast } from "./Toast";
 
 function ttl(seconds: number | undefined): string | null {
   if (seconds === undefined) return null;
@@ -38,6 +39,7 @@ export function BlocklistPanel({
   error: string | null;
 }) {
   const [state, formAction] = useFormState<ActionState, FormData>(updateBlocklist, null);
+  useActionToast(state);
 
   return (
     <div className="panel" style={{ padding: "0.9rem 1.1rem" }}>
@@ -84,26 +86,31 @@ export function BlocklistPanel({
             </ul>
           )}
           <form className="form" action={formAction}>
-            <div className="form__row" style={{ alignItems: "flex-end" }}>
-              <div className="field" style={{ flex: 1 }}>
-                <label className="field__label" htmlFor="blocklist-cidr">
-                  Block a source
-                </label>
-                <input
-                  id="blocklist-cidr"
-                  name="cidr"
-                  placeholder="203.0.113.0/24"
-                  autoComplete="off"
-                  spellCheck={false}
-                  required
-                />
-                <span className="field__hint">
-                  Bare IPs normalize to /32. A runtime block lasts until the gateway restarts; tick
-                  “make permanent” to keep it (or bake it into <code>gateway.security.blocklist.cidrs</code>).
-                </span>
+            <div className="field">
+              <label className="field__label" htmlFor="blocklist-cidr">
+                Block a source
+              </label>
+              {/* Input + button share ONE centered row so the button lines up with the input box. The
+                  hint lives below (outside this row) — inside it, the button would align to the bottom of
+                  the hint and float low. Wraps the button under the input on narrow widths. */}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
+                <div style={{ flex: "1 1 260px" }}>
+                  <input
+                    id="blocklist-cidr"
+                    name="cidr"
+                    placeholder="203.0.113.0/24"
+                    autoComplete="off"
+                    spellCheck={false}
+                    required
+                  />
+                </div>
+                <input type="hidden" name="blocked" value="true" />
+                <BlockButton />
               </div>
-              <input type="hidden" name="blocked" value="true" />
-              <BlockButton />
+              <span className="field__hint">
+                Bare IPs normalize to /32. A runtime block lasts until the gateway restarts; tick
+                “make permanent” to keep it (or bake it into <code>gateway.security.blocklist.cidrs</code>).
+              </span>
             </div>
             {persistentEnabled ? (
               <label
@@ -117,16 +124,6 @@ export function BlocklistPanel({
               <input type="hidden" name="persist" value="false" />
             )}
           </form>
-          {state ? (
-            <p
-              className={`form__msg ${state.ok ? "form__msg--ok" : "form__msg--err"}`}
-              role="status"
-              aria-live="polite"
-              style={{ marginBottom: 0 }}
-            >
-              {state.message}
-            </p>
-          ) : null}
         </>
       )}
     </div>

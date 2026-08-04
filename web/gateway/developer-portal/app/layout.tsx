@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { Sidebar } from "./components/Sidebar";
+import { ToastProvider } from "./components/Toast";
 import { getSession } from "./lib/auth";
 import { openApiUrl, routeTableUrl } from "./lib/gateway";
 import "./globals.css";
@@ -30,12 +31,14 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <a className="skip-link" href="#main">
           Skip to content
         </a>
-        <Sidebar
-          openApiUrl={openApiUrl()}
-          routeTableUrl={routeTableUrl()}
-          user={session ? session.name ?? session.email ?? session.sub : null}
-        />
-        <div className="shell__main">{children}</div>
+        <ToastProvider>
+          <Sidebar
+            openApiUrl={openApiUrl()}
+            routeTableUrl={routeTableUrl()}
+            user={session ? session.name ?? session.email ?? session.sub : null}
+          />
+          <div className="shell__main">{children}</div>
+        </ToastProvider>
       </body>
     </html>
   );

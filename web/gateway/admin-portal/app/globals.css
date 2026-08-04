@@ -335,3 +335,79 @@ button { font: inherit; }
 .rowmenu__note { margin-left: auto; font-size: 0.72rem; color: var(--text-faint); }
 .rowmenu__item--danger .rowmenu__note { color: color-mix(in srgb, var(--danger) 62%, var(--text-faint)); }
 .rowmenu__sep { height: 1px; background: var(--border); margin: 4px 2px; }
+
+/* ---- route disclosure (click a route to list its endpoints) ---- */
+.route-disclosure {
+  display: inline-flex; align-items: center; gap: 7px; padding: 2px 4px 2px 2px; margin-left: -4px;
+  background: transparent; border: 0; border-radius: var(--radius-sm); cursor: pointer; color: var(--text);
+  transition: color 0.12s var(--ease);
+}
+.route-disclosure:hover { color: var(--accent); }
+.route-disclosure:hover .route-id { text-decoration: underline; text-underline-offset: 2px; }
+.route-disclosure__chevron { display: grid; place-items: center; color: var(--text-faint); transition: transform 0.18s var(--ease), color 0.12s var(--ease); }
+.route-disclosure:hover .route-disclosure__chevron { color: var(--accent); }
+.route-disclosure__chevron.is-open { transform: rotate(90deg); color: var(--accent); }
+tr.is-open > td { background: var(--surface-2); }
+
+/* The full-width drill-down row under an expanded route. */
+.subrow > .subrow__cell { padding: 0; background: color-mix(in srgb, var(--surface-2) 60%, var(--surface)); }
+.epdrill { padding: 14px 16px; display: grid; gap: 2px; }
+.epdrill__count { margin: 0 0 8px; font-size: 0.8rem; color: var(--text-muted); }
+.epdrill__count code { font-family: var(--font-mono); font-size: 0.85em; }
+.epdrill .panel { background: var(--surface); }
+.epdrill .table td { padding: 9px 14px; }
+
+/* ---- skeletons (progressive loading) ---- */
+.skeleton {
+  display: block; min-width: 24px; height: 14px; border-radius: 6px;
+  background: linear-gradient(90deg, var(--surface-2) 25%, color-mix(in srgb, var(--border-strong) 55%, var(--surface-2)) 37%, var(--surface-2) 63%);
+  background-size: 400% 100%; animation: skeleton-shimmer 1.4s ease infinite;
+}
+@keyframes skeleton-shimmer { from { background-position: 100% 50%; } to { background-position: 0 50%; } }
+@media (prefers-reduced-motion: reduce) { .skeleton { animation: none; background: var(--surface-2); } }
+
+/* ---- toasts ---- */
+.toaster {
+  position: fixed; z-index: 80; right: 18px; bottom: 18px; display: flex; flex-direction: column; gap: 10px;
+  width: min(380px, calc(100vw - 36px)); pointer-events: none;
+}
+.toast {
+  pointer-events: auto; display: flex; align-items: flex-start; gap: 10px; padding: 12px 12px 12px 14px;
+  background: var(--surface); border: 1px solid var(--border); border-left-width: 3px; border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-float); animation: toast-in 0.22s var(--ease);
+}
+.toast--success { border-left-color: var(--ok); }
+.toast--error { border-left-color: var(--danger); }
+.toast--info { border-left-color: var(--accent); }
+.toast__dot { flex-shrink: 0; width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: var(--text-faint); }
+.toast--success .toast__dot { background: var(--ok); }
+.toast--error .toast__dot { background: var(--danger); }
+.toast--info .toast__dot { background: var(--accent); }
+.toast__msg { margin: 0; flex: 1; font-size: 0.85rem; line-height: 1.45; color: var(--text); }
+.toast__close {
+  flex-shrink: 0; border: 0; background: transparent; color: var(--text-faint); cursor: pointer;
+  font-size: 0.8rem; line-height: 1; padding: 3px; border-radius: 5px; transition: color 0.12s var(--ease), background 0.12s var(--ease);
+}
+.toast__close:hover { color: var(--text); background: var(--surface-2); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+@media (max-width: 640px) { .toaster { right: 12px; left: 12px; bottom: 12px; width: auto; } }
+
+/* ---- confirm modal ---- */
+.modal {
+  position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: 20px;
+  background: rgba(4, 8, 8, 0.5); backdrop-filter: blur(2px); animation: modal-fade 0.16s var(--ease);
+}
+.modal__panel {
+  width: min(460px, 100%); background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: var(--radius); box-shadow: var(--shadow-float); padding: 20px 22px; animation: modal-pop 0.18s var(--ease);
+}
+.modal__title { font-size: 1.05rem; font-weight: 650; letter-spacing: -0.01em; }
+.modal__body { margin-top: 8px; color: var(--text-muted); font-size: 0.9rem; line-height: 1.55; }
+.modal__body code { font-family: var(--font-mono); font-size: 0.85em; }
+.modal__actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+.btn--danger-solid { color: var(--accent-contrast); background: var(--danger); border-color: var(--danger); }
+.btn--danger-solid:hover:not(:disabled) { background: var(--danger-hover); border-color: var(--danger-hover); }
+@keyframes modal-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes modal-pop { from { opacity: 0; transform: translateY(6px) scale(0.99); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .modal, .modal__panel { animation: none; } }

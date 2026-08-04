@@ -143,6 +143,15 @@ export function CopyIcon({ className }: IconProps) {
   );
 }
 
+/** A right-pointing chevron; the disclosure rotates it to point down when its row is expanded. */
+export function ChevronIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)} width={14} height={14}>
+      <path d="M9 6l6 6-6 6" />
+    </svg>
+  );
+}
+
 /** One icon set for the sidebar nav, keyed by name — keeps the nav config declarative. */
 export function NavIcon({ name, className }: IconProps & { name: string }) {
   const paths: Record<string, JSX.Element> = {
