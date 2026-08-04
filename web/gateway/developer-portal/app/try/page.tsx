@@ -1,8 +1,6 @@
 import Link from "next/link";
-import { Header } from "../components/Header";
 import { TryConsole } from "../components/TryConsole";
 import { getSession } from "../lib/auth";
-import { openApiUrl, routeTableUrl } from "../lib/gateway";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +12,6 @@ export default function TryPage({
   const signedIn = getSession() !== null;
   return (
     <>
-      <Header openApiUrl={openApiUrl()} routeTableUrl={routeTableUrl()} />
 
       <main id="main" className="main">
         <section className="intro">

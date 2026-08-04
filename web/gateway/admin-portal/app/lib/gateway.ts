@@ -208,7 +208,7 @@ export async function fetchUsage(): Promise<{ usage: UsageRow[]; error: string |
   }
 }
 
-async function fetchHealth(): Promise<string> {
+export async function fetchHealth(): Promise<string> {
   try {
     const res = await fetch(`${adminBaseUrl()}/actuator/health`, { cache: "no-store" });  // probes stay tokenless
     if (!res.ok) return "DOWN";

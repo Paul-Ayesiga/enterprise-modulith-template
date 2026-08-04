@@ -1,7 +1,6 @@
 import Link from "next/link";
-import { Header } from "../components/Header";
 import { getSession } from "../lib/auth";
-import { apiBaseUrl, openApiUrl, routeTableUrl } from "../lib/gateway";
+import { apiBaseUrl } from "../lib/gateway";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +11,6 @@ export default function GettingStartedPage() {
 
   return (
     <>
-      <Header openApiUrl={openApiUrl()} routeTableUrl={routeTableUrl()} />
 
       <main id="main" className="main">
         <section className="intro">

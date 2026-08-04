@@ -115,3 +115,47 @@ export function PlayIcon({ className }: IconProps) {
     </svg>
   );
 }
+
+export function MenuIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <path d="M4 7h16M4 12h16M4 17h16" />
+    </svg>
+  );
+}
+
+/** One icon set for the sidebar nav, keyed by name — keeps the nav config declarative. */
+export function NavIcon({ name, className }: IconProps & { name: string }) {
+  const paths: Record<string, JSX.Element> = {
+    overview: (
+      <>
+        <path d="M4 15a8 8 0 0 1 16 0" />
+        <path d="M12 15l4-3" />
+      </>
+    ),
+    routes: (
+      <>
+        <circle cx="6" cy="6" r="2" />
+        <circle cx="18" cy="18" r="2" />
+        <path d="M6 8v4a4 4 0 0 0 4 4h6" />
+      </>
+    ),
+    consumers: (
+      <>
+        <circle cx="9" cy="9" r="3" />
+        <path d="M4 20a5 5 0 0 1 10 0" />
+        <path d="M16 6.5a3 3 0 0 1 0 5.5" />
+        <path d="M20 20a5 5 0 0 0-3-4.6" />
+      </>
+    ),
+    blocklist: <path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z" />,
+    services: (
+      <>
+        <rect x="4" y="4" width="16" height="6" rx="1.5" />
+        <rect x="4" y="14" width="16" height="6" rx="1.5" />
+        <path d="M7.5 7h.01M7.5 17h.01" />
+      </>
+    )
+  };
+  return <svg {...base(className)}>{paths[name] ?? <circle cx="12" cy="12" r="8" />}</svg>;
+}

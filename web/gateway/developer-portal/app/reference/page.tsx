@@ -1,7 +1,6 @@
 import Link from "next/link";
-import { Header } from "../components/Header";
 import { Reference } from "../components/Reference";
-import { docsBaseUrl, fetchOpenApi, openApiUrl, routeTableUrl } from "../lib/gateway";
+import { docsBaseUrl, fetchOpenApi } from "../lib/gateway";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +9,6 @@ export default async function ReferencePage() {
 
   return (
     <>
-      <Header openApiUrl={openApiUrl()} routeTableUrl={routeTableUrl()} />
 
       <main id="main" className="main">
         <section className="intro">

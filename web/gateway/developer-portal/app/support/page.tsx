@@ -1,7 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { ExternalIcon } from "../components/Icons";
-import { Header } from "../components/Header";
 import { apiBaseUrl, docsBaseUrl, openApiUrl, routeTableUrl } from "../lib/gateway";
 
 export const dynamic = "force-dynamic";
@@ -70,7 +69,6 @@ export default function SupportPage() {
 
   return (
     <>
-      <Header openApiUrl={openApiUrl()} routeTableUrl={routeTableUrl()} />
 
       <main id="main" className="main">
         <section className="intro">

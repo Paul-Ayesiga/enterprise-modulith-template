@@ -1,10 +1,8 @@
 import Link from "next/link";
-import { Header } from "../components/Header";
 import { LockIcon } from "../components/Icons";
 import { Webhooks } from "../components/Webhooks";
 import { getSession, type Session } from "../lib/auth";
 import { getActiveOrg } from "../lib/credentials";
-import { openApiUrl, routeTableUrl } from "../lib/gateway";
 import { listDeliveries, listEventTypes, listWebhooks, type Delivery } from "../lib/webhooks";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +12,6 @@ export default function WebhooksPage({ searchParams }: { searchParams: { sub?: s
 
   return (
     <>
-      <Header openApiUrl={openApiUrl()} routeTableUrl={routeTableUrl()} />
 
       <main id="main" className="main">
         <section className="intro">

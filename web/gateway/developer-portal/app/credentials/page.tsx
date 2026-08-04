@@ -1,10 +1,8 @@
 import Link from "next/link";
 import { ApiKeys } from "../components/ApiKeys";
-import { Header } from "../components/Header";
 import { LockIcon } from "../components/Icons";
 import { getSession, type Session } from "../lib/auth";
 import { getActiveOrg, listKeys } from "../lib/credentials";
-import { openApiUrl, routeTableUrl } from "../lib/gateway";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +11,6 @@ export default async function CredentialsPage({ searchParams }: { searchParams: 
 
   return (
     <>
-      <Header openApiUrl={openApiUrl()} routeTableUrl={routeTableUrl()} />
 
       <main id="main" className="main">
         <section className="intro">

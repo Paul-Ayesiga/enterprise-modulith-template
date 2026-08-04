@@ -1,8 +1,7 @@
 import { BlocklistPanel } from "./components/BlocklistPanel";
 import { CreateRouteForm } from "./components/CreateRouteForm";
-import { Header } from "./components/Header";
 import { RouteTableRow } from "./components/RouteTableRow";
-import { adminBaseUrl, fetchBlocklist, fetchOverview, fetchUsage, grafanaUrl, type UsageRow } from "./lib/gateway";
+import { adminBaseUrl, fetchBlocklist, fetchOverview, fetchUsage, type UsageRow } from "./lib/gateway";
 
 // Read the live gateway state on every request.
 export const dynamic = "force-dynamic";
@@ -15,8 +14,6 @@ export default async function AdminHome() {
 
   return (
     <>
-      <Header health={health} grafanaUrl={grafanaUrl()} routesUrl={routesUrl} />
-
       <main id="main" className="main">
         <section className="intro">
           <h1 className="intro__title">Gateway control plane</h1>
@@ -37,14 +34,14 @@ export default async function AdminHome() {
           </div>
         ) : (
           <>
-            <section className="stats" aria-label="Overview">
+            <section id="overview" className="stats" aria-label="Overview">
               <Stat value={routes.length} label={`Route${routes.length === 1 ? "" : "s"}`} />
               <Stat value={services.length} label={`Service${services.length === 1 ? "" : "s"}`} />
               <Stat value={productCount} label={`Product${productCount === 1 ? "" : "s"}`} />
               <Stat value={health.toUpperCase() === "UP" ? "Healthy" : health} label="Edge health" />
             </section>
 
-            <section className="section">
+            <section id="routes" className="section">
               <div className="section__head">
                 <h2 className="section__title">Register a route</h2>
                 <span className="section__hint">POST → gatewayroutes · live immediately</span>
@@ -83,7 +80,7 @@ export default async function AdminHome() {
               </div>
             </section>
 
-            <section className="section">
+            <section id="consumers" className="section">
               <div className="section__head">
                 <h2 className="section__title">Consumers</h2>
                 <span className="section__hint">live quota windows — top talkers first</span>
@@ -119,7 +116,7 @@ export default async function AdminHome() {
               )}
             </section>
 
-            <section className="section">
+            <section id="blocklist" className="section">
               <div className="section__head">
                 <h2 className="section__title">IP blocklist</h2>
                 <span className="section__hint">
@@ -134,7 +131,7 @@ export default async function AdminHome() {
               />
             </section>
 
-            <section className="section">
+            <section id="services" className="section">
               <div className="section__head">
                 <h2 className="section__title">Services</h2>
                 <span className="section__hint">backends the routes target</span>

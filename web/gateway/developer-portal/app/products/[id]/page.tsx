@@ -1,8 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Header } from "../../components/Header";
 import { PolicyView } from "../../components/PolicyView";
-import { fetchCatalog, openApiUrl, routeTableUrl, type RouteSummary } from "../../lib/gateway";
+import { fetchCatalog, type RouteSummary } from "../../lib/gateway";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +13,6 @@ export default async function ProductPage({ params }: { params: { id: string } }
   if (error) {
     return (
       <>
-        <Header openApiUrl={openApiUrl()} routeTableUrl={routeTableUrl()} />
         <main id="main" className="main">
           <div className="state state--inline">
             <p className="state__body">Couldn&rsquo;t load the catalog: {error}</p>
@@ -29,7 +27,6 @@ export default async function ProductPage({ params }: { params: { id: string } }
 
   return (
     <>
-      <Header openApiUrl={openApiUrl()} routeTableUrl={routeTableUrl()} />
 
       <main id="main" className="main">
         <nav className="crumbs" aria-label="Breadcrumb">

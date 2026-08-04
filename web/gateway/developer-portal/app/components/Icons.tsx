@@ -105,3 +105,90 @@ export function CheckIcon({ className }: IconProps) {
     </svg>
   );
 }
+
+export function MenuIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <path d="M4 7h16M4 12h16M4 17h16" />
+    </svg>
+  );
+}
+
+/** One icon set for the sidebar nav, keyed by name — keeps the nav config declarative. */
+export function NavIcon({ name, className }: IconProps & { name: string }) {
+  const paths: Record<string, JSX.Element> = {
+    apis: (
+      <>
+        <rect x="4" y="4" width="7" height="7" rx="1.5" />
+        <rect x="13" y="4" width="7" height="7" rx="1.5" />
+        <rect x="4" y="13" width="7" height="7" rx="1.5" />
+        <rect x="13" y="13" width="7" height="7" rx="1.5" />
+      </>
+    ),
+    start: (
+      <>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M10 9l5 3-5 3z" />
+      </>
+    ),
+    reference: (
+      <>
+        <path d="M5 4h11a1 1 0 0 1 1 1v15H6a1 1 0 0 1-1-1z" />
+        <path d="M17 20a2 2 0 0 1 2-2V5" />
+        <path d="M8 8h6M8 11h6" />
+      </>
+    ),
+    try: (
+      <>
+        <rect x="3" y="5" width="18" height="14" rx="2" />
+        <path d="M7 10l3 2-3 2M13 14h4" />
+      </>
+    ),
+    usage: (
+      <>
+        <path d="M4 20V4M4 20h16" />
+        <path d="M8 16v-3M12 16V8M16 16v-6" />
+      </>
+    ),
+    webhooks: (
+      <>
+        <path d="M9 8V5M15 8V5" />
+        <path d="M7 8h10v2a5 5 0 0 1-10 0z" />
+        <path d="M12 15v5" />
+      </>
+    ),
+    changelog: (
+      <>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 7v5l3 2" />
+      </>
+    ),
+    support: (
+      <>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M9.2 9.2a2.8 2.8 0 1 1 3.6 3.9c-.7.4-1 .9-1 1.6" />
+        <path d="M12 17h.01" />
+      </>
+    ),
+    credentials: (
+      <>
+        <circle cx="8" cy="14" r="3.5" />
+        <path d="M10.5 11.5L19 3l2 2-2 2-2-2" />
+      </>
+    ),
+    doc: (
+      <>
+        <path d="M6 3h8l4 4v14H6z" />
+        <path d="M14 3v4h4M9 13h6M9 16h6" />
+      </>
+    ),
+    route: (
+      <>
+        <circle cx="6" cy="6" r="2.2" />
+        <circle cx="18" cy="18" r="2.2" />
+        <path d="M6 8.2v3.8a4 4 0 0 0 4 4h5.8" />
+      </>
+    )
+  };
+  return <svg {...base(className)}>{paths[name] ?? <circle cx="12" cy="12" r="8" />}</svg>;
+}

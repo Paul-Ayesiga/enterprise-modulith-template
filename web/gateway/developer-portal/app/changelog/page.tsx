@@ -1,6 +1,5 @@
 import Link from "next/link";
-import { Header } from "../components/Header";
-import { fetchDeprecations, openApiUrl, routeTableUrl, type DeprecatedRoute } from "../lib/gateway";
+import { fetchDeprecations, type DeprecatedRoute } from "../lib/gateway";
 
 export const dynamic = "force-dynamic";
 
@@ -44,7 +43,6 @@ export default async function ChangelogPage() {
 
   return (
     <>
-      <Header openApiUrl={openApiUrl()} routeTableUrl={routeTableUrl()} />
 
       <main id="main" className="main">
         <section className="intro">

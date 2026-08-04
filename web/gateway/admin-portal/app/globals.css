@@ -23,8 +23,11 @@
   --danger-hover: #a52f27;
   --danger-soft: #fbe9e7;
 
-  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.05);
-  --shadow-lg: 0 10px 34px -14px rgba(16, 24, 40, 0.22);
+  /* Flat by design — components are defined by borders + surface contrast, not elevation. A whisper
+     of shadow stays for genuinely floating things (the mobile drawer, popovers) via --shadow-float. */
+  --shadow: none;
+  --shadow-lg: none;
+  --shadow-float: 0 12px 40px -12px rgba(16, 24, 40, 0.28);
 
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
@@ -57,8 +60,8 @@
     --danger: #f2776b;
     --danger-hover: #f59386;
     --danger-soft: rgba(242, 119, 107, 0.14);
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --shadow-lg: 0 14px 40px -18px rgba(0, 0, 0, 0.7);
+    --shadow: none; --shadow-lg: none;
+    --shadow-float: 0 14px 46px -14px rgba(0, 0, 0, 0.72);
   }
 }
 :root[data-theme="dark"] {
@@ -67,7 +70,7 @@
   --accent: #2dd4bf; --accent-hover: #5fe3d1; --accent-contrast: #08100f; --accent-soft: rgba(45, 212, 191, 0.14);
   --ok: #46ca8f; --ok-soft: rgba(70, 202, 143, 0.13); --warn: #e0a24a; --warn-soft: rgba(224, 162, 74, 0.14);
   --danger: #f2776b; --danger-hover: #f59386; --danger-soft: rgba(242, 119, 107, 0.14);
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4); --shadow-lg: 0 14px 40px -18px rgba(0, 0, 0, 0.7);
+  --shadow: none; --shadow-lg: none; --shadow-float: 0 14px 46px -14px rgba(0, 0, 0, 0.72);
 }
 :root[data-theme="light"] {
   --bg: #f5f7f7; --surface: #ffffff; --surface-2: #eef2f1; --border: #e0e6e4; --border-strong: #cfd8d5;
@@ -208,4 +211,70 @@ button { font: inherit; }
   .site-header__inner, .main { padding-left: 16px; padding-right: 16px; }
   .brand__sub { display: none; }
   .table th:nth-child(2), .table td:nth-child(2) { display: none; } /* hide 'order' on narrow screens */
+}
+
+/* ============================================================================
+   App shell — fixed sidebar on desktop, off-canvas drawer on mobile.
+   ============================================================================ */
+.sidebar {
+  position: fixed; inset: 0 auto 0 0; z-index: 40; width: 250px;
+  display: flex; flex-direction: column;
+  background: var(--surface); border-right: 1px solid var(--border);
+  transition: transform 0.3s var(--ease);
+}
+.sidebar__brand { display: flex; align-items: center; gap: 11px; padding: 18px 18px 14px; min-width: 0; }
+.sidebar__nav { flex: 1; overflow-y: auto; padding: 6px 12px 14px; display: flex; flex-direction: column; gap: 1px; }
+.sidebar__section { font-size: 0.67rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-faint); font-weight: 600; padding: 16px 10px 6px; }
+.sidebar__link {
+  display: flex; align-items: center; gap: 11px; padding: 8px 10px; border-radius: var(--radius-sm);
+  color: var(--text-muted); font-size: 0.875rem; font-weight: 500; position: relative; cursor: pointer;
+  transition: color 0.15s var(--ease), background 0.15s var(--ease);
+}
+.sidebar__link:hover { color: var(--text); background: var(--surface-2); text-decoration: none; }
+.sidebar__link.is-active { color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+.sidebar__link.is-active::before {
+  content: ""; position: absolute; left: -12px; top: 7px; bottom: 7px; width: 3px;
+  border-radius: 0 3px 3px 0; background: var(--accent);
+}
+.sidebar__icon { display: grid; place-items: center; width: 18px; height: 18px; flex-shrink: 0; }
+.sidebar__ext { margin-left: auto; opacity: 0.6; }
+.sidebar__footer { border-top: 1px solid var(--border); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.sidebar__health { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sidebar__tools { display: flex; align-items: center; gap: 8px; }
+.sidebar__signout {
+  flex: 1; text-align: center; padding: 7px 12px; font-size: 0.8rem; font-weight: 550; white-space: nowrap;
+  color: var(--text-muted); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  transition: color 0.15s var(--ease), border-color 0.15s var(--ease), background 0.15s var(--ease);
+}
+.sidebar__signout:hover { color: var(--text); border-color: var(--border-strong); background: var(--surface-2); text-decoration: none; }
+.sidebar__user { font-size: 0.74rem; color: var(--text-faint); padding: 0 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.shell__main { margin-left: 250px; min-height: 100vh; display: flex; flex-direction: column; }
+.shell__main > .main { flex: 1; width: 100%; }
+
+.topbar { display: none; }
+.backdrop {
+  position: fixed; inset: 0; z-index: 35; background: rgba(4, 8, 8, 0.46);
+  opacity: 0; pointer-events: none; transition: opacity 0.3s var(--ease);
+}
+
+/* Richer, still-flat stat cards */
+.stat { transition: border-color 0.15s var(--ease); }
+.stat:hover { border-color: var(--border-strong); }
+.stat__value { color: var(--text); }
+.stat--accent .stat__value { color: var(--accent); }
+
+@media (max-width: 960px) {
+  .sidebar { transform: translateX(-100%); box-shadow: var(--shadow-float); width: 272px; }
+  .sidebar[data-open="true"] { transform: translateX(0); }
+  .shell__main { margin-left: 0; padding-top: 56px; }
+  .topbar {
+    display: flex; position: fixed; top: 0; left: 0; right: 0; height: 56px; z-index: 30;
+    align-items: center; gap: 12px; padding: 0 14px;
+    background: color-mix(in srgb, var(--surface) 86%, transparent);
+    border-bottom: 1px solid var(--border); backdrop-filter: saturate(1.4) blur(8px);
+  }
+  .topbar__brand { display: flex; align-items: center; gap: 9px; font-weight: 650; font-size: 0.92rem; }
+  .topbar__spacer { flex: 1; }
+  .backdrop[data-open="true"] { opacity: 1; pointer-events: auto; }
 }

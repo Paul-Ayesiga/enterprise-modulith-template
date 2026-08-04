@@ -1,7 +1,6 @@
 import { Catalog } from "./components/Catalog";
-import { Header } from "./components/Header";
 import { EmptyState, ErrorState } from "./components/States";
-import { adminBaseUrl, apiBaseUrl, fetchCatalog, openApiUrl, routeTableUrl, totalRoutes } from "./lib/gateway";
+import { adminBaseUrl, apiBaseUrl, fetchCatalog, totalRoutes } from "./lib/gateway";
 
 // Read the live catalog from the gateway on every request.
 export const dynamic = "force-dynamic";
@@ -12,7 +11,6 @@ export default async function Home() {
 
   return (
     <>
-      <Header openApiUrl={openApiUrl()} routeTableUrl={routeTableUrl()} />
 
       <main id="main" className="main">
         <section className="intro">

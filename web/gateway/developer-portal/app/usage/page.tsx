@@ -1,9 +1,7 @@
 import Link from "next/link";
-import { Header } from "../components/Header";
 import { LockIcon } from "../components/Icons";
 import { getSession, type Session } from "../lib/auth";
 import { getActiveOrg } from "../lib/credentials";
-import { openApiUrl, routeTableUrl } from "../lib/gateway";
 import { fetchSubscription, fetchUsageFor, type MyUsage } from "../lib/usage";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +11,6 @@ export default function UsagePage() {
 
   return (
     <>
-      <Header openApiUrl={openApiUrl()} routeTableUrl={routeTableUrl()} />
 
       <main id="main" className="main">
         <section className="intro">
