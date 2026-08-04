@@ -168,6 +168,7 @@ function msg(e: unknown): string {
 export async function updateBlocklist(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const cidr = String(formData.get("cidr") ?? "").trim();
   const blocked = String(formData.get("blocked") ?? "true") === "true";
+  const persist = String(formData.get("persist") ?? "") === "true";
   if (!cidr) {
     return { ok: false, message: "An IP or CIDR is required, e.g. 203.0.113.0/24." };
   }
@@ -175,20 +176,32 @@ export async function updateBlocklist(_prev: ActionState, formData: FormData): P
     const res = await fetch(`${adminBaseUrl()}/actuator/gatewayblocklist`, {
       method: "POST",
       headers: { "content-type": "application/json", ...adminHeaders() },
-      body: JSON.stringify({ cidr, blocked }),
+      body: JSON.stringify({ cidr, blocked, persist }),
       cache: "no-store"
     });
     if (!res.ok) {
       return { ok: false, message: `Gateway refused the change (${res.status}).` };
     }
-    const body = (await res.json()) as { error?: string; cidr?: string; removed?: boolean };
+    const body = (await res.json()) as {
+      error?: string;
+      cidr?: string;
+      source?: string;
+      removed?: boolean;
+      warning?: string;
+    };
     if (body.error) {
       return { ok: false, message: body.error };
     }
     revalidatePath("/");
-    return blocked
-      ? { ok: true, message: `${body.cidr} is blocked — live now. Runtime change: add it to the gateway YAML to survive a restart.` }
-      : { ok: true, message: body.removed ? `${cidr} unblocked.` : `${cidr} was not on the list.` };
+    if (!blocked) {
+      return { ok: true, message: body.removed ? `${cidr} unblocked.` : `${cidr} was not on the list.` };
+    }
+    if (body.warning) {
+      return { ok: true, message: `${body.cidr} blocked. ${body.warning}` };
+    }
+    return body.source === "persistent"
+      ? { ok: true, message: `${body.cidr} is blocked permanently — survives a gateway restart.` }
+      : { ok: true, message: `${body.cidr} is blocked — live now (runtime; check "make permanent" to survive a restart).` };
   } catch (e) {
     return { ok: false, message: `Can't reach the gateway admin API: ${msg(e)}` };
   }

@@ -32,14 +32,17 @@ class IpBlocklistFilter implements GlobalFilter, Ordered {
 
     private final IpBlocklist blocklist;
     private final EdgeClientIp clientIp;
+    private final ObjectProvider<PersistentBlocklist> persistentBlocklist;
     private final ObjectProvider<AutoBlockStore> autoBlock;
     private final MeterRegistry meterRegistry;
     private final AuditSink auditSink;
 
-    IpBlocklistFilter(IpBlocklist blocklist, EdgeClientIp clientIp, ObjectProvider<AutoBlockStore> autoBlock,
+    IpBlocklistFilter(IpBlocklist blocklist, EdgeClientIp clientIp,
+            ObjectProvider<PersistentBlocklist> persistentBlocklist, ObjectProvider<AutoBlockStore> autoBlock,
             ObjectProvider<MeterRegistry> meterRegistry, ObjectProvider<AuditSink> auditSink) {
         this.blocklist = blocklist;
         this.clientIp = clientIp;
+        this.persistentBlocklist = persistentBlocklist;
         this.autoBlock = autoBlock;
         this.meterRegistry = meterRegistry.getIfAvailable();
         this.auditSink = auditSink.getIfAvailable();
@@ -53,6 +56,13 @@ class IpBlocklistFilter implements GlobalFilter, Ordered {
         }
         String matched = blocklist.matchedBy(ip);
         String source = matched != null ? blocklist.sourceOf(matched) : null;
+        if (matched == null) {
+            PersistentBlocklist persistent = persistentBlocklist.getIfAvailable();
+            if (persistent != null && persistent.contains(ip)) {
+                matched = ip;
+                source = "persistent";
+            }
+        }
         if (matched == null) {
             AutoBlockStore auto = autoBlock.getIfAvailable();
             if (auto != null && auto.isBlocked(ip)) {

@@ -82,7 +82,7 @@ Objectives, restore order, and the quarterly drill: [runbooks/restore.md](runboo
 | `SMS_STUB` | often true | false, real Speeda creds in the Secret store |
 | `GATEWAY_ADMIN_TOKEN` | optional | set — the admin port is cluster-internal AND token-gated |
 | `TRUSTED_PROXY_HOPS` / `GATEWAY_TRUSTED_PROXY_HOPS` | 0 (direct — XFF ignored) | the chart sets 2 (modulith) / 1 (gateway) for ingress → gateway → modulith; wrong values make IP allowlists/blocklists judge the wrong address |
-| `GATEWAY_BLOCKLIST` / `GATEWAY_ALLOWLIST` | empty | durable front-door deny / never-blocked CIDRs; runtime deny adds via `gatewayblocklist`/admin portal last until restart |
+| `GATEWAY_BLOCKLIST` / `GATEWAY_ALLOWLIST` | empty | YAML front-door deny / never-blocked CIDRs. UI-added blocks are runtime by default; tick "make permanent" for a durable block (`GATEWAY_PERSISTENT_BLOCKLIST`, Valkey-backed, on by default) |
 | `GATEWAY_AUTOBLOCK` (+ `_THRESHOLD` / `_WINDOW` / `_DURATION` / `_STATUSES`) | on (20 denials/min → 15m) | dynamic auto-blocking of abusive sources; tune the rules or widen `_STATUSES` to 429/404; allow-list trusted infra so it's never caught |
 | Grafana | anonymous admin (otel-lgtm) | real auth; alerts to a contact point (Slack/pager), not just the UI |
 

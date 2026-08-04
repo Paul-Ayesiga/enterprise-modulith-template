@@ -211,7 +211,7 @@ flowchart TB
         <span class="fail"><span class="pill">headers</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox"><span class="ord">+3</span>
-        <span class="what"><b>IP allow/deny</b> — the front-door list, cheapest possible "no": a match refuses before auth (no JWKS work), quotas, or routing. Three layers, in order — <b>allow-set</b> (trusted infra, wins over every block) → <b>manual deny</b> (YAML-durable + runtime <code>gatewayblocklist</code>/portal) → <b>dynamic auto-block</b> (see +4). Judged address = socket peer unless <code>trusted-proxy-hops</code> declares an ingress; X-Forwarded-For never believed otherwise. Denials counted by tier (<code>gateway.blocklist.denied</code>), security-logged, edge-audited.</span>
+        <span class="what"><b>IP allow/deny</b> — the front-door list, cheapest possible "no": a match refuses before auth (no JWKS work), quotas, or routing. Four layers, in order — <b>allow-set</b> (trusted infra, wins over every block) → <b>manual deny</b> (YAML <code>config</code> + <code>runtime</code> via <code>gatewayblocklist</code>/portal) → <b>persistent</b> (durable UI blocks in a Valkey set — survive restart) → <b>dynamic auto-block</b> (see +4). Judged address = socket peer unless <code>trusted-proxy-hops</code> declares an ingress; X-Forwarded-For never believed otherwise. Denials counted by tier (<code>gateway.blocklist.denied</code>), security-logged, edge-audited.</span>
         <span class="fail"><span class="pill bad">403</span><span class="pill">in-memory + Valkey ZSET</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox"><span class="ord">+4</span>
@@ -351,8 +351,8 @@ flowchart TB
         <span class="fail"><span class="pill bad">429</span><span class="pill store">Valkey</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox core"><span class="ord">1</span>
-        <span class="what"><b>Idempotency</b> — <code>Idempotency-Key</code> replays the stored response for same principal+key+body (24 h); same key, different body refuses. A replay still spends a rate-limit token (order 0 first) on purpose.</span>
-        <span class="fail"><span class="pill bad">409</span><span class="pill store">Valkey</span></span></div>
+        <span class="what"><b>Idempotency</b> — <code>Idempotency-Key</code> replays the stored response for same principal+key+body (24 h); same key, different body refuses. Claim-first with a takeover lease (fenced on the claim time), stored per authenticated subject. A replay still spends a rate-limit token (order 0 first) on purpose.</span>
+        <span class="fail"><span class="pill bad">409</span><span class="pill store">Postgres</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox core"><span class="ord">2</span>
         <span class="what"><b>Provisioning gate</b> — no-JIT: a valid JWT alone is not access; the subject needs an <code>app_user</code> row. <code>GET /api/v1/me</code> is the one exception so onboarding is visible.</span>

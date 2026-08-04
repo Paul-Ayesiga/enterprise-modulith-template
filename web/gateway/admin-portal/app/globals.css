@@ -315,3 +315,23 @@ button { font: inherit; }
 .epsummary { color: var(--text-muted); font-size: 0.84rem; max-width: 46ch; }
 
 .btn--sm { padding: 4px 10px; font-size: 0.78rem; }
+
+/* ---- row actions menu (⋯) ---- */
+.btn { white-space: nowrap; }
+.rowmenu__panel {
+  position: fixed; z-index: 60; min-width: 184px; padding: 5px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-float); display: flex; flex-direction: column; gap: 1px;
+}
+.rowmenu__item {
+  display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+  font: inherit; font-size: 0.86rem; color: var(--text); background: transparent; border: 0;
+  padding: 8px 10px; border-radius: 6px; cursor: pointer; white-space: nowrap;
+  transition: background 0.12s var(--ease), color 0.12s var(--ease);
+}
+.rowmenu__item:hover { background: var(--surface-2); }
+.rowmenu__item--danger { color: var(--danger); }
+.rowmenu__item--danger:hover { background: var(--danger-soft); }
+.rowmenu__note { margin-left: auto; font-size: 0.72rem; color: var(--text-faint); }
+.rowmenu__item--danger .rowmenu__note { color: color-mix(in srgb, var(--danger) 62%, var(--text-faint)); }
+.rowmenu__sep { height: 1px; background: var(--border); margin: 4px 2px; }

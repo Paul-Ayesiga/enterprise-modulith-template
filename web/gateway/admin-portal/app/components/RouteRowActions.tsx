@@ -2,17 +2,17 @@
 
 import { useState, useTransition } from "react";
 import { useFormState, useFormStatus } from "react-dom";
-import { setLifecycle, updateRoute, type ActionState } from "../lib/actions";
+import { deleteRoute, setLifecycle, updateRoute, type ActionState } from "../lib/actions";
 import type { RouteRow } from "../lib/gateway";
-import { DeleteRouteButton } from "./DeleteRouteButton";
-import { PencilIcon, PauseIcon, PlayIcon } from "./Icons";
+import { PencilIcon, PauseIcon, PlayIcon, TrashIcon } from "./Icons";
+import { RowMenu } from "./RowMenu";
 
 /**
- * The per-route action cluster, following the lifecycle PROGRESSION so nothing jumps straight to 410:
- * a Published route can only be Deprecated (still serves, warns with Deprecation + Sunset); a
- * Deprecated route can then be Retired (410 Gone) or Republished; a Retired route can be Republished.
- * Retirement is always preceded by a deprecate step. (The Edit row's dropdown still lets you set any
- * state deliberately.) Edit expands an in-place editor; Delete removes the route.
+ * The per-route actions, collapsed into one "⋯" menu so the row height stays fixed. It follows the
+ * lifecycle PROGRESSION so nothing jumps straight to 410: a Published route can only be Deprecated
+ * (still serves, warns with Deprecation + Sunset); a Deprecated route can then be Retired (410) or
+ * Republished; a Retired route can be Republished. Edit expands an in-place editor; Delete is a
+ * two-click confirm inside the menu.
  */
 export function RouteRowActions({
   route,
@@ -26,79 +26,117 @@ export function RouteRowActions({
 }) {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const lifecycle = route.lifecycle.toUpperCase();
 
   function move(to: "PUBLISHED" | "DEPRECATED" | "RETIRED") {
     setError(null);
     start(async () => {
       const result = await setLifecycle(route.id, to);
-      if (result && !result.ok) {
-        setError(result.message);
-      }
+      if (result && !result.ok) setError(result.message);
+    });
+  }
+
+  function remove() {
+    setError(null);
+    start(async () => {
+      const result = await deleteRoute(route.id);
+      if (result && !result.ok) setError(result.message);
     });
   }
 
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-      {lifecycle === "PUBLISHED" && (
-        <button
-          type="button"
-          className="btn btn--ghost"
-          onClick={() => move("DEPRECATED")}
-          disabled={pending}
-          title="Deprecate — still serves, but warns callers with Deprecation + Sunset headers"
-        >
-          <PauseIcon /> {pending ? "…" : "Deprecate"}
-        </button>
-      )}
-      {lifecycle === "DEPRECATED" && (
-        <>
-          <button
-            type="button"
-            className="btn btn--danger"
-            onClick={() => move("RETIRED")}
-            disabled={pending}
-            title="Retire — the edge answers 410 Gone. The deprecate warning has already run; this is the final step."
-          >
-            {pending ? "…" : "Retire"}
-          </button>
-          <button
-            type="button"
-            className="btn btn--ghost"
-            onClick={() => move("PUBLISHED")}
-            disabled={pending}
-            title="Republish — serve normally again, warnings removed"
-          >
-            <PlayIcon /> Republish
-          </button>
-        </>
-      )}
-      {lifecycle === "RETIRED" && (
-        <button
-          type="button"
-          className="btn btn--ghost"
-          onClick={() => move("PUBLISHED")}
-          disabled={pending}
-          title="Republish — serve normally again"
-        >
-          <PlayIcon /> {pending ? "…" : "Republish"}
-        </button>
-      )}
-      <button
-        type="button"
-        className="btn btn--ghost"
-        onClick={onToggleEdit}
-        aria-expanded={editing}
-        aria-label={`Edit route ${route.id}`}
-      >
-        <PencilIcon /> {editing ? "Close" : "Edit"}
-      </button>
-      <DeleteRouteButton id={route.id} />
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
       {error && (
-        <span className="form__msg--err" role="alert" style={{ fontSize: "0.78rem" }}>
+        <span className="form__msg--err" role="alert" style={{ fontSize: "0.76rem" }}>
           {error}
         </span>
       )}
+      <RowMenu label={`Actions for route ${route.id}`} onClose={() => setConfirmDelete(false)}>
+        {(close) => (
+          <>
+            {lifecycle === "PUBLISHED" && (
+              <button
+                type="button"
+                role="menuitem"
+                className="rowmenu__item"
+                onClick={() => {
+                  move("DEPRECATED");
+                  close();
+                }}
+              >
+                <PauseIcon /> Deprecate <span className="rowmenu__note">warns, still serves</span>
+              </button>
+            )}
+            {lifecycle === "DEPRECATED" && (
+              <>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="rowmenu__item"
+                  onClick={() => {
+                    move("PUBLISHED");
+                    close();
+                  }}
+                >
+                  <PlayIcon /> Republish
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="rowmenu__item rowmenu__item--danger"
+                  onClick={() => {
+                    move("RETIRED");
+                    close();
+                  }}
+                >
+                  <PauseIcon /> Retire <span className="rowmenu__note">410 Gone</span>
+                </button>
+              </>
+            )}
+            {lifecycle === "RETIRED" && (
+              <button
+                type="button"
+                role="menuitem"
+                className="rowmenu__item"
+                onClick={() => {
+                  move("PUBLISHED");
+                  close();
+                }}
+              >
+                <PlayIcon /> Republish
+              </button>
+            )}
+            <div className="rowmenu__sep" />
+            <button
+              type="button"
+              role="menuitem"
+              className="rowmenu__item"
+              onClick={() => {
+                onToggleEdit();
+                close();
+              }}
+            >
+              <PencilIcon /> {editing ? "Close editor" : "Edit"}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="rowmenu__item rowmenu__item--danger"
+              onClick={() => {
+                if (!confirmDelete) {
+                  setConfirmDelete(true);
+                  return;
+                }
+                remove();
+                close();
+              }}
+            >
+              <TrashIcon /> {confirmDelete ? "Click again to delete" : "Delete"}
+            </button>
+          </>
+        )}
+      </RowMenu>
     </span>
   );
 }

@@ -52,6 +52,9 @@ gateway:
         threshold: ${GATEWAY_AUTOBLOCK_THRESHOLD:20}
         block-duration: ${GATEWAY_AUTOBLOCK_DURATION:PT15M}
         statuses: ${GATEWAY_AUTOBLOCK_STATUSES:401,403}
+      # Durable manual blocks added from the admin UI, backed by a Valkey set (survive restart).
+      persistent:
+        enabled: ${GATEWAY_PERSISTENT_BLOCKLIST:true}
   # The platform seam: resolve an X-Api-Key by calling the modulith's introspection endpoint with the
   # shared secret. Unset the uri to turn API-key auth off (the bearer path still works).
   platform:

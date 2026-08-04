@@ -124,6 +124,16 @@ export function MenuIcon({ className }: IconProps) {
   );
 }
 
+export function KebabIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <circle cx="12" cy="5" r="1.4" />
+      <circle cx="12" cy="12" r="1.4" />
+      <circle cx="12" cy="19" r="1.4" />
+    </svg>
+  );
+}
+
 /** One icon set for the sidebar nav, keyed by name — keeps the nav config declarative. */
 export function NavIcon({ name, className }: IconProps & { name: string }) {
   const paths: Record<string, JSX.Element> = {

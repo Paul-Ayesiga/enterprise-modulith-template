@@ -25,6 +25,8 @@ gateway:
     blocklist:
       auto:
         enabled: false
+      persistent:
+        enabled: false
     cors:
       allowed-origins:
         - http://example.com

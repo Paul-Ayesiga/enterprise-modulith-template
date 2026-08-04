@@ -53,6 +53,7 @@ export type Blocklist = {
   entries: BlocklistEntry[];
   allow: string[];
   trustedProxyHops: number;
+  persistentEnabled: boolean;
   autoBlock: AutoBlockRules;
   error: string | null;
 };
@@ -183,12 +184,14 @@ export async function fetchBlocklist(): Promise<Blocklist> {
       entries: BlocklistEntry[];
       allow: string[];
       trustedProxyHops: number;
+      persistentEnabled?: boolean;
       autoBlock: AutoBlockRules;
     }>("/actuator/gatewayblocklist");
     return {
       entries: raw.entries,
       allow: raw.allow ?? [],
       trustedProxyHops: raw.trustedProxyHops,
+      persistentEnabled: raw.persistentEnabled ?? false,
       autoBlock: raw.autoBlock ?? AUTO_RULES_OFF,
       error: null
     };
@@ -197,6 +200,7 @@ export async function fetchBlocklist(): Promise<Blocklist> {
       entries: [],
       allow: [],
       trustedProxyHops: 0,
+      persistentEnabled: false,
       autoBlock: AUTO_RULES_OFF,
       error: e instanceof Error ? e.message : String(e)
     };

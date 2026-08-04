@@ -22,6 +22,7 @@ export default async function IpControlsPage() {
         entries={blocklist.entries}
         allow={blocklist.allow}
         autoBlock={blocklist.autoBlock}
+        persistentEnabled={blocklist.persistentEnabled}
         error={blocklist.error}
       />
     </main>

@@ -11,20 +11,30 @@ function ttl(seconds: number | undefined): string | null {
   return `expires in ${seconds}s`;
 }
 
+/** Badge colour by tier: durable blocks read green, abuse blocks amber, the rest neutral. */
+function sourceBadge(source: string): string {
+  if (source === "auto") return "badge--deprecated";
+  if (source === "persistent" || source === "config") return "badge--published";
+  return "badge--open";
+}
+
 /**
- * The edge deny-list: what is blocked right now (manual and auto), block another source, lift one.
- * Every entry refuses matching clients before auth, quotas, or routing — the cheapest possible "no".
- * Auto entries are the dynamic layer's work: sources that tripped the abuse rules, with a TTL.
+ * The edge deny-list: what is blocked right now (manual, durable, and auto), block another source,
+ * lift one. Every entry refuses matching clients before auth, quotas, or routing — the cheapest
+ * possible "no". "Make permanent" writes a durable block that survives a gateway restart; auto
+ * entries are the dynamic layer's work (a TTL); config entries come from YAML.
  */
 export function BlocklistPanel({
   entries,
   allow,
   autoBlock,
+  persistentEnabled,
   error
 }: {
   entries: BlocklistEntry[];
   allow: string[];
   autoBlock: AutoBlockRules;
+  persistentEnabled: boolean;
   error: string | null;
 }) {
   const [state, formAction] = useFormState<ActionState, FormData>(updateBlocklist, null);
@@ -58,9 +68,7 @@ export function BlocklistPanel({
                   style={{ display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.25rem 0" }}
                 >
                   <code>{entry.cidr}</code>
-                  <span className={`badge ${entry.source === "auto" ? "badge--deprecated" : "badge--open"}`}>
-                    {entry.source}
-                  </span>
+                  <span className={`badge ${sourceBadge(entry.source)}`}>{entry.source}</span>
                   {ttl(entry.expiresInSeconds) ? (
                     <span className="field__hint" style={{ margin: 0 }}>
                       {ttl(entry.expiresInSeconds)}
@@ -90,13 +98,24 @@ export function BlocklistPanel({
                   required
                 />
                 <span className="field__hint">
-                  Bare IPs normalize to /32. Runtime entries last until restart — durable blocks go in
-                  the gateway YAML (<code>gateway.security.blocklist.cidrs</code>).
+                  Bare IPs normalize to /32. A runtime block lasts until the gateway restarts; tick
+                  “make permanent” to keep it (or bake it into <code>gateway.security.blocklist.cidrs</code>).
                 </span>
               </div>
               <input type="hidden" name="blocked" value="true" />
               <BlockButton />
             </div>
+            {persistentEnabled ? (
+              <label
+                style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer", marginTop: 2 }}
+              >
+                <input type="checkbox" name="persist" value="true" />
+                <input type="hidden" name="persist" value="false" />
+                Make permanent <span className="field__hint">survives a gateway restart (durable)</span>
+              </label>
+            ) : (
+              <input type="hidden" name="persist" value="false" />
+            )}
           </form>
           {state ? (
             <p

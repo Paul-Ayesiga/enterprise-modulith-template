@@ -59,6 +59,8 @@ export function CreateRouteForm({ services, defaultId, defaultPath, defaultOrder
             itself.
           </span>
         </div>
+      </div>
+      <div className="form__row">
         <div className="field">
           <label className="field__label" htmlFor="route-service">
             Service
