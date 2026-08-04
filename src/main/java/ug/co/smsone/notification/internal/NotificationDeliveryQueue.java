@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.BatchPreparedStatementSetter;
 import org.springframework.jdbc.core.JdbcTemplate;
+import ug.co.smsone.shared.persistence.DbDialect;
 import org.springframework.stereotype.Component;
 import ug.co.smsone.notification.NotificationChannel;
 
@@ -31,10 +32,13 @@ class NotificationDeliveryQueue {
 
     private final JdbcTemplate jdbc;
     private final io.micrometer.core.instrument.MeterRegistry meters;
+    private final DbDialect dialect;
 
-    NotificationDeliveryQueue(JdbcTemplate jdbc, io.micrometer.core.instrument.MeterRegistry meters) {
+    NotificationDeliveryQueue(JdbcTemplate jdbc, io.micrometer.core.instrument.MeterRegistry meters,
+            DbDialect dialect) {
         this.jdbc = jdbc;
         this.meters = meters;
+        this.dialect = dialect;
     }
 
     void enqueue(List<NewDelivery> deliveries, int maxAttempts) {
@@ -78,12 +82,12 @@ class NotificationDeliveryQueue {
                        or (status = 'PROCESSING' and locked_at < now() - (? * interval '1 millisecond'))
                     order by next_attempt_at
                     limit ?
-                    for update skip locked
+                    %s
                 ) c
                 where d.id = c.id
                 returning d.id, d.channel, d.recipient, d.subject, d.body, d.org_id, d.attempts,
                           d.max_attempts, d.created_at, d.throttled_since
-                """,
+                """.formatted(dialect.skipLocked()),
                 (rs, rowNum) -> {
                     Timestamp throttledSince = rs.getTimestamp("throttled_since");
                     return new ClaimedDelivery(
