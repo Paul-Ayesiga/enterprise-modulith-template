@@ -4,8 +4,35 @@ import { useState, useTransition } from "react";
 import { useFormState, useFormStatus } from "react-dom";
 import { deleteRoute, setLifecycle, updateRoute, type ActionState } from "../lib/actions";
 import type { RouteRow } from "../lib/gateway";
-import { PencilIcon, PauseIcon, PlayIcon, TrashIcon } from "./Icons";
+import { CopyIcon, PencilIcon, PauseIcon, PlayIcon, TrashIcon } from "./Icons";
 import { RowMenu } from "./RowMenu";
+
+/**
+ * The route as a `gateway.routes` YAML snippet — paste it into application.yml to promote a runtime
+ * or durable route into the git-reviewed baseline. Only set fields are emitted (the compact
+ * constructor defaults the rest), matching the config the seed loader reads.
+ */
+function routeToYaml(route: RouteRow): string {
+  const lines = [
+    `- id: ${route.id}`,
+    `  order: ${route.order}`,
+    `  service-id: ${route.serviceId}`,
+    `  predicates:`,
+    `    - kind: PATH`,
+    `      args: [${route.paths.join(", ")}]`
+  ];
+  if (route.authenticated) {
+    lines.push(`  auth:`, `    authenticated: true`);
+  }
+  if (route.rateLimited) {
+    lines.push(`  traffic:`, `    rate-limited: true`);
+  }
+  if (route.lifecycle && route.lifecycle.toUpperCase() !== "PUBLISHED") {
+    lines.push(`  lifecycle:`, `    status: ${route.lifecycle.toLowerCase()}`);
+    if (route.sunset) lines.push(`    sunset: "${route.sunset}"`);
+  }
+  return lines.join("\n");
+}
 
 /**
  * The per-route actions, collapsed into one "⋯" menu so the row height stays fixed. It follows the
@@ -27,7 +54,18 @@ export function RouteRowActions({
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [copied, setCopied] = useState(false);
   const lifecycle = route.lifecycle.toUpperCase();
+
+  function copyYaml() {
+    navigator.clipboard
+      .writeText(routeToYaml(route))
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1600);
+      })
+      .catch(() => setError("Couldn't copy to the clipboard."));
+  }
 
   function move(to: "PUBLISHED" | "DEPRECATED" | "RETIRED") {
     setError(null);
@@ -47,6 +85,11 @@ export function RouteRowActions({
 
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
+      {copied && (
+        <span className="form__msg--ok" role="status" style={{ fontSize: "0.76rem" }}>
+          Copied YAML
+        </span>
+      )}
       {error && (
         <span className="form__msg--err" role="alert" style={{ fontSize: "0.76rem" }}>
           {error}
@@ -118,6 +161,17 @@ export function RouteRowActions({
               }}
             >
               <PencilIcon /> {editing ? "Close editor" : "Edit"}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="rowmenu__item"
+              onClick={() => {
+                copyYaml();
+                close();
+              }}
+            >
+              <CopyIcon /> Copy as YAML <span className="rowmenu__note">for application.yml</span>
             </button>
             <button
               type="button"

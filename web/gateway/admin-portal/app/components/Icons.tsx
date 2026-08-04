@@ -134,6 +134,15 @@ export function KebabIcon({ className }: IconProps) {
   );
 }
 
+export function CopyIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M5 15V5a2 2 0 0 1 2-2h8" />
+    </svg>
+  );
+}
+
 /** One icon set for the sidebar nav, keyed by name — keeps the nav config declarative. */
 export function NavIcon({ name, className }: IconProps & { name: string }) {
   const paths: Record<string, JSX.Element> = {
