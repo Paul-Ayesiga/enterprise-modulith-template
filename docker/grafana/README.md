@@ -16,10 +16,14 @@ counter `smsone.foo.bar` surfaces in Prometheus as `smsone_foo_bar_total`). The 
 where each increments are catalogued in `docs/SRS.md` §5.6. k6 uses the same path — its metrics arrive
 with a `k6_` prefix (histograms as `k6_..._milliseconds_bucket`).
 
-## Example alert rules
+## Alert rules
 
-Starting points, written as Prometheus expressions — add them under Alerting → Alert rules against
-the `prometheus` datasource. Thresholds are deliberately conservative; tune to your traffic.
+Four critical alerts are **file-provisioned** from `provisioning-alerts.yaml` (folder **SMSOne**,
+read-only in the UI — thresholds change in git, in review): API 5xx ratio, dead-letters, gateway
+breaker open, payment failures clustering. Each rule's annotation links its runbook in
+`docs/runbooks/`. The rules below are additional starting points, written as Prometheus
+expressions — add them under Alerting → Alert rules against the `prometheus` datasource.
+Thresholds are deliberately conservative; tune to your traffic.
 
 **Dead-letters appearing** — any give-up is a message someone expected to arrive:
 

@@ -37,10 +37,12 @@ class PaymentService {
     private final PaymentsProperties properties;
     private final AuditLog auditLog;
     private final Clock clock;
+    private final io.micrometer.core.instrument.MeterRegistry meters;
 
     PaymentService(PaymentRepository payments, List<PaymentGateway> gateways,
             ObjectProvider<Integrations> integrations, ObjectProvider<Subscriptions> subscriptions,
-            PaymentsProperties properties, AuditLog auditLog, Clock clock) {
+            PaymentsProperties properties, AuditLog auditLog, Clock clock,
+            io.micrometer.core.instrument.MeterRegistry meters) {
         this.payments = payments;
         this.gateways = gateways.stream()
                 .collect(Collectors.toUnmodifiableMap(PaymentGateway::provider, Function.identity()));
@@ -49,6 +51,7 @@ class PaymentService {
         this.properties = properties;
         this.auditLog = auditLog;
         this.clock = clock;
+        this.meters = meters;
     }
 
     Payment initiate(UUID orgId, String provider, BigDecimal amount, String currency, String description,
@@ -109,6 +112,13 @@ class PaymentService {
         payment.applyStatus(result.status(), result.detail(), result.confirmationCode(), clock.instant());
         Payment saved = payments.save(payment);
         if (saved.getStatus() != before && saved.getStatus().terminal()) {
+            // The alerting meter: FAILED spikes page (see docker/grafana/provisioning-alerts.yaml).
+            io.micrometer.core.instrument.Counter.builder("smsone.payments.outcomes")
+                    .description("Terminal payment outcomes, by provider and status")
+                    .tag("provider", saved.getProvider())
+                    .tag("status", saved.getStatus().name())
+                    .register(meters)
+                    .increment();
             auditLog.record("payment." + saved.getStatus().name().toLowerCase(), saved.getOrgId(),
                     saved.getId().toString(), "status=" + before, "status=" + saved.getStatus()
                             + (saved.getConfirmationCode() == null ? "" : " confirmation=" + saved.getConfirmationCode()));

@@ -117,6 +117,8 @@ services:
       # File-provisioned SMSOne dashboards (folder "SMSOne" in the UI) — see docker/grafana/README.md
       - ./grafana/provisioning-dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/smsone.yaml:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards/smsone:ro
+      # Alerts-as-code (folder "SMSOne"): thresholds live in git; each rule links its runbook.
+      - ./grafana/provisioning-alerts.yaml:/otel-lgtm/grafana/conf/provisioning/alerting/smsone.yaml:ro
 
 volumes:
   postgres-data:

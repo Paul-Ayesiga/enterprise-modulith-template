@@ -27,13 +27,15 @@ class PaymentServiceMoneyTest {
     private final PaymentRepository repo = mock(PaymentRepository.class);
     private final PaymentGateway gateway = mock(PaymentGateway.class);
     private final Subscriptions standings = mock(Subscriptions.class);
+    private final io.micrometer.core.instrument.simple.SimpleMeterRegistry meters =
+            new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
 
     private PaymentService service(BigDecimal vatRate) {
         given(gateway.provider()).willReturn("pesapal");
         given(repo.save(any())).willAnswer(inv -> inv.getArgument(0));
         return new PaymentService(repo, List.of(gateway), provider(null), provider(standings),
                 new PaymentsProperties(null, null, new PaymentsProperties.Tax(vatRate)),
-                mock(AuditLog.class), Clock.systemUTC());
+                mock(AuditLog.class), Clock.systemUTC(), meters);
     }
 
     @Test
@@ -78,6 +80,9 @@ class PaymentServiceMoneyTest {
         service.get(orgId, pending.getId());
 
         verify(standings).markStatus(orgId, "ACTIVE"); // PAUSED/PAST_DUE lift; same-status no-ops
+        // The terminal transition was counted for the payment-failures alert family.
+        org.assertj.core.api.Assertions.assertThat(meters.counter("smsone.payments.outcomes",
+                "provider", "pesapal", "status", "COMPLETED").count()).isEqualTo(1.0);
     }
 
     private static <T> ObjectProvider<T> provider(T value) {
