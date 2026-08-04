@@ -670,6 +670,30 @@ for the run carries both, plus <code>org_id</code>.</li>
 What passes there behaves the same against the compose stack.</li>
 </ul>
 
+<h2 id="datalayer">E3 · Data layer &amp; database portability</h2>
+<p>You never touch the databases directly, but here is what stores what — and how the template ports to another RDBMS
+if a product built from it requires one.</p>
+<table class="params">
+  <tr><th>Store</th><th>Role</th></tr>
+  <tr><td>PostgreSQL</td><td>System of record — every module's tenant data, the transactional outbox, full-text search, soft-delete and retention, and the durable-queue tables.</td></tr>
+  <tr><td>Valkey</td><td>Shared fast state — the L2 cache with pub/sub invalidation, rate-limit windows, idempotency snapshots (24&nbsp;h), and the durable IP-block and route stores.</td></tr>
+  <tr><td>SeaweedFS (S3)</td><td>File and document bytes, and exchange artifacts. Reads hand out short-lived presigned URLs, so bytes never proxy through the application.</td></tr>
+  <tr><td>DuckDB (embedded)</td><td>Analytics marts behind <code>/api/v1/analytics/reports</code> — in-process OLAP, kept off the transactional path.</td></tr>
+  <tr><td>Kill Bill → MariaDB</td><td>The billing engine's own store (invoices, subscriptions, payments), reconciled one-way into entitlements.</td></tr>
+  <tr><td>Keycloak → Postgres</td><td>The identity provider's own store (users, organizations, realm roles).</td></tr>
+</table>
+<div class="card tip"><strong>PostgreSQL-first, by design.</strong> The system of record is PostgreSQL, and the schema uses
+Postgres for genuine capability — soft-delete <em>partial indexes</em>, lock-free <code>SKIP&nbsp;LOCKED</code> queue
+processing, and native full-text search. This is the intended default: in a SaaS deployment, the platform owns its
+database.</div>
+<p><strong>Porting to Oracle, SQL Server, or MySQL.</strong> Building a product from this template on a different RDBMS is
+a bounded task, not a rewrite. Roughly 90% of the code is database-agnostic; the Postgres-specific code is confined to
+five seams — the <code>SKIP&nbsp;LOCKED</code> queue claims (already isolated behind a <code>DbDialect</code> bean), the
+<code>ON&nbsp;CONFLICT</code> upserts, native full-text search, and the migration types and partial indexes. The complete
+seam map, a per-vendor SQL translation table, and the step-by-step procedure are in <code>docs/PORTING.md</code>. For the
+deepest coupling (search), the recommended approach is to replace the search adapter with OpenSearch or Elasticsearch —
+it already sits behind a port — rather than reimplement full-text search per vendor.</p>
+
   </main>
   <aside class="toc"><div class="toc-label">On this page</div><div id="toc"></div></aside>
 </div>

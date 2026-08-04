@@ -786,6 +786,26 @@ flowchart TB
         <span class="what"><b>Invalidate</b> — evict + publish on the invalidation channel → every other node drops its stale L1 entry; a plan change bites the very next gate check, not a TTL later.</span>
         <span class="fail"><span class="pill store">pub/sub</span></span></div>
     </div>
+
+    <p class="sec-sub" style="margin-top:18px"><b>Postgres-first, and portable by seam.</b> The system of record is
+      PostgreSQL by design — the schema leans on it for real capability (soft-delete <b>partial indexes</b>, lock-free
+      <code>SKIP&nbsp;LOCKED</code> queue fan-out, native FTS). It is not a portable lowest-common-denominator schema, and
+      that is deliberate. A product built from the template on <b>Oracle / SQL Server / MySQL</b> is a bounded port, not a
+      rewrite: ~90% of the code is DB-agnostic and the Postgres-isms are confined to five seams.</p>
+    <div class="grid">
+      <div class="card c-core"><h3>The five DB seams</h3><span class="tag">docs/PORTING.md</span><ul>
+        <li><b>SKIP LOCKED</b> queue claims — already behind the <code>DbDialect</code> port (swap one bean)</li>
+        <li>The queue <b>claim statements</b> (<code>UPDATE…FROM…RETURNING</code>) — rewritten per vendor</li>
+        <li><b>ON CONFLICT</b> upserts → <code>MERGE</code> / <code>ON DUPLICATE KEY</code></li>
+        <li>Native <b>FTS</b> → swap the search adapter for OpenSearch (already a port)</li>
+        <li>Migration <b>types + partial indexes</b> (per-vendor Flyway locations)</li>
+      </ul></div>
+      <div class="card c-core"><h3>What ports for free</h3><span class="tag">DB-agnostic</span><ul>
+        <li>Every module, the RBAC + auth model, the gateway, the HTTP contract</li>
+        <li>The event / outbox plane, billing, notifications, the whole request chain</li>
+        <li><code>grep -rn "PORTING:" src/main/java</code> finds every marked seam</li>
+      </ul></div>
+    </div>
   </section>
 
   <!-- ============================================================ 14 -->
