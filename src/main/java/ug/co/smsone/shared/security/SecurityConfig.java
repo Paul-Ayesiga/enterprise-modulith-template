@@ -49,6 +49,10 @@ public class SecurityConfig {
                         // Kill Bill's push notifications cannot do OAuth; the endpoint authenticates
                         // by the shared token in the registered callback URL (constant-time compare).
                         .requestMatchers("/api/v1/billing/killbill/notifications").permitAll()
+                        // Self-service signup is pre-authentication by nature; the service itself is
+                        // feature-flagged (403 when disabled) and enumeration-safe, and the shared
+                        // per-IP rate limit still covers the surface.
+                        .requestMatchers("/api/v1/signup", "/api/v1/signup/verify").permitAll()
                         // Pesapal IPN + browser return: secretless by vendor design — handlers only
                         // trigger a server-side re-query of the gateway, so a forged ping is inert.
                         .requestMatchers("/api/v1/payments/pesapal/ipn",

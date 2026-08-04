@@ -263,6 +263,13 @@ app:
     plan-mapping:
       PRO: ${BILLING_PLAN_PRO:pro-monthly}
       ENTERPRISE: ${BILLING_PLAN_ENTERPRISE:enterprise-monthly}
+  signup:
+    # Self-service signup (the public front door). OFF by default — the enterprise baseline stays
+    # admin-provisioned; flip SIGNUP_ENABLED=true to open it. verify-url is the link the email
+    # carries: point it at a front-end page in production; the API's own GET works out of the box.
+    enabled: ${SIGNUP_ENABLED:false}
+    token-ttl: ${SIGNUP_TOKEN_TTL:PT24H}
+    verify-url: ${SIGNUP_VERIFY_URL:http://localhost:28080/api/v1/signup/verify}
   payments:
     # Payment collection gateways. mode switches sandbox <-> live per gateway; nothing touches real
     # money until a mode is explicitly 'live'. Pesapal sandbox defaults are Pesapal's PUBLISHED

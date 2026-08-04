@@ -1,0 +1,164 @@
+package ug.co.smsone.signup.internal;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.time.Clock;
+import java.util.Base64;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import ug.co.smsone.notification.NotificationRequest;
+import ug.co.smsone.notification.Notifications;
+import ug.co.smsone.notification.Recipient;
+import ug.co.smsone.organization.Organizations;
+import ug.co.smsone.shared.audit.AuditLog;
+import ug.co.smsone.shared.error.ConflictException;
+import ug.co.smsone.shared.error.ForbiddenException;
+import ug.co.smsone.shared.error.ValidationException;
+import ug.co.smsone.shared.web.ApiSource;
+
+/**
+ * The signup handshake. {@code request} is deliberately enumeration-safe: it answers the same 202
+ * whether or not the email is known anywhere, stores only the token's SHA-256, and supersedes any
+ * pending request for the same address. {@code verify} spends the single-use token and then runs the
+ * STANDARD provisioning path through the {@link Organizations} port — so the owner invite,
+ * {@code OrganizationRegistered}, trial-on-signup, and billing auto-provision all behave exactly as
+ * if a platform admin had created the org. Alias collisions retry with a numeric suffix.
+ */
+@Service
+class SignupService {
+
+    private static final Logger log = LoggerFactory.getLogger(SignupService.class);
+    private static final SecureRandom RANDOM = new SecureRandom();
+    private static final int MAX_ALIAS_ATTEMPTS = 6;
+
+    private final SignupRepository requests;
+    private final Organizations organizations;
+    private final Notifications notifications;
+    private final SignupProperties properties;
+    private final AuditLog auditLog;
+    private final Clock clock;
+
+    SignupService(SignupRepository requests, Organizations organizations, Notifications notifications,
+            SignupProperties properties, AuditLog auditLog, Clock clock) {
+        this.requests = requests;
+        this.organizations = organizations;
+        this.notifications = notifications;
+        this.properties = properties;
+        this.auditLog = auditLog;
+        this.clock = clock;
+    }
+
+    @Transactional
+    void request(String organizationName, String email, String firstName, String lastName) {
+        requireEnabled();
+        String name = organizationName == null ? "" : organizationName.trim();
+        if (name.length() < 2 || name.length() > 80) {
+            throw new ValidationException("organizationName is required (2–80 characters).",
+                    ApiSource.pointer("/data/attributes/organizationName"));
+        }
+        String normalizedEmail = email == null ? "" : email.trim().toLowerCase();
+        if (!normalizedEmail.matches("[^@\\s]+@[^@\\s]+\\.[^@\\s]+")) {
+            throw new ValidationException("A valid email is required.",
+                    ApiSource.pointer("/data/attributes/email"));
+        }
+        // One live handshake per address: a new request supersedes the pending one.
+        requests.deleteByEmailAndStatus(normalizedEmail, SignupRequest.PENDING);
+
+        byte[] tokenBytes = new byte[32];
+        RANDOM.nextBytes(tokenBytes);
+        String token = Base64.getUrlEncoder().withoutPadding().encodeToString(tokenBytes);
+        requests.save(SignupRequest.pending(normalizedEmail, name, blankToNull(firstName),
+                blankToNull(lastName), sha256(token), clock.instant().plus(properties.tokenTtl()),
+                clock.instant()));
+
+        String link = properties.verifyUrl() + "?token=" + token;
+        notifications.dispatch(NotificationRequest.of(
+                "Verify your email to create '" + name + "'",
+                "You asked to create the organization '" + name + "'.\n\n"
+                        + "Confirm your email to continue:\n" + link + "\n\n"
+                        + "The link is valid for " + properties.tokenTtl().toHours() + " hours. "
+                        + "If you didn't request this, ignore this message — nothing is created "
+                        + "without this confirmation.",
+                List.of(Recipient.email(normalizedEmail))));
+        log.info("Signup requested for '{}' — verification email queued", name);
+    }
+
+    @Transactional
+    SignupRequest verify(String token) {
+        requireEnabled();
+        if (token == null || token.isBlank()) {
+            throw new ValidationException("token is required.", ApiSource.parameter("token"));
+        }
+        SignupRequest request = requests
+                .findByTokenHashAndStatus(sha256(token.trim()), SignupRequest.PENDING)
+                .orElseThrow(SignupService::invalidToken);
+        if (request.expired(clock.instant())) {
+            throw invalidToken();
+        }
+        UUID orgId = createWithAliasRetry(request);
+        request.completed(orgId, clock.instant());
+        requests.save(request);
+        auditLog.record("signup.completed", orgId, request.getEmail(), null,
+                "org=" + request.getOrgName());
+        return request;
+    }
+
+    /** The standard path throws 409 on a taken alias; suffix and retry a bounded number of times. */
+    private UUID createWithAliasRetry(SignupRequest request) {
+        String base = slug(request.getOrgName());
+        for (int attempt = 0; attempt < MAX_ALIAS_ATTEMPTS; attempt++) {
+            String candidate = attempt == 0 ? base : base + "-" + (attempt + 1);
+            try {
+                return organizations.create(candidate, request.getOrgName(), request.getEmail(),
+                        request.getFirstName(), request.getLastName());
+            } catch (ConflictException taken) {
+                // try the next suffix
+            }
+        }
+        throw new ConflictException("Could not find a free alias for '" + request.getOrgName()
+                + "' — try a more distinctive organization name.");
+    }
+
+    static String slug(String name) {
+        String slug = name.toLowerCase()
+                .replaceAll("[^a-z0-9]+", "-")
+                .replaceAll("(^-+|-+$)", "");
+        if (slug.isBlank()) {
+            slug = "org";
+        }
+        return slug.length() > 30 ? slug.substring(0, 30).replaceAll("-+$", "") : slug;
+    }
+
+    private void requireEnabled() {
+        if (!Boolean.TRUE.equals(properties.enabled())) {
+            throw new ForbiddenException(
+                    "Self-service signup is disabled on this platform (SIGNUP_ENABLED).");
+        }
+    }
+
+    private static ValidationException invalidToken() {
+        // One generic message for absent, spent, and expired — a probe learns nothing.
+        return new ValidationException("This verification link is invalid or has expired — start a new signup.",
+                ApiSource.parameter("token"));
+    }
+
+    private static String sha256(String value) {
+        try {
+            return HexFormat.of().formatHex(
+                    MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+}
