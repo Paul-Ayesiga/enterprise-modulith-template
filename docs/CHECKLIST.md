@@ -751,6 +751,11 @@ have closed the cycle `document → search → organization → exchange`, and `
       Playwright login-gate E2E scaffold
 - [x] **Docs (MUST)** — api-guide + system-diagram updated for every slice above; OpenAPI + Postman
       regenerated (124 paths)
+- [x] **Edge IP controls** — gateway front-door deny-list (YAML-durable + `gatewayblocklist`
+      runtime, admin-portal panel, refused before auth at order +3) and trusted-proxy-hop client-IP
+      resolution (`app.http.trusted-proxy-hops` / gateway `trusted-proxy-hops`) so org allowlists,
+      rate-limit IP keys, and the blocklist judge the proxy-vouched address — XFF never believed
+      undeclared
 - [x] **Gate:** full `./gradlew :test` and `:gateway:app:test` green over the final tree
 
 | Reference | What it is |

@@ -148,6 +148,12 @@ app:
       owner-email: ${ORG_DEV_BOOTSTRAP_OWNER_EMAIL:ayesigapo@gmail.com}
       owner-first-name: ${ORG_DEV_BOOTSTRAP_OWNER_FIRST:Paul}
       owner-last-name: ${ORG_DEV_BOOTSTRAP_OWNER_LAST:Ayesiga}
+  http:
+    # How many of OUR proxies stand in front, each appending one X-Forwarded-For entry: 0 = hit
+    # directly (trust only the socket peer — the safe dev default), 1 = behind the gateway,
+    # 2 = behind ingress -> gateway (the Helm chart topology). Governs every client-IP decision
+    # (org ip-allowlist, rate-limit IP keys); XFF is NEVER believed while this is 0.
+    trusted-proxy-hops: ${TRUSTED_PROXY_HOPS:0}
   rate-limit:
     enabled: ${RATE_LIMIT_ENABLED:true}
     key-prefix: rl
@@ -155,7 +161,8 @@ app:
     # fallback for non-org IdPs; if neither is present, keying falls back to sub then IP.
     tenant-claim: ${RATE_LIMIT_TENANT_CLAIM:tenant}
     backend-timeout: ${RATE_LIMIT_BACKEND_TIMEOUT:PT0.25S}
-    trust-forwarded-for: ${RATE_LIMIT_TRUST_XFF:false} # only true behind a trusted proxy/gateway
+    # Predecessor of app.http.trusted-proxy-hops (single-hop only) — still honored; the hops knob wins.
+    trust-forwarded-for: ${RATE_LIMIT_TRUST_XFF:false}
     tiers:
       - id: write
         path-pattern: /api/**

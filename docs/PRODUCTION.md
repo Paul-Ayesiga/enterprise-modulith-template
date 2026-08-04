@@ -81,6 +81,8 @@ Objectives, restore order, and the quarterly drill: [runbooks/restore.md](runboo
 | Payments `*_MODE` (pesapal/yo) | `sandbox` | `live` — creds are per-mode; mode is stamped per payment row |
 | `SMS_STUB` | often true | false, real Speeda creds in the Secret store |
 | `GATEWAY_ADMIN_TOKEN` | optional | set — the admin port is cluster-internal AND token-gated |
+| `TRUSTED_PROXY_HOPS` / `GATEWAY_TRUSTED_PROXY_HOPS` | 0 (direct — XFF ignored) | the chart sets 2 (modulith) / 1 (gateway) for ingress → gateway → modulith; wrong values make IP allowlists/blocklists judge the wrong address |
+| `GATEWAY_BLOCKLIST` | empty | durable front-door deny-list CIDRs; runtime adds via `gatewayblocklist`/admin portal last until restart |
 | Grafana | anonymous admin (otel-lgtm) | real auth; alerts to a contact point (Slack/pager), not just the UI |
 
 ## E2E gate

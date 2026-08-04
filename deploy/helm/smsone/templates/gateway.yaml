@@ -29,6 +29,9 @@ spec:
             - { name: BACKEND_URI, value: "http://modulith:8080" }
             - { name: GATEWAY_REDIS_HOST, value: {{ .Values.valkey.host | quote }} }
             - { name: GATEWAY_JWKS_URI, value: {{ printf "%s/protocol/openid-connect/certs" .Values.modulith.issuerUri | quote }} }
+            # One proxy (the ingress) stands in front of the gateway here, so the edge blocklist
+            # judges the ingress-vouched client address, not the ingress itself.
+            - { name: GATEWAY_TRUSTED_PROXY_HOPS, value: "1" }
             - name: GATEWAY_ADMIN_TOKEN
               valueFrom: { secretKeyRef: { name: {{ .Values.credentials.secretName }}, key: gateway-admin-token, optional: true } }
             {{- with .Values.gateway.env }}

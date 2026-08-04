@@ -32,6 +32,18 @@ export type UsageRow = {
   resetSeconds: number;
 };
 
+/** One deny-list entry from the gatewayblocklist endpoint. */
+export type BlocklistEntry = {
+  cidr: string;
+  source: "config" | "runtime" | string;
+};
+
+export type Blocklist = {
+  entries: BlocklistEntry[];
+  trustedProxyHops: number;
+  error: string | null;
+};
+
 export type Overview = {
   routes: RouteRow[];
   services: ServiceRow[];
@@ -140,6 +152,18 @@ export async function fetchOverview(): Promise<Overview> {
 }
 
 /** Live per-consumer usage — never throws; an unreachable endpoint renders as an error state. */
+/** The edge deny-list — every entry refuses matching sources before auth, quotas, or routing. */
+export async function fetchBlocklist(): Promise<Blocklist> {
+  try {
+    const raw = await getJson<{ entries: BlocklistEntry[]; trustedProxyHops: number }>(
+      "/actuator/gatewayblocklist"
+    );
+    return { entries: raw.entries, trustedProxyHops: raw.trustedProxyHops, error: null };
+  } catch (e) {
+    return { entries: [], trustedProxyHops: 0, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 export async function fetchUsage(): Promise<{ usage: UsageRow[]; error: string | null }> {
   try {
     const usage = await getJson<UsageRow[]>("/actuator/gatewayusage");

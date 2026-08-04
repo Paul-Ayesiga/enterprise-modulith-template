@@ -145,3 +145,37 @@ async function safeMessage(res: Response): Promise<string> {
 function msg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
+
+/**
+ * Block or unblock a source CIDR via the gatewayblocklist write operation. Bites the very next
+ * request — the filter runs before auth and routing. Runtime change: durable blocks belong in
+ * gateway.security.blocklist.cidrs.
+ */
+export async function updateBlocklist(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const cidr = String(formData.get("cidr") ?? "").trim();
+  const blocked = String(formData.get("blocked") ?? "true") === "true";
+  if (!cidr) {
+    return { ok: false, message: "An IP or CIDR is required, e.g. 203.0.113.0/24." };
+  }
+  try {
+    const res = await fetch(`${adminBaseUrl()}/actuator/gatewayblocklist`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...adminHeaders() },
+      body: JSON.stringify({ cidr, blocked }),
+      cache: "no-store"
+    });
+    if (!res.ok) {
+      return { ok: false, message: `Gateway refused the change (${res.status}).` };
+    }
+    const body = (await res.json()) as { error?: string; cidr?: string; removed?: boolean };
+    if (body.error) {
+      return { ok: false, message: body.error };
+    }
+    revalidatePath("/");
+    return blocked
+      ? { ok: true, message: `${body.cidr} is blocked — live now. Runtime change: add it to the gateway YAML to survive a restart.` }
+      : { ok: true, message: body.removed ? `${cidr} unblocked.` : `${cidr} was not on the list.` };
+  } catch (e) {
+    return { ok: false, message: `Can't reach the gateway admin API: ${msg(e)}` };
+  }
+}

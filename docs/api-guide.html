@@ -576,6 +576,10 @@ GET  /api/v1/orgs/{orgId}/exchange/jobs/{jobId}/result   # 302 → the output fi
   <pre><code>PUT …/security-policy {"ipAllowlist":"203.0.113.0/24","requireTrustedDevice":true,
                        "sessionMaxAgeSeconds":3600,"requireMfa":true}
 POST …/security-policy/trusted-devices {"subject":"kc-7d2e…","deviceId":"…","trusted":true}   # trust is the org's grant</code></pre>
+  <p class="mut"><code>ipAllowlist</code> judges the <b>real client</b>, not the proxy in front: the platform declares its
+  proxy depth (<code>TRUSTED_PROXY_HOPS</code> — 0 direct, 1 behind the gateway, 2 behind ingress + gateway) and only the
+  proxy-vouched <code>X-Forwarded-For</code> entry is believed; a caller-forged entry buys nothing. Platform-wide IP
+  <b>blocking</b> is separate and earlier — the gateway's deny-list refuses hostile sources before authentication.</p>
   <p class="mut"><code>requireMfa</code> holds <b>human sessions</b> to a multi-factor token — the JWT's <code>amr</code> claim must
   name a second factor (<code>otp</code>/<code>totp</code>/<code>webauthn</code>…), else <code>403 (mfa)</code>. API keys are machine
   credentials and exempt; new invites into a require-MFA org get TOTP enrollment added to their first-login link

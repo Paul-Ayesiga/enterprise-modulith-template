@@ -1,7 +1,8 @@
+import { BlocklistPanel } from "./components/BlocklistPanel";
 import { CreateRouteForm } from "./components/CreateRouteForm";
 import { Header } from "./components/Header";
 import { RouteTableRow } from "./components/RouteTableRow";
-import { adminBaseUrl, fetchOverview, fetchUsage, grafanaUrl, type UsageRow } from "./lib/gateway";
+import { adminBaseUrl, fetchBlocklist, fetchOverview, fetchUsage, grafanaUrl, type UsageRow } from "./lib/gateway";
 
 // Read the live gateway state on every request.
 export const dynamic = "force-dynamic";
@@ -9,6 +10,7 @@ export const dynamic = "force-dynamic";
 export default async function AdminHome() {
   const [{ routes, services, productCount, health, error }, { usage, error: usageError }] =
     await Promise.all([fetchOverview(), fetchUsage()]);
+  const blocklist = await fetchBlocklist();
   const routesUrl = `${adminBaseUrl()}/actuator/gatewayroutes`;
 
   return (
@@ -115,6 +117,16 @@ export default async function AdminHome() {
                   </table>
                 </div>
               )}
+            </section>
+
+            <section className="section">
+              <div className="section__head">
+                <h2 className="section__title">IP blocklist</h2>
+                <span className="section__hint">
+                  refused before auth, quotas, and routing · trusted proxy hops: {blocklist.trustedProxyHops}
+                </span>
+              </div>
+              <BlocklistPanel entries={blocklist.entries} error={blocklist.error} />
             </section>
 
             <section className="section">

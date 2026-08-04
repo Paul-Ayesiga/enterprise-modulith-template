@@ -23,6 +23,7 @@ import ug.co.smsone.shared.error.ErrorCode;
 import ug.co.smsone.shared.security.CurrentUser;
 import ug.co.smsone.shared.security.CurrentUserProvider;
 import ug.co.smsone.shared.web.EnvelopeErrorWriter;
+import ug.co.smsone.shared.web.ForwardedClientIp;
 import ug.co.smsone.shared.web.RequestPaths;
 
 /**
@@ -50,15 +51,18 @@ public class OrgPolicyEnforcementFilter extends OncePerRequestFilter {
     private final EnvelopeErrorWriter errorWriter;
     private final MeterRegistry meters;
     private final Clock clock;
+    private final ForwardedClientIp forwardedClientIp;
 
     public OrgPolicyEnforcementFilter(OrgSecurityPolicyRepository policies, DeviceService devices,
-            CurrentUserProvider currentUser, EnvelopeErrorWriter errorWriter, MeterRegistry meters, Clock clock) {
+            CurrentUserProvider currentUser, EnvelopeErrorWriter errorWriter, MeterRegistry meters, Clock clock,
+            ForwardedClientIp forwardedClientIp) {
         this.policies = policies;
         this.devices = devices;
         this.currentUser = currentUser;
         this.errorWriter = errorWriter;
         this.meters = meters;
         this.clock = clock;
+        this.forwardedClientIp = forwardedClientIp;
     }
 
     @Override
@@ -99,8 +103,10 @@ public class OrgPolicyEnforcementFilter extends OncePerRequestFilter {
 
     /** @return the violated rule name, or null when the request satisfies the policy. */
     private String evaluate(OrgSecurityPolicy policy, CurrentUser caller, HttpServletRequest request) {
+        // The judged address honors app.http.trusted-proxy-hops — behind the gateway/ingress the raw
+        // socket peer is OUR proxy, and an allowlist judging it would block everyone or no one.
         if (policy.getIpAllowlist() != null && !policy.getIpAllowlist().isBlank()
-                && !CidrMatcher.matchesAny(policy.getIpAllowlist(), request.getRemoteAddr())) {
+                && !CidrMatcher.matchesAny(policy.getIpAllowlist(), forwardedClientIp.clientIp(request))) {
             return "ip-allowlist";
         }
         if (policy.getSessionMaxAgeSeconds() != null) {

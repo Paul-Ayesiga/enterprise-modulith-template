@@ -210,6 +210,10 @@ flowchart TB
         <span class="what"><b>Request identity &amp; trace</b> — mints <code>gw-&lt;uuid&gt;</code> request id + W3C <code>traceparent</code>; both propagate to the backend and every log line.</span>
         <span class="fail"><span class="pill">headers</span></span></div>
       <div class="connector">│▼</div>
+      <div class="stagebox"><span class="ord">+3</span>
+        <span class="what"><b>IP blocklist</b> — the front-door deny-list, cheapest possible "no": a match refuses before auth (no JWKS work), quotas, or routing. Two tiers like the route table — YAML-seeded (durable, boot-validated) + runtime via <code>gatewayblocklist</code> / the admin portal (until restart). Judged address = socket peer unless <code>trusted-proxy-hops</code> declares an ingress; X-Forwarded-For is never believed otherwise. Denials counted (<code>gateway.blocklist.denied</code>), security-logged, edge-audited.</span>
+        <span class="fail"><span class="pill bad">403</span><span class="pill">in-memory set</span></span></div>
+      <div class="connector">│▼</div>
       <div class="stagebox"><span class="ord">+10</span>
         <span class="what"><b>EdgeAuthorization</b> — Bearer JWTs validated against Keycloak's <b>JWKS</b> (cached, no IdP round-trip); <code>X-Api-Key</code> resolved via the modulith introspection seam. Enforces the route's <code>AuthPolicy</code>: authenticated · required scopes · tenant-path template (path tenant must equal token tenant). Denials → security log + edge-audit seam.</span>
         <span class="fail"><span class="pill bad">401 / 403</span><span class="pill store">JWKS · seam</span></span></div>
@@ -351,7 +355,7 @@ flowchart TB
         <span class="fail"><span class="pill bad">403 NOT_PROVISIONED</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox core"><span class="ord">3</span>
-        <span class="what"><b>Org security policy</b> — the tenant's own tightening: IP allowlist (CIDR), trusted-device requirement (<code>X-Device-Id</code>), session max-age, <b>require-MFA</b> (a human JWT must carry a multi-factor <code>amr</code> claim; API keys/impersonation are machine principals and exempt). Refusals name the rule; the policy endpoints themselves are always reachable (no lockout).</span>
+        <span class="what"><b>Org security policy</b> — the tenant's own tightening: IP allowlist (CIDR, judging the client per <code>app.http.trusted-proxy-hops</code> — behind gateway/ingress the socket peer is OUR proxy, so XFF's proxy-vouched entry is the evidence), trusted-device requirement (<code>X-Device-Id</code>), session max-age, <b>require-MFA</b> (a human JWT must carry a multi-factor <code>amr</code> claim; API keys/impersonation are machine principals and exempt). Refusals name the rule; the policy endpoints themselves are always reachable (no lockout).</span>
         <span class="fail"><span class="pill bad">403 (named rule)</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox core"><span class="ord">4</span>

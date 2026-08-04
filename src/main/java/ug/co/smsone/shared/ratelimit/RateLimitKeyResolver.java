@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 import ug.co.smsone.shared.ratelimit.RateLimitProperties.Tier;
 import ug.co.smsone.shared.security.CurrentUser;
 import ug.co.smsone.shared.security.CurrentUserProvider;
+import ug.co.smsone.shared.web.ForwardedClientIp;
 
 /**
  * Resolves the bucket key for a request: {@code <prefix>:<tier>:<scopeType>:<scopeValue>}. Scope
@@ -23,10 +24,13 @@ class RateLimitKeyResolver {
 
     private final RateLimitProperties properties;
     private final CurrentUserProvider currentUserProvider;
+    private final ForwardedClientIp forwardedClientIp;
 
-    RateLimitKeyResolver(RateLimitProperties properties, CurrentUserProvider currentUserProvider) {
+    RateLimitKeyResolver(RateLimitProperties properties, CurrentUserProvider currentUserProvider,
+            ForwardedClientIp forwardedClientIp) {
         this.properties = properties;
         this.currentUserProvider = currentUserProvider;
+        this.forwardedClientIp = forwardedClientIp;
     }
 
     String resolve(HttpServletRequest request, Tier tier) {
@@ -85,6 +89,11 @@ class RateLimitKeyResolver {
     private static final int MAX_IP_LENGTH = 45; // longest IPv6 textual form
 
     private String clientIp(HttpServletRequest request) {
+        // The platform-wide proxy declaration wins; the boolean below is its single-hop predecessor,
+        // kept working for existing configs.
+        if (forwardedClientIp.trustedHops() > 0) {
+            return forwardedClientIp.clientIp(request);
+        }
         if (properties.trustForwardedFor()) {
             String forwarded = request.getHeader("X-Forwarded-For");
             if (forwarded != null && !forwarded.isBlank()) {

@@ -32,6 +32,10 @@ spec:
             - { name: SMTP_HOST, value: {{ .Values.smtp.host | quote }} }
             - { name: KEYCLOAK_ISSUER_URI, value: {{ .Values.modulith.issuerUri | quote }} }
             - { name: KEYCLOAK_URL, value: {{ printf "http://%s-keycloak:8080" .Release.Name | quote }} }
+            # This chart's topology is client -> ingress -> gateway -> modulith: two of OUR proxies
+            # append X-Forwarded-For entries, so client-IP decisions (org ip-allowlist, rate-limit
+            # IP keys) read the 2nd-from-right entry.
+            - { name: TRUSTED_PROXY_HOPS, value: "2" }
             # Every credential comes from the operator-created Secret — see NOTES.txt.
             - name: POSTGRES_USER
               valueFrom: { secretKeyRef: { name: {{ .Values.credentials.secretName }}, key: postgres-user } }

@@ -22,7 +22,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus,metrics,gatewayroutes,gatewaycatalog,gatewayopenapi,gatewayusage   # route-admin + catalog/OpenAPI + per-consumer usage
+        include: health,info,prometheus,metrics,gatewayroutes,gatewaycatalog,gatewayopenapi,gatewayusage,gatewayblocklist   # route-admin + catalog/OpenAPI + usage + ip-blocklist
 
 # The route/service catalog (config-driven). Today the gateway fronts one backend — the modulith;
 # add services and routes here as the platform splits into more.
@@ -32,6 +32,14 @@ gateway:
   security:
     jwk-set-uri: ${KEYCLOAK_JWKS:http://localhost:8081/realms/smsone/protocol/openid-connect/certs}
     tenant-claim: ${GATEWAY_TENANT_CLAIM:tenant}
+    # Front-door deny-list, checked before ANY other policy (auth, quotas, routing). Entries here are
+    # durable; runtime additions via the gatewayblocklist admin endpoint last until restart.
+    # trusted-proxy-hops: 0 = gateway hit directly (X-Forwarded-For is client-writable and IGNORED);
+    # 1 = behind one ingress that appends the real client address.
+    blocklist:
+      # Comma-separated CIDRs/IPs, e.g. "203.0.113.0/24,198.51.100.7". Empty = nothing blocked.
+      cidrs: ${GATEWAY_BLOCKLIST:}
+      trusted-proxy-hops: ${GATEWAY_TRUSTED_PROXY_HOPS:0}
   # The platform seam: resolve an X-Api-Key by calling the modulith's introspection endpoint with the
   # shared secret. Unset the uri to turn API-key auth off (the bearer path still works).
   platform:
