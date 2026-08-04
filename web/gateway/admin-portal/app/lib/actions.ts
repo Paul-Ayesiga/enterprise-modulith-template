@@ -23,12 +23,17 @@ export async function createRoute(_prev: ActionState, formData: FormData): Promi
   // Checkbox-before-hidden pattern: get() sees "true" when checked, the hidden "false" otherwise.
   const authenticated = String(formData.get("authenticated") ?? "") === "true";
   const rateLimited = String(formData.get("rateLimited") ?? "") === "true";
+  const orderRaw = String(formData.get("order") ?? "").trim();
+  const order = orderRaw === "" ? undefined : Number(orderRaw);
+  if (order !== undefined && (!Number.isInteger(order) || order < 0)) {
+    return { ok: false, message: "order must be a non-negative whole number (lower wins when paths overlap)." };
+  }
 
   try {
     const res = await fetch(`${adminBaseUrl()}/actuator/gatewayroutes`, {
       method: "POST",
       headers: { "content-type": "application/json", ...adminHeaders() },
-      body: JSON.stringify({ id, path, serviceId, authenticated, rateLimited }),
+      body: JSON.stringify({ id, path, serviceId, order, authenticated, rateLimited }),
       cache: "no-store"
     });
     if (!res.ok) {
@@ -52,6 +57,7 @@ export async function updateRoute(_prev: ActionState, formData: FormData): Promi
   const serviceId = String(formData.get("serviceId") ?? "").trim();
   const orderRaw = String(formData.get("order") ?? "").trim();
   const lifecycle = String(formData.get("lifecycle") ?? "").trim();
+  const sunset = String(formData.get("sunset") ?? "").trim();
 
   if (!id) {
     return { ok: false, message: "Missing route id." };
@@ -69,6 +75,7 @@ export async function updateRoute(_prev: ActionState, formData: FormData): Promi
   if (serviceId) patch.serviceId = serviceId;
   if (order !== null) patch.order = order;
   if (lifecycle) patch.lifecycle = lifecycle;
+  if (sunset) patch.sunset = sunset;
   patch.authenticated = String(formData.get("authenticated") ?? "") === "true";
   patch.rateLimited = String(formData.get("rateLimited") ?? "") === "true";
   if (Object.keys(patch).length === 0) {
@@ -93,7 +100,7 @@ export async function updateRoute(_prev: ActionState, formData: FormData): Promi
   }
 }
 
-/** One-click lifecycle flip: RETIRED pauses traffic (410 Gone), PUBLISHED resumes it. */
+/** Move a route one step along its lifecycle: DEPRECATED (warns), RETIRED (410 Gone), PUBLISHED (serves). */
 export async function setLifecycle(id: string, lifecycle: string): Promise<ActionState> {
   try {
     const res = await fetch(`${adminBaseUrl()}/actuator/gatewayroutes/${encodeURIComponent(id)}`, {
@@ -107,9 +114,16 @@ export async function setLifecycle(id: string, lifecycle: string): Promise<Actio
       return { ok: false, message: `Lifecycle change failed (${res.status})${detail ? `: ${detail}` : ""}.` };
     }
     revalidatePath("/");
-    const verb = lifecycle === "RETIRED" ? "paused (410 on the edge)" : `set to ${lifecycle}`;
-    const caveat = lifecycle === "RETIRED" ? " Runtime-only: a gateway restart un-pauses it." : "";
-    return { ok: true, message: `Route "${id}" ${verb}.${caveat}` };
+    const verb =
+      lifecycle === "RETIRED"
+        ? "retired — the edge now answers 410 Gone"
+        : lifecycle === "DEPRECATED"
+          ? "deprecated — still serving, but callers get Deprecation + Sunset warnings"
+          : "republished — serving normally again";
+    return {
+      ok: true,
+      message: `Route "${id}" ${verb}. Runtime change: a gateway restart reverts to the YAML lifecycle.`
+    };
   } catch (e) {
     return { ok: false, message: `Can't reach the gateway admin API: ${msg(e)}` };
   }

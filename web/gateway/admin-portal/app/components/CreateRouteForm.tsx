@@ -4,17 +4,41 @@ import { useFormState, useFormStatus } from "react-dom";
 import { createRoute, type ActionState } from "../lib/actions";
 import { PlusIcon } from "./Icons";
 
-export function CreateRouteForm({ services }: { services: string[] }) {
+type CreateRouteFormProps = {
+  services: string[];
+  /** Pre-fill from an "Endpoints → carve out a route" jump. */
+  defaultId?: string;
+  defaultPath?: string;
+  defaultOrder?: string;
+};
+
+export function CreateRouteForm({ services, defaultId, defaultPath, defaultOrder }: CreateRouteFormProps) {
   const [state, formAction] = useFormState<ActionState, FormData>(createRoute, null);
+  const carving = Boolean(defaultPath);
 
   return (
     <form className="form" action={formAction}>
+      {carving && (
+        <p className="form__note">
+          Carving a dedicated route for <code>{defaultPath}</code>. Order <strong>{defaultOrder ?? "5"}</strong>{" "}
+          places it ahead of the coarse product routes, so this exact path is controlled on its own —
+          review and register.
+        </p>
+      )}
       <div className="form__row">
         <div className="field">
           <label className="field__label" htmlFor="route-id">
             Route id
           </label>
-          <input id="route-id" name="id" placeholder="reports-api" autoComplete="off" spellCheck={false} required />
+          <input
+            id="route-id"
+            name="id"
+            defaultValue={defaultId ?? ""}
+            placeholder="reports-api"
+            autoComplete="off"
+            spellCheck={false}
+            required
+          />
           <span className="field__hint">A slug — appears in the route table and logs.</span>
         </div>
         <div className="field">
@@ -24,13 +48,15 @@ export function CreateRouteForm({ services }: { services: string[] }) {
           <input
             id="route-path"
             name="path"
+            defaultValue={defaultPath ?? ""}
             placeholder="/api/v1/reports/**"
             autoComplete="off"
             spellCheck={false}
             required
           />
           <span className="field__hint">
-            Ant-style — <code>**</code> matches any suffix.
+            Ant-style — <code>**</code> matches any suffix; an exact path (no <code>**</code>) matches only
+            itself.
           </span>
         </div>
         <div className="field">
@@ -53,15 +79,30 @@ export function CreateRouteForm({ services }: { services: string[] }) {
           </datalist>
           <span className="field__hint">Must be a registered service.</span>
         </div>
+        <div className="field">
+          <label className="field__label" htmlFor="route-order">
+            Order <span className="field__hint">(optional)</span>
+          </label>
+          <input
+            id="route-order"
+            name="order"
+            type="number"
+            min={0}
+            defaultValue={defaultOrder ?? ""}
+            placeholder="1000"
+            autoComplete="off"
+          />
+          <span className="field__hint">Lower wins when paths overlap. Blank = behind the seeded routes.</span>
+        </div>
       </div>
       <div className="form__row" style={{ marginTop: 4 }}>
         <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-          <input type="checkbox" name="authenticated" value="true" />
+          <input type="checkbox" name="authenticated" value="true" defaultChecked={carving} />
           <input type="hidden" name="authenticated" value="false" />
           Require token <span className="field__hint">(401 without a valid bearer)</span>
         </label>
         <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-          <input type="checkbox" name="rateLimited" value="true" />
+          <input type="checkbox" name="rateLimited" value="true" defaultChecked={carving} />
           <input type="hidden" name="rateLimited" value="false" />
           Rate limit <span className="field__hint">(shared token bucket, 429 over it)</span>
         </label>

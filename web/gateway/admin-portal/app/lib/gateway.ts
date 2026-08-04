@@ -12,6 +12,7 @@ export type RouteRow = {
   predicates: string[];
   paths: string[];
   lifecycle: Lifecycle;
+  sunset: string | null;
   rateLimited: boolean;
   product: string | null;
 };
@@ -102,8 +103,10 @@ type RawRoute = {
   predicates: string[];
   // First-class from the gatewayroutes read since the update op landed; older gateways omit them.
   path?: string;
+  paths?: string[]; // ALL match patterns for the route (identity-api covers /me + /permissions + /admin/**)
   lifecycle?: string;
   rateLimited?: boolean;
+  sunset?: string | null;
 };
 type CatalogProduct = { id: string; name: string; routes: { id: string; paths: string[]; lifecycle: string }[] };
 
@@ -132,8 +135,9 @@ export async function fetchOverview(): Promise<Overview> {
           serviceId: r.serviceId,
           authenticated: r.authenticated,
           predicates: r.predicates ?? [],
-          paths: r.path ? [r.path] : meta?.paths ?? pathsFromPredicates(r.predicates ?? []),
+          paths: r.paths && r.paths.length ? r.paths : r.path ? [r.path] : meta?.paths ?? pathsFromPredicates(r.predicates ?? []),
           lifecycle: r.lifecycle ?? meta?.lifecycle ?? "PUBLISHED",
+          sunset: r.sunset ?? null,
           rateLimited: r.rateLimited ?? false,
           product: meta?.product ?? null
         };
@@ -231,4 +235,109 @@ function pathsFromPredicates(predicates: string[]): string[] {
     }
   }
   return out;
+}
+
+/** The modulith's own base URL — its full OpenAPI (every endpoint) lives here, not at the edge. */
+export function docsBaseUrl(): string {
+  return process.env.MODULITH_DOCS_URL ?? "http://localhost:28080";
+}
+
+/** One real API operation, and which gateway route (if any) fronts it today. */
+export type Endpoint = {
+  method: string;
+  path: string;
+  summary: string;
+  tag: string;
+  route: { id: string; lifecycle: Lifecycle; authenticated: boolean; order: number } | null;
+};
+
+export type EndpointsView = {
+  endpoints: Endpoint[];
+  total: number;
+  routed: number;
+  error: string | null;
+};
+
+const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
+
+/**
+ * Ant-style path pattern to an anchored RegExp, mirroring Spring's PathPattern for the cases the
+ * gateway uses: a double star spans path segments, a single star stays within one, and a pattern
+ * with no wildcard matches only that exact path (so /api/v1/me does NOT catch /api/v1/me/profile —
+ * that falls to the catch-all, which is exactly the mapping the operator needs to see).
+ */
+function antToRegex(pattern: string): RegExp {
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  // Split on the segment-spanning ** (becomes .*); within each piece a lone * stays in-segment.
+  const body = escaped
+    .split("**")
+    .map((piece) => piece.replace(/\*/g, "[^/]*"))
+    .join(".*");
+  return new RegExp("^" + body + "$");
+}
+
+async function fetchOpenApi(): Promise<{ paths?: Record<string, Record<string, unknown>> }> {
+  const res = await fetch(`${docsBaseUrl()}/v3/api-docs`, { cache: "no-store" });
+  if (!res.ok) {
+    throw new Error(`OpenAPI ${res.status} from ${docsBaseUrl()}`);
+  }
+  return (await res.json()) as { paths?: Record<string, Record<string, unknown>> };
+}
+
+/**
+ * Every endpoint the modulith documents (its OpenAPI), each mapped to the lowest-order gateway route
+ * whose pattern matches it — so the operator sees the whole surface AND how the coarse routes cover
+ * it (a specific route wins by order; ungrouped paths fall to the platform-api catch-all).
+ */
+export async function fetchEndpoints(): Promise<EndpointsView> {
+  try {
+    const [routesRaw, spec] = await Promise.all([
+      getJson<RawRoute[]>("/actuator/gatewayroutes"),
+      fetchOpenApi()
+    ]);
+    const routes = routesRaw
+      .map((r) => {
+        const paths = r.paths && r.paths.length ? r.paths : r.path ? [r.path] : [];
+        return {
+          id: r.id,
+          order: r.order,
+          authenticated: r.authenticated,
+          lifecycle: (r.lifecycle ?? "PUBLISHED") as Lifecycle,
+          patterns: paths.map(antToRegex)
+        };
+      })
+      .sort((a, b) => a.order - b.order);
+
+    const endpoints: Endpoint[] = [];
+    for (const [path, methods] of Object.entries(spec.paths ?? {})) {
+      const serving = routes.find((r) => r.patterns.some((re) => re.test(path))) ?? null;
+      for (const [method, op] of Object.entries(methods)) {
+        if (!HTTP_METHODS.has(method.toUpperCase())) continue;
+        const operation = (op ?? {}) as { summary?: string; tags?: string[] };
+        endpoints.push({
+          method: method.toUpperCase(),
+          path,
+          summary: operation.summary ?? "",
+          tag: operation.tags && operation.tags.length ? String(operation.tags[0]) : "Untagged",
+          route: serving
+            ? {
+                id: serving.id,
+                lifecycle: serving.lifecycle,
+                authenticated: serving.authenticated,
+                order: serving.order
+              }
+            : null
+        });
+      }
+    }
+    endpoints.sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method));
+    return {
+      endpoints,
+      total: endpoints.length,
+      routed: endpoints.filter((e) => e.route).length,
+      error: null
+    };
+  } catch (e) {
+    return { endpoints: [], total: 0, routed: 0, error: e instanceof Error ? e.message : String(e) };
+  }
 }

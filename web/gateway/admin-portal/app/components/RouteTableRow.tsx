@@ -64,6 +64,7 @@ export function RouteTableRow({ route, services }: { route: RouteRow; services: 
 
 function LifecycleBadge({ lifecycle }: { lifecycle: string }) {
   const key = lifecycle.toLowerCase();
-  const label = key === "retired" ? "Paused" : key.charAt(0).toUpperCase() + key.slice(1);
+  // Speak the lifecycle vocabulary, not "Paused" — a retired route is 410 Gone, not temporarily off.
+  const label = key.charAt(0).toUpperCase() + key.slice(1);
   return <span className={`badge badge--${key}`}>{label}</span>;
 }

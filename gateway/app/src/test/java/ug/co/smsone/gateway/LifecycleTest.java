@@ -52,7 +52,11 @@ class LifecycleTest {
     void retiredRouteIsGone() {
         client().get().uri("/gone/x").exchange()
                 .expectStatus().isEqualTo(410)
-                .expectBody().jsonPath("$.errors[0].code").isEqualTo("GONE");
+                // The 410 explains itself (not a bare "GONE") and carries the Sunset date it went on.
+                .expectHeader().valueEquals("Sunset", "Sun, 30 Jun 2024 23:59:59 GMT")
+                .expectBody()
+                .jsonPath("$.errors[0].code").isEqualTo("GONE")
+                .jsonPath("$.errors[0].detail").value(org.hamcrest.Matchers.containsString("retired"));
     }
 
     @Test

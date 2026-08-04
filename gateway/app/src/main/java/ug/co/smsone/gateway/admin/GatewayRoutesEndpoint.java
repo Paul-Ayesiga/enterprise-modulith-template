@@ -53,6 +53,7 @@ public class GatewayRoutesEndpoint {
             row.put("predicates", route.predicates().stream()
                     .map(predicate -> predicate.kind() + " " + predicate.args()).toList());
             row.put("path", firstPath(route));
+            row.put("paths", GatewayCatalogEndpoint.pathsOf(route)); // ALL match patterns, not just the first
             row.put("lifecycle", route.lifecycle().status().name());
             row.put("sunset", route.lifecycle().sunset());
             row.put("rateLimited", route.traffic().rateLimited());
@@ -67,7 +68,7 @@ public class GatewayRoutesEndpoint {
      */
     @WriteOperation
     public Map<String, Object> createRoute(String id, String path, String serviceId,
-            @Nullable Boolean authenticated, @Nullable Boolean rateLimited) {
+            @Nullable Integer order, @Nullable Boolean authenticated, @Nullable Boolean rateLimited) {
         if (services.find(serviceId).isEmpty()) {
             throw new IllegalArgumentException("Unknown service '" + serviceId + "'");
         }
@@ -75,11 +76,14 @@ public class GatewayRoutesEndpoint {
                 ? new AuthPolicy(true, java.util.Set.of(), null) : AuthPolicy.OPEN;
         TrafficPolicy traffic = Boolean.TRUE.equals(rateLimited)
                 ? new TrafficPolicy(null, null, true, false, 0, null) : TrafficPolicy.NONE;
-        registrar.register(new RouteDefinition(id, 1000,
+        // Order decides who wins when paths overlap (lower first) — a carved single-endpoint route
+        // needs a lower order than the coarse product route it splits out of. Default 1000 keeps a
+        // plain registration behind the seeded product routes.
+        registrar.register(new RouteDefinition(id, order == null ? 1000 : order,
                 List.of(new RoutePredicate(RoutePredicate.Kind.PATH, List.of(path))),
                 serviceId, auth, traffic, TransformPolicy.NONE,
                 LifecyclePolicy.PUBLISHED, Map.of()));
-        return Map.of("status", "registered", "id", id);
+        return Map.of("status", "registered", "id", id, "order", order == null ? 1000 : order);
     }
 
     /**

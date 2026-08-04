@@ -231,6 +231,7 @@ gateway:
           args: [/gone/**]
       lifecycle:
         status: retired
+        sunset: "Sun, 30 Jun 2024 23:59:59 GMT"
     - id: v1-route                            # versioning by header; v1 is deprecated
       order: 43
       service-id: backend

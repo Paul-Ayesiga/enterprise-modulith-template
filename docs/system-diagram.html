@@ -243,8 +243,8 @@ flowchart TB
         <span class="fail"><span class="pill bad">413 / 504</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox"><span class="ord">lifecycle</span>
-        <span class="what"><b>Lifecycle enforcement</b> — <code>DEPRECATED</code> still serves but stamps <code>Deprecation</code> + <code>Sunset</code> headers; <code>RETIRED</code> never reaches the backend. The dev portal's changelog renders this table live.</span>
-        <span class="fail"><span class="pill bad">410 Gone</span></span></div>
+        <span class="what"><b>Lifecycle enforcement</b> — a route progresses <code>PUBLISHED</code> → <code>DEPRECATED</code> (still serves, stamps <code>Deprecation: true</code> + <code>Sunset</code> — clients are warned first) → <code>RETIRED</code> (410 Gone, never reaches the backend). Retirement always follows a deprecate step in the admin portal; the 410 carries its <code>Sunset</code> and a real <code>detail</code> ("This API route was retired…"), not a bare code. The dev portal's changelog renders the table live.</span>
+        <span class="fail"><span class="pill bad">410 Gone + Sunset</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox"><span class="ord">cache</span>
         <span class="what"><b>Edge response cache</b> — SCG <code>LocalResponseCache</code> (in-process), GETs only, per-route TTL; the stock URI+cookie key is replaced by a <b>tenant-aware</b> <code>@Primary CacheKeyGenerator</code> so tenants can never read each other's cached responses.</span>

@@ -8,14 +8,14 @@ import { DeleteRouteButton } from "./DeleteRouteButton";
 import { PencilIcon, PauseIcon, PlayIcon } from "./Icons";
 
 /**
- * The per-route action cluster: Pause/Resume (a one-click lifecycle flip — RETIRED answers 410 on the
- * edge, PUBLISHED serves again), Edit (expands an in-place editor row beneath), and Delete. Editing
- * goes through the gateway's update operation, which preserves the policies a delete-and-recreate
- * would lose (auth, traffic, transform).
+ * The per-route action cluster, following the lifecycle PROGRESSION so nothing jumps straight to 410:
+ * a Published route can only be Deprecated (still serves, warns with Deprecation + Sunset); a
+ * Deprecated route can then be Retired (410 Gone) or Republished; a Retired route can be Republished.
+ * Retirement is always preceded by a deprecate step. (The Edit row's dropdown still lets you set any
+ * state deliberately.) Edit expands an in-place editor; Delete removes the route.
  */
 export function RouteRowActions({
   route,
-  services,
   editing,
   onToggleEdit
 }: {
@@ -26,12 +26,12 @@ export function RouteRowActions({
 }) {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const paused = route.lifecycle === "RETIRED";
+  const lifecycle = route.lifecycle.toUpperCase();
 
-  function flipLifecycle() {
+  function move(to: "PUBLISHED" | "DEPRECATED" | "RETIRED") {
     setError(null);
     start(async () => {
-      const result = await setLifecycle(route.id, paused ? "PUBLISHED" : "RETIRED");
+      const result = await setLifecycle(route.id, to);
       if (result && !result.ok) {
         setError(result.message);
       }
@@ -39,17 +39,51 @@ export function RouteRowActions({
   }
 
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-      <button
-        type="button"
-        className="btn btn--ghost"
-        onClick={flipLifecycle}
-        disabled={pending}
-        aria-label={paused ? `Resume route ${route.id}` : `Pause route ${route.id}`}
-        title={paused ? "Resume — PUBLISHED serves again" : "Pause — RETIRED answers 410 Gone"}
-      >
-        {paused ? <PlayIcon /> : <PauseIcon />} {pending ? "…" : paused ? "Resume" : "Pause"}
-      </button>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+      {lifecycle === "PUBLISHED" && (
+        <button
+          type="button"
+          className="btn btn--ghost"
+          onClick={() => move("DEPRECATED")}
+          disabled={pending}
+          title="Deprecate — still serves, but warns callers with Deprecation + Sunset headers"
+        >
+          <PauseIcon /> {pending ? "…" : "Deprecate"}
+        </button>
+      )}
+      {lifecycle === "DEPRECATED" && (
+        <>
+          <button
+            type="button"
+            className="btn btn--danger"
+            onClick={() => move("RETIRED")}
+            disabled={pending}
+            title="Retire — the edge answers 410 Gone. The deprecate warning has already run; this is the final step."
+          >
+            {pending ? "…" : "Retire"}
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={() => move("PUBLISHED")}
+            disabled={pending}
+            title="Republish — serve normally again, warnings removed"
+          >
+            <PlayIcon /> Republish
+          </button>
+        </>
+      )}
+      {lifecycle === "RETIRED" && (
+        <button
+          type="button"
+          className="btn btn--ghost"
+          onClick={() => move("PUBLISHED")}
+          disabled={pending}
+          title="Republish — serve normally again"
+        >
+          <PlayIcon /> {pending ? "…" : "Republish"}
+        </button>
+      )}
       <button
         type="button"
         className="btn btn--ghost"
@@ -129,11 +163,25 @@ export function EditRouteForm({ route, services, onDone }: { route: RouteRow; se
             Lifecycle
           </label>
           <select id={`edit-lifecycle-${route.id}`} name="lifecycle" defaultValue={route.lifecycle}>
-            <option value="PUBLISHED">PUBLISHED — serves normally</option>
-            <option value="DEPRECATED">DEPRECATED — serves + warns (Sunset)</option>
-            <option value="RETIRED">RETIRED — paused, 410 Gone</option>
+            <option value="PUBLISHED">Published — serves normally</option>
+            <option value="DEPRECATED">Deprecated — serves + warns (Deprecation/Sunset)</option>
+            <option value="RETIRED">Retired — 410 Gone</option>
           </select>
           <span className="field__hint">Scopes, timeouts, caching, and transforms are preserved.</span>
+        </div>
+        <div className="field">
+          <label className="field__label" htmlFor={`edit-sunset-${route.id}`}>
+            Sunset <span className="field__hint">(optional)</span>
+          </label>
+          <input
+            id={`edit-sunset-${route.id}`}
+            name="sunset"
+            defaultValue={route.sunset ?? ""}
+            placeholder="Wed, 31 Dec 2026 23:59:59 GMT"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <span className="field__hint">Sent as the Sunset header while deprecated (and on the 410).</span>
         </div>
       </div>
       <div className="form__row" style={{ marginTop: 4 }}>

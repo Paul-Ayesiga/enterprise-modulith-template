@@ -1,15 +1,18 @@
 "use client";
 
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ExternalIcon, GatewayMark, MenuIcon, NavIcon } from "./Icons";
 import { ThemeToggle } from "./ThemeToggle";
 
-const SECTIONS = [
-  { id: "overview", label: "Overview", icon: "overview" },
-  { id: "routes", label: "Routes", icon: "routes" },
-  { id: "consumers", label: "Consumers", icon: "consumers" },
-  { id: "blocklist", label: "IP controls", icon: "blocklist" },
-  { id: "services", label: "Services", icon: "services" }
+const NAV = [
+  { href: "/", label: "Overview", icon: "overview" },
+  { href: "/routes", label: "Routes", icon: "routes" },
+  { href: "/endpoints", label: "Endpoints", icon: "endpoints" },
+  { href: "/consumers", label: "Consumers", icon: "consumers" },
+  { href: "/ip-controls", label: "IP controls", icon: "blocklist" },
+  { href: "/services", label: "Services", icon: "services" }
 ];
 
 type SidebarProps = {
@@ -20,31 +23,17 @@ type SidebarProps = {
 };
 
 /**
- * The control-plane shell: a fixed sidebar on desktop, an off-canvas drawer on mobile. Section links
- * scroll to the dashboard's sections and track the one in view (scrollspy). The active org's edge
- * health rides at the bottom so an operator always sees it.
+ * The control-plane shell: a fixed sidebar on desktop, an off-canvas drawer on mobile. Each item is
+ * its own page (route-based, active by path); the active org's edge health rides at the bottom.
  */
 export function Sidebar({ health, grafanaUrl, routesUrl, user }: SidebarProps) {
+  const pathname = usePathname();
   const [open, setOpen] = useState(false);
-  const [active, setActive] = useState(SECTIONS[0].id);
   const up = health.toUpperCase() === "UP";
 
   useEffect(() => {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const visible = entries
-          .filter((e) => e.isIntersecting)
-          .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-        if (visible) setActive(visible.target.id);
-      },
-      { rootMargin: "-45% 0px -50% 0px", threshold: [0, 0.2, 0.6, 1] }
-    );
-    SECTIONS.forEach((s) => {
-      const el = document.getElementById(s.id);
-      if (el) observer.observe(el);
-    });
-    return () => observer.disconnect();
-  }, []);
+    setOpen(false);
+  }, [pathname]);
 
   useEffect(() => {
     if (!open) return;
@@ -53,11 +42,8 @@ export function Sidebar({ health, grafanaUrl, routesUrl, user }: SidebarProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
-  function go(id: string) {
-    setOpen(false);
-    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
-    setActive(id);
-  }
+  const isActive = (href: string) =>
+    href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`);
 
   return (
     <>
@@ -71,12 +57,12 @@ export function Sidebar({ health, grafanaUrl, routesUrl, user }: SidebarProps) {
         >
           <MenuIcon />
         </button>
-        <span className="topbar__brand">
+        <Link className="topbar__brand" href="/">
           <span className="brand__mark">
             <GatewayMark />
           </span>
           Gateway
-        </span>
+        </Link>
         <span className="topbar__spacer" />
         <ThemeToggle />
       </header>
@@ -84,7 +70,7 @@ export function Sidebar({ health, grafanaUrl, routesUrl, user }: SidebarProps) {
       <div className="backdrop" data-open={open} onClick={() => setOpen(false)} aria-hidden="true" />
 
       <aside className="sidebar" data-open={open} aria-label="Control plane">
-        <div className="sidebar__brand">
+        <Link className="sidebar__brand" href="/" aria-label="SMSOne Gateway admin, home">
           <span className="brand__mark">
             <GatewayMark />
           </span>
@@ -92,25 +78,21 @@ export function Sidebar({ health, grafanaUrl, routesUrl, user }: SidebarProps) {
             <span className="brand__title">SMSOne Gateway</span>{" "}
             <span className="brand__sub">admin</span>
           </span>
-        </div>
+        </Link>
 
         <nav className="sidebar__nav" aria-label="Sections">
-          {SECTIONS.map((s) => (
-            <a
-              key={s.id}
-              href={`#${s.id}`}
-              className={`sidebar__link${active === s.id ? " is-active" : ""}`}
-              aria-current={active === s.id ? "true" : undefined}
-              onClick={(e) => {
-                e.preventDefault();
-                go(s.id);
-              }}
+          {NAV.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`sidebar__link${isActive(item.href) ? " is-active" : ""}`}
+              aria-current={isActive(item.href) ? "page" : undefined}
             >
               <span className="sidebar__icon">
-                <NavIcon name={s.icon} />
+                <NavIcon name={item.icon} />
               </span>
-              {s.label}
-            </a>
+              {item.label}
+            </Link>
           ))}
 
           <div className="sidebar__section">External</div>

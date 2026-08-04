@@ -149,6 +149,11 @@ export function NavIcon({ name, className }: IconProps & { name: string }) {
       </>
     ),
     blocklist: <path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z" />,
+    endpoints: (
+      <>
+        <path d="M9 6l-4 6 4 6M15 6l4 6-4 6" />
+      </>
+    ),
     services: (
       <>
         <rect x="4" y="4" width="16" height="6" rx="1.5" />
