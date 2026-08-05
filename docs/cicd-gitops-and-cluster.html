@@ -329,6 +329,12 @@ flowchart LR
       </figure>
       <p>Notice there's no arrow from CI straight into the cluster: CI's job ends at "push image + commit the new tag."
         Argo takes it from there. That separation is the heart of GitOps — and why no cluster password ever lives in CI.</p>
+      <div class="note note--ok"><div class="note__tag">Wired in this repo</div>
+        <p>The CI half is committed: on push to <code>main</code>, the <code>gitops-bump</code> job in
+          <code>.github/workflows/ci.yml</code> records the built image SHA in <code>deploy/helm/smsone/values-prod.yaml</code>
+          and commits it; the prod Argo Application (<code>deploy/argocd/application.yaml</code>, <code>targetRevision: main</code>)
+          rolls it out. Point Argo at your prod cluster to activate. The local cluster already runs the same loop against
+          <code>values-local.yaml</code> on <code>feat/k3s-local</code>.</p></div>
     </section>
 
     <section>

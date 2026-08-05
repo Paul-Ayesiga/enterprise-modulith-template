@@ -134,20 +134,26 @@ jobs:
             docker push "$IMAGE_BASE/$image:main"
           done
 
-  # Deploy stub — the real command, wired to a protected environment, waiting for a cluster.
-  # Promote by adding KUBECONFIG as an environment secret and replacing the echo with the helm
-  # upgrade. First-deploy order: docs/PRODUCTION.md.
-  deploy:
-    if: github.event_name == 'workflow_dispatch'
-    needs: [backend-tests, portal-build, helm-lint]
+  # GitOps deploy (pull-based, no cluster creds in CI). On every push to main, record the freshly built
+  # image SHA in the prod values file and commit it; a prod Argo CD Application (deploy/argocd/application.yaml)
+  # watching deploy/helm/smsone on `main` then rolls it out — zero-downtime. See
+  # docs/cicd-gitops-and-cluster.html. Needs the Actions bot allowed to push to main; otherwise the push is a
+  # no-op with a warning (nothing else breaks).
+  gitops-bump:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [publish-images]
     runs-on: ubuntu-latest
-    environment: production
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Deploy (stub)
+      - name: Record the deployed image tag and commit it
         run: |
-          echo "helm upgrade --install smsone deploy/helm/smsone \\"
-          echo "  --namespace smsone --create-namespace \\"
-          echo "  --set global.imageTag=${GITHUB_SHA} \\"
-          echo "  -f deploy/helm/smsone/values.yaml -f <environment-values>"
-          echo "(stub: add KUBECONFIG as an environment secret and replace this echo)"
+          f=deploy/helm/smsone/values-prod.yaml
+          sed -i -E "s|^(  imageTag: ).*# gitops-bump.*$|\1${GITHUB_SHA} # gitops-bump: CI overwrites this with the built commit SHA|" "$f"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$f"
+          if git diff --cached --quiet; then echo "image tag unchanged — nothing to deploy"; exit 0; fi
+          git commit -m "chore(gitops): deploy ${GITHUB_SHA} [skip ci]"
+          git push || echo "::warning::Could not push the GitOps bump — allow the github-actions bot to push to main (branch protection)."

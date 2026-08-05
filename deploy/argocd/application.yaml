@@ -1,0 +1,30 @@
+# PRODUCTION Argo CD Application — the pull-based deployer. Apply this on your prod cluster's Argo CD; it
+# watches deploy/helm/smsone (base values.yaml + values-prod.yaml) on `main`. CI's `gitops-bump` job commits
+# the built image SHA into values-prod.yaml on every merge to main, so merges roll out automatically —
+# zero-downtime, with NO cluster credentials in CI.
+#
+# The LOCAL equivalent is deploy/k3s-local/argocd/application.yaml (feat/k3s-local + values-local.yaml).
+# A private repo needs a credential (read-only deploy key or token) in a `repository`-labelled secret — see
+# scripts/k3s-argocd.sh for the pattern.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: smsone
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Paul-Ayesiga/enterprise-modulith-template.git
+    targetRevision: main
+    path: deploy/helm/smsone
+    helm:
+      valueFiles:
+        - values.yaml
+        - values-prod.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: smsone
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

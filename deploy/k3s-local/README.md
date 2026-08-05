@@ -63,23 +63,71 @@ is rolling updates + readiness probes.
   `k3s ctr images import`, and the chart pulls with `imagePullPolicy: Never`. Zero extra infra. The
   registry alternative (closer to prod) is [`registries.yaml`](registries.yaml).
 
-## GitOps with Argo CD (optional)
+## GitOps with Argo CD
 
-Turn "deploy" into "commit to Git." `scripts/k3s-argocd.sh` installs Argo CD, adds a **read-only deploy
-key** so it can clone this private repo, and creates an Application
-([`argocd/application.yaml`](argocd/application.yaml)) that keeps the `smsone` namespace reconciled to
-`deploy/helm/smsone` + `values-local.yaml`.
+Deploy by **committing to Git**: Argo CD runs in the cluster, watches this repo, and reconciles the
+`smsone` namespace to `deploy/helm/smsone` + `values-local.yaml`. It self-heals drift too — a manual
+`helm --set` or `kubectl edit` is reverted to what Git says. The full CI/CD picture (and how Jenkins /
+Rancher fit): [`../../docs/cicd-gitops-and-cluster.html`](../../docs/cicd-gitops-and-cluster.html).
+
+### Install (one command)
 
 ```bash
-make k3s-argocd                                            # install Argo + point it at the chart (prints admin pw)
-kubectl -n argocd port-forward svc/argocd-server 8080:80   # UI at http://localhost:8080 (user: admin)
+make k3s-argocd     # install Argo, add a read-only deploy key, apply the Application, print the admin password
 ```
 
-After this you **deploy by committing**: change `values-local.yaml` (say `modulith.replicas`), push, and
-Argo applies it — within ~3 min, or force it with
-`kubectl -n argocd annotate application smsone argocd.argoproj.io/refresh=hard --overwrite`. Argo also
-**self-heals drift** — a manual `helm --set` or `kubectl edit` is reverted to what Git says. Switch the
-Application's `targetRevision` to `main` once the k3s PR merges.
+Idempotent and reproducible from [`argocd/application.yaml`](argocd/application.yaml) (the declarative
+Application) + [`../../scripts/k3s-argocd.sh`](../../scripts/k3s-argocd.sh).
+
+### See the UI (from your Mac — the VM is headless)
+
+- **Ingress (persistent, recommended)** — add the host to the Mac's `/etc/hosts` once (all hosts on one
+  line), then browse **http://argocd.smsone.local**:
+  ```bash
+  echo "192.168.64.5  api.smsone.local auth.smsone.local argocd.smsone.local" | sudo tee -a /etc/hosts
+  ```
+- **Port-forward (no /etc/hosts)** — run this **on the Mac** (not in the VM's SSH session) and leave it
+  open, then browse **http://localhost:8080**:
+  ```bash
+  KUBECONFIG=~/.kube/smsone-k3s.yaml kubectl -n argocd port-forward svc/argocd-server 8080:80
+  ```
+
+Log in as **`admin`**; fetch the initial password (then change it in the UI → User Info):
+```bash
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo
+```
+
+### Deploy by committing
+
+Change `values-local.yaml` (e.g. `modulith.replicas`), commit, push. Argo applies it within ~3 min — or
+force it now:
+```bash
+kubectl -n argocd annotate application smsone argocd.argoproj.io/refresh=hard --overwrite
+```
+
+### Good to know
+
+- **Private repo → read-only deploy key.** `make k3s-argocd` adds a repo deploy key titled `argocd-local
+  (read-only)`; the private half lives only in the in-cluster `repo-smsone` secret (never committed). Remove it with:
+  ```bash
+  gh repo deploy-key list   -R Paul-Ayesiga/enterprise-modulith-template     # find the id
+  gh repo deploy-key delete <id> -R Paul-Ayesiga/enterprise-modulith-template
+  ```
+- **Branch.** The local Application tracks `feat/k3s-local` (where the chart lives today). After that PR
+  merges, switch `argocd/application.yaml`'s `targetRevision` to `main` and re-apply.
+- **Argo vs Helm.** Once Argo manages the app, stop running `helm upgrade` by hand — change Git instead
+  (Argo reverts manual changes anyway).
+- **Demo commits.** The `demo(gitops): scale …` commits on the branch were the live scale demo — squash
+  them at merge if you like.
+
+### The production loop (a merge deploys itself)
+
+Automated for prod: on every push to `main`, CI's **`gitops-bump`** job records the freshly built image
+SHA in [`../helm/smsone/values-prod.yaml`](../helm/smsone/values-prod.yaml) and commits it; a **prod** Argo
+Application ([`../argocd/application.yaml`](../argocd/application.yaml), `targetRevision: main`) rolls it out
+— zero-downtime, no cluster credentials in CI. Activate it by running Argo on your prod cluster and applying
+that Application (the local loop already runs the same way against `values-local.yaml`). Requires the
+github-actions bot to be allowed to push to `main`.
 
 ## Teardown
 
