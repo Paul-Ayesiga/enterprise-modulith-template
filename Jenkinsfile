@@ -79,7 +79,10 @@ spec:
       steps {
         withCredentials([usernamePassword(credentialsId: 'ghcr', usernameVariable: 'GHCR_USER', passwordVariable: 'GHCR_PAT')]) {
           sh '''
-            echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            # No `docker login` here: this container is a JDK image with a dind sidecar, so there is a
+            # Docker daemon on DOCKER_HOST but no docker binary — the login died with "docker: not found".
+            # It was never the right mechanism anyway; --publishImage authenticates with the credentials
+            # configured on the bootBuildImage task, which read GHCR_USER/GHCR_PAT straight from here.
             ./gradlew --no-daemon $GRADLE_JVM bootBuildImage --imageName "$IMAGE_BASE/modulith:${GIT_COMMIT}" --publishImage
             ./gradlew --no-daemon $GRADLE_JVM :gateway:app:bootBuildImage --imageName "$IMAGE_BASE/gateway:${GIT_COMMIT}" --publishImage
           '''

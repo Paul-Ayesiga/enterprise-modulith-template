@@ -61,3 +61,15 @@ tasks.withType<Test> {
         environment("TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE", "/var/run/docker.sock")
     }
 }
+
+// GHCR credentials for --publishImage. Mirrors the modulith build; see the comment there for why the
+// pipeline cannot rely on `docker login`.
+tasks.bootBuildImage {
+    docker {
+        publishRegistry {
+            username.set(providers.environmentVariable("GHCR_USER").getOrElse(""))
+            password.set(providers.environmentVariable("GHCR_PAT").getOrElse(""))
+            url.set("https://ghcr.io")
+        }
+    }
+}

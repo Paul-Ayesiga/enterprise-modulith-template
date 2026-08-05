@@ -126,3 +126,18 @@ tasks.withType<Test> {
         environment("TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE", "/var/run/docker.sock")
     }
 }
+
+// Publishing the image authenticates through the Boot plugin, NOT the docker CLI. The CI agent is a JDK
+// container with a Docker-in-Docker sidecar: there is a daemon on DOCKER_HOST (Testcontainers reaches it
+// fine) but no `docker` binary, so the pipeline's `docker login` died with "docker: not found". It would
+// not have helped either — `--publishImage` reads these credentials rather than the CLI's config.json.
+// Empty when unset, so a local `bootBuildImage` without --publishImage still works.
+tasks.bootBuildImage {
+    docker {
+        publishRegistry {
+            username.set(providers.environmentVariable("GHCR_USER").getOrElse(""))
+            password.set(providers.environmentVariable("GHCR_PAT").getOrElse(""))
+            url.set("https://ghcr.io")
+        }
+    }
+}
