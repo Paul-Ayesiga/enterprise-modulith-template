@@ -83,7 +83,13 @@ spec:
             # Docker daemon on DOCKER_HOST but no docker binary — the login died with "docker: not found".
             # It was never the right mechanism anyway; --publishImage authenticates with the credentials
             # configured on the bootBuildImage task, which read GHCR_USER/GHCR_PAT straight from here.
-            ./gradlew --no-daemon $GRADLE_JVM bootBuildImage --imageName "$IMAGE_BASE/modulith:${GIT_COMMIT}" --publishImage
+            # The leading colon is load-bearing. Unqualified, `bootBuildImage` matches the task in EVERY
+            # project, so this one line built the modulith AND the gateway — both under the modulith's
+            # --imageName. Paketo derives its cache volume names from the image name, so the two builds
+            # shared one /launch-cache and (org.gradle.parallel=true) raced it: "failed to export:
+            # caching layer ... /launch-cache/staging/...tar: no such file or directory". The gateway
+            # then published itself to GHCR wearing the modulith's tag.
+            ./gradlew --no-daemon $GRADLE_JVM :bootBuildImage --imageName "$IMAGE_BASE/modulith:${GIT_COMMIT}" --publishImage
             ./gradlew --no-daemon $GRADLE_JVM :gateway:app:bootBuildImage --imageName "$IMAGE_BASE/gateway:${GIT_COMMIT}" --publishImage
           '''
         }
