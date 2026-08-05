@@ -52,6 +52,7 @@ document is.
 | [GATEWAY_ARCHITECTURE.md](GATEWAY_ARCHITECTURE.md) | The gateway north star: a stateless reactive Spring Cloud Gateway, hexagonal ports & adapters, the request pipeline, coarse-vs-fine authZ |
 | [GATEWAY_PLAN.md](GATEWAY_PLAN.md) | The phased gateway build (Core → Security → Traffic → Observability → Extensibility → Admin → Enterprise), each with its gate |
 | [K8S_LOCAL_PLAN.md](K8S_LOCAL_PLAN.md) | Deploying the platform on local k3s (Ubuntu/UTM, arm64): ctr-imported images, in-cluster state, the Keycloak-issuer/CoreDNS crux, and the "production feeling" demo — **SHIPPED**; operator guide in `deploy/k3s-local/README.md` |
+| [k8s-local-walkthrough.html](k8s-local-walkthrough.html) | Newcomer-friendly, diagram-rich walkthrough of the local k3s deployment — the vocabulary, topology, the traced request path, the issuer/CoreDNS trick, the two bugs, and the zero-downtime proof (open in a browser) |
 | [reusable-data-exchange-platform-guidelines.md](reusable-data-exchange-platform-guidelines.md) | Principles for the exchange (import/export) platform — the spec the `exchange` module implements |
 | [CHECKLIST.md](CHECKLIST.md) | Gate ledger — a box is ticked only when the deliverable's acceptance gate passed |
 | [COMPLETED_MODULES.md](COMPLETED_MODULES.md) | Per-module inventory of what is built, tested and gated |

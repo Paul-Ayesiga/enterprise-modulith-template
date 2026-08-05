@@ -1,0 +1,587 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SMSOne — Local Kubernetes Walkthrough</title>
+<style>
+  :root {
+    --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+
+    /* dark is the default (matches the other docs); light is the [data-theme="light"] override below */
+    --bg: #0b1116; --surface: #10181f; --surface-2: #151f28; --border: #223039;
+    --border-strong: #2d3e49; --text: #e6eef4; --muted: #93a4b1; --faint: #6f8290;
+    --accent: #2dd4c8; --accent-ink: #7cebe2; --accent-weak: #123037;
+    --warn: #e6a83a; --warn-weak: #2c2413; --ok: #46c07a; --ok-weak: #14301f;
+    --danger: #ef6f63; --danger-weak: #2e1512;
+    --term-bg: #080d12; --term-text: #d6e2ea; --term-muted: #61758a; --term-accent: #45d0c8;
+    --radius: 10px; --maxw: 78ch;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px -14px rgba(0,0,0,.7);
+  }
+  :root[data-theme="light"] {
+    --bg: #f4f7f9; --surface: #ffffff; --surface-2: #eef2f5; --border: #d8e0e6;
+    --border-strong: #c2ccd4; --text: #10171d; --muted: #566673; --faint: #7c8b97;
+    --accent: #0a8f96; --accent-ink: #076267; --accent-weak: #daf0f1;
+    --warn: #b45309; --warn-weak: #fbecd6; --ok: #157f47; --ok-weak: #d8f0e0;
+    --danger: #c0362c; --danger-weak: #f6ddd9;
+    --term-bg: #0e1720; --term-text: #d6e2ea; --term-muted: #6f8494; --term-accent: #45d0c8;
+    --shadow: 0 1px 2px rgba(16,23,29,.05), 0 8px 24px -12px rgba(16,23,29,.18);
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-sans); line-height: 1.65;
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+
+  .toggle { position: fixed; top: 14px; right: 16px; z-index: 20; background: var(--surface);
+    color: var(--text); border: 1px solid var(--border); border-radius: 999px; padding: 6px 14px;
+    font: 600 12.5px var(--font-mono); cursor: pointer; box-shadow: var(--shadow); }
+  .toggle:hover { border-color: var(--accent); }
+  .toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .shell { display: grid; grid-template-columns: 1fr; gap: 0; align-items: start; }
+  @media (min-width: 1080px) {
+    .shell { grid-template-columns: 232px minmax(0, 1fr); gap: 56px; }
+    .toc { position: sticky; top: 0; max-height: 100vh; overflow: auto; padding: 40px 0; display: block; }
+  }
+  .toc { display: none; }
+  .toc__label { font-family: var(--font-mono); font-size: .68rem; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--faint); margin: 0 0 14px; }
+  .toc ol { list-style: none; margin: 0; padding: 0; counter-reset: toc; display: flex; flex-direction: column; gap: 2px; }
+  .toc a { counter-increment: toc; display: flex; gap: 10px; align-items: baseline; text-decoration: none;
+    color: var(--muted); font-size: .86rem; padding: 5px 8px; border-radius: 7px; }
+  .toc a::before { content: counter(toc, decimal-leading-zero); font-family: var(--font-mono); font-size: .7rem; color: var(--faint); }
+  .toc a:hover { color: var(--text); background: var(--surface-2); }
+  .toc a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  main { padding: 40px 0 96px; min-width: 0; }
+
+  .hero { padding: 24px 0 8px; }
+  .eyebrow { font-family: var(--font-mono); font-size: .72rem; letter-spacing: .18em; text-transform: uppercase;
+    color: var(--accent-ink); margin: 0 0 18px; display: flex; gap: 10px; align-items: center; }
+  .eyebrow::before { content: "\262F"; font-size: 1.1em; }
+  h1 { font-size: clamp(2rem, 5vw, 3.15rem); line-height: 1.05; letter-spacing: -.02em; margin: 0 0 18px;
+    text-wrap: balance; font-weight: 750; }
+  .lede { font-size: 1.2rem; color: var(--muted); margin: 0 0 28px; max-width: 62ch; text-wrap: pretty; }
+  .lede strong { color: var(--text); font-weight: 650; }
+
+  .scoreboard { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0; }
+  .score { flex: 1 1 150px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 16px 18px; box-shadow: var(--shadow); }
+  .score b { display: block; font-family: var(--font-mono); font-size: 1.7rem; letter-spacing: -.02em;
+    font-variant-numeric: tabular-nums; color: var(--accent-ink); }
+  .score.ok b { color: var(--ok); }
+  .score span { font-size: .82rem; color: var(--muted); }
+
+  h2 { font-size: clamp(1.5rem, 3vw, 2rem); letter-spacing: -.015em; margin: 64px 0 6px; padding-top: 14px;
+    text-wrap: balance; font-weight: 720; scroll-margin-top: 16px; }
+  h2 .n { font-family: var(--font-mono); font-size: .8rem; color: var(--accent); display: block;
+    letter-spacing: .12em; margin-bottom: 2px; font-weight: 600; }
+  h3 { font-size: 1.18rem; margin: 34px 0 4px; letter-spacing: -.01em; font-weight: 660; }
+  p { margin: 14px 0; max-width: var(--maxw); }
+  a { color: var(--accent-ink); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  strong { font-weight: 650; }
+  .section-intro { color: var(--muted); font-size: 1.05rem; max-width: var(--maxw); }
+
+  code { font-family: var(--font-mono); font-size: .86em; background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 5px; padding: .08em .4em; color: var(--text); }
+  h2 code, h3 code { font-size: .8em; }
+
+  ul, ol.prose { max-width: var(--maxw); padding-left: 1.2em; }
+  li { margin: 7px 0; }
+  li::marker { color: var(--faint); }
+
+  .term { margin: 22px 0; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--border-strong);
+    box-shadow: var(--shadow); background: var(--term-bg); }
+  .term__bar { display: flex; align-items: center; gap: 7px; padding: 10px 14px;
+    background: rgba(255,255,255,.04); border-bottom: 1px solid rgba(255,255,255,.06); }
+  .term__bar i { width: 11px; height: 11px; border-radius: 50%; background: #3a4a57; display: block; }
+  .term__bar i:nth-child(1){ background:#e0645b; } .term__bar i:nth-child(2){ background:#e2b53f; } .term__bar i:nth-child(3){ background:#4fb865; }
+  .term__bar em { margin-left: auto; font-family: var(--font-mono); font-size: .72rem; color: var(--term-muted); font-style: normal; }
+  .term pre { margin: 0; padding: 16px 18px; overflow-x: auto; font-family: var(--font-mono);
+    font-size: .82rem; line-height: 1.7; color: var(--term-text); }
+  .term .p { color: var(--term-accent); user-select: none; }
+  .term .o { color: var(--term-muted); }
+  .term .g { color: #6fcf97; } .term .r { color: #eb8079; } .term .y { color: #e2c15f; }
+
+  .note { margin: 24px 0; border: 1px solid var(--border); border-left-width: 3px; border-radius: var(--radius);
+    background: var(--surface); padding: 16px 18px; box-shadow: var(--shadow); max-width: var(--maxw); }
+  .note__tag { font-family: var(--font-mono); font-size: .68rem; letter-spacing: .12em; text-transform: uppercase;
+    font-weight: 700; margin-bottom: 6px; display: inline-flex; align-items: center; gap: 7px; }
+  .note p:first-of-type { margin-top: 0; } .note p:last-child { margin-bottom: 0; }
+  .note--gotcha { border-left-color: var(--warn); background: var(--warn-weak); }
+  .note--gotcha .note__tag { color: var(--warn); }
+  .note--ok { border-left-color: var(--ok); background: var(--ok-weak); }
+  .note--ok .note__tag { color: var(--ok); }
+  .note--info { border-left-color: var(--accent); background: var(--accent-weak); }
+  .note--info .note__tag { color: var(--accent-ink); }
+
+  .diagram { margin: 26px 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 18px; box-shadow: var(--shadow); overflow-x: auto; }
+  .diagram pre.mermaid { margin: 0; text-align: center; min-width: 520px; background: transparent; border: 0; padding: 0; }
+  .diagram figcaption { font-size: .84rem; color: var(--muted); margin-top: 12px; padding-top: 12px;
+    border-top: 1px dashed var(--border); font-family: var(--font-mono); line-height: 1.6; }
+  .diagram figcaption b { color: var(--text); font-weight: 600; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; margin: 22px 0; }
+  .term-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 15px 16px; }
+  .term-card h4 { margin: 0 0 4px; font-family: var(--font-mono); font-size: .92rem; color: var(--accent-ink); }
+  .term-card p { margin: 0; font-size: .88rem; color: var(--muted); max-width: none; }
+
+  .pill { font-family: var(--font-mono); font-size: .74rem; font-weight: 700; padding: .1em .5em; border-radius: 999px; }
+  .pill--ok { background: var(--ok-weak); color: var(--ok); }
+  .pill--bad { background: var(--danger-weak); color: var(--danger); }
+
+  .flowmap { display: flex; flex-direction: column; gap: 0; margin: 22px 0; max-width: var(--maxw); }
+  .frow { display: grid; grid-template-columns: 34px 1fr; gap: 16px; padding: 6px 0; }
+  .frow__n { font-family: var(--font-mono); font-weight: 700; color: var(--accent); font-size: .9rem;
+    font-variant-numeric: tabular-nums; padding-top: 2px; position: relative; }
+  .frow:not(:last-child) .frow__n::after { content: ""; position: absolute; left: 50%; top: 26px; bottom: -6px;
+    width: 2px; background: var(--border-strong); transform: translateX(-50%); }
+  .frow__b h4 { margin: 0 0 2px; font-size: 1rem; }
+  .frow__b p { margin: 0; font-size: .92rem; color: var(--muted); max-width: none; }
+
+  table { border-collapse: collapse; width: 100%; margin: 22px 0; font-size: .9rem; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-family: var(--font-mono); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--muted); border-bottom: 1px solid var(--border-strong); }
+  td code { font-size: .82em; }
+
+  hr { border: none; border-top: 1px solid var(--border); margin: 56px 0; }
+  .foot { color: var(--faint); font-size: .82rem; font-family: var(--font-mono); max-width: var(--maxw); }
+
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+</style>
+</head>
+<body>
+
+<button class="toggle" id="themeToggle" aria-label="Toggle light or dark theme">◐ theme</button>
+
+<div class="wrap">
+<div class="shell">
+
+  <nav class="toc" aria-label="Contents">
+    <p class="toc__label">The walkthrough</p>
+    <ol>
+      <li><a href="#glossary">The words first</a></li>
+      <li><a href="#bigpicture">The big picture</a></li>
+      <li><a href="#setup">The setup, step by step</a></li>
+      <li><a href="#flow">One request, traced</a></li>
+      <li><a href="#issuer">The issuer trick</a></li>
+      <li><a href="#gotchas">Two bugs I hit</a></li>
+      <li><a href="#zerodowntime">Proving zero downtime</a></li>
+      <li><a href="#runit">Run it yourself</a></li>
+      <li><a href="#recap">The mental model</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <header class="hero" id="top">
+      <p class="eyebrow">Local Kubernetes · k3s · a hands-on walkthrough</p>
+      <h1>Your app, running on a real cluster — on your laptop</h1>
+      <p class="lede">We took the <strong>Spring modulith + API gateway</strong> and ran it on
+        <strong>Kubernetes</strong> (k3s) inside an Ubuntu VM on your Mac — three copies of the app behind
+        one edge, real database, real login server. Then we broke things on purpose and watched it stay up.
+        This page explains <strong>every moving part</strong>, assuming you've never touched Kubernetes.</p>
+
+      <div class="scoreboard">
+        <div class="score ok"><b>699/699</b><span>requests succeeded during a live upgrade + pod kill + scale</span></div>
+        <div class="score ok"><b>0</b><span>failed requests (<span class="pill pill--bad">5xx</span>) — zero downtime</span></div>
+        <div class="score"><b>3&nbsp;→&nbsp;5&nbsp;→&nbsp;3</b><span>app copies scaled on demand, no restart</span></div>
+      </div>
+    </header>
+
+    <section>
+      <h2 id="glossary"><span class="n">01 — Vocabulary</span>The words first (the only Kubernetes jargon you need)</h2>
+      <p class="section-intro">Kubernetes has a lot of nouns. Here are the seven that appear on this page.
+        Read these once; everything after will click.</p>
+
+      <div class="grid">
+        <div class="term-card"><h4>Pod</h4><p>One running container (here: one copy of the app). The smallest thing Kubernetes runs. Pods are disposable — they die and get replaced.</p></div>
+        <div class="term-card"><h4>Deployment</h4><p>A rule that says "keep N identical pods alive." Want 3 copies? The Deployment makes and heals them. Change the image and it rolls pods over one by one.</p></div>
+        <div class="term-card"><h4>Service</h4><p>A stable in-cluster address + built-in load balancer for a set of pods. You talk to <code>modulith:8080</code>; it spreads traffic across the 3 pods for you.</p></div>
+        <div class="term-card"><h4>Ingress</h4><p>The front door. Maps a hostname (<code>api.smsone.local</code>) from outside the cluster to a Service inside it. Ours is <b>Traefik</b>, which ships with k3s.</p></div>
+        <div class="term-card"><h4>ConfigMap</h4><p>Non-secret config (files, settings) handed to pods. We use it to inject the Keycloak realm and the SeaweedFS config.</p></div>
+        <div class="term-card"><h4>Secret</h4><p>Like a ConfigMap, but for passwords/keys. The DB password and the gateway↔app shared secret live here.</p></div>
+        <div class="term-card"><h4>Namespace</h4><p>A folder that groups related objects. Everything of ours lives in the <code>smsone</code> namespace.</p></div>
+      </div>
+
+      <div class="note note--info">
+        <div class="note__tag">Mental shortcut</div>
+        <p><b>Deployment</b> = "how many + which image", <b>Service</b> = "how to reach them + load-balance",
+          <b>Ingress</b> = "how the outside world reaches a Service." Almost everything below is just those three, plus config.</p>
+      </div>
+    </section>
+
+    <section>
+      <h2 id="bigpicture"><span class="n">02 — Topology</span>The big picture: where everything lives</h2>
+      <p class="section-intro">Your Mac runs the tools (<code>kubectl</code>, <code>helm</code>, <code>docker</code>).
+        The cluster runs inside an Ubuntu VM. A request enters through Traefik, hits the gateway, and the
+        gateway forwards to one of three app pods. State (database, cache, files, login) lives in the cluster too.</p>
+
+      <figure class="diagram">
+        <pre class="mermaid">
+flowchart LR
+  B["Browser / curl — on your Mac"]
+  subgraph VM["Ubuntu VM · UTM arm64 · k3s"]
+    direction TB
+    T["Traefik ingress :80"]
+    G["gateway — the edge"]
+    subgraph MOD["modulith Service — 3 pods"]
+      direction LR
+      M1["pod 1"]
+      M2["pod 2"]
+      M3["pod 3"]
+    end
+    K["Keycloak — login / tokens"]
+    P[("Postgres")]
+    V[("Valkey — cache")]
+    S[("SeaweedFS — files")]
+  end
+  B -->|"api.smsone.local"| T
+  T --> G
+  G -->|"http://modulith:8080"| MOD
+  G -. "verify token · JWKS" .-> K
+  MOD --> P
+  MOD --> V
+  MOD --> S
+  MOD -. "trust issuer" .-> K
+</pre>
+        <figcaption><b>Solid arrows</b> carry the request. <b>Dashed arrows</b> are token trust. The key idea:
+          the gateway targets the <b>Service</b> <code>modulith:8080</code>, never a specific pod — Kubernetes spreads the load.</figcaption>
+      </figure>
+
+      <p>Two important design choices are visible here:</p>
+      <ul>
+        <li><strong>Load balancing is Kubernetes' job.</strong> The gateway forwards to <code>http://modulith:8080</code>
+          — one address. Behind it, Kubernetes' Service fans out to all 3 pods. Add pods and they join automatically.</li>
+        <li><strong>State runs in the cluster too.</strong> Locally we deploy Postgres, Valkey, SeaweedFS and Keycloak
+          as pods so the whole thing is self-contained — a production chart would point at managed versions instead.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2 id="setup"><span class="n">03 — Build-out</span>The setup, step by step</h2>
+      <p class="section-intro">Four phases, each with a checkpoint ("gate") we had to pass before moving on.
+        This is exactly what ran.</p>
+
+      <h3>Phase 0 — a cluster + a way to ship images</h3>
+      <p>k3s is a tiny, complete Kubernetes. Installing it on the VM gives us the whole machine: the container
+        runtime, Traefik (ingress), CoreDNS (in-cluster DNS), storage, and metrics — one command.</p>
+      <figure class="term">
+        <div class="term__bar"><i></i><i></i><i></i><em>ubuntu-vm</em></div>
+<pre><span class="p">$</span> curl -sfL https://get.k3s.io | sh -          <span class="o"># installs the whole cluster</span></pre>
+      </figure>
+      <p>Then we point the Mac's <code>kubectl</code> at it (copy the cluster's config, rewrite the address to the
+        VM's IP). Now <code>kubectl get nodes</code> works <em>from the Mac</em>.</p>
+      <p>The app has to become container images the cluster can run. We build them on the Mac and stream them
+        straight into the VM's image store over SSH — no image registry needed:</p>
+      <figure class="term">
+        <div class="term__bar"><i></i><i></i><i></i><em>mac → vm</em></div>
+<pre><span class="p">$</span> docker save smsone/modulith:dev smsone/gateway:dev \
+    | gzip | ssh vm <span class="y">'gunzip | sudo k3s ctr images import -'</span>
+<span class="g">docker.io/smsone/modulith:dev  saved</span>
+<span class="g">docker.io/smsone/gateway:dev   saved</span></pre>
+      </figure>
+      <div class="note note--info"><div class="note__tag">Why not a registry?</div>
+        <p>The plan called for a local image registry (the prod-like way). In practice, streaming the images
+          directly was simpler and needs zero extra infrastructure — so that became the default, with the registry
+          kept as a documented alternative. The app then runs with <code>imagePullPolicy: Never</code> (use the
+          image already on the node).</p></div>
+
+      <h3>Phase 1 — the supporting cast (database, cache, files, login)</h3>
+      <p>Before the app can start, its dependencies must exist. We applied plain Kubernetes files that create
+        Postgres, Valkey, SeaweedFS, and a <b>Keycloak</b> (the login/token server) — each as a Deployment + a Service.
+        The checkpoint: <em>a login token minted here carries the right issuer, and the cluster can reach Keycloak by
+        the same name the browser uses.</em> (That's the trick in section 5 — the single most failure-prone step.)</p>
+
+      <h3>Phase 2 — the app, via a Helm chart</h3>
+      <p>Helm is a package manager for Kubernetes: one <b>chart</b> (a bundle of templates) plus a <b>values</b>
+        file (your settings). We reused the production chart and added a small <code>values-local.yaml</code> that points
+        it at the in-cluster database/cache/login and asks for <strong>3 app copies</strong>.</p>
+      <figure class="term">
+        <div class="term__bar"><i></i><i></i><i></i><em>mac</em></div>
+<pre><span class="p">$</span> helm upgrade --install smsone deploy/helm/smsone \
+      -n smsone -f deploy/helm/smsone/values-local.yaml
+<span class="p">$</span> kubectl get pods -n smsone
+<span class="o">gateway-…    1/1  Running</span>
+<span class="o">modulith-…   1/1  Running   </span><span class="g">×3</span></pre>
+      </figure>
+      <p><strong>The gate:</strong> a real request, all the way through, returns <span class="pill pill--ok">200</span>:</p>
+      <figure class="term">
+        <div class="term__bar"><i></i><i></i><i></i><em>gate — end to end</em></div>
+<pre><span class="p">$</span> curl -H <span class="y">"Authorization: Bearer $TOKEN"</span> http://api.smsone.local/api/v1/me
+<span class="g">{"data":{"type":"user", … "roles":["platform-superadmin", …]},</span>
+<span class="g"> "meta":{"requestId":"</span><span class="y">gw-</span><span class="g">767c…"}}</span>   <span class="o"># the gw- prefix ⇒ it went through the gateway</span></pre>
+      </figure>
+
+      <h3>Phase 3 — the "production feeling"</h3>
+      <p>The point of Kubernetes: survive change without downtime. We proved three behaviours (section 7):
+        a rolling upgrade, a pod being killed, and scaling — all while a request loop hammered the app.</p>
+
+      <div class="flowmap">
+        <div class="frow"><div class="frow__n">0</div><div class="frow__b"><h4>Cluster + images</h4><p>k3s on the VM; <code>kubectl</code> from the Mac; images streamed into the node.</p></div></div>
+        <div class="frow"><div class="frow__n">1</div><div class="frow__b"><h4>State + login</h4><p>Postgres, Valkey, SeaweedFS, Keycloak as pods. Issuer/DNS checkpoint passed.</p></div></div>
+        <div class="frow"><div class="frow__n">2</div><div class="frow__b"><h4>App via Helm</h4><p>modulith ×3 + gateway. <code>/api/v1/me</code> → <span class="pill pill--ok">200</span> end to end.</p></div></div>
+        <div class="frow"><div class="frow__n">3</div><div class="frow__b"><h4>Break it, stay up</h4><p>Rolling upgrade + pod kill + scale under load → zero failed requests.</p></div></div>
+      </div>
+    </section>
+
+    <section>
+      <h2 id="flow"><span class="n">04 — Request path</span>One request, traced end to end</h2>
+      <p class="section-intro">Here is exactly what happens when you ask for <code>/api/v1/me</code>. Two separate
+        concerns: <b>getting a token</b> (proving who you are) and <b>using it</b> (the actual API call).</p>
+
+      <figure class="diagram">
+        <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant C as curl / browser
+  participant K as Keycloak
+  participant T as Traefik (ingress)
+  participant G as gateway (edge)
+  participant M as modulith (1 of 3)
+  Note over C,K: Step A — log in, get a token
+  C->>K: POST /token (paul / password)
+  K-->>C: access_token (signed; iss = auth.smsone.local)
+  Note over C,M: Step B — call the API with that token
+  C->>T: GET /api/v1/me + Bearer token
+  T->>G: route by Host = api.smsone.local
+  G->>K: fetch public keys (JWKS, cached)
+  G->>G: check signature + expiry
+  G->>M: forward to http://modulith:8080
+  M->>M: re-check issuer, load the user
+  M-->>G: 200 · JSON:API · requestId "gw-…"
+  G-->>T: 200
+  T-->>C: 200
+</pre>
+        <figcaption>The gateway does the <b>coarse</b> check at the edge (is this a valid, unexpired token?). The
+          modulith does the <b>fine</b> checks (who exactly are you, what may you do). Defence in depth.</figcaption>
+      </figure>
+
+      <p>Why two checkpoints? The gateway rejects junk early and cheaply, so bad traffic never reaches the app.
+        The app never <em>trusts</em> the gateway blindly — it validates the token again itself. Either layer alone
+        would work; together they're robust.</p>
+    </section>
+
+    <section>
+      <h2 id="issuer"><span class="n">05 — The tricky bit</span>The issuer trick (why tokens validate on both sides)</h2>
+      <p class="section-intro">This is the part that trips everyone up, so it gets its own diagram. A login token
+        contains an <b>issuer</b> (<code>iss</code>) — the URL of who minted it. Everyone who checks the token must
+        agree on that URL. The problem: "the browser" and "a pod inside the cluster" reach Keycloak by <em>different paths</em>.</p>
+
+      <figure class="diagram">
+        <pre class="mermaid">
+flowchart TB
+  ISS{{"Every token: iss = http://auth.smsone.local/realms/smsone"}}
+  subgraph OUT["Reaching Keycloak from your Mac (outside)"]
+    HOSTS["/etc/hosts → VM IP"] --> TRA["Traefik"] --> KCa["Keycloak pod"]
+  end
+  subgraph IN["Reaching Keycloak from inside the cluster"]
+    CORE["CoreDNS rewrite → keycloak Service"] --> KCb["Keycloak pod"]
+  end
+  KCa --> ISS
+  KCb --> ISS
+  ISS --> WIN["Same issuer host everywhere — gateway and modulith trust the very tokens the browser mints"]
+</pre>
+        <figcaption>One name — <code>auth.smsone.local</code> — resolves <b>two ways</b> (via <code>/etc/hosts</code>
+          outside, via <b>CoreDNS</b> inside) but always lands on the same Keycloak, so the <code>iss</code> is identical for
+          everyone. That consistency is the whole game.</figcaption>
+      </figure>
+
+      <p>Concretely: Keycloak is told its public name is <code>auth.smsone.local</code>, so it stamps that into every
+        token. On the Mac, <code>/etc/hosts</code> sends that name to the VM's Traefik. <em>Inside</em> the cluster we
+        add a small CoreDNS rule that rewrites the same name to the Keycloak Service. Now the gateway (checking
+        signatures) and the modulith (checking the issuer) both use <code>auth.smsone.local</code> and everything lines up.</p>
+
+      <div class="note note--info"><div class="note__tag">If you skip this</div>
+        <p>Without the CoreDNS rewrite, the app inside the cluster can't resolve <code>auth.smsone.local</code>, or
+          resolves it to something with a different address, and every token is rejected with a confusing
+          "issuer mismatch." It's the #1 local-Kubernetes-with-OIDC footgun.</p></div>
+    </section>
+
+    <section>
+      <h2 id="gotchas"><span class="n">06 — War stories</span>Two bugs I hit (and what they teach)</h2>
+      <p class="section-intro">Real deployments hit snags. Both of these are common Kubernetes lessons, so they're
+        worth understanding rather than just fixing.</p>
+
+      <h3>Bug 1 — the app crash-looped on startup</h3>
+      <p>The very first rollout crashed with a baffling error:</p>
+      <figure class="term">
+        <div class="term__bar"><i></i><i></i><i></i><em>kubectl logs modulith-…</em></div>
+<pre><span class="r">APPLICATION FAILED TO START</span>
+Property: spring.data.redis.port
+Value:    <span class="r">"tcp://10.43.252.234:6379"</span>   <span class="o"># expected a number like 6379!</span></pre>
+      </figure>
+      <p>Kubernetes has a legacy feature: for every Service in the namespace, it injects Docker-style environment
+        variables into your pods — including <code>VALKEY_PORT=tcp://10.43.…:6379</code> (because there's a Service
+        named <code>valkey</code>). The app reads an env var <em>also</em> called <code>VALKEY_PORT</code>, expecting the
+        number <code>6379</code> — and got a URL instead. Boom.</p>
+      <div class="note note--gotcha"><div class="note__tag">The fix — one line</div>
+        <p>Set <code>enableServiceLinks: false</code> on the pods. The app finds everything by DNS name anyway
+          (<code>valkey</code>, <code>modulith</code>), so those legacy variables are pure downside. This also protected
+          <code>GATEWAY_PORT</code> from the same collision.</p></div>
+
+      <h3>Bug 2 — the chart's settings didn't match the app</h3>
+      <p>The Helm chart was setting environment variables the app no longer reads — <code>BACKEND_URI</code>,
+        <code>GATEWAY_REDIS_HOST</code>, <code>GATEWAY_JWKS_URI</code> — while the app actually wanted
+        <code>MODULITH_URI</code>, <code>VALKEY_HOST</code>, <code>KEYCLOAK_JWKS</code>. The gateway would have started but
+        been unable to reach the app or verify tokens. It also never set the gateway's own port.</p>
+      <table>
+        <thead><tr><th>Chart was sending</th><th>App actually reads</th><th>Result if unfixed</th></tr></thead>
+        <tbody>
+          <tr><td><code>BACKEND_URI</code></td><td><code>MODULITH_URI</code></td><td>gateway can't find the app</td></tr>
+          <tr><td><code>GATEWAY_REDIS_HOST</code></td><td><code>VALKEY_HOST</code></td><td>rate-limiter can't reach cache</td></tr>
+          <tr><td><code>GATEWAY_JWKS_URI</code></td><td><code>KEYCLOAK_JWKS</code></td><td>tokens never validate</td></tr>
+          <tr><td><em>(unset)</em></td><td><code>GATEWAY_PORT</code></td><td>listens on the wrong port</td></tr>
+        </tbody>
+      </table>
+      <div class="note note--ok"><div class="note__tag">Fixed in the chart itself</div>
+        <p>Because this was wrong for <b>production</b> too, the fix went into the shared chart — not patched around
+          locally. A local snag surfaced a real prod bug. That's the value of running prod-shaped locally.</p></div>
+    </section>
+
+    <section>
+      <h2 id="zerodowntime"><span class="n">07 — The payoff</span>Proving zero downtime</h2>
+      <p class="section-intro">We started a loop firing requests through the edge, then upgraded the app to a new
+        image version <em>while it was serving traffic</em>. Kubernetes never lets the count of healthy pods drop.</p>
+
+      <figure class="diagram">
+        <pre class="mermaid">
+flowchart LR
+  A["3 pods v1 — all Ready"] -->|"helm upgrade · new image"| B["start +1 pod v2 — surge to 4"]
+  B -->|"v2 passes readiness"| C["remove 1 old pod — still 3+ Ready"]
+  C -->|"repeat until all new"| D["3 pods v2 — all Ready"]
+  A -. "request loop stays 200 throughout" .-> D
+</pre>
+        <figcaption><b>Readiness probe</b> = "is this pod ready for traffic?" A new pod receives requests only after it
+          says yes; an old one is removed only after that. The healthy count never dips, so no request is dropped.</figcaption>
+      </figure>
+
+      <p>The load generator's final tally, across the rolling upgrade <em>plus</em> a deliberate pod kill <em>plus</em>
+        scaling 3→5→3:</p>
+      <figure class="term">
+        <div class="term__bar"><i></i><i></i><i></i><em>loadgen result</em></div>
+<pre><span class="o">..  n=400 ok=400 bad=0   ← during the rolling upgrade</span>
+<span class="g">RESULT total=699 ok=699 bad=0</span>   <span class="o"># zero failed requests, start to finish</span></pre>
+      </figure>
+
+      <p>The other two "production feeling" behaviours came for free from the same machinery:</p>
+      <ul>
+        <li><strong>Self-healing:</strong> delete a pod and the Deployment immediately creates a replacement; the
+          Service stops sending traffic to the dying one. You lose a pod, not a request.</li>
+        <li><strong>Scaling:</strong> <code>kubectl scale --replicas=5</code> and two more pods join the Service and start
+          taking load within a minute; scale back to 3 just as easily.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2 id="runit"><span class="n">08 — Hands on</span>Run it yourself</h2>
+      <p class="section-intro">Everything is wired into <code>make</code> targets and repeatable scripts, so you never
+        have to remember the raw commands.</p>
+      <figure class="term">
+        <div class="term__bar"><i></i><i></i><i></i><em>mac</em></div>
+<pre><span class="p">$</span> make k3s-kubeconfig    <span class="o"># point kubectl at the VM's cluster</span>
+<span class="p">$</span> make k3s-images        <span class="o"># build + load the app images into the node</span>
+<span class="p">$</span> make k3s-up            <span class="o"># state + Keycloak + the app (modulith ×3 + gateway)</span>
+
+<span class="o"># add ONE line to /etc/hosts (needs your Mac password), then:</span>
+<span class="p">$</span> echo <span class="y">"192.168.64.5  api.smsone.local auth.smsone.local"</span> | sudo tee -a /etc/hosts
+<span class="p">$</span> TOKEN=$(scripts/k3s-token.sh)
+<span class="p">$</span> curl -H <span class="y">"Authorization: Bearer $TOKEN"</span> http://api.smsone.local/api/v1/me   <span class="g"># → 200</span>
+
+<span class="p">$</span> make k3s-demo          <span class="o"># the zero-downtime show: roll + kill + scale under load</span></pre>
+      </figure>
+      <p>The full operator guide (prerequisites, teardown, how each tricky part works) lives in the repo at
+        <code>deploy/k3s-local/README.md</code>, and the design rationale in <code>docs/K8S_LOCAL_PLAN.md</code>.</p>
+    </section>
+
+    <section>
+      <h2 id="recap"><span class="n">09 — Takeaways</span>The mental model to keep</h2>
+      <ul>
+        <li><strong>You declare the desired state; Kubernetes makes it true.</strong> "I want 3 copies of this image."
+          It creates them, heals them, and rolls them over on change — you never manage individual pods.</li>
+        <li><strong>Talk to Services, never pods.</strong> Pods come and go; the Service is the stable address that
+          load-balances across whatever pods currently exist. That's what makes scaling and healing invisible to callers.</li>
+        <li><strong>Zero downtime = rolling updates + readiness probes.</strong> New pods must prove they're ready
+          before old ones leave. The healthy count never dips.</li>
+        <li><strong>Config and secrets are injected, not baked in.</strong> The same image runs locally and in prod;
+          only the ConfigMaps/Secrets/values differ.</li>
+        <li><strong>Names must be consistent across the boundary.</strong> The issuer/CoreDNS trick is the local
+          expression of a universal rule: everyone must agree on the same hostnames.</li>
+      </ul>
+      <div class="note note--ok"><div class="note__tag">The one-sentence version</div>
+        <p>Kubernetes turned "run this app" into "keep this app running, correctly, through change" — and we proved
+          it with 699 requests and zero failures.</p></div>
+
+      <hr>
+      <p class="foot">Walkthrough of the local k3s deployment · smsone platform · generated from the actual build.
+        Companion docs: deploy/k3s-local/README.md · docs/K8S_LOCAL_PLAN.md. Diagrams: Mermaid. Toggle theme, top-right.</p>
+    </section>
+
+  </main>
+</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>
+(function () {
+  // Theme boot: stored choice > OS preference > dark. localStorage can be blocked on file:// —
+  // everything below still works (it only loses persistence across visits).
+  var stored = null;
+  try { stored = localStorage.getItem("smsone-k8s-doc-theme"); } catch (e) {}
+  var theme = stored || (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+
+  var dark = {
+    background: "transparent", fontFamily: "ui-sans-serif, system-ui, sans-serif", fontSize: "13px",
+    primaryColor: "#14212a", primaryTextColor: "#e6eef4", primaryBorderColor: "#2d3e49",
+    lineColor: "#3f5563", clusterBkg: "#0e1720", clusterBorder: "#223039",
+    titleColor: "#93a4b1", edgeLabelBackground: "#0e1720", noteBkgColor: "#14212a",
+    noteTextColor: "#e6eef4", noteBorderColor: "#2d3e49", actorBkg: "#14212a",
+    actorBorder: "#2d3e49", actorTextColor: "#e6eef4", signalColor: "#93a4b1", signalTextColor: "#c7d4de"
+  };
+  var light = {
+    background: "transparent", fontFamily: "ui-sans-serif, system-ui, sans-serif", fontSize: "13px",
+    primaryColor: "#e4f2f2", primaryTextColor: "#10171d", primaryBorderColor: "#b8ccce",
+    lineColor: "#8aa8ab", clusterBkg: "#eef2f5", clusterBorder: "#d8e0e6",
+    titleColor: "#566673", edgeLabelBackground: "#eef2f5", noteBkgColor: "#e4f2f2",
+    noteTextColor: "#10171d", noteBorderColor: "#b8ccce", actorBkg: "#e4f2f2",
+    actorBorder: "#b8ccce", actorTextColor: "#10171d", signalColor: "#566673", signalTextColor: "#28323c"
+  };
+
+  // Keep each diagram's source so a toggle can re-render it in the new palette
+  // (mermaid inlines colors into the SVG at render time).
+  var holders = Array.prototype.slice.call(document.querySelectorAll(".mermaid"));
+  var sources = holders.map(function (el) { return el.textContent; });
+
+  function apply(next) {
+    if (next === "light") document.documentElement.setAttribute("data-theme", "light");
+    else document.documentElement.removeAttribute("data-theme");
+    mermaid.initialize({ startOnLoad: false, securityLevel: "loose", theme: "base",
+      themeVariables: next === "light" ? light : dark });
+    holders.forEach(function (el, i) {
+      el.removeAttribute("data-processed");
+      el.textContent = sources[i];
+    });
+    mermaid.run();
+  }
+
+  apply(theme);
+
+  var btn = document.getElementById("themeToggle");
+  if (btn) btn.addEventListener("click", function () {
+    theme = theme === "light" ? "dark" : "light";
+    try { localStorage.setItem("smsone-k8s-doc-theme", theme); } catch (e) {}
+    apply(theme);
+  });
+})();
+</script>
+
+</body>
+</html>
