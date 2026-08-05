@@ -1,0 +1,17 @@
+# TEMPLATE — the REGISTRY alternative to scripts/k3s-images.sh's ctr-import loop. If you'd rather push
+# images to a registry the cluster pulls from (closer to prod), run `registry:2` on the VM at
+# <VM-IP>:5000, drop this file at /etc/rancher/k3s/registries.yaml on the VM, and restart k3s
+# (`sudo systemctl restart k3s`). Then build+push from the Mac and set values-local.yaml
+# global.imageBase=<VM-IP>:5000/smsone, imageTag=<tag>, imagePullPolicy=Always.
+#
+#   docker build -t <VM-IP>:5000/smsone/modulith:dev --target modulith . && docker push <VM-IP>:5000/smsone/modulith:dev
+#
+# Declares the local registry as an INSECURE mirror (plain http) — fine on a private VM link, never in prod.
+mirrors:
+  "<VM-IP>:5000":
+    endpoint:
+      - "http://<VM-IP>:5000"
+configs:
+  "<VM-IP>:5000":
+    tls:
+      insecure_skip_verify: true

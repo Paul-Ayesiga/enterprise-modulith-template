@@ -50,9 +50,9 @@ GATEWAY_RUN_ENV = set -a; . $(ENV_FILE); set +a; \
 .PHONY: help env pull up down restart ps logs run seed gateway gateway-build gateway-test token build test openapi nuke clean fresh
 
 help: ## List available targets
-	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
+	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) \
 		| sort \
-		| awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-9s\033[0m %s\n", $$1, $$2}'
+		| awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
 env: $(ENV_FILE) ## Create docker/.env from the example if it does not exist
 $(ENV_FILE):
@@ -150,3 +150,20 @@ multi-token: ## Mint a demo bearer token IN-NETWORK (issuer keycloak:8080, so th
 
 multi-down: ## Stop the multi-instance stack (keeps the base infra + volumes)
 	@$(MULTI) down
+
+.PHONY: k3s-kubeconfig k3s-images k3s-up k3s-demo k3s-token
+
+k3s-kubeconfig: ## k3s(local): fetch + rewrite the VM kubeconfig -> ~/.kube/smsone-k3s.yaml
+	@scripts/k3s-kubeconfig.sh
+
+k3s-images: ## k3s(local): build the arm64 images + stream them into the VM's containerd
+	@scripts/k3s-images.sh
+
+k3s-up: ## k3s(local): bring up state + dev-Keycloak + the app via the chart (idempotent)
+	@scripts/k3s-up.sh
+
+k3s-demo: ## k3s(local): production-feeling demo — roll/kill/scale under load, prove zero 5xx
+	@scripts/k3s-demo.sh
+
+k3s-token: ## k3s(local): print a dev token via the ingress (needs auth.smsone.local in /etc/hosts)
+	@scripts/k3s-token.sh $(U)

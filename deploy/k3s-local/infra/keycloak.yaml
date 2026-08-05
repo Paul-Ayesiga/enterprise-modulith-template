@@ -1,0 +1,117 @@
+# Dev-mode Keycloak for the local cluster (start-dev --import-realm). The prod chart's Keycloak is
+# start --optimized with no import — deliberately different. THE ISSUER: KC_HOSTNAME pins every token's
+# `iss` to http://auth.smsone.local/realms/smsone; the CoreDNS rewrite (coredns-custom.yaml) makes that
+# host resolve to this Service INSIDE the cluster, so the modulith (issuerUri = same host) validates the
+# very tokens the browser mints. The Service is port 80 → 8080 so http://auth.smsone.local (no port)
+# reaches Keycloak both in-cluster and via the ingress.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: smsone
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keycloak
+  template:
+    metadata:
+      labels:
+        app: keycloak
+    spec:
+      initContainers:
+        - name: wait-postgres
+          image: busybox:1.36
+          command: ["sh", "-c", "until nc -z postgres 5432; do echo 'waiting for postgres'; sleep 2; done"]
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:26.7.0
+          args: ["start-dev", "--import-realm"]
+          env:
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              value: admin
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: smsone-credentials
+                  key: KEYCLOAK_ADMIN_PASSWORD
+            - name: KC_DB
+              value: postgres
+            - name: KC_DB_URL
+              value: "jdbc:postgresql://postgres:5432/keycloak"
+            - name: KC_DB_USERNAME
+              value: modulith
+            - name: KC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: smsone-credentials
+                  key: POSTGRES_PASSWORD
+            - name: KC_HOSTNAME
+              value: "http://auth.smsone.local"
+            - name: KC_HTTP_ENABLED
+              value: "true"
+            - name: KC_PROXY_HEADERS
+              value: xforwarded
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+            - name: BRAND_NAME
+              value: SMSONE
+            - name: JAVA_OPTS_APPEND
+              value: "-Xmx512m"
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 9000
+              name: management
+          volumeMounts:
+            - name: realm
+              mountPath: /opt/keycloak/data/import
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 9000
+            initialDelaySeconds: 25
+            periodSeconds: 10
+            failureThreshold: 40
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 900Mi
+      volumes:
+        - name: realm
+          configMap:
+            name: keycloak-realm
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: smsone
+spec:
+  selector:
+    app: keycloak
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: keycloak
+  namespace: smsone
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: auth.smsone.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: keycloak
+                port:
+                  number: 80

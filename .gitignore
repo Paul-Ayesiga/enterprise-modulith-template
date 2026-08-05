@@ -16,6 +16,10 @@ out/
 # Environment / secrets — commit .env.example, never .env
 .env
 
+# Local k3s: the filled Secret (commit secret.example.yaml only) + any fetched kubeconfig
+deploy/k3s-local/**/secret.yaml
+*smsone-k3s.yaml
+
 # Local data (DuckDB marts, Parquet snapshots)
 /data/
 *.duckdb

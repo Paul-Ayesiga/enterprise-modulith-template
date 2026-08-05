@@ -1,0 +1,214 @@
+# Local-only in-cluster state for the k3s dev cluster. The prod Helm chart is state-EXTERNAL; this
+# layer stands up Postgres / Valkey / SeaweedFS as pods so the whole platform runs inside Kubernetes
+# locally. Dev credentials come from the `smsone-credentials` Secret (created by scripts/k3s-up.sh).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: smsone
+---
+# ---------------- Postgres (app DB `modulith` + Keycloak's own DB `keycloak`) ----------------
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: smsone
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 4Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+  namespace: smsone
+data:
+  01-keycloak-db.sql: |
+    CREATE DATABASE keycloak;
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: smsone
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:18.4-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: modulith
+            - name: POSTGRES_USER
+              value: modulith
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: smsone-credentials
+                  key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "modulith", "-d", "modulith"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 200Mi
+            limits:
+              memory: 400Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: postgres-data
+        - name: init
+          configMap:
+            name: postgres-init
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: smsone
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+# ---------------- Valkey (rate-limiter token bucket · cache L2) — ephemeral ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: valkey
+  namespace: smsone
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: valkey
+  template:
+    metadata:
+      labels:
+        app: valkey
+    spec:
+      containers:
+        - name: valkey
+          image: valkey/valkey:8-alpine
+          ports:
+            - containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["valkey-cli", "ping"]
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: valkey
+  namespace: smsone
+spec:
+  selector:
+    app: valkey
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+# ---------------- SeaweedFS (S3 for files/documents) ----------------
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: seaweedfs-data
+  namespace: smsone
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: seaweedfs
+  namespace: smsone
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: seaweedfs
+  template:
+    metadata:
+      labels:
+        app: seaweedfs
+    spec:
+      containers:
+        - name: seaweedfs
+          image: chrislusf/seaweedfs:4.40
+          args: ["server", "-s3", "-s3.config=/etc/seaweedfs/s3-config.json", "-dir=/data"]
+          ports:
+            - containerPort: 8333
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: s3config
+              mountPath: /etc/seaweedfs
+          readinessProbe:
+            tcpSocket:
+              port: 8333
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: seaweedfs-data
+        - name: s3config
+          configMap:
+            name: seaweedfs-s3-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: seaweedfs
+  namespace: smsone
+spec:
+  selector:
+    app: seaweedfs
+  ports:
+    - port: 8333
+      targetPort: 8333

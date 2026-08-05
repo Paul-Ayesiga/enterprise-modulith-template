@@ -17,6 +17,9 @@ spec:
         app.kubernetes.io/name: gateway
         {{- include "smsone.labels" . | nindent 8 }}
     spec:
+      # See modulith.yaml: the legacy {SVC}_PORT=tcp://... link vars collide with GATEWAY_PORT /
+      # VALKEY_PORT that this app reads. It resolves backends by DNS Service name, so switch them off.
+      enableServiceLinks: false
       containers:
         - name: gateway
           image: {{ include "smsone.image" (dict "root" . "name" "gateway") }}
@@ -26,14 +29,29 @@ spec:
             # Admin/management port — cluster-internal ONLY; the Service below does not expose it.
             - containerPort: {{ .Values.gateway.adminPort }}
           env:
-            - { name: BACKEND_URI, value: "http://modulith:8080" }
-            - { name: GATEWAY_REDIS_HOST, value: {{ .Values.valkey.host | quote }} }
-            - { name: GATEWAY_JWKS_URI, value: {{ printf "%s/protocol/openid-connect/certs" .Values.modulith.issuerUri | quote }} }
+            # The app reads GATEWAY_PORT / GATEWAY_ADMIN_PORT — keep them in lock-step with the
+            # containerPorts and the Service targetPort below (public 8080, admin 9090).
+            - { name: GATEWAY_PORT, value: {{ .Values.gateway.port | quote }} }
+            - { name: GATEWAY_ADMIN_PORT, value: {{ .Values.gateway.adminPort | quote }} }
+            # The backend the edge fronts — the modulith Service; kube-proxy spreads the replicas.
+            - { name: MODULITH_URI, value: "http://modulith:8080" }
+            # Valkey backs the rate-limiter token bucket (shared across gateway replicas).
+            - { name: VALKEY_HOST, value: {{ .Values.valkey.host | quote }} }
+            # Validate bearer JWTs against the IdP's JWKS (issuer host = modulith.issuerUri).
+            - { name: KEYCLOAK_JWKS, value: {{ printf "%s/protocol/openid-connect/certs" .Values.modulith.issuerUri | quote }} }
+            # Platform seams — API-key introspection, edge audit, quota, and usage metering all call
+            # back into the modulith Service.
+            - { name: GATEWAY_INTROSPECTION_URI, value: "http://modulith:8080/internal/gateway/api-key/introspect" }
+            - { name: GATEWAY_AUDIT_URI, value: "http://modulith:8080/internal/gateway/audit" }
+            - { name: GATEWAY_QUOTA_URI, value: "http://modulith:8080/internal/gateway/quota" }
+            - { name: GATEWAY_USAGE_URI, value: "http://modulith:8080/internal/gateway/usage-report" }
             # One proxy (the ingress) stands in front of the gateway here, so the edge blocklist
             # judges the ingress-vouched client address, not the ingress itself.
             - { name: GATEWAY_TRUSTED_PROXY_HOPS, value: "1" }
-            - name: GATEWAY_ADMIN_TOKEN
-              valueFrom: { secretKeyRef: { name: {{ .Values.credentials.secretName }}, key: gateway-admin-token, optional: true } }
+            # The shared secret the gateway presents on every platform seam — must equal the modulith's
+            # app.gateway.secret. Optional: falls back to the app default in dev.
+            - name: GATEWAY_SECRET
+              valueFrom: { secretKeyRef: { name: {{ .Values.credentials.secretName }}, key: gateway-secret, optional: true } }
             {{- with .Values.gateway.env }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

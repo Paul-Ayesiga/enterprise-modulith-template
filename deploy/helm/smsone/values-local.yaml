@@ -1,0 +1,75 @@
+# Local k3s (Ubuntu/UTM, arm64) overrides for the smsone chart. The chart is STATE-EXTERNAL by design;
+# here we point it at the in-cluster state stood up by deploy/k3s-local/infra/* and run the app images
+# built on the Mac and imported into containerd (imagePullPolicy: Never — no registry in this loop).
+#
+#   helm upgrade --install smsone deploy/helm/smsone -n smsone -f deploy/helm/smsone/values-local.yaml
+#
+# The issuer crux (docs/K8S_LOCAL_PLAN.md §5): every token's `iss` is http://auth.smsone.local/realms/smsone;
+# a coredns-custom rewrite makes that host resolve IN-cluster to the keycloak Service, so the modulith
+# (issuerUri = same host) and the gateway (JWKS = same host) validate the very tokens the browser mints.
+
+global:
+  imageBase: smsone            # images are smsone/modulith:dev and smsone/gateway:dev (ctr-imported)
+  imageTag: dev
+  imagePullPolicy: Never       # use the containerd-local image; never reach for a registry
+
+# In-cluster state (deploy/k3s-local/infra) — Services, not the chart's example endpoints.
+postgres:
+  host: postgres
+  port: 5432
+  database: modulith
+valkey:
+  host: valkey
+seaweedfs:
+  s3Endpoint: http://seaweedfs:8333
+killbill:
+  url: http://localhost:8082   # Kill Bill is not deployed locally; the app only dials it lazily
+smtp:
+  host: localhost              # no mail server locally; mail is sent lazily, never at boot
+
+# The chart's Keycloak is prod-mode (start --optimized, no import). Locally we run the dev-Keycloak from
+# deploy/k3s-local/infra/keycloak.yaml (start-dev --import-realm, owns the `keycloak` Service + auth ingress).
+keycloak:
+  enabled: false
+
+modulith:
+  replicas: 3
+  # Same host the browser uses; resolves in-cluster to keycloak via the coredns-custom rewrite.
+  issuerUri: http://auth.smsone.local/realms/smsone
+  # The admin client's Keycloak base URL — our dev-Keycloak Service via the issuer host (not the
+  # chart's {release}-keycloak default, which we don't deploy locally).
+  keycloakUrl: http://auth.smsone.local
+  env:
+    - { name: OTEL_SDK_DISABLED, value: "true" }
+    # No OTLP collector locally — stop the 1-minute push to localhost:4318 (and its shutdown stack trace).
+    - { name: MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED, value: "false" }
+  resources:
+    requests: { cpu: 250m, memory: 448Mi }
+    limits: { memory: 1024Mi }
+
+gateway:
+  replicas: 1
+  env:
+    - { name: OTEL_SDK_DISABLED, value: "true" }
+    - { name: JAVA_OPTS, value: "-Xms128m -Xmx256m -XX:+UseSerialGC" }
+  resources:
+    requests: { cpu: 150m, memory: 256Mi }
+    limits: { memory: 512Mi }
+
+# The two Next.js portals are deferred locally (K8S_LOCAL_PLAN §8) — no images in this loop.
+developerPortal:
+  enabled: false
+adminPortal:
+  enabled: false
+
+# No nightly pg_dump CronJob locally.
+backup:
+  enabled: false
+
+ingress:
+  className: traefik
+  hosts:
+    api: api.smsone.local        # → gateway (the edge). auth host is owned by the infra dev-Keycloak.
+    auth: auth.smsone.local
+    portal: portal.smsone.local
+    admin: admin.smsone.local
