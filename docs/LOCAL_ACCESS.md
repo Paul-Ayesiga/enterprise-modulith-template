@@ -107,7 +107,8 @@ sudo sh -c 'echo "192.168.64.5  api.smsone.local auth.smsone.local argocd.smsone
   Rough timings after boot: Postgres/Valkey ~15 s, Keycloak ~30 s, each modulith ~60–90 s; Argo CD then
   reconciles the app automatically. Nothing to redeploy.
 - **If `kubectl` can't reach it** — the VM's IP changed (DHCP). Re-run `make k3s-kubeconfig` and update the
-  `/etc/hosts` line to the new IP. (Give the VM a static IP / DHCP reservation to stop this happening.)
+  `/etc/hosts` line to the new IP. Avoid this entirely by giving the VM a **static IP** — see the operator
+  README → [*Keep the VM's IP stable*](../deploy/k3s-local/README.md#keep-the-vms-ip-stable-recommended).
 
 ## URLs (Kubernetes)
 

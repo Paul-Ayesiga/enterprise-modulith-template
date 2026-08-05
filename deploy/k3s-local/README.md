@@ -16,6 +16,37 @@ state-*external*, this layer stands the state up in-cluster.
 - **Mac:** `docker` (builds the arm64 images), `kubectl`, `helm`, and SSH to the VM
   (default `gopher@192.168.64.5`, key `~/.ssh/smsone_k3s` — override with `VM=` / `SSH_KEY=`).
 
+## Keep the VM's IP stable (recommended)
+
+k3s bakes the VM's IP into the kubeconfig, and you point `/etc/hosts` at it — so a DHCP address that
+changes across reboots breaks both (`kubectl` can't connect; the `*.smsone.local` names stop resolving).
+Pin it with a static IP on the VM (Ubuntu **netplan**):
+
+```bash
+ip -br addr                        # note your interface (UTM arm64: usually enp0s1) + the current IP
+# stop cloud-init from re-writing the network on boot, then declare the static address:
+echo 'network: {config: disabled}' | sudo tee /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+sudo tee /etc/netplan/99-static.yaml >/dev/null <<'YAML'
+network:
+  version: 2
+  ethernets:
+    enp0s1:                        # <- your interface from `ip -br addr`
+      dhcp4: false
+      addresses: [192.168.64.5/24] # keep the address you already use
+      routes:
+        - to: default
+          via: 192.168.64.1        # UTM "Shared Network" gateway is .1
+      nameservers:
+        addresses: [192.168.64.1, 1.1.1.1]
+YAML
+sudo chmod 600 /etc/netplan/99-static.yaml
+sudo netplan apply                 # the SSH session may blip for a second if the IP changed
+```
+
+Confirm with `ip -br addr` (still `192.168.64.5`). Now the VM keeps that address across power-offs, so
+`~/.kube/smsone-k3s.yaml` and `/etc/hosts` stay valid — nothing to re-fetch on the next boot. If UTM ever
+hands that address to something else, pick one outside its DHCP pool and update those two files once.
+
 ## Bring it up (four commands)
 
 ```bash
