@@ -86,14 +86,24 @@ once — `ERR_CONNECTION_REFUSED` in the browser. The cluster recovered on its o
 but the agent pod survived the restart and kept climbing, and `pollSCM` plus the 5-minute folder scan
 would have started another build straight into the same wall.
 
-**So the job ships disabled after that incident.** Re-enable it only once one of these is true:
-
-- the build runs somewhere with real headroom (a beefier external agent, or not this laptop);
-- the Test stage stops needing Testcontainers on this VM;
-- the dind cap is raised *and* the VM has the RAM to back it — note the Mac is 16 GB with 8 GB already
-  in the VM, so "give the VM more memory" is not available here.
-
 Scaling `modulith.replicas` to 1 in `values-local.yaml` bought ~1.5 GB and was still not enough.
+
+### What was changed to make a build fit
+
+Three things, all in the `Jenkinsfile` and all reversible on a bigger host:
+
+- **`TEST_TASKS` defaults to `:gateway:app:test`.** The modulith's `:test` is what hurts — it starts
+  `postgres:18.4-alpine`, `quay.io/keycloak/keycloak:26.7.0` and `chrislusf/seaweedfs:4.40` inside
+  dind. The gateway suite starts only `valkey:8-alpine`, so dind is still genuinely exercised. Run the
+  full suite by setting the build parameter to `:test :gateway:app:test`.
+- **The build JVM is capped** (`GRADLE_OPTS=-Xmx640m`, `--max-workers=2`). Unbounded, Gradle sizes its
+  heap from the *node's* memory, not the container limit — which is how it reached ~1.7 GB before any
+  test ran. This is the single most important guard.
+- **Memory moved from `build` to `dind`** (2 GB→1600 MB and 1 GB→1800 MB). The narrowed tests need far
+  less, and `bootBuildImage` runs the entire Paketo lifecycle inside the daemon, where 1 GB was short.
+
+The image-build stage remains the heaviest part of the pipeline. If a build wedges the node again, that
+is the stage to suspect, and the fix is to build one image rather than both — or to build elsewhere.
 
 ## Recovery — cluster wedged during or after a build
 

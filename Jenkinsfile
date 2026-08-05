@@ -7,8 +7,11 @@
 //   - 'ghcr'     : username + PAT (write:packages) to push images to GHCR
 //   - 'git-push' : an SSH private key allowed to PUSH to main (writes the GitOps image-tag bump)
 //
-// RAM: the agent pod wants ~2 GB; on an 8 GB VM alongside the app + Argo that's tight — give the VM more
-// memory, or point this at a beefier external agent, before leaning on it for every push.
+// RAM: this pod is sized to survive an 8 GB VM that is already running the platform, Argo and the Jenkins
+// controller — a build with the full test suite took the node NotReady and knocked every service offline.
+// Two things keep it inside its budget: TEST_TASKS defaults to the gateway suite only (no Keycloak/
+// Postgres/SeaweedFS in dind), and the build JVM's heap is capped so Gradle stops sizing itself off the
+// node. Both are reversible on a bigger host. The full story: docs/runbooks/ci-jenkins.md.
 pipeline {
   agent {
     kubernetes {
@@ -25,27 +28,42 @@ spec:
       env:
         - { name: DOCKER_HOST, value: "tcp://localhost:2375" }
         - { name: TESTCONTAINERS_RYUK_DISABLED, value: "true" }
+        # Cap the build JVM. Left unbounded, Gradle sized its heap off the NODE's memory rather than the
+        # container limit and reached ~1.7 GB before a single test ran — that is what took the kubelet
+        # down (docs/runbooks/ci-jenkins.md). --max-workers is capped in the stage for the same reason.
+        - { name: GRADLE_OPTS, value: "-Xmx640m -XX:MaxMetaspaceSize=256m" }
       resources:
-        requests: { memory: "1400Mi", cpu: "500m" }
-        limits:   { memory: "2Gi" }
+        requests: { memory: "1Gi", cpu: "500m" }
+        limits:   { memory: "1600Mi" }
     - name: dind
       image: docker:27-dind
       securityContext: { privileged: true }
       env:
         - { name: DOCKER_TLS_CERTDIR, value: "" }
+      # Budget moved here from `build`: the narrowed test run only starts valkey:8-alpine, but
+      # bootBuildImage runs the whole Paketo lifecycle inside this daemon and 1 GB was not enough.
       resources:
         requests: { memory: "512Mi" }
-        limits:   { memory: "1Gi" }
+        limits:   { memory: "1800Mi" }
 '''
     }
   }
   options { disableConcurrentBuilds(); timeout(time: 40, unit: 'MINUTES') }
   triggers { pollSCM('H/5 * * * *') }
+  parameters {
+    // Narrowed by default so a build actually completes on the 8 GB k3s VM. The modulith's `:test`
+    // starts Keycloak (~540 MB), Postgres and SeaweedFS as Testcontainers INSIDE dind; the gateway
+    // suite starts only valkey:8-alpine, so it still proves the daemon works without the footprint.
+    // Run everything with TEST_TASKS=":test :gateway:app:test" — on a host with the RAM to spare.
+    // Full context and the incident this came from: docs/runbooks/ci-jenkins.md.
+    string(name: 'TEST_TASKS', defaultValue: ':gateway:app:test',
+           description: 'Gradle test tasks to run. Default is narrowed for the local VM.')
+  }
   environment { IMAGE_BASE = 'ghcr.io/paul-ayesiga/enterprise-modulith-template' }
 
   stages {
     stage('Test') {
-      steps { sh './gradlew --no-daemon :test :gateway:app:test' }
+      steps { sh "./gradlew --no-daemon --max-workers=2 ${params.TEST_TASKS}" }
       post { always { junit allowEmptyResults: true, testResults: '**/build/test-results/test/*.xml' } }
     }
 
