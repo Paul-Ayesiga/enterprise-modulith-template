@@ -28,6 +28,12 @@ spec:
       env:
         - { name: DOCKER_HOST, value: "tcp://localhost:2375" }
         - { name: TESTCONTAINERS_RYUK_DISABLED, value: "true" }
+        # Every gradlew run is TWO JVMs: this launcher, plus the single-use daemon it forks (--no-daemon
+        # prevents a *reused* daemon, not a forked one). -Dorg.gradle.jvmargs caps only the daemon; left
+        # alone the launcher takes ~25% of the container limit — ~512 MB it never needs, since it does
+        # nothing but forward to the daemon. Adding that to the daemon's heap and the page cache left by
+        # the previous image build is what OOMKilled this container between the two bootBuildImage calls.
+        - { name: GRADLE_OPTS, value: "-Xmx256m" }
       resources:
         # Back to 2 Gi: this container runs the Gradle JVM *and* the forked test JVM. Trimming it to
         # 1600 Mi to fund dind is what OOMKilled build #3. The two containers peak in different stages
@@ -66,6 +72,9 @@ spec:
     // ran a 2 GB heap inside a 1.6 GB container and was OOMKilled mid-test. This is the override that
     // actually takes, and it must be passed to every gradlew call, not set as an env var.
     GRADLE_JVM = '-Dorg.gradle.jvmargs=-Xmx768m'
+    // Image builds need far less daemon heap than tests do: the Paketo lifecycle runs inside dind, and
+    // Gradle only orchestrates it. Keeping this low is what leaves room for the second invocation.
+    GRADLE_JVM_IMAGE = '-Dorg.gradle.jvmargs=-Xmx512m'
   }
 
   stages {
@@ -89,8 +98,8 @@ spec:
             # shared one /launch-cache and (org.gradle.parallel=true) raced it: "failed to export:
             # caching layer ... /launch-cache/staging/...tar: no such file or directory". The gateway
             # then published itself to GHCR wearing the modulith's tag.
-            ./gradlew --no-daemon $GRADLE_JVM :bootBuildImage --imageName "$IMAGE_BASE/modulith:${GIT_COMMIT}" --publishImage
-            ./gradlew --no-daemon $GRADLE_JVM :gateway:app:bootBuildImage --imageName "$IMAGE_BASE/gateway:${GIT_COMMIT}" --publishImage
+            ./gradlew --no-daemon $GRADLE_JVM_IMAGE :bootBuildImage --imageName "$IMAGE_BASE/modulith:${GIT_COMMIT}" --publishImage
+            ./gradlew --no-daemon $GRADLE_JVM_IMAGE :gateway:app:bootBuildImage --imageName "$IMAGE_BASE/gateway:${GIT_COMMIT}" --publishImage
           '''
         }
       }
