@@ -46,6 +46,10 @@ modulith:
   replicas: 2
   port: 8080
   issuerUri: https://auth.example.com/realms/smsone
+  # Base URL of Keycloak for the ADMIN client (user provisioning). Empty = the chart's own
+  # {release}-keycloak Service; override when Keycloak lives elsewhere (shared/external IdP, or the
+  # local dev-Keycloak reached via the issuer host).
+  keycloakUrl: ""
   env: []                    # extra env — [{name: ..., value: ...}]
   resources:
     requests: { cpu: 500m, memory: 1Gi }

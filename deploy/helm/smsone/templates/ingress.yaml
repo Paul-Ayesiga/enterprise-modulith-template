@@ -23,6 +23,7 @@ spec:
         - {{ .Values.ingress.hosts.admin }}
   {{- end }}
   rules:
+    {{- if .Values.gateway.enabled }}
     - host: {{ .Values.ingress.hosts.api }}
       http:
         paths:
@@ -30,6 +31,8 @@ spec:
             pathType: Prefix
             backend:
               service: { name: gateway, port: { number: 8080 } }
+    {{- end }}
+    {{- if .Values.keycloak.enabled }}
     - host: {{ .Values.ingress.hosts.auth }}
       http:
         paths:
@@ -37,6 +40,8 @@ spec:
             pathType: Prefix
             backend:
               service: { name: {{ .Release.Name }}-keycloak, port: { number: 8080 } }
+    {{- end }}
+    {{- if .Values.developerPortal.enabled }}
     - host: {{ .Values.ingress.hosts.portal }}
       http:
         paths:
@@ -44,6 +49,8 @@ spec:
             pathType: Prefix
             backend:
               service: { name: developer-portal, port: { number: 3000 } }
+    {{- end }}
+    {{- if .Values.adminPortal.enabled }}
     - host: {{ .Values.ingress.hosts.admin }}
       http:
         paths:
@@ -51,4 +58,5 @@ spec:
             pathType: Prefix
             backend:
               service: { name: admin-portal, port: { number: 3000 } }
+    {{- end }}
 {{- end }}

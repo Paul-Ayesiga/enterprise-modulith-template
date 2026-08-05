@@ -1,0 +1,13 @@
+# k3s CoreDNS imports ConfigMap `coredns-custom` (kube-system): *.override keys are folded into the
+# main server block. This rewrite makes `auth.smsone.local` resolve, INSIDE the cluster, to the
+# Keycloak Service — so the modulith and gateway can use the same issuer host the browser uses. That's
+# what keeps the token `iss` consistent on both sides of the Mac↔cluster boundary. Apply, then
+# `kubectl -n kube-system rollout restart deploy/coredns`.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns-custom
+  namespace: kube-system
+data:
+  smsone.override: |
+    rewrite name auth.smsone.local keycloak.smsone.svc.cluster.local

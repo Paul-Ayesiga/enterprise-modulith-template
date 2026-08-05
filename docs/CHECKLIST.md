@@ -779,6 +779,28 @@ have closed the cycle `document → search → organization → exchange`, and `
 - [ ] Phase 2 (deferred): reverse-geocoding `Geocoder` adapters + `geo_place` cache + async worker;
       distance-ordered `near`; IP fallback; policy UI
 
+## Local Kubernetes (k3s) — Phases 0–3 ✅ (2026-08-05)
+
+- [x] **Cluster + image loop** — k3s (containerd/Traefik/CoreDNS/local-path/metrics-server) on an
+      Ubuntu/UTM arm64 VM; kubeconfig on the Mac; images built on the Mac and streamed into containerd via
+      `docker save | k3s ctr images import` (`scripts/k3s-images.sh`), run with `imagePullPolicy: Never` —
+      the registry path kept as a documented alternative (`deploy/k3s-local/registries.yaml`)
+- [x] **In-cluster state + dev-Keycloak** — Postgres/Valkey/SeaweedFS + a `start-dev --import-realm`
+      Keycloak as plain manifests (`deploy/k3s-local/infra/`); the Helm chart stays state-external
+- [x] **Issuer crux (CoreDNS)** — one issuer host `auth.smsone.local` for browser and cluster alike; a
+      `coredns-custom` rewrite resolves it in-cluster to the `keycloak` Service, so the modulith
+      (`issuerUri`) and gateway (JWKS) validate the tokens the browser mints. `enableServiceLinks: false`
+      stops the injected `{SVC}_PORT=tcp://…` vars from shadowing `VALKEY_PORT`/`GATEWAY_PORT`
+- [x] **App via the chart** — modulith ×3 + gateway from `deploy/helm/smsone` + `values-local.yaml`; the
+      stale gateway env names fixed in the chart (`BACKEND_URI`→`MODULITH_URI`, `GATEWAY_REDIS_HOST`→
+      `VALKEY_HOST`, `GATEWAY_JWKS_URI`→`KEYCLOAK_JWKS`, + `GATEWAY_PORT`/platform-seam URIs) — benefits prod
+- [x] **Gate:** `curl -H "Authorization: Bearer <token>" http://api.smsone.local/api/v1/me` → 200 end to
+      end (Traefik → gateway → a modulith pod; the response `requestId` is prefixed `gw-`)
+- [x] **Production feeling** (`scripts/k3s-demo.sh`) — rolling `helm upgrade` (image-tag bump) + a pod
+      kill + a 3→5→3 scale under a live request loop through the edge: **699/699 requests, zero 5xx**.
+      Load balancing is Kubernetes' (gateway → `modulith` Service → kube-proxy); zero-downtime is rolling
+      updates + readiness probes
+
 | Reference | What it is |
 |---|---|
 | [AGENTS.md](../AGENTS.md) | Engineering standards — §1 is the rules that fail the build, §14 the review checklist |

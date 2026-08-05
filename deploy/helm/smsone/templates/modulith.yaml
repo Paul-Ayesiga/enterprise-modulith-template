@@ -16,6 +16,10 @@ spec:
         app.kubernetes.io/name: modulith
         {{- include "smsone.labels" . | nindent 8 }}
     spec:
+      # Kubernetes injects Docker-style {SVC}_PORT=tcp://ip:port env vars for every Service in the
+      # namespace; those shadow the app's own VALKEY_PORT/GATEWAY_PORT/... placeholders and break
+      # int-binding. Everything here is discovered by DNS Service name, so switch the legacy links off.
+      enableServiceLinks: false
       containers:
         - name: modulith
           image: {{ include "smsone.image" (dict "root" . "name" "modulith") }}
@@ -31,7 +35,7 @@ spec:
             - { name: KILLBILL_URL, value: {{ .Values.killbill.url | quote }} }
             - { name: SMTP_HOST, value: {{ .Values.smtp.host | quote }} }
             - { name: KEYCLOAK_ISSUER_URI, value: {{ .Values.modulith.issuerUri | quote }} }
-            - { name: KEYCLOAK_URL, value: {{ printf "http://%s-keycloak:8080" .Release.Name | quote }} }
+            - { name: KEYCLOAK_URL, value: {{ .Values.modulith.keycloakUrl | default (printf "http://%s-keycloak:8080" .Release.Name) | quote }} }
             # This chart's topology is client -> ingress -> gateway -> modulith: two of OUR proxies
             # append X-Forwarded-For entries, so client-IP decisions (org ip-allowlist, rate-limit
             # IP keys) read the 2nd-from-right entry.
@@ -45,6 +49,10 @@ spec:
               valueFrom: { secretKeyRef: { name: {{ .Values.credentials.secretName }}, key: killbill-user } }
             - name: KILLBILL_PASSWORD
               valueFrom: { secretKeyRef: { name: {{ .Values.credentials.secretName }}, key: killbill-password } }
+            # Shared secret the gateway presents on the /internal/gateway/* seams — must equal the
+            # gateway's gateway.platform.secret. Optional: falls back to the app default in dev.
+            - name: GATEWAY_SECRET
+              valueFrom: { secretKeyRef: { name: {{ .Values.credentials.secretName }}, key: gateway-secret, optional: true } }
             {{- with .Values.modulith.env }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
