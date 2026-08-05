@@ -26,6 +26,19 @@ spring:
 
 server:
   port: ${GATEWAY_PORT:8090}
+  # MUST stay `none`, and must be explicit. Left unset, Spring Boot picks the strategy from the detected
+  # cloud platform, and on Kubernetes that turns on forwarded-header handling — which rewrites
+  # `getRemoteAddress()` from the client's own X-Forwarded-For. EdgeClientIp then reads a *spoofed* peer
+  # while believing it is reading the socket, so with `trusted-proxy-hops: 0` (the default, meaning "trust
+  # nothing, the socket decides") a caller could still pick its own identity by setting one header. Proven
+  # against the deployed gateway: with 9.0.0.0/8 blocked, `X-Forwarded-For: 9.9.9.9` returned 403 while the
+  # same request without the header was let through. That is blocklist evasion, spoofable per-IP rate
+  # limits, and an auto-block that can be aimed at somebody else's address.
+  #
+  # The edge decides how far to trust X-Forwarded-For in ONE place — gateway.security.blocklist
+  # .trusted-proxy-hops — and the framework must not quietly have an opinion of its own. Put a real proxy
+  # in front? Raise trusted-proxy-hops to match its hop count; do not switch this on.
+  forward-headers-strategy: none
   # Compress proxied responses the client will accept (gzip), above a min size and for text-like types.
   compression:
     enabled: true

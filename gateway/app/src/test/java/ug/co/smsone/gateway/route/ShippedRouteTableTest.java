@@ -35,7 +35,25 @@ class ShippedRouteTableTest {
 
     private static final AntPathMatcher MATCHER = new AntPathMatcher();
 
+    private static final StandardEnvironment ENV = shippedEnvironment();
     private static final List<RouteDefinition> ROUTES = shippedRoutes();
+
+    /**
+     * The edge must decide how far to trust {@code X-Forwarded-For} in exactly one place —
+     * {@code gateway.security.blocklist.trusted-proxy-hops} — so the framework must not also have an
+     * opinion. Left unset, Spring Boot derives the strategy from the detected cloud platform and turns
+     * forwarded-header handling ON under Kubernetes, which rewrites {@code getRemoteAddress()} from the
+     * caller's own header. {@code EdgeClientIp} then reads a spoofed peer while believing it is reading
+     * the socket. Verified against the deployed gateway: with {@code 9.0.0.0/8} blocked, a request
+     * carrying {@code X-Forwarded-For: 9.9.9.9} was refused 403 while the same request without the
+     * header passed — blocklist evasion, and a per-IP rate limit and auto-block that anyone can aim.
+     */
+    @Test
+    void forwardedHeadersAreNeverTrustedByTheFramework() {
+        assertThat(ENV.getProperty("server.forward-headers-strategy"))
+                .as("server.forward-headers-strategy must be pinned to none — see the gateway's application.yml")
+                .isEqualToIgnoringCase("none");
+    }
 
     /** Public by nature: a prospect has no account yet. */
     @Test
@@ -101,8 +119,8 @@ class ShippedRouteTableTest {
                 .orElseThrow(() -> new AssertionError("no shipped route matches " + path));
     }
 
-    /** Binds the shipped application.yml and runs it through the production RouteCatalog mapping. */
-    private static List<RouteDefinition> shippedRoutes() {
+    /** Loads the shipped application.yml into an Environment — deliberately NOT the test resources copy. */
+    private static StandardEnvironment shippedEnvironment() {
         // Gradle runs tests with the module as the working directory; tolerate a repo-root runner too.
         Resource yaml = List.of(
                         new FileSystemResource("src/main/resources/application.yml"),
@@ -120,9 +138,14 @@ class ShippedRouteTableTest {
         } catch (IOException e) {
             throw new AssertionError("could not read " + yaml, e);
         }
-        GatewayProperties properties = Binder.get(environment)
+        return environment;
+    }
+
+    /** Runs the shipped config through the production RouteCatalog mapping. */
+    private static List<RouteDefinition> shippedRoutes() {
+        GatewayProperties properties = Binder.get(ENV)
                 .bind("gateway", GatewayProperties.class)
-                .orElseThrow(() -> new AssertionError("no gateway.* config in " + yaml));
+                .orElseThrow(() -> new AssertionError("no gateway.* config in the shipped application.yml"));
 
         return new RouteCatalog(properties, event -> { }).routes();
     }
