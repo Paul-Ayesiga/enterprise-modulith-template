@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SMSOne — CI/CD, GitOps & the Cluster</title>
+<style>
+  :root {
+    --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+    --bg: #0b1116; --surface: #10181f; --surface-2: #151f28; --border: #223039;
+    --border-strong: #2d3e49; --text: #e6eef4; --muted: #93a4b1; --faint: #6f8290;
+    --accent: #2dd4c8; --accent-ink: #7cebe2; --accent-weak: #123037;
+    --warn: #e6a83a; --warn-weak: #2c2413; --ok: #46c07a; --ok-weak: #14301f;
+    --danger: #ef6f63; --danger-weak: #2e1512;
+    --term-bg: #080d12; --term-text: #d6e2ea; --term-muted: #61758a; --term-accent: #45d0c8;
+    --radius: 10px; --maxw: 78ch;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px -14px rgba(0,0,0,.7);
+  }
+  :root[data-theme="light"] {
+    --bg: #f4f7f9; --surface: #ffffff; --surface-2: #eef2f5; --border: #d8e0e6;
+    --border-strong: #c2ccd4; --text: #10171d; --muted: #566673; --faint: #7c8b97;
+    --accent: #0a8f96; --accent-ink: #076267; --accent-weak: #daf0f1;
+    --warn: #b45309; --warn-weak: #fbecd6; --ok: #157f47; --ok-weak: #d8f0e0;
+    --danger: #c0362c; --danger-weak: #f6ddd9;
+    --term-bg: #0e1720; --term-text: #d6e2ea; --term-muted: #6f8494; --term-accent: #45d0c8;
+    --shadow: 0 1px 2px rgba(16,23,29,.05), 0 8px 24px -12px rgba(16,23,29,.18);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-sans);
+    line-height: 1.65; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+  .toggle { position: fixed; top: 14px; right: 16px; z-index: 20; background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: 999px; padding: 6px 14px; font: 600 12.5px var(--font-mono);
+    cursor: pointer; box-shadow: var(--shadow); }
+  .toggle:hover { border-color: var(--accent); }
+  .toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .shell { display: grid; grid-template-columns: 1fr; align-items: start; }
+  .toc { display: none; }
+  @media (min-width: 1080px) {
+    .shell { grid-template-columns: 236px minmax(0, 1fr); gap: 56px; }
+    .toc { position: sticky; top: 0; max-height: 100vh; overflow: auto; padding: 40px 0; display: block; }
+  }
+  .toc__label { font-family: var(--font-mono); font-size: .68rem; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--faint); margin: 0 0 14px; }
+  .toc ol { list-style: none; margin: 0; padding: 0; counter-reset: toc; display: flex; flex-direction: column; gap: 2px; }
+  .toc a { counter-increment: toc; display: flex; gap: 10px; align-items: baseline; text-decoration: none;
+    color: var(--muted); font-size: .86rem; padding: 5px 8px; border-radius: 7px; }
+  .toc a::before { content: counter(toc, decimal-leading-zero); font-family: var(--font-mono); font-size: .7rem; color: var(--faint); }
+  .toc a:hover { color: var(--text); background: var(--surface-2); }
+  .toc a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  main { padding: 40px 0 96px; min-width: 0; }
+  .hero { padding: 24px 0 8px; }
+  .eyebrow { font-family: var(--font-mono); font-size: .72rem; letter-spacing: .18em; text-transform: uppercase;
+    color: var(--accent-ink); margin: 0 0 18px; display: flex; gap: 10px; align-items: center; }
+  .eyebrow::before { content: "\21C6"; font-size: 1.1em; }
+  h1 { font-size: clamp(2rem, 5vw, 3.05rem); line-height: 1.05; letter-spacing: -.02em; margin: 0 0 18px;
+    text-wrap: balance; font-weight: 750; }
+  .lede { font-size: 1.2rem; color: var(--muted); margin: 0 0 28px; max-width: 64ch; text-wrap: pretty; }
+  .lede strong { color: var(--text); font-weight: 650; }
+
+  .verdict { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0; }
+  .vcard { flex: 1 1 210px; background: var(--surface); border: 1px solid var(--border); border-left-width: 3px;
+    border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow); }
+  .vcard h4 { margin: 0 0 3px; font-size: 1rem; display: flex; align-items: baseline; gap: 8px; }
+  .vcard h4 span { font-family: var(--font-mono); font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; }
+  .vcard p { margin: 0; font-size: .86rem; color: var(--muted); max-width: none; }
+  .vcard.adopt { border-left-color: var(--ok); } .vcard.adopt span { color: var(--ok); }
+  .vcard.later { border-left-color: var(--accent); } .vcard.later span { color: var(--accent-ink); }
+  .vcard.skip { border-left-color: var(--warn); } .vcard.skip span { color: var(--warn); }
+
+  h2 { font-size: clamp(1.5rem, 3vw, 2rem); letter-spacing: -.015em; margin: 64px 0 6px; padding-top: 14px;
+    text-wrap: balance; font-weight: 720; scroll-margin-top: 16px; }
+  h2 .n { font-family: var(--font-mono); font-size: .8rem; color: var(--accent); display: block; letter-spacing: .12em; margin-bottom: 2px; font-weight: 600; }
+  h3 { font-size: 1.18rem; margin: 32px 0 4px; letter-spacing: -.01em; font-weight: 660; }
+  p { margin: 14px 0; max-width: var(--maxw); }
+  a { color: var(--accent-ink); text-underline-offset: 2px; }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  strong { font-weight: 650; }
+  .section-intro { color: var(--muted); font-size: 1.05rem; max-width: var(--maxw); }
+  code { font-family: var(--font-mono); font-size: .86em; background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 5px; padding: .08em .4em; color: var(--text); }
+  h2 code, h3 code { font-size: .8em; }
+  ul, ol.prose { max-width: var(--maxw); padding-left: 1.2em; }
+  li { margin: 7px 0; } li::marker { color: var(--faint); }
+
+  .term { margin: 22px 0; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--border-strong);
+    box-shadow: var(--shadow); background: var(--term-bg); }
+  .term__bar { display: flex; align-items: center; gap: 7px; padding: 10px 14px; background: rgba(255,255,255,.04);
+    border-bottom: 1px solid rgba(255,255,255,.06); }
+  .term__bar i { width: 11px; height: 11px; border-radius: 50%; background: #3a4a57; display: block; }
+  .term__bar i:nth-child(1){ background:#e0645b; } .term__bar i:nth-child(2){ background:#e2b53f; } .term__bar i:nth-child(3){ background:#4fb865; }
+  .term__bar em { margin-left: auto; font-family: var(--font-mono); font-size: .72rem; color: var(--term-muted); font-style: normal; }
+  .term pre { margin: 0; padding: 16px 18px; overflow-x: auto; font-family: var(--font-mono); font-size: .82rem; line-height: 1.7; color: var(--term-text); }
+  .term .p { color: var(--term-accent); user-select: none; } .term .o { color: var(--term-muted); }
+  .term .g { color: #6fcf97; } .term .r { color: #eb8079; } .term .y { color: #e2c15f; }
+
+  .note { margin: 24px 0; border: 1px solid var(--border); border-left-width: 3px; border-radius: var(--radius);
+    background: var(--surface); padding: 16px 18px; box-shadow: var(--shadow); max-width: var(--maxw); }
+  .note__tag { font-family: var(--font-mono); font-size: .68rem; letter-spacing: .12em; text-transform: uppercase;
+    font-weight: 700; margin-bottom: 6px; display: inline-flex; align-items: center; gap: 7px; }
+  .note p:first-of-type { margin-top: 0; } .note p:last-child { margin-bottom: 0; }
+  .note--gotcha { border-left-color: var(--warn); background: var(--warn-weak); } .note--gotcha .note__tag { color: var(--warn); }
+  .note--ok { border-left-color: var(--ok); background: var(--ok-weak); } .note--ok .note__tag { color: var(--ok); }
+  .note--info { border-left-color: var(--accent); background: var(--accent-weak); } .note--info .note__tag { color: var(--accent-ink); }
+
+  .diagram { margin: 26px 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 18px; box-shadow: var(--shadow); overflow-x: auto; }
+  .diagram pre.mermaid { margin: 0; text-align: center; min-width: 540px; background: transparent; border: 0; padding: 0; }
+  .diagram figcaption { font-size: .84rem; color: var(--muted); margin-top: 12px; padding-top: 12px;
+    border-top: 1px dashed var(--border); font-family: var(--font-mono); line-height: 1.6; }
+  .diagram figcaption b { color: var(--text); font-weight: 600; }
+
+  table { border-collapse: collapse; width: 100%; margin: 22px 0; font-size: .9rem; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-family: var(--font-mono); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--muted); border-bottom: 1px solid var(--border-strong); }
+  td code { font-size: .82em; }
+  .tool-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px,1fr)); gap: 10px; margin: 14px 0 4px; }
+  .tool-meta div { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .tool-meta dt { font-family: var(--font-mono); font-size: .64rem; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
+  .tool-meta dd { margin: 2px 0 0; font-size: .9rem; }
+
+  hr { border: none; border-top: 1px solid var(--border); margin: 56px 0; }
+  .foot { color: var(--faint); font-size: .82rem; font-family: var(--font-mono); max-width: var(--maxw); }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+</style>
+</head>
+<body>
+
+<button class="toggle" id="themeToggle" aria-label="Toggle light or dark theme">◐ theme</button>
+
+<div class="wrap">
+<div class="shell">
+
+  <nav class="toc" aria-label="Contents">
+    <p class="toc__label">On this page</p>
+    <ol>
+      <li><a href="#map">The lifecycle map</a></li>
+      <li><a href="#have">What you already have</a></li>
+      <li><a href="#jenkins">Jenkins</a></li>
+      <li><a href="#argo">Argo CD</a></li>
+      <li><a href="#rancher">Rancher</a></li>
+      <li><a href="#target">Your target pipeline</a></li>
+      <li><a href="#server">Inside the Ubuntu server</a></li>
+      <li><a href="#plan">What to adopt, in order</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <header class="hero" id="top">
+      <p class="eyebrow">CI · CD · GitOps · cluster ops — how the pieces fit</p>
+      <h1>From a commit to a running cluster — and where each tool belongs</h1>
+      <p class="lede">Jenkins, Argo CD and Rancher get lumped together as "DevOps tools," but they live in
+        <strong>three different stages</strong> of the same journey. Here's what each one is, where it sits, and
+        exactly how it maps onto <strong>this</strong> platform — which already has a working CI pipeline.</p>
+
+      <div class="verdict">
+        <div class="vcard skip"><h4>Jenkins <span>skip</span></h4><p>CI automation server. You already do this with GitHub Actions — adding Jenkins duplicates it.</p></div>
+        <div class="vcard adopt"><h4>Argo CD <span>adopt next</span></h4><p>GitOps delivery. Turns "commit to Git" into "deployed" and completes your deferred GitOps item.</p></div>
+        <div class="vcard later"><h4>Rancher <span>later</span></h4><p>Cluster management UI. Great once you run several clusters; overkill for one local k3s today.</p></div>
+      </div>
+    </header>
+
+    <section>
+      <h2 id="map"><span class="n">01 — Orientation</span>The lifecycle map: three stages, three jobs</h2>
+      <p class="section-intro">The single most useful idea: these tools don't compete (mostly) — they occupy different
+        stages. <b>CI</b> builds and tests. <b>CD</b> deploys. <b>Cluster management</b> operates the clusters. Jenkins and
+        GitHub Actions fight over the CI slot; Argo CD owns CD; Rancher owns the ops layer.</p>
+
+      <figure class="diagram">
+        <pre class="mermaid">
+flowchart LR
+  DEV["Developer — git push"]
+  subgraph CI["Stage 1 · CI — build and test"]
+    B["test · build image · scan · push to registry"]
+  end
+  subgraph CD["Stage 2 · CD — deploy"]
+    S["make the cluster match Git"]
+  end
+  subgraph OPS["Stage 3 · Ops — run and manage"]
+    R["pods · scaling · healing · observe"]
+  end
+  DEV --> CI --> CD --> OPS
+  J["Jenkins"] -. "one option for" .-> CI
+  GH["GitHub Actions — you use this"] -. "one option for" .-> CI
+  ARGO["Argo CD"] -. "does" .-> CD
+  RAN["Rancher"] -. "a UI over" .-> OPS
+</pre>
+        <figcaption><b>Jenkins</b> and <b>GitHub Actions</b> are interchangeable choices for Stage 1. <b>Argo CD</b> is Stage 2.
+          <b>Rancher</b> is a management layer over Stage 3. Different jobs — you don't pick "one of the three."</figcaption>
+      </figure>
+    </section>
+
+    <section>
+      <h2 id="have"><span class="n">02 — Baseline</span>What you already have (so we don't reinvent it)</h2>
+      <p class="section-intro">Your <code>.github/workflows/ci.yml</code> is already a solid Stage-1 pipeline. Knowing this
+        is what makes the Jenkins verdict easy and shows exactly where Argo CD plugs in.</p>
+      <table>
+        <thead><tr><th>CI job (GitHub Actions)</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td><code>backend-tests</code></td><td>Runs <code>:test</code> and <code>:gateway:app:test</code> (real Testcontainers)</td></tr>
+          <tr><td><code>portal-build</code></td><td>Builds the two Next.js portals (matrix)</td></tr>
+          <tr><td><code>supply-chain</code></td><td>SBOM (Anchore) + vulnerability scan (Trivy)</td></tr>
+          <tr><td><code>helm-lint</code></td><td>Lints the Helm chart</td></tr>
+          <tr><td><code>publish-images</code></td><td>Buildpacks images → pushes to <b>GHCR</b> (SHA tag + moves <code>:main</code>)</td></tr>
+          <tr><td><code>deploy</code></td><td><b>A stub</b> — it just <em>echoes</em> a <code>helm upgrade</code> and waits for a cluster credential</td></tr>
+        </tbody>
+      </table>
+      <div class="note note--info"><div class="note__tag">The gap</div>
+        <p>Everything up to "push image to GHCR" works. The <b>last mile</b> — actually getting that image running on a
+          cluster — is a placeholder. That last mile is precisely what <b>Argo CD</b> fills, without ever handing cluster
+          credentials to CI.</p></div>
+    </section>
+
+    <section>
+      <h2 id="jenkins"><span class="n">03 — Stage 1 (CI)</span>Jenkins — the veteran build server</h2>
+      <dl class="tool-meta">
+        <div><dt>What</dt><dd>Self-hosted CI/CD automation server</dd></div>
+        <div><dt>Stage</dt><dd>CI (build &amp; test)</dd></div>
+        <div><dt>Model</dt><dd>You run the server + agents; pipelines in a <code>Jenkinsfile</code></dd></div>
+        <div><dt>For you</dt><dd>Redundant with GitHub Actions</dd></div>
+      </dl>
+      <p>Jenkins is the original open-source automation server: you define a pipeline (checkout → test → build image →
+        scan → push → deploy), and Jenkins runs it on machines you operate, with a vast plugin ecosystem. It's
+        powerful and battle-tested, but <em>you</em> host and maintain the server, the agents, and the plugins.</p>
+      <p><strong>How it would apply here:</strong> a <code>Jenkinsfile</code> could run your Gradle tests, build the
+        buildpacks images, run Trivy, push to a registry, and call <code>helm upgrade</code> — i.e. re-implement what
+        <code>ci.yml</code> already does for free on GitHub's runners.</p>
+      <div class="note note--gotcha"><div class="note__tag">Verdict — skip (for now)</div>
+        <p>You already have a complete CI pipeline in GitHub Actions. Adding Jenkins means a server to babysit and a
+          duplicate pipeline. Only choose Jenkins if you need <b>self-hosted / air-gapped CI</b> (compliance, on-prem,
+          no cloud runners) or your org already standardizes on it. Otherwise it's motion without progress.</p></div>
+    </section>
+
+    <section>
+      <h2 id="argo"><span class="n">04 — Stage 2 (CD)</span>Argo CD — Git becomes the deploy button</h2>
+      <dl class="tool-meta">
+        <div><dt>What</dt><dd>GitOps continuous delivery for Kubernetes</dd></div>
+        <div><dt>Stage</dt><dd>CD (deploy)</dd></div>
+        <div><dt>Model</dt><dd>Runs <b>inside</b> the cluster; <b>pulls</b> desired state from Git</dd></div>
+        <div><dt>For you</dt><dd>The natural next step</dd></div>
+      </dl>
+      <p>Argo CD runs inside your cluster and continuously makes the cluster match what's declared in a Git repo — your
+        Helm chart plus a values file. <strong>Git is the single source of truth.</strong> Change the desired image tag
+        in Git, and Argo notices and syncs. It shows you a live diff (Git vs cluster), auto-heals drift (someone
+        <code>kubectl edit</code>s something? it reverts), and gives a clean web UI + history.</p>
+
+      <figure class="diagram">
+        <pre class="mermaid">
+flowchart LR
+  subgraph GIT["Git repo — the desired state"]
+    H["deploy/helm/smsone + values (image tag)"]
+  end
+  ARGO["Argo CD — runs in the cluster"]
+  K8S["Kubernetes — the live state"]
+  H -. "watches for commits" .-> ARGO
+  ARGO -->|"apply / sync"| K8S
+  K8S -->|"reports live state" | ARGO
+  ARGO -->|"drift detected → re-sync"| K8S
+</pre>
+        <figcaption><b>Push CD</b> (a CI job runs <code>helm upgrade</code>) needs cluster credentials in CI and fires once.
+          <b>Pull CD / GitOps</b> (Argo) keeps the cluster continuously reconciled to Git, and CI never touches the cluster.</figcaption>
+      </figure>
+
+      <p><strong>How it maps onto this repo:</strong> you'd create one Argo "Application" pointing at
+        <code>deploy/helm/smsone</code> with a prod values file. Then:</p>
+      <ul>
+        <li>Your CI's <code>deploy</code> stub goes away — no <code>KUBECONFIG</code> secret in GitHub, because Argo pulls
+          from <em>inside</em> the cluster (a big security win).</li>
+        <li>"Deploying" becomes: CI pushes the image to GHCR, then bumps the image tag in Git → Argo syncs it.</li>
+        <li>The zero-downtime rolling update you already saw is unchanged — Argo just runs the same Helm release, so
+          Kubernetes still does surge-then-terminate.</li>
+      </ul>
+      <div class="note note--ok"><div class="note__tag">Verdict — adopt next</div>
+        <p>Biggest value for least effort, and it completes the <b>GitOps</b> item explicitly deferred in
+          <code>docs/K8S_LOCAL_PLAN.md §8</code>. It installs on your existing local k3s in a couple of minutes, so it's
+          also the best way to <em>learn</em> GitOps hands-on. (Flux is the main alternative — same idea, no UI, more CLI.)</p></div>
+    </section>
+
+    <section>
+      <h2 id="rancher"><span class="n">05 — Stage 3 (Ops)</span>Rancher — one pane of glass over many clusters</h2>
+      <dl class="tool-meta">
+        <div><dt>What</dt><dd>Kubernetes management platform (SUSE)</dd></div>
+        <div><dt>Stage</dt><dd>Cluster ops / management</dd></div>
+        <div><dt>Model</dt><dd>A control plane + web UI over one or many clusters</dd></div>
+        <div><dt>For you</dt><dd>Useful as you add environments</dd></div>
+      </dl>
+      <p>Rancher is a management platform: a web UI and control plane to provision, secure (centralized RBAC / SSO),
+        monitor and operate <em>many</em> Kubernetes clusters from one place. It includes an app catalog, cluster
+        provisioning, monitoring, and its own GitOps engine (Fleet). It does <strong>not</strong> build or deploy your
+        app — it manages the clusters your app runs on. (Fun fact: <code>k3s</code>, the cluster you're already running,
+        is a Rancher/SUSE project.)</p>
+      <div class="note note--info"><div class="note__tag">Don't confuse the two</div>
+        <p><b>Rancher</b> (the server platform, this section) is not <b>Rancher Desktop</b> (a laptop app for running
+          containers/k8s locally, in the same space as Docker Desktop). Different products, same brand.</p></div>
+      <p><strong>How it would apply here:</strong> install Rancher and you get a GUI over your k3s — browse pods, read
+        logs, scale, and manage access without <code>kubectl</code>. The <em>real</em> payoff arrives when you have
+        several clusters (local → dev → staging → prod): manage them all, with unified users and policies, in one UI.</p>
+      <div class="note note--info"><div class="note__tag">Verdict — later / optional</div>
+        <p>Overkill for a single local cluster today. Reach for it when you have multiple clusters or teammates who want
+          a UI instead of the CLI. Argo CD (Stage 2) delivers more value first.</p></div>
+    </section>
+
+    <section>
+      <h2 id="target"><span class="n">06 — Putting it together</span>The target pipeline for this platform</h2>
+      <p class="section-intro">Wire the tools to their stages and the whole path from keyboard to cluster becomes
+        hands-off and auditable — every change is a Git commit.</p>
+      <figure class="diagram">
+        <pre class="mermaid">
+flowchart LR
+  A["git push — app code"] --> GA["GitHub Actions — test, build, scan, push image to GHCR"]
+  GA --> BUMP["bump image tag in Git (values)"]
+  BUMP --> ARGO["Argo CD sees the commit"]
+  ARGO --> SYNC["sync deploy/helm/smsone to the cluster"]
+  SYNC --> RUN["modulith x N + gateway — rolling update, zero downtime"]
+  RAN["Rancher (optional)"] -. "observe / manage" .-> RUN
+</pre>
+        <figcaption>Keep <b>GitHub Actions</b> for CI. Add <b>Argo CD</b> for CD. Add <b>Rancher</b> only when multi-cluster.
+          <b>Jenkins</b> would merely replace the GitHub Actions box — no need.</figcaption>
+      </figure>
+      <p>Notice there's no arrow from CI straight into the cluster: CI's job ends at "push image + commit the new tag."
+        Argo takes it from there. That separation is the heart of GitOps — and why no cluster password ever lives in CI.</p>
+    </section>
+
+    <section>
+      <h2 id="server"><span class="n">07 — The runtime</span>Inside the Ubuntu server: where things actually live</h2>
+      <p class="section-intro">A frequent surprise for people new to Kubernetes: <strong>you don't copy your app or files
+        onto the server.</strong> The YAML, scripts and <code>values-local.yaml</code> live in the Git repo on your Mac.
+        You tell the Kubernetes <em>API</em> "run this," and it schedules containers from images. So the VM has no
+        project folder to browse — it holds images, live data, and a database of objects.</p>
+      <table>
+        <thead><tr><th>What</th><th>Where on the VM</th><th>How you're meant to look</th></tr></thead>
+        <tbody>
+          <tr><td>App <b>images</b></td><td>containerd store (not plain files)</td><td><code>sudo k3s ctr images ls | grep smsone</code></td></tr>
+          <tr><td>Persistent <b>data</b> (DB rows, uploaded files)</td><td><code>/var/lib/rancher/k3s/storage/</code> → <code>pvc-…_smsone_postgres-data</code>, <code>…_seaweedfs-data</code></td><td>root-owned; read it <em>through</em> the app</td></tr>
+          <tr><td>The <b>objects</b> you applied (Deployments, Services, ConfigMaps, Secrets)</td><td><code>/var/lib/rancher/k3s/server/db/state.db</code> — a <b>SQLite database</b>, not files</td><td>never edit directly — use <code>kubectl</code></td></tr>
+          <tr><td>Cluster <b>credentials</b></td><td><code>/etc/rancher/k3s/k3s.yaml</code></td><td>already copied to <code>~/.kube/smsone-k3s.yaml</code> on the Mac</td></tr>
+        </tbody>
+      </table>
+      <p>The mental model: <strong>the repo (Mac) is the source of truth for <em>what</em> runs; the VM is a runtime</strong>
+        holding images + live data + an object database, all managed through <code>kubectl</code> — not by browsing directories.
+        The right way to "see the contents":</p>
+      <figure class="term">
+        <div class="term__bar"><i></i><i></i><i></i><em>mac — kubectl against the live cluster</em></div>
+<pre><span class="p">$</span> export KUBECONFIG=~/.kube/smsone-k3s.yaml
+<span class="p">$</span> kubectl get all -n smsone                 <span class="o"># pods, services, deployments</span>
+<span class="p">$</span> kubectl get configmap,secret -n smsone    <span class="o"># the injected config</span>
+<span class="p">$</span> kubectl -n smsone exec -it deploy/postgres -- psql -U modulith -c <span class="y">'\dt'</span>   <span class="o"># DB tables</span>
+<span class="p">$</span> kubectl logs -n smsone deploy/modulith    <span class="o"># app logs (k8s captures stdout)</span></pre>
+      </figure>
+      <div class="note note--gotcha"><div class="note__tag">Why Postman said ENOTFOUND api.smsone.local</div>
+        <p><code>api.smsone.local</code> is a made-up name that no DNS server knows. Your Mac must be told where it points —
+          add <code>&lt;VM-IP&gt;  api.smsone.local auth.smsone.local</code> to <code>/etc/hosts</code>, then restart Postman
+          (it caches DNS). Inside the cluster this "just works" because CoreDNS resolves the names — which is why the
+          proof ran from within the cluster.</p></div>
+    </section>
+
+    <section>
+      <h2 id="plan"><span class="n">08 — Recommendation</span>What to adopt, in order</h2>
+      <ol class="prose">
+        <li><strong>Now — nothing to add.</strong> GitHub Actions already gives you tests, SBOM/scan, and images in GHCR.</li>
+        <li><strong>Next — Argo CD (GitOps).</strong> Install it on the existing k3s, point one Application at
+          <code>deploy/helm/smsone</code>, enable auto-sync. Replace the CI <code>deploy</code> stub with a tag-bump commit.
+          This completes the deferred GitOps item and removes cluster credentials from CI.</li>
+        <li><strong>Later — as you scale.</strong> Rancher when you run multiple clusters or want a UI for non-CLI folks;
+          optionally Argo <em>Rollouts</em> for canary/blue-green on top of Argo CD.</li>
+        <li><strong>Skip — Jenkins</strong>, unless a hard self-hosted/on-prem CI requirement appears.</li>
+      </ol>
+      <div class="note note--ok"><div class="note__tag">Want to try it?</div>
+        <p>Argo CD installs on your local k3s in minutes. I can set it up and point it at the chart so you can watch a
+          Git commit flow all the way to a running pod — the fastest way to feel GitOps click. Just say the word.</p></div>
+
+      <hr>
+      <p class="foot">CI/CD, GitOps &amp; cluster ops for the smsone platform · companion to k8s-local-walkthrough.html
+        and docs/PRODUCTION.md · diagrams: Mermaid · toggle theme, top-right.</p>
+    </section>
+
+  </main>
+</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>
+(function () {
+  var stored = null;
+  try { stored = localStorage.getItem("smsone-k8s-doc-theme"); } catch (e) {}
+  var theme = stored || (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+  var dark = {
+    background: "transparent", fontFamily: "ui-sans-serif, system-ui, sans-serif", fontSize: "13px",
+    primaryColor: "#14212a", primaryTextColor: "#e6eef4", primaryBorderColor: "#2d3e49",
+    lineColor: "#3f5563", clusterBkg: "#0e1720", clusterBorder: "#223039",
+    titleColor: "#93a4b1", edgeLabelBackground: "#0e1720"
+  };
+  var light = {
+    background: "transparent", fontFamily: "ui-sans-serif, system-ui, sans-serif", fontSize: "13px",
+    primaryColor: "#e4f2f2", primaryTextColor: "#10171d", primaryBorderColor: "#b8ccce",
+    lineColor: "#8aa8ab", clusterBkg: "#eef2f5", clusterBorder: "#d8e0e6",
+    titleColor: "#566673", edgeLabelBackground: "#eef2f5"
+  };
+  var holders = Array.prototype.slice.call(document.querySelectorAll(".mermaid"));
+  var sources = holders.map(function (el) { return el.textContent; });
+  function apply(next) {
+    if (next === "light") document.documentElement.setAttribute("data-theme", "light");
+    else document.documentElement.removeAttribute("data-theme");
+    mermaid.initialize({ startOnLoad: false, securityLevel: "loose", theme: "base",
+      themeVariables: next === "light" ? light : dark });
+    holders.forEach(function (el, i) { el.removeAttribute("data-processed"); el.textContent = sources[i]; });
+    mermaid.run();
+  }
+  apply(theme);
+  var btn = document.getElementById("themeToggle");
+  if (btn) btn.addEventListener("click", function () {
+    theme = theme === "light" ? "dark" : "light";
+    try { localStorage.setItem("smsone-k8s-doc-theme", theme); } catch (e) {}
+    apply(theme);
+  });
+})();
+</script>
+
+</body>
+</html>
