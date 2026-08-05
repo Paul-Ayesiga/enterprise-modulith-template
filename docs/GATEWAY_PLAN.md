@@ -129,6 +129,17 @@ tenant misses and never reads the first's response), `CompressionTest` (3, large
 `LoadBalancingTest` (1, two instances, both reached). Note: SCG-filter-generated errors (413/429) keep
 SCG's response shape; routing/auth/timeout/circuit failures use the gateway envelope — a documented refinement.
 
+**Multi-instance & backend health (wired 2026-08-05).** The load-balancer path is exercised end to end
+by running the modulith as **three replicas** behind the edge (the `multi` Spring profile →
+`lb://modulith`): `make multi-demo` builds the images and runs them under Docker, and an
+`X-Gateway-Upstream` response header names the chosen replica so round-robin and failover are visible.
+Three refinements landed with it: a **health-checked LB supplier** (`GatewayLoadBalancerConfig`,
+profile-gated) that finally consumes each service's `health-path` and **ejects a crashed replica** from
+rotation — closing the backend-health gap this plan had left to "needs the load balancer" (Phase-1
+note above); **retry backoff** (50 ms → 500 ms) so a GET retry lands on a different instance without
+stampeding a struggling one; and a global **connect-timeout** (2 s) the httpclient had lacked. Bulkheads
+and least-conn / weighted / consistent-hash strategies remain future work.
+
 **Focus.** Protect backends and shape load.
 
 **Deliverables** — rate limiting on **reactive Valkey** (fixed/sliding window, token bucket) keyed by

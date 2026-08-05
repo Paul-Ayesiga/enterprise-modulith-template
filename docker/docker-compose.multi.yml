@@ -1,0 +1,97 @@
+# Multi-instance overlay on docker-compose.yml: the modulith as THREE replicas behind the gateway, so
+# the edge routes lb://modulith — Spring Cloud LoadBalancer round-robins, the health-checked supplier
+# ejects a crashed replica, retries send a GET to a live one, and the circuit breaker sheds load if all
+# three fail. Everything shares the base stack's Postgres/Keycloak/Valkey/SeaweedFS.
+#
+#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.multi.yml up --build -d \
+#       modulith-1 modulith-2 modulith-3 gateway     (or: make multi-demo)
+#
+# Prove zero downtime — kill a replica while looping requests through the edge (:28090):
+#   docker kill enterprise-modulith-template-modulith-2-1
+#
+# In-container everything targets keycloak:8080, so the demo token must be minted with that issuer
+# (make multi-token does it in-network).
+name: enterprise-modulith-template
+
+x-modulith: &modulith
+  build:
+    context: ..
+    dockerfile: Dockerfile
+    target: modulith
+  image: smsone-modulith:local
+  restart: unless-stopped
+  environment: &modulith-env
+    SERVER_PORT: "8080"
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: "5432"
+    POSTGRES_DB: ${POSTGRES_DB:-modulith}
+    POSTGRES_USER: ${POSTGRES_USER:-modulith}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-modulith}
+    KEYCLOAK_ISSUER_URI: http://keycloak:8080/realms/smsone
+    KEYCLOAK_URL: http://keycloak:8080
+    VALKEY_HOST: valkey
+    VALKEY_PORT: "6379"
+    S3_ENDPOINT: http://seaweedfs:8333
+    SMTP_HOST: mailpit
+    SMTP_PORT: "1025"
+    GATEWAY_SECRET: ${GATEWAY_SECRET:-dev-gateway-secret}
+    OTEL_SDK_DISABLED: "true"
+    JAVA_OPTS: -Xms256m -Xmx512m -XX:+UseSerialGC
+  depends_on:
+    postgres: { condition: service_healthy }
+    valkey: { condition: service_healthy }
+    keycloak: { condition: service_started }
+    seaweedfs: { condition: service_started }
+  healthcheck:
+    test: ["CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health >/dev/null || exit 1"]
+    interval: 10s
+    timeout: 5s
+    retries: 30
+    start_period: 90s
+
+services:
+  modulith-1:
+    <<: *modulith
+  modulith-2:
+    <<: *modulith
+  modulith-3:
+    <<: *modulith
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: gateway
+    image: smsone-gateway:local
+    restart: unless-stopped
+    ports:
+      - "${GATEWAY_PORT:-28090}:8090"        # public edge
+      - "${GATEWAY_ADMIN_PORT:-29090}:9090"  # admin/health
+    environment:
+      SPRING_PROFILES_ACTIVE: multi
+      GATEWAY_PORT: "8090"
+      GATEWAY_ADMIN_PORT: "9090"
+      MODULITH_1: http://modulith-1:8080
+      MODULITH_2: http://modulith-2:8080
+      MODULITH_3: http://modulith-3:8080
+      MODULITH_URI: http://modulith-1:8080
+      KEYCLOAK_JWKS: http://keycloak:8080/realms/smsone/protocol/openid-connect/certs
+      VALKEY_HOST: valkey
+      VALKEY_PORT: "6379"
+      GATEWAY_SECRET: ${GATEWAY_SECRET:-dev-gateway-secret}
+      GATEWAY_INTROSPECTION_URI: http://modulith-1:8080/internal/gateway/api-key/introspect
+      GATEWAY_AUDIT_URI: http://modulith-1:8080/internal/gateway/audit
+      GATEWAY_QUOTA_URI: http://modulith-1:8080/internal/gateway/quota
+      GATEWAY_USAGE_URI: http://modulith-1:8080/internal/gateway/usage-report
+      OTEL_SDK_DISABLED: "true"
+      JAVA_OPTS: -Xms128m -Xmx256m -XX:+UseSerialGC
+    depends_on:
+      modulith-1: { condition: service_healthy }
+      modulith-2: { condition: service_healthy }
+      modulith-3: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9090/actuator/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s

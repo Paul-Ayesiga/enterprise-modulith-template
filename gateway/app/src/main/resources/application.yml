@@ -1,6 +1,24 @@
 spring:
   application:
     name: gateway
+  cloud:
+    gateway:
+      server:
+        webflux:
+          httpclient:
+            # Fail fast when a backend won't accept the TCP connection (ms). There was no connect
+            # timeout before — only the per-route response timeout — so a black-holed backend hung on
+            # the reactor-netty default. Pure upside on any topology, single- or multi-instance.
+            connect-timeout: 2000
+    loadbalancer:
+      # Consumed by the health-checked instance supplier (active under the `multi` profile): SCLB probes
+      # each instance's health path and balances only over instances that answer UP, ejecting a crashed
+      # one from rotation. Harmless when no load-balanced service is configured.
+      health-check:
+        initial-delay: 2s
+        interval: 5s
+        path:
+          default: /actuator/health
   data:
     redis:                              # Valkey — the rate limiter's shared token-bucket store
       host: ${VALKEY_HOST:localhost}

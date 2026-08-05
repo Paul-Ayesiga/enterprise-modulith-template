@@ -10,6 +10,7 @@ SHELL := /usr/bin/env bash
 COMPOSE_FILE := docker/docker-compose.yml
 ENV_FILE     := docker/.env
 COMPOSE      := docker compose -f $(COMPOSE_FILE) --env-file $(ENV_FILE)
+MULTI        := docker compose -f $(COMPOSE_FILE) -f docker/docker-compose.multi.yml --env-file $(ENV_FILE)
 # Readiness gate for `fresh`: bootRun's own Compose wait races a stack that is still starting,
 # so we block on the realm being importable before handing over.
 KEYCLOAK_READY_URL := http://localhost:$(shell grep -E '^KEYCLOAK_PORT=' $(ENV_FILE) 2>/dev/null | cut -d= -f2 || echo 8081)/realms/smsone/.well-known/openid-configuration
@@ -125,3 +126,27 @@ fresh: clean ## clean + wipe data volumes + wait for the stack + run. The one co
 
 nuke: ## Stop the stack AND wipe its data volumes (fresh DB/Keycloak/objects next up)
 	$(COMPOSE) down -v
+
+multi-demo: env ## Docker: build + run 3 modulith replicas behind the gateway — round-robin + zero-downtime demo
+	@echo "▶ Building images + starting infra + 3 modulith replicas + gateway (first build downloads deps)…"
+	@$(MULTI) up -d --build modulith-1 modulith-2 modulith-3 gateway
+	@set -a; . $(ENV_FILE) 2>/dev/null || true; set +a; \
+	  gwadmin=$${GATEWAY_ADMIN_PORT:-29090}; gw=$${GATEWAY_PORT:-28090}; \
+	  echo "▶ Waiting for the edge to report healthy (:$$gwadmin)…"; \
+	  until curl -fsS http://localhost:$$gwadmin/actuator/health >/dev/null 2>&1; do printf '.'; sleep 3; done; echo ' up'; \
+	  echo; echo "  Edge:  http://localhost:$$gw"; \
+	  echo "  Token: TOKEN=\$$(make -s multi-token)"; \
+	  echo "  Demo:  for i in \$$(seq 9); do curl -s -D - -o /dev/null -H \"Authorization: Bearer \$$TOKEN\" http://localhost:$$gw/api/v1/me | grep -i x-gateway-upstream; done"; \
+	  echo "  Kill:  docker kill enterprise-modulith-template-modulith-2-1   # re-run the loop → still all 200, :modulith-2 gone"; \
+	  echo "  Stop:  make multi-down"
+
+multi-token: ## Mint a demo bearer token IN-NETWORK (issuer keycloak:8080, so the modulith accepts it)
+	@set -a; . $(ENV_FILE) 2>/dev/null || true; set +a; \
+	  $(MULTI) exec -T gateway curl -fsS -X POST \
+	    http://keycloak:8080/realms/$${KEYCLOAK_REALM:-smsone}/protocol/openid-connect/token \
+	    -d grant_type=password -d client_id=$${KEYCLOAK_CLIENT:-smsone-web} -d scope=organization \
+	    -d username=$${DEMO_USER:-paul} -d password=$${DEMO_PASSWORD:-Paul123} \
+	  | python3 -c 'import sys,json;print(json.load(sys.stdin).get("access_token",""))'
+
+multi-down: ## Stop the multi-instance stack (keeps the base infra + volumes)
+	@$(MULTI) down
