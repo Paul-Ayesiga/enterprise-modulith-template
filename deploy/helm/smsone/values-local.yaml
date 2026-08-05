@@ -4,7 +4,7 @@
 #
 #   helm upgrade --install smsone deploy/helm/smsone -n smsone -f deploy/helm/smsone/values-local.yaml
 #
-# The issuer crux (docs/K8S_LOCAL_PLAN.md §5): every token's `iss` is http://auth.smsone.local/realms/smsone;
+# The issuer crux (docs/plans/K8S_LOCAL_PLAN.md §5): every token's `iss` is http://auth.smsone.local/realms/smsone;
 # a coredns-custom rewrite makes that host resolve IN-cluster to the keycloak Service, so the modulith
 # (issuerUri = same host) and the gateway (JWKS = same host) validate the very tokens the browser mints.
 

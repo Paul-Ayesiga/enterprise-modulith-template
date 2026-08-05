@@ -660,7 +660,7 @@ One line each. They are not this repo's differentiators; violating them is still
 | A decision with alternatives worth recording | a new `docs/adr/000N-*.md` in the existing voice: Context / Decision / Why / Consequences |
 | A deliverable whose gate passed | `docs/CHECKLIST.md` |
 | A doc added, renamed or retired | `docs/README.md` (the index); retired docs move to `docs/archive/` with a superseded-by header |
-| Anything with a plan doc | `docs/IMPLEMENTATION_PLAN.md` is the living plan — plan first, then code |
+| Anything with a plan doc | `docs/plans/IMPLEMENTATION_PLAN.md` is the living plan — plan first, then code |
 
 ---
 
@@ -683,11 +683,11 @@ Run top to bottom on every change.
 
 **Documentation (MUST — no exceptions)**
 - [ ] Any change to the API surface (new/changed endpoint, parameter, permission, error code,
-      provider, or behavior a caller can observe) updates **`docs/api-guide.html`** in the same
+      provider, or behavior a caller can observe) updates **`docs/guides/api-guide.html`** in the same
       change-set. The guide is self-indexing — nav, "On this page", and search all generate from
       the content — so adding/editing the `.ep` blocks in the right Part section is the whole job.
 - [ ] Architecture-level changes (a new module, store, filter, gateway stage, integration, or
-      delivery flow) update **`docs/system-diagram.html`** the same way.
+      delivery flow) update **`docs/guides/system-diagram.html`** the same way.
 
 **Data**
 - [ ] Correct base class (`BaseEntity` / `AggregateRoot` / `SoftDeletableEntity`).

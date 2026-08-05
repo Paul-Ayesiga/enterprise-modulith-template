@@ -1,7 +1,7 @@
 # perf — k6 load tests
 
 Committed, runnable [k6](https://k6.io) scripts that stress the platform against four scenario groups.
-The **plan, SLOs, and what to watch** live in [`docs/PERF_PLAN.md`](../docs/PERF_PLAN.md); this is the
+The **plan, SLOs, and what to watch** live in [`docs/plans/PERF_PLAN.md`](../docs/plans/PERF_PLAN.md); this is the
 operational quick-start.
 
 ## Prerequisites

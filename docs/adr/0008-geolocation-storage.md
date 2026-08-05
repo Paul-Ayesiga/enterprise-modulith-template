@@ -24,4 +24,4 @@ A later move to PostGIS is a **persistence-only** change, not a rewrite: enable 
 `geography` column backfilled from lat/lng, add a `PostgisGeoSearch` (`ST_DWithin`/GiST) and switch the
 bean, then contract. At that point geo becomes a documented Postgres seam in `docs/PORTING.md`. Until
 then, distance-ordered `near` results are deferred (bbox filtering covers "in this area"); very large
-datasets are the signal to execute the migration path (see `docs/GEOLOCATION_PLAN.md` §6).
+datasets are the signal to execute the migration path (see `docs/plans/GEOLOCATION_PLAN.md` §6).

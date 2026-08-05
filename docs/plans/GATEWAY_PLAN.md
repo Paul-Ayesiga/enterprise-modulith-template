@@ -2,7 +2,7 @@
 
 How we build the gateway **incrementally** — useful from the first slice, growing into a full edge
 platform. Design is in [GATEWAY_ARCHITECTURE.md](GATEWAY_ARCHITECTURE.md); the decision is
-[adr/0007-api-gateway.md](adr/0007-api-gateway.md). This is a **plan** — no gateway code exists yet;
+[adr/0007-api-gateway.md](../adr/0007-api-gateway.md). This is a **plan** — no gateway code exists yet;
 it is written to be approved before Phase 1 starts (the repo's plan-first rule).
 
 ## Sequencing rationale

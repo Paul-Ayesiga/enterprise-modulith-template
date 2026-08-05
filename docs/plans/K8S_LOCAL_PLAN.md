@@ -4,7 +4,7 @@
 > dev-Keycloak with the issuer/CoreDNS crux proven, the app via the chart (`/api/v1/me` 200 end to end),
 > and the production-feeling demo — a rolling `helm upgrade`, a pod kill, and a 3→5→3 scale under a live
 > request loop: **699/699 requests, zero 5xx**. Operator guide + the four bring-up commands:
-> [`../deploy/k3s-local/README.md`](../deploy/k3s-local/README.md). One deviation from the plan below: the
+> [`../deploy/k3s-local/README.md`](../../deploy/k3s-local/README.md). One deviation from the plan below: the
 > image loop shipped as `ctr`-import, not a registry (§1) — the registry stays documented as the alternative.
 
 ## 1. Goal & decisions

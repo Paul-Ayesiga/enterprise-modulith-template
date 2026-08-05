@@ -1,6 +1,6 @@
 # Build Checklist
 
-Living checklist for [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md). Checked = implemented **and**
+Living checklist for [IMPLEMENTATION_PLAN.md](plans/IMPLEMENTATION_PLAN.md). Checked = implemented **and**
 its acceptance gate verified. Updated as work lands — this file is the single place to see progress.
 
 ## Phase 0 — Platform skeleton ✅ (2026-07-27)
@@ -279,7 +279,7 @@ From [reviews/2026-08-01-code-audit.md](reviews/2026-08-01-code-audit.md); phase
 
 ## Localization module ✅ (2026-08-01)
 
-Slice 1 of [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md).
+Slice 1 of [NEXT_MODULES_PLAN.md](plans/NEXT_MODULES_PLAN.md).
 
 - [x] **V21** `translation` — soft-deletable (partial unique `(locale, msg_key)`), added to
       `PURGE_ORDER` (the metamodel-derivation test enforces the pairing)
@@ -299,7 +299,7 @@ Slice 1 of [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md).
 
 ## Search module ✅ (2026-08-01)
 
-Slice 2 of [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md).
+Slice 2 of [NEXT_MODULES_PLAN.md](plans/NEXT_MODULES_PLAN.md).
 
 - [x] **V22** `pg_trgm` + `search_document` — a rebuildable projection (deliberately NOT
       soft-deletable, the header argues it), GENERATED `tsv`, GIN on `tsv`, trigram GIN on titles
@@ -321,7 +321,7 @@ Slice 2 of [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md).
 
 ## Document module ✅ (2026-08-01)
 
-Slice 3 of [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md).
+Slice 3 of [NEXT_MODULES_PLAN.md](plans/NEXT_MODULES_PLAN.md).
 
 - [x] **V23** `document` — soft-deletable catalog over files-held keys (ninth soft-deletable,
       partial unique on `storage_key`), in `PURGE_ORDER`
@@ -344,7 +344,7 @@ Slice 3 of [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md).
 
 ## P8 — Customer support: tickets, SLAs, escalations ✅ (2026-08-01)
 
-Slice 8 (final) of [PLATFORM_EXPANSION_PLAN.md](PLATFORM_EXPANSION_PLAN.md) — the largest, landing
+Slice 8 (final) of [PLATFORM_EXPANSION_PLAN.md](plans/PLATFORM_EXPANSION_PLAN.md) — the largest, landing
 on finished ground (it consumes notifications, webhooks, the SLA seeder).
 
 - [x] **V36** ticket (soft-deletable, 20th) + ticket_message (append-only child, 9th intra-module
@@ -400,7 +400,7 @@ The three items left open by choice, now worked:
 
 ## P7 — Maintenance windows ✅ (2026-08-01)
 
-Slice 7 of [PLATFORM_EXPANSION_PLAN.md](PLATFORM_EXPANSION_PLAN.md); gates on nothing.
+Slice 7 of [PLATFORM_EXPANSION_PLAN.md](plans/PLATFORM_EXPANSION_PLAN.md); gates on nothing.
 
 - [x] **V35** maintenance_window (soft-deletable, 19th) — platform-wide (org_id null) or org-scoped;
       ANNOUNCE (banner) or RESTRICT (org writes → 503 + Retry-After for the time bounds)
@@ -415,7 +415,7 @@ Slice 7 of [PLATFORM_EXPANSION_PLAN.md](PLATFORM_EXPANSION_PLAN.md); gates on no
 
 ## P6 — Compliance: consent, legal holds, erasure ✅ (2026-08-01)
 
-Slice 6 of [PLATFORM_EXPANSION_PLAN.md](PLATFORM_EXPANSION_PLAN.md) — the one slice that changes an
+Slice 6 of [PLATFORM_EXPANSION_PLAN.md](plans/PLATFORM_EXPANSION_PLAN.md) — the one slice that changes an
 existing job (the purge must honor holds).
 
 - [x] **V34** consent_record (append-only), legal_hold (active-until-released), erasure_request —
@@ -437,7 +437,7 @@ existing job (the purge must honor holds).
 
 ## P5 — Integration hub ✅ (2026-08-01)
 
-Slice 5 of [PLATFORM_EXPANSION_PLAN.md](PLATFORM_EXPANSION_PLAN.md).
+Slice 5 of [PLATFORM_EXPANSION_PLAN.md](plans/PLATFORM_EXPANSION_PLAN.md).
 
 - [x] **V33** `integration` (soft-deletable, 18th) + `integration_setting` (element rows, cascade
       FK). One live per (scope, kind) via TWO partial unique indexes (org + platform-default —
@@ -454,7 +454,7 @@ Slice 5 of [PLATFORM_EXPANSION_PLAN.md](PLATFORM_EXPANSION_PLAN.md).
 
 ## P4 — Devices + org security policies ✅ (2026-08-01)
 
-Slice 4 of [PLATFORM_EXPANSION_PLAN.md](PLATFORM_EXPANSION_PLAN.md); one `access` module (the
+Slice 4 of [PLATFORM_EXPANSION_PLAN.md](plans/PLATFORM_EXPANSION_PLAN.md); one `access` module (the
 trusted-device gate is a policy that reads devices, so they live together).
 
 - [x] **V31** `user_device` (soft-deletable, 16th) — self-service, idempotent per (subject,
@@ -474,7 +474,7 @@ trusted-device gate is a policy that reads devices, so they live together).
 
 ## P3 — Org user groups ✅ (2026-08-01)
 
-Slice 3 of [PLATFORM_EXPANSION_PLAN.md](PLATFORM_EXPANSION_PLAN.md); lives entirely in the
+Slice 3 of [PLATFORM_EXPANSION_PLAN.md](plans/PLATFORM_EXPANSION_PLAN.md); lives entirely in the
 organization module.
 
 - [x] **V30** `org_group` (soft-deletable, FIFTEENTH; purged FIRST in PURGE_ORDER) + `org_group_member`
@@ -491,7 +491,7 @@ organization module.
 
 ## P2 — API keys ✅ (2026-08-01)
 
-Slice 2 of [PLATFORM_EXPANSION_PLAN.md](PLATFORM_EXPANSION_PLAN.md).
+Slice 2 of [PLATFORM_EXPANSION_PLAN.md](plans/PLATFORM_EXPANSION_PLAN.md).
 
 - [x] **V29** `api_key` (soft-deletable, FOURTEENTH — revocation IS the soft delete); `secret_hash`
       SHA-256 (hashed not encrypted: we only verify, never need the plaintext back); org keys carry
@@ -514,12 +514,12 @@ Slice 2 of [PLATFORM_EXPANSION_PLAN.md](PLATFORM_EXPANSION_PLAN.md).
       reading `WebhookEventType` itself (can never drift; no hardcoded `allowableValues`)
 - [x] Billing view lists the account's payment METHODS (read-only — adding one stays Kaui's /
       a KB payment plugin's job)
-- [x] **docs/api-guide.html** — self-contained tester guide: auth + axes + org switching, envelope,
+- [x] **docs/guides/api-guide.html** — self-contained tester guide: auth + axes + org switching, envelope,
       localized errors, cursors, rate limits, idempotency, and per-surface walkthroughs with
       sample data (tenant lifecycle, members + escalation 403, plans/entitlements, billing,
       documents, search, the full exchange import walkthrough with error report, webhook
       signature verification, audit, impersonation) + error-code table
-- [x] **docs/PLATFORM_EXPANSION_PLAN.md** — the strategy for the ten remaining workstreams
+- [x] **docs/plans/PLATFORM_EXPANSION_PLAN.md** — the strategy for the ten remaining workstreams
       (P1 profile → P2 api-keys → P3 groups → P4 devices+policies → P5 integration hub →
       P6 compliance → P7 maintenance → P8 support), models + endpoints + gates + V-numbers
 - [x] **P1 shipped — profile module (V28)**: `user_profile` (soft-deletable, THIRTEENTH) +
@@ -612,7 +612,7 @@ confirmed findings fixed in the same pass.
       (+ percentiles-histogram config); purge-silence alert rewritten as `absent_over_time`;
       filter order renumbered (impersonation −2 → org-MDC −1 → rate limit 0 → idempotency 1 →
       provisioning gate 2) so 429s and replays carry the tenant
-- [x] Platform tenant surface + lifecycle (docs/TENANT_LIFECYCLE.md): `GET /api/v1/admin/orgs`
+- [x] Platform tenant surface + lifecycle (docs/plans/TENANT_LIFECYCLE.md): `GET /api/v1/admin/orgs`
       (+`?status=`), `GET /{id}`, `GET /{id}/members`, `DELETE /{id}` (SUSPENDED-only, soft,
       audited, `OrganizationDeleted` → cache evict + `org.deleted` webhook; Keycloak org kept
       deliberately) — `AdminOrganizationApiTest`
@@ -631,7 +631,7 @@ confirmed findings fixed in the same pass.
 
 ## Observability pass ✅ (2026-08-01)
 
-Slice 5 of [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md) — numbers someone can alert on, plus the
+Slice 5 of [NEXT_MODULES_PLAN.md](plans/NEXT_MODULES_PLAN.md) — numbers someone can alert on, plus the
 dashboards to see them. (The plan's "RateLimit headers on success" item turned out already shipped
 by the audit remediation; verified, not re-done.)
 
@@ -659,7 +659,7 @@ by the audit remediation; verified, not re-done.)
 
 ## Exchange module ✅ (2026-08-01)
 
-Slice 4 of [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md) — the scale-first centerpiece. As-shipped
+Slice 4 of [NEXT_MODULES_PLAN.md](plans/NEXT_MODULES_PLAN.md) — the scale-first centerpiece. As-shipped
 deltas from the plan sketch: submit answers **202** (not 201 — the work is a background job), the
 surface is org-scoped (`/api/v1/orgs/{orgId}/exchange/**`), the SPI settled as
 `importRecord`/`export` with per-direction permissions, no `total` column (it would cost a full

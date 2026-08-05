@@ -2,7 +2,7 @@
 
 The platform's programmable front door. This document is the north star — *what the gateway is and
 the rules it obeys*. The phased build lives in [GATEWAY_PLAN.md](GATEWAY_PLAN.md); the decision record
-is [adr/0007-api-gateway.md](adr/0007-api-gateway.md).
+is [adr/0007-api-gateway.md](../adr/0007-api-gateway.md).
 
 > One line: a **stateless, reactive Spring Cloud Gateway**, built **hexagonally** — a generic core of
 > edge concepts that depends only on **ports**, with the platform plugging in through **adapters**.

@@ -2,7 +2,7 @@
 
 How we measure this platform under stress — the scenarios, the pass/fail gates (SLOs), what to watch
 while it runs, and how to run it. The load generator is **[k6](https://k6.io)**; the scripts live in
-[`perf/`](../perf) and are committed and runnable as-is.
+[`perf/`](../../perf) and are committed and runnable as-is.
 
 > **The one thing to know first.** The production `/api/v1/**` route is **rate-limited to 20 req/s per
 > principal** (burst 40). A single k6 box is one principal, so *throughput* scenarios can't push past
@@ -165,7 +165,7 @@ Leave the limit at its default (20/40) for `edge-enforcement.js` — shedding th
 
 ## How to run
 
-**Prerequisites:** the stack up (`make run` + `make gateway`, per [LOCAL_ACCESS](LOCAL_ACCESS.md)) and
+**Prerequisites:** the stack up (`make run` + `make gateway`, per [LOCAL_ACCESS](../LOCAL_ACCESS.md)) and
 k6 installed (`brew install k6`, or see [k6 install docs](https://grafana.com/docs/k6/latest/set-up/install-k6/)).
 
 ```bash

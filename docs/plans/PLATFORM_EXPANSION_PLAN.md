@@ -161,4 +161,4 @@ maintenance windows — it goes last so it lands on finished ground.
 Counts to bump each time a soft-deletable joins (AGENTS §4.1, DATA_MODEL §2.2/§5.1,
 `AnalyticsReport` javadoc, `PURGE_ORDER`); tag budget ≤8 per group (new controllers need
 OpenApiConfig map entries — flag each to the user); both-axes review (§14) before the gate;
-`docs/api-guide.html` gains a section per shipped slice.
+`docs/guides/api-guide.html` gains a section per shipped slice.
