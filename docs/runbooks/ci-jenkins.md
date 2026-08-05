@@ -118,6 +118,25 @@ first, then judge the tests.
 The image-build stage remains the heaviest part of the pipeline. If a build wedges the node again, that
 is the stage to suspect, and the fix is to build one image rather than both — or to build elsewhere.
 
+## A test that passes locally and fails only in CI
+
+Spring Boot changes defaults when it detects a cloud platform, and the build pod *is* one — so the
+agent can behave differently from your laptop for reasons that have nothing to do with the code. That is
+not theoretical: it is how `X-Forwarded-For` came to be trusted in Kubernetes and nowhere else, which
+made the blocklist evadable in production while every local run stayed green.
+
+Reproduce that class of failure in seconds instead of a 5-minute CI round trip — Spring detects
+Kubernetes purely from the environment:
+
+    KUBERNETES_SERVICE_HOST=10.43.0.1 KUBERNETES_SERVICE_PORT=443 \
+      ./gradlew :gateway:app:test --tests "*BlocklistTest*"
+
+The other half of the same trap: `gateway/app/src/test/resources/application.yml` **shadows** the shipped
+`src/main/resources/application.yml` on the test classpath. A security-relevant setting added only to the
+shipped file is silently absent under test, and the suite will happily prove a guarantee the product does
+not actually make. When you pin something there, mirror it — `ShippedRouteTableTest` guards the shipped
+file precisely because nothing else does.
+
 ## Recovery — cluster wedged during or after a build
 
 Run these from the VM (`ssh gopher@192.168.64.5`); the Mac's `kubectl` sometimes cannot reach `:6443`

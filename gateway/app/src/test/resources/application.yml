@@ -3,6 +3,13 @@ spring:
     name: gateway-test
 
 server:
+  # Mirrors the shipped application.yml, and must keep mirroring it. This file SHADOWS the real one on the
+  # test classpath, so anything security-relevant that is only set there is silently absent under test.
+  # That is not hypothetical: BlocklistTest asserts a spoofed X-Forwarded-For buys nothing, and it passed
+  # on a laptop while failing in the CI pod — because Spring derives this strategy from the detected cloud
+  # platform when it is unset, so the test only told the truth where a platform happened to be detected.
+  # Pinned here so the suite exercises the production posture everywhere it runs.
+  forward-headers-strategy: none
   compression:
     enabled: true
     mime-types: application/json,text/plain
