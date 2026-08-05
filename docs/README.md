@@ -20,6 +20,7 @@ document is.
 |---|---|
 | [SRS.md](SRS.md) | Requirements with stable IDs, external interfaces, NFRs, and traceability to the tests that verify them |
 | [DATA_MODEL.md](DATA_MODEL.md) | Every table, column, index and invariant; migration history; lifecycle and retention |
+| [erd/schema.dbml](erd/schema.dbml) | The full schema as dbdiagram.io DBML — 52 tables, real FKs + tenant/soft-ref relationships, per-module groups; generated from the applied migrations, import to visualize |
 | [EVENTS.md](EVENTS.md) | Domain event catalog: publishers, payloads, consumers, idempotency keys |
 | [SLO.md](SLO.md) | Service-level objectives: the promise, the exact measuring expression, the error budget, the discipline when it runs out |
 | [runbooks/](runbooks/) | One runbook per provisioned alert — what fired, first five minutes, diagnosis, remediation — plus the restore/DR drill |
