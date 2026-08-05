@@ -1,0 +1,133 @@
+# Jenkins controller on the local k3s cluster — self-hosted CI (no GitHub-hosted minutes). The controller
+# runs here; build work runs in on-demand agent pods spawned by the Kubernetes plugin (see the Jenkinsfile).
+# Browse http://jenkins.smsone.local (add to the Mac's /etc/hosts) or port-forward svc/jenkins 8080:8080.
+#
+# NOTE (RAM): the controller is light (~0.7 GB); real builds (Gradle + Testcontainers, or kaniko image
+# builds) need ~1.5–2 GB in an agent pod — tight on an 8 GB VM alongside the app + Argo. Bump the VM or use
+# an external/beefier agent for heavy builds.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: jenkins
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: jenkins
+  namespace: jenkins
+---
+# The Kubernetes plugin needs to create/manage agent pods in this namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: jenkins-agents
+  namespace: jenkins
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/exec", "pods/log"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets", "configmaps"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jenkins-agents
+  namespace: jenkins
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: jenkins-agents
+subjects:
+  - kind: ServiceAccount
+    name: jenkins
+    namespace: jenkins
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jenkins-home
+  namespace: jenkins
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 6Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jenkins
+  namespace: jenkins
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate            # single RWO PVC
+  selector:
+    matchLabels:
+      app: jenkins
+  template:
+    metadata:
+      labels:
+        app: jenkins
+    spec:
+      serviceAccountName: jenkins
+      securityContext:
+        runAsUser: 1000
+        fsGroup: 1000          # own /var/jenkins_home on the PVC
+      containers:
+        - name: jenkins
+          image: jenkins/jenkins:lts-jdk21
+          env:
+            - name: JAVA_OPTS
+              value: "-Djenkins.install.runSetupWizard=true -Xmx768m"
+          ports:
+            - { containerPort: 8080, name: http }
+            - { containerPort: 50000, name: agent }
+          volumeMounts:
+            - name: home
+              mountPath: /var/jenkins_home
+          readinessProbe:
+            httpGet: { path: /login, port: 8080 }
+            initialDelaySeconds: 40
+            periodSeconds: 10
+            failureThreshold: 30
+          resources:
+            requests: { cpu: 250m, memory: 640Mi }
+            limits: { memory: 1200Mi }
+      volumes:
+        - name: home
+          persistentVolumeClaim:
+            claimName: jenkins-home
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jenkins
+  namespace: jenkins
+spec:
+  selector:
+    app: jenkins
+  ports:
+    - { name: http, port: 8080, targetPort: 8080 }
+    - { name: agent, port: 50000, targetPort: 50000 }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jenkins
+  namespace: jenkins
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: jenkins.smsone.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: jenkins
+                port:
+                  number: 8080

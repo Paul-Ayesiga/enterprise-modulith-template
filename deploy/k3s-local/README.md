@@ -84,7 +84,7 @@ Application) + [`../../scripts/k3s-argocd.sh`](../../scripts/k3s-argocd.sh).
 - **Ingress (persistent, recommended)** — add the host to the Mac's `/etc/hosts` once (all hosts on one
   line), then browse **http://argocd.smsone.local**:
   ```bash
-  echo "192.168.64.5  api.smsone.local auth.smsone.local argocd.smsone.local" | sudo tee -a /etc/hosts
+  echo "192.168.64.5  api.smsone.local auth.smsone.local argocd.smsone.local jenkins.smsone.local" | sudo tee -a /etc/hosts
   ```
 - **Port-forward (no /etc/hosts)** — run this **on the Mac** (not in the VM's SSH session) and leave it
   open, then browse **http://localhost:8080**:
@@ -128,6 +128,35 @@ Application ([`../argocd/application.yaml`](../argocd/application.yaml), `target
 — zero-downtime, no cluster credentials in CI. Activate it by running Argo on your prod cluster and applying
 that Application (the local loop already runs the same way against `values-local.yaml`). Requires the
 github-actions bot to be allowed to push to `main`.
+
+## Self-hosted CI with Jenkins
+
+Run CI on your own cluster instead of GitHub-hosted runners (no per-minute bill). `scripts/k3s-jenkins.sh`
+installs a Jenkins controller ([`jenkins/jenkins.yaml`](jenkins/jenkins.yaml)); the pipeline is the repo's
+[`Jenkinsfile`](../../Jenkinsfile) — it mirrors the GitHub Actions CI (**test → build+push images → GitOps
+image-tag bump**) in an on-demand agent pod with a Docker-in-Docker sidecar (so Testcontainers and
+`bootBuildImage` get a Docker daemon).
+
+```bash
+make k3s-jenkins     # install the controller + print the initial admin password
+```
+
+Open **http://jenkins.smsone.local** (or `kubectl -n jenkins port-forward svc/jenkins 8080:8080`), then finish
+the one-time setup in the UI:
+
+1. Unlock with the printed password; install the **suggested plugins** + **Kubernetes** + **Pipeline: SCM step**.
+2. **Manage Jenkins → Clouds → New cloud → Kubernetes** (in-cluster; Jenkins namespace `jenkins`).
+3. **Credentials** — add two: `ghcr` (username + a GHCR PAT with `write:packages`) and `git-push` (an SSH
+   private key allowed to push to `main`, for the GitOps bump).
+4. **New Item → Pipeline** (or Multibranch) → *Pipeline script from SCM* → this repo → script path `Jenkinsfile`.
+   SCM polling picks up pushes within ~5 min (a laptop Jenkins can't receive GitHub webhooks).
+
+**RAM:** the build agent wants ~2 GB; on an 8 GB VM alongside the app + Argo that's tight — give the VM more
+memory or use an external agent before relying on it for every push.
+
+**Handing off from GitHub Actions:** CI's expensive jobs (image build + GitOps bump) now run only when the
+repo variable `USE_GITHUB_ACTIONS_CD` is `true` (default off), and doc-only changes skip CI entirely — so
+GitHub stops billing. Delete `.github/workflows/ci.yml` once you trust Jenkins for everything.
 
 ## Teardown
 
