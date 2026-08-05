@@ -3,7 +3,9 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore: ["docs/**", "**/*.md"]   # doc-only changes don't burn CI minutes
   pull_request:
+    paths-ignore: ["docs/**", "**/*.md"]
   workflow_dispatch:
 
 permissions:
@@ -96,7 +98,9 @@ jobs:
   # the portals from their Dockerfiles. Tags: the commit SHA (immutable — what Helm deploys pin)
   # plus a moving `main`.
   publish-images:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Off by default now that Jenkins builds/deploys (see Jenkinsfile). Set the repo variable
+    # USE_GITHUB_ACTIONS_CD=true to run image build + GitOps bump on GitHub-hosted runners instead.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.USE_GITHUB_ACTIONS_CD == 'true'
     needs: [backend-tests, portal-build]
     runs-on: ubuntu-latest
     permissions:
@@ -140,7 +144,9 @@ jobs:
   # docs/guides/cicd-gitops-and-cluster.html. Needs the Actions bot allowed to push to main; otherwise the push is a
   # no-op with a warning (nothing else breaks).
   gitops-bump:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Off by default now that Jenkins builds/deploys (see Jenkinsfile). Set the repo variable
+    # USE_GITHUB_ACTIONS_CD=true to run image build + GitOps bump on GitHub-hosted runners instead.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.USE_GITHUB_ACTIONS_CD == 'true'
     needs: [publish-images]
     runs-on: ubuntu-latest
     permissions:

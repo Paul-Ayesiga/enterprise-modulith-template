@@ -151,7 +151,7 @@ multi-token: ## Mint a demo bearer token IN-NETWORK (issuer keycloak:8080, so th
 multi-down: ## Stop the multi-instance stack (keeps the base infra + volumes)
 	@$(MULTI) down
 
-.PHONY: k3s-kubeconfig k3s-images k3s-up k3s-demo k3s-token k3s-argocd
+.PHONY: k3s-kubeconfig k3s-images k3s-up k3s-demo k3s-token k3s-argocd k3s-jenkins
 
 k3s-kubeconfig: ## k3s(local): fetch + rewrite the VM kubeconfig -> ~/.kube/smsone-k3s.yaml
 	@scripts/k3s-kubeconfig.sh
@@ -170,3 +170,6 @@ k3s-token: ## k3s(local): print a dev token via the ingress (needs auth.smsone.l
 
 k3s-argocd: ## k3s(local): install Argo CD + GitOps the chart — then deploy by committing to Git
 	@scripts/k3s-argocd.sh
+
+k3s-jenkins: ## k3s(local): install a self-hosted Jenkins controller (CI without GitHub-hosted minutes)
+	@scripts/k3s-jenkins.sh
