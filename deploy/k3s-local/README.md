@@ -63,9 +63,27 @@ is rolling updates + readiness probes.
   `k3s ctr images import`, and the chart pulls with `imagePullPolicy: Never`. Zero extra infra. The
   registry alternative (closer to prod) is [`registries.yaml`](registries.yaml).
 
+## GitOps with Argo CD (optional)
+
+Turn "deploy" into "commit to Git." `scripts/k3s-argocd.sh` installs Argo CD, adds a **read-only deploy
+key** so it can clone this private repo, and creates an Application
+([`argocd/application.yaml`](argocd/application.yaml)) that keeps the `smsone` namespace reconciled to
+`deploy/helm/smsone` + `values-local.yaml`.
+
+```bash
+make k3s-argocd                                            # install Argo + point it at the chart (prints admin pw)
+kubectl -n argocd port-forward svc/argocd-server 8080:80   # UI at http://localhost:8080 (user: admin)
+```
+
+After this you **deploy by committing**: change `values-local.yaml` (say `modulith.replicas`), push, and
+Argo applies it — within ~3 min, or force it with
+`kubectl -n argocd annotate application smsone argocd.argoproj.io/refresh=hard --overwrite`. Argo also
+**self-heals drift** — a manual `helm --set` or `kubectl edit` is reverted to what Git says. Switch the
+Application's `targetRevision` to `main` once the k3s PR merges.
+
 ## Teardown
 
 ```bash
-helm uninstall smsone -n smsone            # the app
+helm uninstall smsone -n smsone            # the app (if still Helm-managed; skip once Argo owns it)
 kubectl delete -f infra/ ; kubectl delete ns smsone   # state + dev-Keycloak (drops PVC data)
 ```
