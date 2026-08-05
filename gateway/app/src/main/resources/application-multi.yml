@@ -27,3 +27,16 @@ gateway:
         rate-limited: true
         retries: 2             # GET/5xx or a dead connection → re-run the LB filter → a different instance
         circuit-breaker: true  # a run of 5xx opens the circuit → forward:/__fallback (503) while it heals
+    # `policies` is a map, so this merges with application.yml rather than replacing it — but a key
+    # redefined here wins. Restated so the public routes get the same failover behaviour as edge-api on
+    # this profile; without it, signup and the provider callbacks would be the only paths in the
+    # multi-instance demo with no retries and no circuit breaker.
+    edge-public:
+      auth:
+        authenticated: false
+      traffic:
+        response-timeout-ms: 15000
+        max-request-bytes: 65536
+        rate-limited: true
+        retries: 2
+        circuit-breaker: true

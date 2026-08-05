@@ -116,6 +116,23 @@ gateway:
         response-timeout-ms: 15000
         max-request-bytes: 10485760   # 10 MB
         rate-limited: true
+    # The pre-authentication surface. These callers cannot hold a token by nature — a prospect signing up
+    # has no account yet, and Pesapal / Kill Bill are external systems that never see one — so demanding a
+    # JWT here contradicted the modulith, which deliberately permits the very same paths. Before this
+    # existed they fell through to the `platform-api` catch-all and every one of them answered 401.
+    #
+    # This is NOT authorization being dropped; it is moved to where the caller can actually be judged:
+    # signup is feature-flagged and enumeration-safe, the Kill Bill hook compares a shared token in
+    # constant time, and the Pesapal handlers only trigger a server-side re-query, so a forged ping is
+    # inert. The traffic guards stay ON and get *tighter* — an unauthenticated path is precisely the one
+    # that most needs a rate limit and the smallest body it can accept.
+    edge-public:
+      auth:
+        authenticated: false
+      traffic:
+        response-timeout-ms: 15000
+        max-request-bytes: 65536      # 64 KB — small JSON posts, never uploads
+        rate-limited: true
   # API products — how the route surface is grouped for the developer portal / onboarding. A route joins
   # a product by its `product:` label; the name/description below are what the catalog (and portal) show.
   products:
@@ -151,6 +168,31 @@ gateway:
   # matches its product's path prefixes and shares the `edge-api` policy. A request takes the most specific
   # route by `order`; the `platform-api` catch-all (highest order) keeps any ungrouped path working.
   routes:
+    # Public routes first. Order matters and is the whole bug: these paths are ordinary /api/v1/… strings,
+    # so without a route of their own they were swallowed by the `platform-api` catch-all (order 100) and
+    # its authenticated policy. Keep them below every other order.
+    - id: signup-api
+      order: 5
+      service-id: modulith
+      product: identity
+      policy-ref: edge-public
+      predicates:
+        - kind: PATH
+          args:
+            # Mirrors the modulith's own permitAll list exactly — POST /signup, GET+POST /signup/verify.
+            - /api/v1/signup
+            - /api/v1/signup/verify
+    - id: provider-callbacks
+      order: 6
+      service-id: modulith
+      product: platform
+      policy-ref: edge-public
+      predicates:
+        - kind: PATH
+          args:
+            - /api/v1/payments/pesapal/ipn
+            - /api/v1/payments/pesapal/callback
+            - /api/v1/billing/killbill/notifications
     - id: identity-api
       order: 10
       service-id: modulith
