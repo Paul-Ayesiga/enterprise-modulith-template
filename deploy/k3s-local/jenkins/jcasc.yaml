@@ -1,0 +1,112 @@
+# Jenkins Configuration as Code -- the whole controller setup that used to be four rounds of clicking in
+# the setup wizard (admin user, Kubernetes cloud, credentials, job). Applied at boot by the
+# configuration-as-code plugin; the wizard is switched off in jenkins.yaml.
+#
+# ${VAR} references come from the `jenkins-secrets` Secret via envFrom (scripts/k3s-jenkins.sh creates it).
+# Anything with a `:-` fallback is optional at boot -- Jenkins starts, and the pipeline stage that needs the
+# missing credential is the thing that fails, rather than the whole controller.
+#
+# After editing: `make k3s-jenkins` (re-applies the ConfigMap and restarts the controller). Jenkins treats
+# this file as the source of truth, so UI changes to anything configured here are overwritten on restart.
+
+jenkins:
+  systemMessage: |
+    Configured by JCasC from deploy/k3s-local/jenkins/jcasc.yaml -- edit that file, not this UI.
+    Changes made here are lost on the next controller restart.
+
+  # The controller schedules only; every build runs in an agent pod from the `k3s` cloud below.
+  numExecutors: 0
+  mode: EXCLUSIVE
+  slaveAgentPort: 50000
+
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "admin"
+          password: "${JENKINS_ADMIN_PASSWORD}"
+
+  authorizationStrategy:
+    loggedInUsersCanDoAnything:
+      allowAnonymousRead: false
+
+  clouds:
+    - kubernetes:
+        name: "k3s"
+        # In-cluster: the ServiceAccount token is picked up automatically, so no credentials here.
+        serverUrl: "https://kubernetes.default.svc"
+        namespace: "jenkins"
+        # Agents dial back on the Service DNS name, not the ingress host -- the ingress is Mac-side only.
+        jenkinsUrl: "http://jenkins.jenkins.svc.cluster.local:8080"
+        jenkinsTunnel: "jenkins.jenkins.svc.cluster.local:50000"
+        # An 8 GB VM fits about one ~2 GB build pod at a time next to the app + Argo; 2 is the ceiling
+        # before the node starts evicting, and disableConcurrentBuilds() in the Jenkinsfile keeps it at 1.
+        containerCapStr: "2"
+        connectTimeout: 60
+        readTimeout: 60
+        retentionTimeout: 5
+
+security:
+  # The build pod is fresh every time, so github.com is never in a known_hosts file. Without this the
+  # multibranch checkout fails host key verification on the very first fetch.
+  gitHostKeyVerificationConfiguration:
+    sshHostKeyVerificationStrategy: "acceptFirstConnectionStrategy"
+
+credentials:
+  system:
+    domainCredentials:
+      - credentials:
+          - usernamePassword:
+              scope: GLOBAL
+              id: "ghcr"
+              description: "GHCR image push -- GitHub username + PAT with write:packages"
+              username: "${GHCR_USER:-unset}"
+              password: "${GHCR_PAT:-unset}"
+          - basicSSHUserPrivateKey:
+              scope: GLOBAL
+              id: "git-push"
+              description: "SSH key that may push to main -- private repo checkout + the GitOps tag bump"
+              username: "git"
+              privateKeySource:
+                directEntry:
+                  privateKey: "${GIT_PUSH_KEY:-}"
+
+unclassified:
+  location:
+    url: "http://jenkins.smsone.local/"
+    adminAddress: "jenkins@smsone.local"
+
+jobs:
+  # Multibranch, not a plain Pipeline job, and that distinction matters: the Jenkinsfile gates two stages on
+  # `when { branch 'main' }`, which reads env.BRANCH_NAME. Only multibranch sets it -- under a plain Pipeline
+  # job those stages would silently skip on every build.
+  - script: |
+      multibranchPipelineJob('enterprise-modulith-template') {
+        description('Self-hosted CI for the modulith + gateway. Defined in deploy/k3s-local/jenkins/jcasc.yaml.')
+        branchSources {
+          git {
+            id('emt-origin')
+            // SSH, because the repo is private -- reuses the same key the GitOps bump pushes with.
+            remote('git@github.com:Paul-Ayesiga/enterprise-modulith-template.git')
+            credentialsId('git-push')
+            includes('main')
+          }
+        }
+        factory {
+          workflowBranchProjectFactory {
+            scriptPath('Jenkinsfile')
+          }
+        }
+        orphanedItemStrategy {
+          discardOldItems {
+            numToKeep(10)
+          }
+        }
+        triggers {
+          // A laptop Jenkins can't receive GitHub webhooks, so it scans instead. Matches the
+          // pollSCM('H/5 * * * *') cadence the Jenkinsfile declares.
+          periodicFolderTrigger {
+            interval('5m')
+          }
+        }
+      }

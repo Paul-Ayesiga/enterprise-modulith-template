@@ -2,9 +2,17 @@
 # runs here; build work runs in on-demand agent pods spawned by the Kubernetes plugin (see the Jenkinsfile).
 # Browse http://jenkins.smsone.local (add to the Mac's /etc/hosts) or port-forward svc/jenkins 8080:8080.
 #
-# NOTE (RAM): the controller is light (~0.7 GB); real builds (Gradle + Testcontainers, or kaniko image
-# builds) need ~1.5–2 GB in an agent pod — tight on an 8 GB VM alongside the app + Argo. Bump the VM or use
-# an external/beefier agent for heavy builds.
+# There is no setup wizard: plugins come from plugins.txt (installed by an initContainer) and the entire
+# controller config — admin user, Kubernetes cloud, credentials, the pipeline job — comes from jcasc.yaml.
+# The wizard is a one-shot, click-through, unversioned state machine that leaves nothing behind in Git, and
+# it strands the controller with zero plugins if its plugin download is ever interrupted.
+#
+# APPLY WITH scripts/k3s-jenkins.sh, not `kubectl apply -f` on its own: the script builds the ConfigMap from
+# plugins.txt + jcasc.yaml and creates the `jenkins-secrets` Secret this Deployment reads.
+#
+# NOTE (RAM): the controller is light (~0.9 GB with these plugins); real builds (Gradle + Testcontainers, or
+# bootBuildImage) need ~1.5–2 GB in an agent pod — tight on an 8 GB VM alongside the app + Argo. Bump the VM
+# or use an external/beefier agent for heavy builds.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -76,30 +84,74 @@ spec:
       securityContext:
         runAsUser: 1000
         fsGroup: 1000          # own /var/jenkins_home on the PVC
+      initContainers:
+        # Installs plugins.txt into the PVC before the controller starts, so Jenkins boots with every plugin
+        # already present and never has to talk to the update centre interactively. Re-runs only when
+        # plugins.txt changes: the checksum marker keeps ordinary pod restarts from re-downloading the whole
+        # set (~80 jpi once dependencies are resolved), and from needing the network at all.
+        - name: install-plugins
+          image: jenkins/jenkins:lts-jdk21
+          command: ["bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              want="$(md5sum /config/plugins.txt | cut -d' ' -f1)"
+              marker=/var/jenkins_home/.plugins-installed
+              if [ -f "$marker" ] && [ "$(cat "$marker")" = "$want" ]; then
+                echo "plugins already match plugins.txt ($want) — skipping download"
+                exit 0
+              fi
+              echo "installing plugins from plugins.txt ($want)"
+              jenkins-plugin-cli \
+                --plugin-file /config/plugins.txt \
+                --plugin-download-directory /var/jenkins_home/plugins \
+                --latest true
+              echo "$want" > "$marker"
+          volumeMounts:
+            - { name: home, mountPath: /var/jenkins_home }
+            - { name: config, mountPath: /config }
+          resources:
+            requests: { cpu: 200m, memory: 256Mi }
+            limits: { memory: 768Mi }
       containers:
         - name: jenkins
           image: jenkins/jenkins:lts-jdk21
           env:
+            # runSetupWizard=false is the point of all this — JCasC owns the config instead.
+            # MaxMetaspaceSize is bounded on purpose: ~80 plugins push metaspace hard, and left unbounded it
+            # grows past the container limit and the pod is OOMKilled rather than throwing a JVM error.
             - name: JAVA_OPTS
-              value: "-Djenkins.install.runSetupWizard=true -Xmx768m"
+              value: >-
+                -Djenkins.install.runSetupWizard=false
+                -Xmx768m
+                -XX:MaxMetaspaceSize=300m
+            - name: CASC_JENKINS_CONFIG
+              value: /config/jcasc.yaml
+          envFrom:
+            # Admin password + the ghcr / git-push credential values that jcasc.yaml interpolates.
+            - secretRef:
+                name: jenkins-secrets
           ports:
             - { containerPort: 8080, name: http }
             - { containerPort: 50000, name: agent }
           volumeMounts:
-            - name: home
-              mountPath: /var/jenkins_home
+            - { name: home, mountPath: /var/jenkins_home }
+            - { name: config, mountPath: /config }
           readinessProbe:
             httpGet: { path: /login, port: 8080 }
             initialDelaySeconds: 40
             periodSeconds: 10
             failureThreshold: 30
           resources:
-            requests: { cpu: 250m, memory: 640Mi }
-            limits: { memory: 1200Mi }
+            requests: { cpu: 250m, memory: 768Mi }
+            limits: { memory: 1400Mi }
       volumes:
         - name: home
           persistentVolumeClaim:
             claimName: jenkins-home
+        - name: config
+          configMap:
+            name: jenkins-config     # built from plugins.txt + jcasc.yaml by scripts/k3s-jenkins.sh
 ---
 apiVersion: v1
 kind: Service

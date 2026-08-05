@@ -168,22 +168,45 @@ installs a Jenkins controller ([`jenkins/jenkins.yaml`](jenkins/jenkins.yaml)); 
 image-tag bump**) in an on-demand agent pod with a Docker-in-Docker sidecar (so Testcontainers and
 `bootBuildImage` get a Docker daemon).
 
+There is **no setup wizard**. Plugins come from [`jenkins/plugins.txt`](jenkins/plugins.txt) and the entire
+controller config — admin user, Kubernetes cloud, credentials, and the pipeline job — comes from
+[`jenkins/jcasc.yaml`](jenkins/jcasc.yaml), applied at boot by the Configuration-as-Code plugin. Jenkins comes
+up ready to build, and it comes up the same way every time, including after a PVC wipe.
+
 ```bash
-make k3s-jenkins     # install the controller + print the initial admin password
+# first run: pass the CI credentials and there is nothing left to do by hand
+GHCR_USER=<github-user> GHCR_PAT=<PAT with write:packages> \
+  GIT_PUSH_KEY_FILE=~/.ssh/id_ed25519 make k3s-jenkins
 ```
 
-Open **http://jenkins.smsone.local** (or `kubectl -n jenkins port-forward svc/jenkins 8080:8080`), then finish
-the one-time setup in the UI:
+Omit those and the install still succeeds — it stores placeholders, prints what is missing, and the build
+stages that need them fail until you fill them in. The script prints the generated admin password; it is
+idempotent, so re-run it after editing `plugins.txt` or `jcasc.yaml` and it re-applies and restarts.
 
-1. Unlock with the printed password; install the **suggested plugins** + **Kubernetes** + **Pipeline: SCM step**.
-2. **Manage Jenkins → Clouds → New cloud → Kubernetes** (in-cluster; Jenkins namespace `jenkins`).
-3. **Credentials** — add two: `ghcr` (username + a GHCR PAT with `write:packages`) and `git-push` (an SSH
-   private key allowed to push to `main`, for the GitOps bump).
-4. **New Item → Pipeline** (or Multibranch) → *Pipeline script from SCM* → this repo → script path `Jenkinsfile`.
-   SCM polling picks up pushes within ~5 min (a laptop Jenkins can't receive GitHub webhooks).
+Open **http://jenkins.smsone.local** (or `kubectl -n jenkins port-forward svc/jenkins 8080:8080`) and log in
+as `admin`. The job `enterprise-modulith-template` is already there, scanning `main` every 5 minutes (a
+laptop Jenkins can't receive GitHub webhooks).
+
+> **`jcasc.yaml` is the source of truth.** Anything it configures — the cloud, the credentials, the job — is
+> rewritten from that file on every restart, so change it in Git, not in the UI.
+
+### Wiring the CI credentials
+
+Both live in the `jenkins-secrets` Secret (never in Git). To set or rotate them:
+
+```bash
+kubectl -n jenkins delete secret jenkins-secrets
+JENKINS_ADMIN_PASSWORD=<keep-your-current-one> \
+  GHCR_USER=<github-user> GHCR_PAT=<PAT with write:packages> \
+  GIT_PUSH_KEY_FILE=~/.ssh/id_ed25519 make k3s-jenkins
+```
+
+- **`ghcr`** — GitHub username + a PAT with `write:packages`, to push images.
+- **`git-push`** — an SSH private key allowed to push to `main`. Used twice: the repo is private, so it also
+  authenticates the checkout. Add the matching public key as a deploy key (with write access) on GitHub.
 
 **RAM:** the build agent wants ~2 GB; on an 8 GB VM alongside the app + Argo that's tight — give the VM more
-memory or use an external agent before relying on it for every push.
+memory or use an external agent before relying on it for every push. The cloud caps itself at 2 agent pods.
 
 **Handing off from GitHub Actions:** CI's expensive jobs (image build + GitOps bump) now run only when the
 repo variable `USE_GITHUB_ACTIONS_CD` is `true` (default off), and doc-only changes skip CI entirely — so

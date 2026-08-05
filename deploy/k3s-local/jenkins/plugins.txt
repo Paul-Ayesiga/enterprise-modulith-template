@@ -1,0 +1,32 @@
+# Plugins installed into the controller by the `install-plugins` initContainer (jenkins-plugin-cli).
+# Versions are deliberately unpinned: the CLI resolves the newest release compatible with the core in
+# jenkins.yaml, which is what you want on a template that tracks `lts-jdk21`. Pin `name:version` here if a
+# build ever needs to be byte-reproducible.
+#
+# Editing this file changes its checksum, which is what makes the initContainer re-run (see jenkins.yaml).
+# Keep comments on their own line -- the CLI treats a whole line as a plugin id.
+
+# Provisioning -- this is what replaces the setup wizard.
+# configuration-as-code reads jcasc.yaml; job-dsl backs its `jobs:` block.
+configuration-as-code
+job-dsl
+
+# What the Jenkinsfile actually calls.
+# kubernetes            -> agent { kubernetes { yaml ... } }, the on-demand build pods
+# workflow-aggregator   -> declarative pipeline suite, including multibranch
+# git                   -> SCM plus the multibranch git branch source
+# credentials-binding   -> withCredentials(usernamePassword(...))
+# ssh-credentials       -> withCredentials(sshUserPrivateKey(...)) for the GitOps push
+# junit                 -> the junit step in the Test stage
+# ws-cleanup            -> cleanWs() in post
+kubernetes
+workflow-aggregator
+git
+credentials-binding
+ssh-credentials
+junit
+ws-cleanup
+
+# Quality of life: timestamps in console output, per-stage timing on the job page.
+timestamper
+pipeline-stage-view
