@@ -15,7 +15,7 @@ spec:
   project: default
   source:
     repoURL: git@github.com:Paul-Ayesiga/enterprise-modulith-template.git
-    targetRevision: feat/k3s-local
+    targetRevision: main
     path: deploy/helm/smsone
     helm:
       valueFiles: [values-local.yaml]
