@@ -1,0 +1,969 @@
+// ===================================================================
+// SMSOne Enterprise Modulith — full database schema (dbdiagram.io / DBML)
+// Generated from the 47 applied Flyway migrations (V1–V47). 52 tables.
+// Import: dbdiagram.io → New → Import → paste this file (or Import DBML).
+// ===================================================================
+
+Project smsone {
+  database_type: 'PostgreSQL'
+  Note: '''
+  Enterprise Spring Modulith template. Postgres is the system of record.
+  RELATIONSHIPS: only 10 real foreign keys exist — all INTRA-module (a parent and its
+  child rows in the same module). CROSS-module links are SOFT references, never FKs:
+  `org_id` (uuid) → organization.kc_org_id (the tenant/Keycloak org), and
+  `user_subject`/`subject` (varchar) → app_user.subject. Those are drawn here as
+  coloured refs so the tenant hub is visible, but the database enforces no FK on them.
+  '''
+}
+
+Table org_security_policy {
+  id uuid [pk]
+  org_id uuid [not null]
+  ip_allowlist text
+  require_trusted_device boolean [not null, default: false]
+  session_max_age_seconds bigint
+  version bigint [not null]
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  deleted_at timestamptz
+  require_mfa boolean [not null, default: false]
+  indexes {
+    org_id [unique, note: 'partial: live rows', name: 'uq_org_security_policy_org_live']
+  }
+  Note: 'access module'
+}
+
+Table api_key {
+  id uuid [pk]
+  org_id uuid
+  name varchar(100) [not null]
+  prefix varchar(20) [not null]
+  secret_hash varchar(64) [not null]
+  permissions text
+  platform_tier varchar(30)
+  expires_at timestamptz
+  last_used_at timestamptz
+  version bigint [not null]
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  deleted_at timestamptz
+  indexes {
+    prefix [unique, note: 'partial: live rows', name: 'uq_api_key_prefix_live']
+  }
+  Note: 'apikeys module'
+}
+
+Table audit_log {
+  id uuid [pk]
+  org_id uuid
+  action varchar(80) [not null]
+  actor varchar(64)
+  target varchar(320)
+  occurred_at timestamptz [not null]
+  version bigint [not null]
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  from_state varchar(1000)
+  to_state varchar(1000)
+  on_behalf_of varchar(64)
+  impersonation_id uuid
+  Note: 'audit module'
+}
+
+Table billing_account {
+  id uuid [pk]
+  org_id uuid [not null]
+  kb_account_id uuid [not null]
+  version bigint [not null]
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  deleted_at timestamptz
+  indexes {
+    org_id [unique, note: 'partial: live rows', name: 'uq_billing_account_org_live']
+  }
+  Note: 'billing module'
+}
+
+Table consent_record {
+  id uuid [pk]
+  subject varchar(64) [not null]
+  purpose varchar(60) [not null]
+  granted boolean [not null]
+  source varchar(60)
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  Note: 'compliance module'
+}
+
+Table erasure_request {
+  id uuid [pk]
+  subject varchar(64) [not null]
+  requested_by varchar(100) [not null]
+  status varchar(20) [not null]
+  detail varchar(300)
+  created_at timestamptz [not null]
+  updated_at timestamptz
+  Note: 'compliance module'
+}
+
+Table legal_hold {
+  id uuid [pk]
+  scope varchar(10) [not null]
+  subject varchar(64)
+  org_id uuid
+  reason varchar(300) [not null]
+  placed_by varchar(100) [not null]
+  placed_at timestamptz [not null]
+  released_at timestamptz
+  released_by varchar(100)
+  Note: 'compliance module'
+}
+
+Table document {
+  id uuid [pk]
+  org_id uuid
+  owner_subject varchar(64) [not null]
+  storage_key varchar(300) [not null]
+  name varchar(255) [not null]
+  content_type varchar(100) [not null]
+  size_bytes bigint [not null]
+  source varchar(20) [not null]
+  version bigint [not null]
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  deleted_at timestamptz
+  indexes {
+    storage_key [unique, note: 'partial: live rows', name: 'uq_document_storage_key']
+  }
+  Note: 'document module'
+}
+
+Table exchange_job {
+  id uuid [pk]
+  org_id uuid [not null]
+  requester varchar(64) [not null]
+  job_type varchar(10) [not null]
+  handler varchar(60) [not null]
+  format varchar(10) [not null]
+  status varchar(30) [not null]
+  source_key varchar(300)
+  result_key varchar(300)
+  error_report_key varchar(300)
+  processed bigint [not null, default: 0]
+  failed bigint [not null, default: 0]
+  next_offset bigint [not null, default: 0]
+  attempts integer [not null, default: 0]
+  cancel_requested boolean [not null, default: false]
+  locked_at timestamptz
+  last_error text
+  created_at timestamptz [not null]
+  updated_at timestamptz
+  handler_version integer [not null, default: 1]
+  Note: 'exchange module'
+}
+
+Table exchange_job_error {
+  job_id uuid [pk]
+  row_num bigint [pk]
+  error varchar(500) [not null]
+  Note: 'exchange module'
+}
+
+Table exchange_schedule {
+  id uuid [pk]
+  org_id uuid [not null]
+  requester varchar(64) [not null]
+  handler varchar(60) [not null]
+  format varchar(10) [not null]
+  cron varchar(120) [not null]
+  enabled boolean [not null, default: true]
+  next_run_at timestamptz [not null]
+  last_job_id uuid
+  version bigint [not null]
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  deleted_at timestamptz
+  Note: 'exchange module'
+}
+
+Table geo_capture_policy {
+  id uuid [pk]
+  org_id uuid [not null]
+  subject_type varchar(64) [not null]
+  mode varchar(16) [not null]
+  min_accuracy_m numeric(10,2)
+  allowed_sources varchar(64)
+  max_fix_age_seconds integer
+  retention_days integer
+  coarsen_after_days integer
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  version bigint [not null]
+  indexes {
+    (org_id, subject_type) [unique, name: 'uq_geo_capture_policy']
+  }
+  Note: 'geo module'
+}
+
+Table geo_stamp {
+  id uuid [pk]
+  org_id uuid [not null]
+  subject_type varchar(64) [not null]
+  subject_id varchar(64) [not null]
+  latitude numeric(9,6) [not null]
+  longitude numeric(9,6) [not null]
+  accuracy_m numeric(10,2)
+  altitude_m numeric(10,2)
+  source varchar(16) [not null]
+  captured_by varchar(64)
+  captured_at timestamptz [not null]
+  consent_ref varchar(64)
+  country_code varchar(2)
+  admin1 varchar(120)
+  locality varchar(160)
+  formatted_address text
+  place_id varchar(128)
+  geocoder_provider varchar(24)
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  version bigint [not null]
+  deleted_at timestamptz
+  Note: 'geo module'
+}
+
+Table app_user {
+  id uuid [pk]
+  subject varchar(64) [not null]
+  email varchar(320) [not null]
+  status varchar(20) [not null]
+  provisioned_at timestamptz [not null]
+  activated_at timestamptz
+  version bigint [not null]
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  deleted_at timestamptz
+  indexes {
+    subject [unique, note: 'partial: live rows', name: 'uq_app_user_subject_live']
+  }
+  Note: 'identity module'
+}
+
+Table impersonation_session {
+  id uuid [pk]
+  actor_subject varchar(64) [not null]
+  target_subject varchar(64) [not null]
+  org_id uuid
+  reason varchar(500) [not null]
+  mode varchar(20) [not null]
+  started_at timestamptz [not null]
+  expires_at timestamptz [not null]
+  ended_at timestamptz
+  ended_by varchar(64)
+  version bigint [not null]
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  Note: 'identity module'
+}
+
+Table integration {
+  id uuid [pk]
+  org_id uuid
+  kind varchar(20) [not null]
+  provider varchar(40) [not null]
+  enabled boolean [not null, default: true]
+  version bigint [not null]
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  deleted_at timestamptz
+  indexes {
+    (org_id, kind) [unique, note: 'partial: live rows', name: 'uq_integration_org_kind_live']
+    kind [unique, note: 'partial: live rows', name: 'uq_integration_platform_kind_live']
+  }
+  Note: 'integration module'
+}
+
+Table integration_setting {
+  integration_id uuid [pk]
+  setting_key varchar(60) [pk]
+  setting_value varchar(600) [not null]
+  is_secret boolean [not null, default: false]
+  Note: 'integration module'
+}
+
+Table translation {
+  id uuid [pk]
+  locale varchar(35) [not null]
+  msg_key varchar(200) [not null]
+  msg_value text [not null]
+  version bigint [not null]
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  deleted_at timestamptz
+  indexes {
+    (locale, msg_key) [unique, note: 'partial: live rows', name: 'uq_translation_locale_key']
+  }
+  Note: 'localization module'
+}
+
+Table maintenance_window {
+  id uuid [pk]
+  org_id uuid
+  starts_at timestamptz [not null]
+  ends_at timestamptz [not null]
+  mode varchar(10) [not null]
+  message varchar(300) [not null]
+  version bigint [not null]
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  deleted_at timestamptz
+  Note: 'maintenance module'
+}
+
+Table in_app_notification {
+  id uuid [pk]
+  recipient varchar(150) [not null]
+  subject varchar(255) [not null]
+  body text
+  read_at timestamptz
+  version bigint [not null]
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  Note: 'notification module'
+}
+
+Table notification_delivery {
+  id uuid [pk]
+  channel varchar(20) [not null]
+  recipient text [not null]
+  subject varchar(255) [not null]
+  body text
+  status varchar(20) [not null]
+  attempts integer [not null, default: 0]
+  max_attempts integer [not null]
+  next_attempt_at timestamptz [not null]
+  locked_at timestamptz
+  last_error text
+  created_at timestamptz [not null]
+  throttled_since timestamptz
+  org_id uuid
+  Note: 'notification module'
+}
+
+Table membership {
+  id uuid [pk]
+  org_id uuid [not null]
+  user_subject varchar(64) [not null]
+  role_id uuid [not null]
+  status varchar(20) [not null]
+  version bigint [not null]
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  deleted_at timestamptz
+  indexes {
+    (org_id, user_subject) [unique, note: 'partial: live rows', name: 'uq_membership_org_user_live']
+  }
+  Note: 'organization module'
+}
+
+Table org_group {
+  id uuid [pk]
+  org_id uuid [not null]
+  name varchar(100) [not null]
+  role_id uuid [not null]
+  version bigint [not null]
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  deleted_at timestamptz
+  indexes {
+    (org_id, name) [unique, note: 'partial: live rows', name: 'uq_org_group_org_name_live']
+  }
+  Note: 'organization module'
+}
+
+Table org_group_member {
+  group_id uuid [pk]
+  user_subject varchar(64) [pk]
+  Note: 'organization module'
+}
+
+Table org_role {
+  id uuid [pk]
+  org_id uuid [not null]
+  code varchar(64) [not null]
+  name varchar(120) [not null]
+  system_role boolean [not null]
+  description text
+  version bigint [not null]
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  deleted_at timestamptz
+  indexes {
+    (org_id, code) [unique, note: 'partial: live rows', name: 'uq_org_role_org_code_live']
+  }
+  Note: 'organization module'
+}
+
+Table organization {
+  id uuid [pk]
+  kc_org_id uuid [not null]
+  alias varchar(120) [not null]
+  name varchar(200) [not null]
+  status varchar(20) [not null]
+  version bigint [not null]
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  deleted_at timestamptz
+  indexes {
+    alias [unique, note: 'partial: live rows', name: 'uq_organization_alias_live']
+    kc_org_id [unique, note: 'partial: live rows', name: 'uq_organization_kc_org_id_live']
+  }
+  Note: 'organization module'
+}
+
+Table role_permission {
+  role_id uuid [pk]
+  permission varchar(64) [pk]
+  Note: 'organization module'
+}
+
+Table payment {
+  id uuid [pk]
+  org_id uuid [not null]
+  provider varchar(32) [not null]
+  mode varchar(16) [not null]
+  merchant_reference varchar(50) [unique, not null]
+  gateway_reference varchar(100)
+  amount numeric(19,2) [not null]
+  currency varchar(3) [not null]
+  description varchar(100) [not null]
+  phone_number varchar(20)
+  email varchar(255)
+  status varchar(24) [not null]
+  status_detail varchar(255)
+  confirmation_code varchar(64)
+  redirect_url varchar(1024)
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  version bigint [not null]
+  vat_amount numeric(19,2)
+  net_amount numeric(19,2)
+  Note: 'payments module'
+}
+
+Table user_contact {
+  profile_id uuid [not null]
+  kind varchar(10) [not null]
+  contact_value varchar(150) [not null]
+  label varchar(50)
+  is_primary boolean [not null, default: false]
+  Note: 'profile module'
+}
+
+Table user_device {
+  id uuid [pk]
+  subject varchar(64) [not null]
+  name varchar(100) [not null]
+  kind varchar(10) [not null]
+  fingerprint varchar(100) [not null]
+  push_token varchar(300)
+  trusted boolean [not null, default: false]
+  last_seen_at timestamptz
+  version bigint [not null]
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  deleted_at timestamptz
+  indexes {
+    (subject, fingerprint) [unique, note: 'partial: live rows', name: 'uq_user_device_subject_fingerprint_live']
+  }
+  Note: 'profile module'
+}
+
+Table user_preference {
+  subject varchar(64) [pk]
+  pref_key varchar(100) [pk]
+  pref_value varchar(500) [not null]
+  updated_at timestamptz [not null]
+  Note: 'profile module'
+}
+
+Table user_profile {
+  id uuid [pk]
+  subject varchar(64) [not null]
+  display_name varchar(150)
+  phone varchar(30)
+  timezone varchar(50)
+  locale varchar(20)
+  avatar_key varchar(300)
+  version bigint [not null]
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  deleted_at timestamptz
+  indexes {
+    subject [unique, note: 'partial: live rows', name: 'uq_user_profile_subject_live']
+  }
+  Note: 'profile module'
+}
+
+Table org_retention_override {
+  id uuid [pk]
+  org_id uuid [not null]
+  scope varchar(40) [not null]
+  retention_days integer [not null]
+  version bigint [not null]
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  indexes {
+    (org_id, scope) [unique, name: 'uq_org_retention_override']
+  }
+  Note: 'scheduler module'
+}
+
+Table search_document {
+  id uuid [pk]
+  org_id uuid
+  entity_type varchar(40) [not null]
+  entity_id varchar(64) [not null]
+  title varchar(300) [not null]
+  body text [not null]
+  tsv tsvector
+  updated_at timestamptz [not null]
+  indexes {
+    (entity_type, entity_id) [unique, name: 'uq_search_entity']
+  }
+  Note: 'search module'
+}
+
+Table feature_flag {
+  id uuid [pk]
+  flag_key varchar(150) [not null]
+  enabled boolean [not null]
+  description text
+  version bigint [not null]
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  deleted_at timestamptz
+  percentage integer
+  indexes {
+    flag_key [unique, note: 'partial: live rows', name: 'uq_feature_flag_key_live']
+  }
+  Note: 'settings module'
+}
+
+Table feature_flag_org_override {
+  id uuid [pk]
+  flag_key varchar(150) [not null]
+  org_id uuid [not null]
+  enabled boolean [not null]
+  created_at timestamptz [not null]
+  indexes {
+    (flag_key, org_id) [unique, name: 'feature_flag_org_override_flag_key_org_id_key']
+  }
+  Note: 'settings module'
+}
+
+Table setting {
+  id uuid [pk]
+  setting_key varchar(150) [not null]
+  setting_value text [not null]
+  description text
+  version bigint [not null]
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  deleted_at timestamptz
+  indexes {
+    setting_key [unique, note: 'partial: live rows', name: 'uq_setting_key_live']
+  }
+  Note: 'settings module'
+}
+
+Table event_inbox {
+  listener_id varchar(200) [pk]
+  message_id varchar(200) [pk]
+  processed_at timestamptz [not null]
+  Note: 'shared module'
+}
+
+Table event_publication {
+  id uuid [pk]
+  listener_id text [not null]
+  event_type text [not null]
+  serialized_event text [not null]
+  publication_date timestamptz [not null]
+  completion_date timestamptz
+  status text
+  completion_attempts integer
+  last_resubmission_date timestamptz
+  Note: 'shared module'
+}
+
+Table idempotency_key {
+  principal varchar(200) [pk]
+  idem_key varchar(128) [pk]
+  request_hash varchar(64) [not null]
+  response_status integer
+  response_body text
+  content_type varchar(100)
+  created_at timestamptz [not null]
+  Note: 'shared module'
+}
+
+Table shedlock {
+  name varchar(64) [pk]
+  lock_until timestamp [not null]
+  locked_at timestamp [not null]
+  locked_by varchar(255) [not null]
+  Note: 'shared module'
+}
+
+Table signup_request {
+  id uuid [pk]
+  email varchar(255) [not null]
+  org_name varchar(80) [not null]
+  first_name varchar(60)
+  last_name varchar(60)
+  token_hash varchar(64) [unique, not null]
+  status varchar(16) [not null]
+  expires_at timestamptz [not null]
+  created_at timestamptz [not null]
+  completed_at timestamptz
+  org_id uuid
+  Note: 'signup module'
+}
+
+Table api_usage_daily {
+  org_id uuid [pk]
+  day date [pk]
+  requests bigint [not null, default: 0]
+  exported boolean [not null, default: false]
+  Note: 'subscription module'
+}
+
+Table org_subscription {
+  id uuid [pk]
+  org_id uuid [not null]
+  plan_id uuid [not null]
+  status varchar(20) [not null]
+  current_period_end timestamptz
+  version bigint [not null]
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  deleted_at timestamptz
+  trial_ends_at timestamptz
+  indexes {
+    org_id [unique, note: 'partial: live rows', name: 'uq_org_subscription_org_live']
+  }
+  Note: 'subscription module'
+}
+
+Table plan {
+  id uuid [pk]
+  code varchar(30) [unique, not null]
+  name varchar(100) [not null]
+  rank integer [not null]
+  version bigint [not null]
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  Note: 'subscription module'
+}
+
+Table plan_entitlement {
+  plan_id uuid [pk]
+  ent_key varchar(60) [pk]
+  limit_value bigint
+  Note: 'subscription module'
+}
+
+Table org_sla_override {
+  id uuid [pk]
+  org_id uuid [not null]
+  priority varchar(2) [not null]
+  first_response_minutes integer [not null]
+  resolution_minutes integer [not null]
+  version bigint [not null]
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  indexes {
+    (org_id, priority) [unique, name: 'uq_org_sla_override']
+  }
+  Note: 'support module'
+}
+
+Table sla_policy {
+  id uuid [pk]
+  priority varchar(2) [unique, not null]
+  first_response_minutes integer [not null]
+  resolution_minutes integer [not null]
+  version bigint [not null]
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  Note: 'support module'
+}
+
+Table ticket {
+  id uuid [pk]
+  org_id uuid [not null]
+  opener_subject varchar(64) [not null]
+  subject varchar(200) [not null]
+  category varchar(40)
+  priority varchar(2) [not null]
+  status varchar(25) [not null]
+  assignee_subject varchar(64)
+  first_response_at timestamptz
+  first_response_due_at timestamptz [not null]
+  resolution_due_at timestamptz [not null]
+  escalated boolean [not null, default: false]
+  version bigint [not null]
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  deleted_at timestamptz
+  Note: 'support module'
+}
+
+Table ticket_message {
+  id uuid [pk]
+  ticket_id uuid [not null]
+  author_subject varchar(64) [not null]
+  body text [not null]
+  internal boolean [not null, default: false]
+  created_at timestamptz [not null]
+  Note: 'support module'
+}
+
+Table webhook_delivery {
+  id uuid [pk]
+  subscription_id uuid [not null]
+  org_id uuid [not null]
+  event_type varchar(80) [not null]
+  payload text [not null]
+  status varchar(20) [not null]
+  attempts integer [not null]
+  max_attempts integer [not null]
+  next_attempt_at timestamptz [not null]
+  locked_at timestamptz
+  last_error varchar(1000)
+  response_status integer
+  created_at timestamptz [not null]
+  delivered_at timestamptz
+  Note: 'webhooks module'
+}
+
+Table webhook_subscription {
+  id uuid [pk]
+  org_id uuid [not null]
+  url varchar(2048) [not null]
+  secret varchar(200) [not null]
+  event_types text [not null]
+  status varchar(20) [not null]
+  version bigint [not null]
+  created_at timestamptz [not null]
+  created_by varchar(100)
+  updated_at timestamptz
+  updated_by varchar(100)
+  deleted_at timestamptz
+  Note: 'webhooks module'
+}
+
+// ---- Real foreign keys (10, all intra-module) ----
+Ref: exchange_job_error.job_id > exchange_job.id
+Ref: integration_setting.integration_id > integration.id
+Ref: membership.role_id > org_role.id
+Ref: org_group_member.group_id > org_group.id
+Ref: org_subscription.plan_id > plan.id
+Ref: plan_entitlement.plan_id > plan.id
+Ref: role_permission.role_id > org_role.id
+Ref: ticket_message.ticket_id > ticket.id
+Ref: user_contact.profile_id > user_profile.id
+Ref: webhook_delivery.subscription_id > webhook_subscription.id
+
+// ---- Soft references (cross-module; NOT enforced by any DB FK) ----
+Ref: api_key.org_id > organization.kc_org_id [color: #b0653a]
+Ref: api_usage_daily.org_id > organization.kc_org_id [color: #b0653a]
+Ref: audit_log.org_id > organization.kc_org_id [color: #b0653a]
+Ref: billing_account.org_id > organization.kc_org_id [color: #b0653a]
+Ref: document.org_id > organization.kc_org_id [color: #b0653a]
+Ref: exchange_job.org_id > organization.kc_org_id [color: #b0653a]
+Ref: exchange_schedule.org_id > organization.kc_org_id [color: #b0653a]
+Ref: feature_flag_org_override.org_id > organization.kc_org_id [color: #b0653a]
+Ref: geo_capture_policy.org_id > organization.kc_org_id [color: #b0653a]
+Ref: geo_stamp.org_id > organization.kc_org_id [color: #b0653a]
+Ref: impersonation_session.org_id > organization.kc_org_id [color: #b0653a]
+Ref: integration.org_id > organization.kc_org_id [color: #b0653a]
+Ref: legal_hold.org_id > organization.kc_org_id [color: #b0653a]
+Ref: maintenance_window.org_id > organization.kc_org_id [color: #b0653a]
+Ref: membership.org_id > organization.kc_org_id [color: #b0653a]
+Ref: membership.user_subject > app_user.subject [color: #b0653a]
+Ref: notification_delivery.org_id > organization.kc_org_id [color: #b0653a]
+Ref: org_group.org_id > organization.kc_org_id [color: #b0653a]
+Ref: org_group.role_id > org_role.id [color: #b0653a]
+Ref: org_group_member.user_subject > app_user.subject [color: #b0653a]
+Ref: org_retention_override.org_id > organization.kc_org_id [color: #b0653a]
+Ref: org_role.org_id > organization.kc_org_id [color: #b0653a]
+Ref: org_security_policy.org_id > organization.kc_org_id [color: #b0653a]
+Ref: org_sla_override.org_id > organization.kc_org_id [color: #b0653a]
+Ref: org_subscription.org_id > organization.kc_org_id [color: #b0653a]
+Ref: payment.org_id > organization.kc_org_id [color: #b0653a]
+Ref: search_document.org_id > organization.kc_org_id [color: #b0653a]
+Ref: signup_request.org_id > organization.kc_org_id [color: #b0653a]
+Ref: ticket.org_id > organization.kc_org_id [color: #b0653a]
+Ref: user_device.subject > app_user.subject [color: #b0653a]
+Ref: user_profile.subject > app_user.subject [color: #b0653a]
+Ref: webhook_delivery.org_id > organization.kc_org_id [color: #b0653a]
+Ref: webhook_subscription.org_id > organization.kc_org_id [color: #b0653a]
+
+// ---- Module groups ----
+TableGroup access {
+  org_security_policy
+}
+TableGroup apikeys {
+  api_key
+}
+TableGroup audit {
+  audit_log
+}
+TableGroup billing {
+  billing_account
+}
+TableGroup compliance {
+  consent_record
+  erasure_request
+  legal_hold
+}
+TableGroup document {
+  document
+}
+TableGroup exchange {
+  exchange_job
+  exchange_job_error
+  exchange_schedule
+}
+TableGroup geo {
+  geo_capture_policy
+  geo_stamp
+}
+TableGroup identity {
+  app_user
+  impersonation_session
+}
+TableGroup integration {
+  integration
+  integration_setting
+}
+TableGroup localization {
+  translation
+}
+TableGroup maintenance {
+  maintenance_window
+}
+TableGroup notification {
+  in_app_notification
+  notification_delivery
+}
+TableGroup organization {
+  membership
+  org_group
+  org_group_member
+  org_role
+  organization
+  role_permission
+}
+TableGroup payments {
+  payment
+}
+TableGroup profile {
+  user_contact
+  user_device
+  user_preference
+  user_profile
+}
+TableGroup scheduler {
+  org_retention_override
+}
+TableGroup search {
+  search_document
+}
+TableGroup settings {
+  feature_flag
+  feature_flag_org_override
+  setting
+}
+TableGroup shared {
+  event_inbox
+  event_publication
+  idempotency_key
+  shedlock
+}
+TableGroup signup {
+  signup_request
+}
+TableGroup subscription {
+  api_usage_daily
+  org_subscription
+  plan
+  plan_entitlement
+}
+TableGroup support {
+  org_sla_override
+  sla_policy
+  ticket
+  ticket_message
+}
+TableGroup webhooks {
+  webhook_delivery
+  webhook_subscription
+}
