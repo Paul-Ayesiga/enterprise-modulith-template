@@ -96,11 +96,24 @@ Three things, all in the `Jenkinsfile` and all reversible on a bigger host:
   `postgres:18.4-alpine`, `quay.io/keycloak/keycloak:26.7.0` and `chrislusf/seaweedfs:4.40` inside
   dind. The gateway suite starts only `valkey:8-alpine`, so dind is still genuinely exercised. Run the
   full suite by setting the build parameter to `:test :gateway:app:test`.
-- **The build JVM is capped** (`GRADLE_OPTS=-Xmx640m`, `--max-workers=2`). Unbounded, Gradle sizes its
-  heap from the *node's* memory, not the container limit — which is how it reached ~1.7 GB before any
-  test ran. This is the single most important guard.
-- **Memory moved from `build` to `dind`** (2 GB→1600 MB and 1 GB→1800 MB). The narrowed tests need far
-  less, and `bootBuildImage` runs the entire Paketo lifecycle inside the daemon, where 1 GB was short.
+- **The build JVM is capped — via `-Dorg.gradle.jvmargs=-Xmx768m` on every `gradlew` call.** The
+  mechanism matters, because the obvious version does not work: `gradle.properties` pins
+  `org.gradle.jvmargs=-Xmx2g`, and **`GRADLE_OPTS` does not override it**. Even under `--no-daemon`
+  Gradle forks a single-use daemon with the `gradle.properties` args ("To honour the JVM settings for
+  this build a single-use Daemon process will be forked"), so a first attempt at this ran a 2 GB heap
+  inside a 1.6 GB container and the container was `OOMKilled` mid-test. It must be a command-line
+  property, and it must be on the image-build invocations too, not only the test one.
+- **`dind` raised to 1800 MB, `build` left at 2 GB.** `bootBuildImage` runs the whole Paketo lifecycle
+  inside the daemon and 1 GB was short. Do *not* fund that by shrinking `build` — that container holds
+  the Gradle JVM and the forked test JVM, and starving it is the OOMKill above. The two peak in
+  different stages, so their limits may sum above what the node could serve simultaneously; only the
+  requests have to fit, and they do.
+
+If the `build` container is `OOMKilled`, expect the build to end as **ABORTED**, not FAILED, with
+`AgentOfflineException` in the post steps and no archived test results — the agent dies before Jenkins
+can collect them. Any test failures printed just before it are suspect: a JVM being strangled fails
+timing-sensitive tests (cache TTLs, blocklist windows) that pass cleanly with headroom. Fix the memory
+first, then judge the tests.
 
 The image-build stage remains the heaviest part of the pipeline. If a build wedges the node again, that
 is the stage to suspect, and the fix is to build one image rather than both — or to build elsewhere.

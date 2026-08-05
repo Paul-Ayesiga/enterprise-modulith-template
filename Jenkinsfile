@@ -28,13 +28,13 @@ spec:
       env:
         - { name: DOCKER_HOST, value: "tcp://localhost:2375" }
         - { name: TESTCONTAINERS_RYUK_DISABLED, value: "true" }
-        # Cap the build JVM. Left unbounded, Gradle sized its heap off the NODE's memory rather than the
-        # container limit and reached ~1.7 GB before a single test ran — that is what took the kubelet
-        # down (docs/runbooks/ci-jenkins.md). --max-workers is capped in the stage for the same reason.
-        - { name: GRADLE_OPTS, value: "-Xmx640m -XX:MaxMetaspaceSize=256m" }
       resources:
+        # Back to 2 Gi: this container runs the Gradle JVM *and* the forked test JVM. Trimming it to
+        # 1600 Mi to fund dind is what OOMKilled build #3. The two containers peak in different stages
+        # (JVMs during Test, the buildpack lifecycle during Build), so the limits may sum above what the
+        # node could serve at once — it is the requests that must fit, and they do.
         requests: { memory: "1Gi", cpu: "500m" }
-        limits:   { memory: "1600Mi" }
+        limits:   { memory: "2Gi" }
     - name: dind
       image: docker:27-dind
       securityContext: { privileged: true }
@@ -59,11 +59,18 @@ spec:
     string(name: 'TEST_TASKS', defaultValue: ':gateway:app:test',
            description: 'Gradle test tasks to run. Default is narrowed for the local VM.')
   }
-  environment { IMAGE_BASE = 'ghcr.io/paul-ayesiga/enterprise-modulith-template' }
+  environment {
+    IMAGE_BASE = 'ghcr.io/paul-ayesiga/enterprise-modulith-template'
+    // gradle.properties pins `org.gradle.jvmargs=-Xmx2g`, sized for a laptop. GRADLE_OPTS does NOT
+    // override it: even under --no-daemon Gradle forks a single-use daemon with those args, so build #3
+    // ran a 2 GB heap inside a 1.6 GB container and was OOMKilled mid-test. This is the override that
+    // actually takes, and it must be passed to every gradlew call, not set as an env var.
+    GRADLE_JVM = '-Dorg.gradle.jvmargs=-Xmx768m'
+  }
 
   stages {
     stage('Test') {
-      steps { sh "./gradlew --no-daemon --max-workers=2 ${params.TEST_TASKS}" }
+      steps { sh "./gradlew --no-daemon --max-workers=2 $GRADLE_JVM ${params.TEST_TASKS}" }
       post { always { junit allowEmptyResults: true, testResults: '**/build/test-results/test/*.xml' } }
     }
 
@@ -73,8 +80,8 @@ spec:
         withCredentials([usernamePassword(credentialsId: 'ghcr', usernameVariable: 'GHCR_USER', passwordVariable: 'GHCR_PAT')]) {
           sh '''
             echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
-            ./gradlew --no-daemon bootBuildImage --imageName "$IMAGE_BASE/modulith:${GIT_COMMIT}" --publishImage
-            ./gradlew --no-daemon :gateway:app:bootBuildImage --imageName "$IMAGE_BASE/gateway:${GIT_COMMIT}" --publishImage
+            ./gradlew --no-daemon $GRADLE_JVM bootBuildImage --imageName "$IMAGE_BASE/modulith:${GIT_COMMIT}" --publishImage
+            ./gradlew --no-daemon $GRADLE_JVM :gateway:app:bootBuildImage --imageName "$IMAGE_BASE/gateway:${GIT_COMMIT}" --publishImage
           '''
         }
       }
