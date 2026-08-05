@@ -33,7 +33,7 @@ keycloak:
   enabled: false
 
 modulith:
-  replicas: 3
+  replicas: 4
   # Same host the browser uses; resolves in-cluster to keycloak via the coredns-custom rewrite.
   issuerUri: http://auth.smsone.local/realms/smsone
   # The admin client's Keycloak base URL — our dev-Keycloak Service via the issuer host (not the
