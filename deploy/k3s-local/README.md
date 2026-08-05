@@ -2,7 +2,7 @@
 
 Deploy the modulith (×3) + gateway on **k3s** running in an Ubuntu Server VM (UTM, arm64), so you get a
 production-shaped Kubernetes environment locally — rolling updates, self-healing, scaling, the works.
-The full rationale and phase gates are in [`../../docs/K8S_LOCAL_PLAN.md`](../../docs/K8S_LOCAL_PLAN.md).
+The full rationale and phase gates are in [`../../docs/plans/K8S_LOCAL_PLAN.md`](../../docs/plans/K8S_LOCAL_PLAN.md).
 
 **What runs where:** the app comes from the **Helm chart** (`../helm/smsone`) with a
 [`values-local.yaml`](../helm/smsone/values-local.yaml) overlay; the **state** (Postgres, Valkey,
@@ -68,7 +68,7 @@ is rolling updates + readiness probes.
 Deploy by **committing to Git**: Argo CD runs in the cluster, watches this repo, and reconciles the
 `smsone` namespace to `deploy/helm/smsone` + `values-local.yaml`. It self-heals drift too — a manual
 `helm --set` or `kubectl edit` is reverted to what Git says. The full CI/CD picture (and how Jenkins /
-Rancher fit): [`../../docs/cicd-gitops-and-cluster.html`](../../docs/cicd-gitops-and-cluster.html).
+Rancher fit): [`../../docs/guides/cicd-gitops-and-cluster.html`](../../docs/guides/cicd-gitops-and-cluster.html).
 
 ### Install (one command)
 

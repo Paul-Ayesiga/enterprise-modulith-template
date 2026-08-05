@@ -1,11 +1,11 @@
 # Documentation
 
-How the docs are arranged: **current, load-bearing documents live at this level — one document, one
-job.** Decisions live in [adr/](adr/), artifacts the build regenerates live in [modulith/](modulith/)
-and [openapi/](openapi/), point-in-time audits live in [reviews/](reviews/), and finished plans move
-to [archive/](archive/) with a header saying what superseded them. The authoritative "you changed X,
-so update Y" duties table is [../AGENTS.md](../AGENTS.md) §13 — this page only says what each
-document is.
+How the docs are arranged: **current, load-bearing reference lives at this top level — one document, one
+job.** Rendered visual explainers live in [guides/](guides/), plans and architecture north-stars in
+[plans/](plans/), decisions in [adr/](adr/), build-regenerated artifacts in [modulith/](modulith/) and
+[openapi/](openapi/), point-in-time audits in [reviews/](reviews/), and superseded plans move to
+[archive/](archive/) with a header saying what replaced them. The authoritative "you changed X, so update
+Y" duties table is [../AGENTS.md](../AGENTS.md) §13 — this page only says what each document is.
 
 ## Start here (new to the repo, in this order)
 
@@ -29,6 +29,17 @@ document is.
 | [openapi/](openapi/) | Generated OpenAPI 3.1 spec (`./gradlew exportOpenApi`) — Postman imports it natively |
 | [modulith/](modulith/) | Generated C4/PlantUML diagrams and per-module canvases (`./gradlew exportModulithDocs`) |
 
+## Guides — [guides/](guides/) · open in a browser
+
+Rendered HTML explainers, each with diagrams and a light/dark toggle.
+
+| Guide | One job |
+|---|---|
+| [system-diagram.html](guides/system-diagram.html) | The system architecture — the module map and request path as interactive diagrams |
+| [api-guide.html](guides/api-guide.html) | The API surface — endpoints, auth, the response envelope, and worked examples |
+| [k8s-local-walkthrough.html](guides/k8s-local-walkthrough.html) | Newcomer-friendly walkthrough of the local k3s deployment — the vocabulary, topology, the traced request path, the issuer/CoreDNS trick, the two bugs, and the zero-downtime proof |
+| [cicd-gitops-and-cluster.html](guides/cicd-gitops-and-cluster.html) | CI/CD, GitOps & cluster ops — what Jenkins / Argo CD / Rancher are and where each fits, the target pipeline, and where things live on the cluster |
+
 ## Decisions — [adr/](adr/)
 
 | ADR | Decision |
@@ -42,19 +53,27 @@ document is.
 | [0007](adr/0007-api-gateway.md) | API gateway: a reactive Spring Cloud Gateway as a hexagonal platform product |
 | [0008](adr/0008-geolocation-storage.md) | Geolocation stored as numeric lat/lng behind a spatial port (`GeoSearch`), PostGIS deferred |
 
-## Project management — where work stands
+## Plans — [plans/](plans/)
+
+The living plans and architecture north-stars. Plan first, then code (AGENTS §13).
 
 | Document | One job |
 |---|---|
-| [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) | The living plan: pinned versions, contracts, phases — and the Boot-4/Testcontainers-2 gotchas (§10) |
-| [NEXT_MODULES_PLAN.md](NEXT_MODULES_PLAN.md) | The active build-out plan: localization → search → document → exchange → observability, plus the carried backlog |
-| [GEOLOCATION_PLAN.md](GEOLOCATION_PLAN.md) | The `geo` module: PostGIS-backed geolocation stamps, per-record-type capture policy, a pluggable geocoder SPI, and the phased rollout |
-| [GATEWAY_ARCHITECTURE.md](GATEWAY_ARCHITECTURE.md) | The gateway north star: a stateless reactive Spring Cloud Gateway, hexagonal ports & adapters, the request pipeline, coarse-vs-fine authZ |
-| [GATEWAY_PLAN.md](GATEWAY_PLAN.md) | The phased gateway build (Core → Security → Traffic → Observability → Extensibility → Admin → Enterprise), each with its gate |
-| [K8S_LOCAL_PLAN.md](K8S_LOCAL_PLAN.md) | Deploying the platform on local k3s (Ubuntu/UTM, arm64): ctr-imported images, in-cluster state, the Keycloak-issuer/CoreDNS crux, and the "production feeling" demo — **SHIPPED**; operator guide in `deploy/k3s-local/README.md` |
-| [k8s-local-walkthrough.html](k8s-local-walkthrough.html) | Newcomer-friendly, diagram-rich walkthrough of the local k3s deployment — the vocabulary, topology, the traced request path, the issuer/CoreDNS trick, the two bugs, and the zero-downtime proof (open in a browser) |
-| [cicd-gitops-and-cluster.html](cicd-gitops-and-cluster.html) | CI/CD, GitOps & cluster ops — what Jenkins / Argo CD / Rancher are and where each fits this platform's existing GitHub Actions + Helm + k3s setup, the target pipeline, and where things live on the cluster (open in a browser) |
-| [reusable-data-exchange-platform-guidelines.md](reusable-data-exchange-platform-guidelines.md) | Principles for the exchange (import/export) platform — the spec the `exchange` module implements |
+| [IMPLEMENTATION_PLAN.md](plans/IMPLEMENTATION_PLAN.md) | The living plan: pinned versions, contracts, phases — and the Boot-4/Testcontainers-2 gotchas (§10) |
+| [NEXT_MODULES_PLAN.md](plans/NEXT_MODULES_PLAN.md) | The active build-out plan: localization → search → document → exchange → observability, plus the carried backlog |
+| [PLATFORM_EXPANSION_PLAN.md](plans/PLATFORM_EXPANSION_PLAN.md) | The platform-expansion slices — the enterprise features layered onto the core |
+| [TENANT_LIFECYCLE.md](plans/TENANT_LIFECYCLE.md) | Org/tenant lifecycle — trial, active, pause/suspend, and the transitions between them |
+| [GEOLOCATION_PLAN.md](plans/GEOLOCATION_PLAN.md) | The `geo` module: numeric lat/lng behind a spatial port, per-record-type capture policy, a pluggable geocoder SPI, and the phased rollout |
+| [GATEWAY_ARCHITECTURE.md](plans/GATEWAY_ARCHITECTURE.md) | The gateway north star: a stateless reactive Spring Cloud Gateway, hexagonal ports & adapters, the request pipeline, coarse-vs-fine authZ |
+| [GATEWAY_PLAN.md](plans/GATEWAY_PLAN.md) | The phased gateway build (Core → Security → Traffic → Observability → Extensibility → Admin → Enterprise), each with its gate |
+| [K8S_LOCAL_PLAN.md](plans/K8S_LOCAL_PLAN.md) | Deploying the platform on local k3s (Ubuntu/UTM, arm64): ctr-imported images, in-cluster state, the Keycloak-issuer/CoreDNS crux, and the "production feeling" demo — **SHIPPED**; operator guide in `../deploy/k3s-local/README.md` |
+| [PERF_PLAN.md](plans/PERF_PLAN.md) | The load-test plan (k6, in `perf/`): scenarios, thresholds, and what the numbers mean |
+| [reusable-data-exchange-platform-guidelines.md](plans/reusable-data-exchange-platform-guidelines.md) | Principles for the exchange (import/export) platform — the spec the `exchange` module implements |
+
+## Where work stands
+
+| Document | One job |
+|---|---|
 | [CHECKLIST.md](CHECKLIST.md) | Gate ledger — a box is ticked only when the deliverable's acceptance gate passed |
 | [COMPLETED_MODULES.md](COMPLETED_MODULES.md) | Per-module inventory of what is built, tested and gated |
 

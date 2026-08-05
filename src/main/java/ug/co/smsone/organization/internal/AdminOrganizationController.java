@@ -20,7 +20,7 @@ import ug.co.smsone.shared.web.ResourceObject;
 import ug.co.smsone.shared.web.WindowedResult;
 
 /**
- * The platform's tenant-management surface (docs/TENANT_LIFECYCLE.md is the lifecycle it drives):
+ * The platform's tenant-management surface (docs/plans/TENANT_LIFECYCLE.md is the lifecycle it drives):
  * support READS — every tenant, one tenant, its roster — and admin takes the one destructive step,
  * delete. Class-level {@code /api/v1/admin} mapping keeps the whole surface out of the
  * X-Impersonate docs: an impersonated principal holds no platform tier and every row here refuses.

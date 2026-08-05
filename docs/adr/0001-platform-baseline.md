@@ -34,4 +34,4 @@ The platform anchor must not ship EOL software and must stay license-clean for r
 - Rejected: Lombok (records + constructor injection instead), Zalando problem-spring-web (Spring-native
   RFC 9457), Togglz (DB-backed flags), MinIO SDK (S3 v2 SDK), JSON:API libraries (hand-rolled lite envelope).
 
-Full rationale and alternatives: [../IMPLEMENTATION_PLAN.md](../IMPLEMENTATION_PLAN.md).
+Full rationale and alternatives: [../IMPLEMENTATION_PLAN.md](../plans/IMPLEMENTATION_PLAN.md).

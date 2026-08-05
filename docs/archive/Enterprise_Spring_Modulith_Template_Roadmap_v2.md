@@ -1,7 +1,7 @@
 # Enterprise Spring Modulith Template Roadmap
 
 > **ARCHIVED.** The original vision document. Superseded by
-> [../IMPLEMENTATION_PLAN.md](../IMPLEMENTATION_PLAN.md) (which pins what was actually built) and by
+> [../IMPLEMENTATION_PLAN.md](../plans/IMPLEMENTATION_PLAN.md) (which pins what was actually built) and by
 > the shipped code — the group id (`io.commuza` → `ug.co.smsone`), the module list and several
 > library choices changed during implementation. Kept as written.
 

@@ -9,7 +9,7 @@ Two dashboards are file-provisioned into the `otel-lgtm` container's Grafana (fo
   ratio, impersonation session trend.
 - **SMSOne · k6 Load** — live load-test metrics (latency percentiles, gateway-vs-direct overhead,
   status/429 breakdown, checks, VUs), filterable by scenario. Populated only while a k6 run streams
-  over OTLP — `OTEL=1 perf/run.sh <scenario>`; see `perf/README.md` and `docs/PERF_PLAN.md`.
+  over OTLP — `OTEL=1 perf/run.sh <scenario>`; see `perf/README.md` and `docs/plans/PERF_PLAN.md`.
 
 Metrics arrive over OTLP from the application (the Boot OTel starter exports Micrometer meters;
 counter `smsone.foo.bar` surfaces in Prometheus as `smsone_foo_bar_total`). The custom meters and

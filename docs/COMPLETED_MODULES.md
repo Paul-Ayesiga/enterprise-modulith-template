@@ -90,7 +90,7 @@ The business record OF a stored file, over keys the `files` module holds.
   equivalents under `/api/v1/documents`.
 
 ## exchange
-The Data Exchange Platform ([the guidelines doc](reusable-data-exchange-platform-guidelines.md) is
+The Data Exchange Platform ([the guidelines doc](plans/reusable-data-exchange-platform-guidelines.md) is
 its spec): import/export as durable, resumable background jobs — built for scale first.
 - **Queue discipline**: `exchange_job` is a §7-style claim queue (`SKIP LOCKED`, every write fenced
   on the claim's `attempts`, stale-lock reclaim); one job per claim — fan-out is instances sharing
@@ -127,7 +127,7 @@ The commercial axis of a tenant — plans, subscriptions, and the gates everythi
 - **Change bites immediately**: assigning a plan publishes `SubscriptionChanged` → the entitlement
   cache evicts (a downgrade cannot ride the TTL) and `org.subscription_changed` fans out to the
   tenant's webhooks. Assignments are `platform-admin` and audited.
-- **Lifecycle doc**: [TENANT_LIFECYCLE.md](TENANT_LIFECYCLE.md) — states, transitions, and the
+- **Lifecycle doc**: [TENANT_LIFECYCLE.md](plans/TENANT_LIFECYCLE.md) — states, transitions, and the
   platform surface (`/api/v1/admin/orgs/**`) that drives them, including SUSPENDED-only delete.
 - Billing integrates through the `Subscriptions` write port — see the billing module below.
 

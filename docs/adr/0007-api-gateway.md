@@ -18,8 +18,8 @@ surface or a shared Valkey snapshot, and audit events publish to a sink. The gat
 **fine-grained** `hasPermission` (defense in depth). It ships in phases — Core → Security → Traffic
 → Observability → Extensibility → Admin → Enterprise — and is useful from Phase 1.
 
-The full design is [../GATEWAY_ARCHITECTURE.md](../GATEWAY_ARCHITECTURE.md); the phased delivery is
-[../GATEWAY_PLAN.md](../GATEWAY_PLAN.md).
+The full design is [../GATEWAY_ARCHITECTURE.md](../plans/GATEWAY_ARCHITECTURE.md); the phased delivery is
+[../GATEWAY_PLAN.md](../plans/GATEWAY_PLAN.md).
 
 ## Why
 Every service otherwise reimplements routing, security, rate limiting, CORS, request validation, and
@@ -61,4 +61,4 @@ existing port: key introspection (`ApiKeyAuthenticator`), audit ingest (`AuditLo
 lookup (`Entitlements.limitOf`). The hexagonal boundary — the core depending on neither Spring Cloud
 Gateway nor any platform module — is enforced by an ArchUnit test that ships with `gateway:core`. Enterprise
 deliverables that are separate deployables/infra (a developer-portal UI, multi-region failover) are out of
-the gateway codebase by design, flagged not dropped. Per-phase detail: [../GATEWAY_PLAN.md](../GATEWAY_PLAN.md).
+the gateway codebase by design, flagged not dropped. Per-phase detail: [../GATEWAY_PLAN.md](../plans/GATEWAY_PLAN.md).

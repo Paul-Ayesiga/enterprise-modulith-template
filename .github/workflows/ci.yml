@@ -137,7 +137,7 @@ jobs:
   # GitOps deploy (pull-based, no cluster creds in CI). On every push to main, record the freshly built
   # image SHA in the prod values file and commit it; a prod Argo CD Application (deploy/argocd/application.yaml)
   # watching deploy/helm/smsone on `main` then rolls it out — zero-downtime. See
-  # docs/cicd-gitops-and-cluster.html. Needs the Actions bot allowed to push to main; otherwise the push is a
+  # docs/guides/cicd-gitops-and-cluster.html. Needs the Actions bot allowed to push to main; otherwise the push is a
   # no-op with a warning (nothing else breaks).
   gitops-bump:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

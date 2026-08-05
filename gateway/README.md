@@ -1,8 +1,8 @@
 # Gateway
 
 The platform's reactive edge — a separate Spring Cloud Gateway deployable, built hexagonally. Design:
-[../docs/GATEWAY_ARCHITECTURE.md](../docs/GATEWAY_ARCHITECTURE.md); plan + phase status:
-[../docs/GATEWAY_PLAN.md](../docs/GATEWAY_PLAN.md); decision: [../docs/adr/0007-api-gateway.md](../docs/adr/0007-api-gateway.md).
+[../docs/plans/GATEWAY_ARCHITECTURE.md](../docs/plans/GATEWAY_ARCHITECTURE.md); plan + phase status:
+[../docs/plans/GATEWAY_PLAN.md](../docs/plans/GATEWAY_PLAN.md); decision: [../docs/adr/0007-api-gateway.md](../docs/adr/0007-api-gateway.md).
 
 ## Subprojects
 

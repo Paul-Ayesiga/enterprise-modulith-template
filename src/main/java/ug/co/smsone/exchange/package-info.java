@@ -1,6 +1,6 @@
 /**
  * The Data Exchange Platform: import/export as durable, resumable, record-oriented JOBS — never
- * long-running requests (docs/reusable-data-exchange-platform-guidelines.md is the spec). The
+ * long-running requests (docs/plans/reusable-data-exchange-platform-guidelines.md is the spec). The
  * module owns jobs, formats, streaming, layered validation, progress and error reports; it is
  * domain-agnostic by construction — business modules implement the {@code ExchangeHandler} port
  * and keep every business rule (the members handler drives the same {@code MemberService} the REST
