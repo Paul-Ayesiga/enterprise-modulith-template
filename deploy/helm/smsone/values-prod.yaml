@@ -1,0 +1,17 @@
+# Production overlay for the smsone chart, consumed by the prod Argo CD Application
+# (deploy/argocd/application.yaml) alongside the base values.yaml.
+#
+# The `imageTag` line is MANAGED BY CI: the `gitops-bump` job in .github/workflows/ci.yml rewrites it to the
+# freshly built commit SHA on every push to main, and Argo rolls it out — that's the auto-deploy-on-merge
+# loop. Fill in the real hostnames/endpoints for your environment (the base values.yaml carries examples).
+global:
+  imageBase: ghcr.io/paul-ayesiga/enterprise-modulith-template
+  imageTag: main # gitops-bump: CI overwrites this with the built commit SHA
+  imagePullPolicy: IfNotPresent
+
+# --- Fill these for your cluster; until then the chart's example.com placeholders apply ---
+# postgres: { host: postgres.prod.internal, port: 5432, database: modulith }
+# valkey:   { host: valkey.prod.internal }
+# seaweedfs:{ s3Endpoint: http://seaweedfs.prod.internal:8333 }
+# modulith: { issuerUri: https://auth.example.com/realms/smsone }
+# ingress:  { className: nginx, hosts: { api: api.example.com, auth: auth.example.com, portal: portal.example.com, admin: admin.example.com } }

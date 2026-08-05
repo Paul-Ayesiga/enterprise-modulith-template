@@ -1,0 +1,28 @@
+# Argo CD Application — GitOps for the local k3s cluster. Argo renders deploy/helm/smsone with
+# values-local.yaml and keeps the `smsone` namespace reconciled to Git: you DEPLOY BY COMMITTING to this
+# branch, and Argo self-heals any manual drift (a stray `kubectl edit` / `helm --set` gets reverted).
+#
+# The repo is private, so Argo authenticates with a READ-ONLY deploy key held in the `repo-smsone`
+# secret (created by scripts/k3s-argocd.sh — the private key is never committed).
+#
+# Switch targetRevision to `main` once the k3s PR is merged.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: smsone
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:Paul-Ayesiga/enterprise-modulith-template.git
+    targetRevision: main
+    path: deploy/helm/smsone
+    helm:
+      valueFiles: [values-local.yaml]
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: smsone
+  syncPolicy:
+    automated:
+      prune: true       # remove chart resources deleted from Git (won't touch the infra it doesn't manage)
+      selfHeal: true    # revert manual drift back to what Git says
