@@ -12,6 +12,13 @@ incident teaches you a step that is missing, add it in the fix's PR.
 | `smsone-breaker-open` | [breaker-open.md](breaker-open.md) | a gateway circuit breaker opens for 1 minute |
 | `smsone-payment-failures` | [payment-failures.md](payment-failures.md) | >3 FAILED payments at one provider in 30 minutes |
 
+Two runbooks here are not wired to an alert — nothing pages you, you come looking:
+
+| Runbook | Read it when |
+|---|---|
+| [restore.md](restore.md) | restoring from backup, or running the DR drill |
+| [ci-jenkins.md](ci-jenkins.md) | signing in to the self-hosted Jenkins, wiring its two CI credentials, or recovering the local k3s node after a build exhausts it |
+
 Shared context for every incident:
 
 - **Grafana** `http://localhost:${GRAFANA_PORT:-3000}` (folder *SMSOne*): dashboards for HTTP/cache,

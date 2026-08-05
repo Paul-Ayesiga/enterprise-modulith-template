@@ -23,7 +23,7 @@ Y" duties table is [../AGENTS.md](../AGENTS.md) §13 — this page only says wha
 | [erd/schema.dbml](erd/schema.dbml) | The full schema as dbdiagram.io DBML — 52 tables, real FKs + tenant/soft-ref relationships, per-module groups; generated from the applied migrations, import to visualize |
 | [EVENTS.md](EVENTS.md) | Domain event catalog: publishers, payloads, consumers, idempotency keys |
 | [SLO.md](SLO.md) | Service-level objectives: the promise, the exact measuring expression, the error budget, the discipline when it runs out |
-| [runbooks/](runbooks/) | One runbook per provisioned alert — what fired, first five minutes, diagnosis, remediation — plus the restore/DR drill |
+| [runbooks/](runbooks/) | One runbook per provisioned alert — what fired, first five minutes, diagnosis, remediation — plus the restore/DR drill and [ci-jenkins.md](runbooks/ci-jenkins.md) (self-hosted Jenkins: sign-in, CI credentials, recovering the node after a build exhausts it) |
 | [PRODUCTION.md](PRODUCTION.md) | The road to a cluster: CI/images, Helm chart, prod Keycloak, backups, the dev-vs-prod knob table |
 | [PORTING.md](PORTING.md) | Porting the template to another RDBMS (Oracle/SQL Server/MySQL): the five Postgres seams + per-vendor recipe |
 | [openapi/](openapi/) | Generated OpenAPI 3.1 spec (`./gradlew exportOpenApi`) — Postman imports it natively |
