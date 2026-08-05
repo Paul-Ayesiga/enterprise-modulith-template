@@ -328,7 +328,7 @@ flowchart LR
       <div class="flowmap">
         <div class="frow"><div class="frow__n">0</div><div class="frow__b"><h4>Cluster + images</h4><p>k3s on the VM; <code>kubectl</code> from the Mac; images streamed into the node.</p></div></div>
         <div class="frow"><div class="frow__n">1</div><div class="frow__b"><h4>State + login</h4><p>Postgres, Valkey, SeaweedFS, Keycloak as pods. Issuer/DNS checkpoint passed.</p></div></div>
-        <div class="frow"><div class="frow__n">2</div><div class="frow__b"><h4>App via Helm</h4><p>modulith ×3 + gateway. <code>/api/v1/me</code> → <span class="pill pill--ok">200</span> end to end.</p></div></div>
+        <div class="frow"><div class="frow__n">2</div><div class="frow__b"><h4>App via Helm</h4><p>modulith + gateway. <code>/api/v1/me</code> → <span class="pill pill--ok">200</span> end to end.</p></div></div>
         <div class="frow"><div class="frow__n">3</div><div class="frow__b"><h4>Break it, stay up</h4><p>Rolling upgrade + pod kill + scale under load → zero failed requests.</p></div></div>
       </div>
     </section>
@@ -489,7 +489,7 @@ flowchart LR
         <div class="term__bar"><i></i><i></i><i></i><em>mac</em></div>
 <pre><span class="p">$</span> make k3s-kubeconfig    <span class="o"># point kubectl at the VM's cluster</span>
 <span class="p">$</span> make k3s-images        <span class="o"># build + load the app images into the node</span>
-<span class="p">$</span> make k3s-up            <span class="o"># state + Keycloak + the app (modulith ×3 + gateway)</span>
+<span class="p">$</span> make k3s-up            <span class="o"># state + Keycloak + the app (modulith + gateway)</span>
 
 <span class="o"># add ONE line to /etc/hosts (needs your Mac password), then:</span>
 <span class="p">$</span> echo <span class="y">"192.168.64.5  api.smsone.local auth.smsone.local"</span> | sudo tee -a /etc/hosts

@@ -33,7 +33,12 @@ keycloak:
   enabled: false
 
 modulith:
-  replicas: 3
+  # 1 locally: each replica costs ~750 MB and the 8 GB VM had only ~2 GB free — less than a Jenkins build
+  # agent needs (1.4 GB Gradle + 0.5 GB dind), so CI could schedule a build pod but would drive the node
+  # into memory pressure. Rolling updates still surge a new pod before retiring the old one, so upgrades
+  # stay zero-downtime; what you give up is redundancy against a crash and anything for the gateway to
+  # round-robin across. Raise it temporarily to re-run the multi-replica or 3->5->3 scale demos.
+  replicas: 1
   # Same host the browser uses; resolves in-cluster to keycloak via the coredns-custom rewrite.
   issuerUri: http://auth.smsone.local/realms/smsone
   # The admin client's Keycloak base URL — our dev-Keycloak Service via the issuer host (not the

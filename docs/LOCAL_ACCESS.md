@@ -106,9 +106,11 @@ sudo sh -c 'echo "192.168.64.5  api.smsone.local auth.smsone.local argocd.smsone
   ```
   Rough timings after boot: Postgres/Valkey ~15 s, Keycloak ~30 s, each modulith ~60–90 s; Argo CD then
   reconciles the app automatically. Nothing to redeploy.
-- **If `kubectl` can't reach it** — the VM's IP changed (DHCP). Re-run `make k3s-kubeconfig` and update the
-  `/etc/hosts` line to the new IP. Avoid this entirely by giving the VM a **static IP** — see the operator
-  README → [*Keep the VM's IP stable*](../deploy/k3s-local/README.md#keep-the-vms-ip-stable-recommended).
+- **If `kubectl` can't reach it** — the VM holds **192.168.64.5 statically** (netplan `99-static.yaml`, with
+  cloud-init's network management disabled), so the address survives reboots and neither `~/.kube/smsone-k3s.yaml`
+  nor `/etc/hosts` should go stale. Give it a minute first — the ingress answers before every pod is ready.
+  If the address ever does move, re-run `make k3s-kubeconfig`, update the `/etc/hosts` line, and re-check the
+  procedure in the operator README → [*Keep the VM's IP stable*](../deploy/k3s-local/README.md#keep-the-vms-ip-stable-recommended).
 
 ## URLs (Kubernetes)
 
@@ -132,7 +134,7 @@ Postgres / Valkey / SeaweedFS have **no ingress** (in-cluster only) — reach th
 | **Keycloak** realm `smsone` (app login / API tokens) | `paul` | `Paul123` |
 | **Keycloak** admin console (`auth.smsone.local/admin`) | `admin` | `admin` |
 | **Argo CD** | `admin` | `kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' \| base64 -d` |
-| **Jenkins** (initial, before the setup wizard sets your own) | `admin` | `kubectl -n jenkins exec deploy/jenkins -- cat /var/jenkins_home/secrets/initialAdminPassword` |
+| **Jenkins** (generated on install; there is no setup wizard) | `admin` | `kubectl -n jenkins get secret jenkins-secrets -o jsonpath='{.data.JENKINS_ADMIN_PASSWORD}' \| base64 -d` |
 | **Postgres** (in-cluster) | `modulith` | `modulith` |
 | **SeaweedFS** S3 (in-cluster) | `smsone` | `smsone-secret` |
 
@@ -152,7 +154,7 @@ The endpoints, roles, and response envelope are the same as Compose — see **Pa
 ```bash
 make k3s-kubeconfig    # kubeconfig from the VM -> ~/.kube/smsone-k3s.yaml
 make k3s-images        # build the app images and load them into the VM's containerd
-make k3s-up            # namespace + secret + state + dev-Keycloak + CoreDNS + the app (modulith ×3 + gateway)
+make k3s-up            # namespace + secret + state + dev-Keycloak + CoreDNS + the app (modulith + gateway)
 make k3s-argocd        # optional — Argo CD (GitOps: deploy by committing)
 make k3s-jenkins       # optional — self-hosted Jenkins (CI without GitHub-hosted minutes)
 make k3s-demo          # optional — the rolling-update / kill / scale zero-downtime demo
