@@ -46,6 +46,7 @@ tracing) at `:28090/api/v1/…`. `make` (no target) lists every target:
 | `make seed` | Like `run`, plus seeds the `acme` demo org (owner `paul`) at startup |
 | `make gateway` | The API gateway (`:28090`, admin `:29090`) fronting the modulith — start `make run` first, this in a 2nd terminal |
 | `make gateway-build` · `gateway-test` | Build · test the gateway subprojects alone |
+| `make multi-demo` | **Docker**: builds + runs the modulith as **3 replicas** behind the gateway (`lb://modulith`) — round-robin + zero-downtime. `make multi-token` mints an in-network token; `make multi-down` stops it |
 | `make up` · `down` · `restart` | Infra stack only — e.g. to run the modulith from your IDE |
 | `make ps` · `logs S=keycloak` | Stack status · tail one service's logs |
 | `make env` | Create `docker/.env` from the example (one-time) |

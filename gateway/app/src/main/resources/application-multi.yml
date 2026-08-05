@@ -1,0 +1,29 @@
+# Multi-instance profile — activate with SPRING_PROFILES_ACTIVE=multi (see scripts/multi-instance-demo.sh).
+#
+# Points the `modulith` service at THREE instances, so ServiceDefinition.loadBalanced() flips true and
+# the edge routes lb://modulith: Spring Cloud LoadBalancer round-robins across them, the health-checked
+# supplier (GatewayLoadBalancerConfig, active on this profile) ejects a crashed instance, retries give
+# per-instance failover for GETs, and the circuit breaker sheds load when all three fail. Everything
+# else (routes, security, the control-plane seams) is inherited from application.yml unchanged.
+#
+# The control-plane seams (introspection / quota / audit / usage) still target a single modulith via
+# ${MODULITH_URI} — point them at instance 1. To demo failover, kill instance 2 or 3 (not 1), so auth
+# and quota keep working while the proxied traffic fails over.
+gateway:
+  services:
+    - id: modulith
+      health-path: /actuator/health
+      instances:
+        - ${MODULITH_1:http://localhost:28080}
+        - ${MODULITH_2:http://localhost:28081}
+        - ${MODULITH_3:http://localhost:28082}
+  policies:
+    edge-api:
+      auth:
+        authenticated: true
+      traffic:
+        response-timeout-ms: 15000
+        max-request-bytes: 10485760
+        rate-limited: true
+        retries: 2             # GET/5xx or a dead connection → re-run the LB filter → a different instance
+        circuit-breaker: true  # a run of 5xx opens the circuit → forward:/__fallback (503) while it heals

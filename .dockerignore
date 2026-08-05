@@ -1,0 +1,14 @@
+# Keep the Docker build context small + reproducible: ship source + gradle wrapper only.
+.git
+.gradle
+**/build/
+web/                # the Next.js portals (huge node_modules) — not part of the Java build
+docs/
+perf/
+data/
+**/node_modules
+.idea
+*.iml
+*.log
+.DS_Store
+scratchpad/

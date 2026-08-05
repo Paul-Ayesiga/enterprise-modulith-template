@@ -91,9 +91,13 @@ class GatewayRouteLocator {
         }
         if (traffic.retries() > 0) {
             // Retry only idempotent GETs on a server error (ADR 0005's spirit — never replay a write).
+            // Exponential backoff (50ms → 500ms) so a retry never stampedes a struggling backend; on a
+            // load-balanced service SCG re-runs the LB filter, so the retry lands on a DIFFERENT instance
+            // (per-instance failover). A connection failure to a dead instance is retried the same way.
             spec = spec.retry(config -> config.setRetries(traffic.retries())
                     .setMethods(HttpMethod.GET)
-                    .setSeries(HttpStatus.Series.SERVER_ERROR));
+                    .setSeries(HttpStatus.Series.SERVER_ERROR)
+                    .setBackoff(Duration.ofMillis(50), Duration.ofMillis(500), 2, true));
         }
         if (traffic.circuitBreaker()) {
             // A backend 5xx counts as a failure (not just an exception/timeout), tripping the circuit.
