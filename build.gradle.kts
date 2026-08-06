@@ -132,7 +132,17 @@ tasks.withType<Test> {
 // fine) but no `docker` binary, so the pipeline's `docker login` died with "docker: not found". It would
 // not have helped either — `--publishImage` reads these credentials rather than the CLI's config.json.
 // Empty when unset, so a local `bootBuildImage` without --publishImage still works.
+// CI passes -PimageBase/-PimageTag so BOTH images can be built by ONE gradlew invocation. Two separate
+// invocations died repeatedly: the second JVM pair started while the first image build's memory was still
+// resident in the container, and the cgroup OOMKilled it (exit 137) at exactly that seam. Absent the
+// properties the task keeps its default name, so a local `bootBuildImage` is unaffected.
+val imageBase = providers.gradleProperty("imageBase")
+val imageTag = providers.gradleProperty("imageTag")
+
 tasks.bootBuildImage {
+    if (imageBase.isPresent && imageTag.isPresent) {
+        imageName.set("${imageBase.get()}/modulith:${imageTag.get()}")
+    }
     docker {
         publishRegistry {
             username.set(providers.environmentVariable("GHCR_USER").getOrElse(""))

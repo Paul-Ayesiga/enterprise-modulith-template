@@ -64,7 +64,15 @@ tasks.withType<Test> {
 
 // GHCR credentials for --publishImage. Mirrors the modulith build; see the comment there for why the
 // pipeline cannot rely on `docker login`.
+// Named from the same -PimageBase/-PimageTag as the modulith, so one gradlew run produces both images
+// under their own names. See the comment in the root build for why two runs could not be used.
+val imageBase = providers.gradleProperty("imageBase")
+val imageTag = providers.gradleProperty("imageTag")
+
 tasks.bootBuildImage {
+    if (imageBase.isPresent && imageTag.isPresent) {
+        imageName.set("${imageBase.get()}/gateway:${imageTag.get()}")
+    }
     docker {
         publishRegistry {
             username.set(providers.environmentVariable("GHCR_USER").getOrElse(""))

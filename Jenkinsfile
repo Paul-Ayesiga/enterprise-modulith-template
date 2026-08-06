@@ -98,8 +98,13 @@ spec:
             # shared one /launch-cache and (org.gradle.parallel=true) raced it: "failed to export:
             # caching layer ... /launch-cache/staging/...tar: no such file or directory". The gateway
             # then published itself to GHCR wearing the modulith's tag.
-            ./gradlew --no-daemon $GRADLE_JVM_IMAGE :bootBuildImage --imageName "$IMAGE_BASE/modulith:${GIT_COMMIT}" --publishImage
-            ./gradlew --no-daemon $GRADLE_JVM_IMAGE :gateway:app:bootBuildImage --imageName "$IMAGE_BASE/gateway:${GIT_COMMIT}" --publishImage
+            # ONE invocation for both images, and --no-parallel so they run one after the other inside it.
+            # Two separate gradlew runs were OOMKilled at the seam every time: the second JVM pair started
+            # while the first image build's memory was still resident. Names come from -PimageBase and
+            # -PimageTag (see the build files) because --imageName cannot differ per task in one run.
+            ./gradlew --no-daemon --no-parallel $GRADLE_JVM_IMAGE \
+              -PimageBase="$IMAGE_BASE" -PimageTag="${GIT_COMMIT}" \
+              :bootBuildImage :gateway:app:bootBuildImage --publishImage
           '''
         }
       }
