@@ -1,0 +1,542 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SMSOne — MCP: the agent surface</title>
+<style>
+  :root {
+    --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+    /* dark is the default (matches the other docs); light is the [data-theme="light"] override below */
+    --bg: #0b1116; --surface: #10181f; --surface-2: #151f28; --border: #223039;
+    --border-strong: #2d3e49; --text: #e6eef4; --muted: #93a4b1; --faint: #6f8290;
+    --accent: #2dd4c8; --accent-ink: #7cebe2; --accent-weak: #123037;
+    --warn: #e6a83a; --warn-weak: #2c2413; --ok: #46c07a; --ok-weak: #14301f;
+    --danger: #ef6f63; --danger-weak: #2e1512;
+    --radius: 10px;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px -14px rgba(0,0,0,.7);
+  }
+  :root[data-theme="light"] {
+    --bg: #f4f7f9; --surface: #ffffff; --surface-2: #eef2f5; --border: #d8e0e6;
+    --border-strong: #c2ccd4; --text: #10171d; --muted: #566673; --faint: #7c8b97;
+    --accent: #0a8f96; --accent-ink: #076267; --accent-weak: #daf0f1;
+    --warn: #b45309; --warn-weak: #fbecd6; --ok: #157f47; --ok-weak: #d8f0e0;
+    --danger: #c0362c; --danger-weak: #f6ddd9;
+    --shadow: 0 1px 2px rgba(16,23,29,.05), 0 8px 24px -12px rgba(16,23,29,.18);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-sans);
+    line-height: 1.65; -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+  .toggle { position: fixed; top: 14px; right: 16px; z-index: 20; background: var(--surface);
+    color: var(--text); border: 1px solid var(--border); border-radius: 999px; padding: 6px 14px;
+    font: 600 12.5px var(--font-mono); cursor: pointer; box-shadow: var(--shadow); }
+  .toggle:hover { border-color: var(--accent); }
+  .shell { display: grid; grid-template-columns: 1fr; align-items: start; }
+  .toc { display: none; }
+  @media (min-width: 1080px) {
+    .shell { grid-template-columns: 240px minmax(0,1fr); gap: 52px; }
+    .toc { display: block; position: sticky; top: 24px; padding: 18px 0 40px; font-size: 13.5px; }
+    .toc__label { margin: 0 0 8px; font: 700 11px var(--font-mono); letter-spacing: .12em;
+      text-transform: uppercase; color: var(--faint); }
+    .toc ol { margin: 0; padding: 0 0 0 2px; list-style: none; }
+    .toc li { margin: 5px 0; }
+    .toc a { color: var(--muted); text-decoration: none; }
+    .toc a:hover { color: var(--accent-ink); }
+  }
+  main { padding-bottom: 90px; min-width: 0; }
+  .hero { padding: 56px 0 8px; }
+  .eyebrow { font: 700 12px var(--font-mono); letter-spacing: .14em; text-transform: uppercase;
+    color: var(--accent-ink); margin: 0 0 10px; }
+  h1 { font-size: clamp(26px, 4vw, 38px); line-height: 1.15; margin: 0 0 14px; letter-spacing: -.015em; }
+  .lede { color: var(--muted); font-size: 16.5px; max-width: 72ch; margin: 0 0 8px; }
+  section { margin-top: 46px; }
+  h2 { font-size: 21px; margin: 0 0 10px; letter-spacing: -.01em; scroll-margin-top: 24px; }
+  h2 .n { display: block; font: 700 11px var(--font-mono); letter-spacing: .13em; color: var(--faint);
+    text-transform: uppercase; margin-bottom: 6px; }
+  h3 { font-size: 15.5px; margin: 22px 0 8px; }
+  p { margin: 10px 0; max-width: 76ch; }
+  .section-intro { color: var(--muted); }
+  code { font: 500 .92em var(--font-mono); background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 5px; padding: .08em .35em; }
+  pre { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 14px 16px; overflow-x: auto; box-shadow: var(--shadow); }
+  pre code { background: none; border: 0; padding: 0; font-size: 13px; line-height: 1.55; }
+  .diagram { margin: 18px 0; background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px 14px 8px; overflow-x: auto; box-shadow: var(--shadow); }
+  .diagram pre.mermaid { margin: 0; text-align: center; min-width: 560px; background: transparent;
+    border: 0; padding: 0; box-shadow: none; }
+  figcaption { color: var(--muted); font-size: 13.5px; padding: 10px 6px 8px; }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 13.8px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font: 700 11.5px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--faint); }
+  td code { white-space: nowrap; }
+  .tablewrap { overflow-x: auto; }
+  .pill { display: inline-block; font: 700 10.5px var(--font-mono); letter-spacing: .05em; border-radius: 999px;
+    padding: 2px 9px; border: 1px solid var(--border-strong); white-space: nowrap; }
+  .pill.read { color: var(--ok); background: var(--ok-weak); border-color: transparent; }
+  .pill.write { color: var(--warn); background: var(--warn-weak); border-color: transparent; }
+  .pill.destr { color: var(--danger); background: var(--danger-weak); border-color: transparent; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    border-radius: var(--radius); padding: 12px 16px; margin: 16px 0; box-shadow: var(--shadow); }
+  .card.warn { border-left-color: var(--warn); }
+  .card h4 { margin: 0 0 6px; font-size: 14px; }
+  .card p { margin: 6px 0; font-size: 14px; }
+  ul { padding-left: 22px; } li { margin: 5px 0; }
+  .grid2 { display: grid; grid-template-columns: 1fr; gap: 14px; }
+  @media (min-width: 900px) { .grid2 { grid-template-columns: 1fr 1fr; } }
+</style>
+</head>
+<body>
+
+<button class="toggle" id="themeToggle" aria-label="Toggle light or dark theme">◐ theme</button>
+
+<div class="wrap">
+<div class="shell">
+
+  <nav class="toc" aria-label="Contents">
+    <p class="toc__label">On this page</p>
+    <ol>
+      <li><a href="#what">What this is</a></li>
+      <li><a href="#connect">Connect an agent</a></li>
+      <li><a href="#auth">Auth &amp; scoping</a></li>
+      <li><a href="#path">The request path</a></li>
+      <li><a href="#pipeline">The dispatch pipeline</a></li>
+      <li><a href="#catalog">Tool catalog</a></li>
+      <li><a href="#content">Prompts &amp; resources</a></li>
+      <li><a href="#conventions">Conventions</a></li>
+      <li><a href="#async">The async pattern</a></li>
+      <li><a href="#ops">Operating it</a></li>
+      <li><a href="#tests">How it is tested</a></li>
+      <li><a href="#nongoals">Boundaries &amp; non-goals</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <header class="hero" id="top">
+      <p class="eyebrow">MCP · Model Context Protocol · the agent surface</p>
+      <h1>Agents talk to the platform — through the same doors as everyone else</h1>
+      <p class="lede">The platform serves the <strong>Model Context Protocol</strong> at <code>/mcp</code>, so AI agents
+        (Claude Code, Claude Desktop, the Claude API's MCP connector, Managed Agents, any MCP client) can read and
+        operate a tenant's slice of the platform. The design has one sentence at its core: <strong>MCP is a second
+        protocol surface over the same module ports the REST controllers use</strong> — every permission, guard,
+        transaction and audit rule exists exactly once, and both surfaces cross it.</p>
+    </header>
+
+    <section>
+      <h2 id="what"><span class="n">01 — Orientation</span>What this is: a transport, not another backend</h2>
+      <p class="section-intro">Nothing about the business changed. The <code>mcp</code> module owns tool definitions and
+        dispatch; it owns <em>no</em> capability. Tool handlers are one-line delegations to module ports, and those ports
+        delegate to the same internal services REST delegates to.</p>
+      <figure class="diagram">
+        <pre class="mermaid">
+flowchart LR
+  subgraph CLIENTS["Callers"]
+    REST["REST clients<br/>web · mobile · integrations"]
+    AGENT["AI agents<br/>Claude Code · Desktop · API connector · Managed Agents"]
+  end
+  subgraph SURFACES["Protocol surfaces"]
+    CTRL["REST controllers<br/>/api/v1/**"]
+    MCP["MCP endpoint<br/>/mcp · JSON-RPC over stateless streamable HTTP"]
+  end
+  subgraph PORTS["Module API ports (one set)"]
+    P["OrgDirectory · OrgMembers · OrgRoles · SubscriptionOverview · UsageSummaries<br/>WebhookAdmin · SupportDesk · DocumentDirectory · ExchangeJobs · SearchQueries"]
+  end
+  SVC["Internal services — permissions · guards · transactions · audit<br/>(escalation guard, SSRF guard, entitlement caps, last-owner lock)"]
+  REST --> CTRL --> P
+  AGENT --> MCP --> P
+  P --> SVC
+</pre>
+        <figcaption>One capability layer, two doors. A rule enforced in a service fires identically for both surfaces —
+          there is nothing to keep in sync, because there is nothing duplicated.</figcaption>
+      </figure>
+      <div class="card">
+        <h4>Why stateless streamable HTTP</h4>
+        <p>Each MCP request is a plain JSON-RPC POST — no <code>Mcp-Session-Id</code>, no SSE listening stream, no
+          in-memory session map. That is what makes the surface safe across the modulith's N replicas with no sticky
+          routing, and it matches where the protocol is heading (the 2026-07-28 spec RC removes sessions from streamable
+          HTTP entirely). The trade, accepted knowingly: no server-initiated messages (sampling, elicitation,
+          notifications) — none of which tools/resources/prompts need.</p>
+      </div>
+    </section>
+
+    <section>
+      <h2 id="connect"><span class="n">02 — Ten minutes</span>Connect an agent</h2>
+      <p class="section-intro">One credential works everywhere: an <strong>org API key</strong> (minted in the console or
+        via <code>POST /api/v1/orgs/{orgId}/api-keys</code>, permissions capped to what the minter holds). Send it as
+        <code>X-Api-Key</code> or as <code>Authorization: Bearer sk_…</code> — both spellings authenticate identically.</p>
+
+      <h3>Claude Code (this repo ships <code>.mcp.json</code>)</h3>
+      <pre><code>{
+  "mcpServers": {
+    "smsone-local": {
+      "type": "http",
+      "url": "http://localhost:28090/mcp",
+      "headers": { "X-Api-Key": "${SMSONE_API_KEY}" }
+    }
+  }
+}</code></pre>
+      <p>Export <code>SMSONE_API_KEY=sk_…</code>, start the stack (<code>make up &amp;&amp; make run &amp;&amp; make gateway</code>),
+        open Claude Code in the repo — the server appears with the tools your key allows. <code>:28090</code> is the
+        <strong>gateway</strong>, the same edge production uses (<code>https://api.&lt;host&gt;/mcp</code>); running only the
+        modulith? Point at it directly on <code>:28080</code> — same behavior, minus the edge policy.</p>
+
+      <h3>Claude API — MCP connector</h3>
+      <pre><code>client.beta.messages.create(
+    model="claude-opus-5", max_tokens=1024,
+    betas=["mcp-client-2025-11-20"],
+    mcp_servers=[{"type": "url", "url": "https://api.example.smsone.co.ug/mcp",
+                  "name": "smsone", "authorization_token": "sk_…"}],
+    tools=[{"type": "mcp_toolset", "mcp_server_name": "smsone"}],
+    messages=[...])</code></pre>
+
+      <h3>Managed Agents — vault credential</h3>
+      <pre><code># agent declares the server (no auth here)
+mcp_servers: [{type: url, name: smsone, url: https://api.example.smsone.co.ug/mcp}]
+tools: [{type: agent_toolset_20260401}, {type: mcp_toolset, mcp_server_name: smsone}]
+
+# vault holds the key as a static bearer, matched to the server by URL
+auth: {type: static_bearer, mcp_server_url: "https://api.example.smsone.co.ug/mcp", token: "sk_…"}</code></pre>
+    </section>
+
+    <section>
+      <h2 id="auth"><span class="n">03 — Identity</span>Auth &amp; scoping: the key is the whole model</h2>
+      <ul>
+        <li><strong>Org-implicit, always.</strong> A key belongs to exactly one organization; no tool takes an
+          <code>orgId</code> argument. Cross-tenant addressing is not a forbidden input — it is an input that does not
+          exist. Prompt injection cannot name another tenant.</li>
+        <li><strong>The permission subset is the scope model.</strong> Keys are minted with a subset of
+          <code>organization.Permission</code> codes, capped by what the minter holds. Every tool declares the same
+          permission its REST twin requires — one vocabulary, both surfaces.</li>
+        <li><strong>Discovery is filtered; the call is the boundary.</strong> <code>tools/list</code> shows only tools the
+          key may call (agents plan with real capabilities instead of discovering them by 403). A hidden tool invoked
+          directly is re-checked and denied — fail closed, before any side effect.</li>
+        <li><strong><code>Bearer sk_…</code> is understood at both tiers.</strong> Remote MCP clients can only send
+          bearer headers; the gateway routes <code>sk_</code>-prefixed bearers to key introspection, the modulith's key
+          filter consumes them before the JWT machinery ever sees them. A JWT can never start with <code>sk_</code>, so
+          nothing real is hidden from the JWT path.</li>
+        <li><strong>Machine grants stay un-escalatable.</strong> When a key invites or re-roles a member, the escalation
+          guard treats the key's minted subset as its held set — capped at mint by a human who held those permissions, so
+          a key can hand on at most what its minter could have. A role carrying anything beyond the subset refuses.</li>
+        <li><strong>Attribution is honest.</strong> Everything a key does is recorded as <code>key:&lt;id&gt;</code> —
+          job requesters, ticket openers, audit actors.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2 id="path"><span class="n">04 — Anatomy</span>The request path</h2>
+      <figure class="diagram">
+        <pre class="mermaid">
+flowchart TB
+  A["Agent — JSON-RPC POST /mcp<br/>Authorization: Bearer sk_…  or  X-Api-Key"]
+  subgraph GW["API gateway — route mcp-api · policy edge-mcp"]
+    G1["blocklist · abuse guard"]
+    G2["edge auth: sk_ bearer → key introspection (JWKS for JWTs)"]
+    G3["token-bucket rate limit · 60s response timeout · 2 MiB body cap"]
+  end
+  subgraph MOD["Modulith servlet chain"]
+    F1["RequestIdFilter — ULID → MDC + X-Request-Id"]
+    F2["ApiKeyAuthenticationFilter — X-Api-Key or Bearer sk_…"]
+    F3["OrgMdcFilter · RateLimitFilter (mcp tier: per-key bucket)"]
+  end
+  subgraph MCPM["mcp module"]
+    T["HttpServletStatelessServerTransport (SDK servlet)"]
+    W["Filtering wrapper — kill switch · permission-filtered tools/list"]
+    D["McpToolDispatcher — the pipeline (next section)"]
+  end
+  PORT["module port → internal service"]
+  A --> GW --> MOD --> T --> W --> D --> PORT
+  G1 --> G2 --> G3
+  F1 --> F2 --> F3
+</pre>
+        <figcaption>Being a servlet (not an MVC controller), the endpoint is invisible to the JSON:API envelope advice and
+          to springdoc — the REST contract stays exactly what it was. Being inside the servlet chain, request-ids, key
+          auth and app-side rate limiting already cover it.</figcaption>
+      </figure>
+      <div class="card warn">
+        <h4>The gateway policy is deliberate</h4>
+        <p><code>edge-mcp</code>, not <code>edge-api</code>: a tool call may legitimately run longer than an interactive
+          API call (60 s vs 15 s), while JSON-RPC bodies never justify 10 MB (2 MiB cap). Both halves are pinned by
+          <code>ShippedRouteTableTest</code>.</p>
+      </div>
+    </section>
+
+    <section>
+      <h2 id="pipeline"><span class="n">05 — One policy point</span>The dispatch pipeline</h2>
+      <p class="section-intro">Every <code>tools/call</code> crosses one pipeline in <code>McpToolDispatcher</code> —
+        the only place authorization, tenancy policy, write-gating, audit and metrics happen. Handlers never see an
+        unauthorized call.</p>
+      <figure class="diagram">
+        <pre class="mermaid">
+flowchart TB
+  IN["tools/call — ToolContext frozen on the servlet thread<br/>(principal · orgId · subject · requestId · client IP)"]
+  P1{"permission check<br/>ApiPermissionEvaluator — the REST evaluator"}
+  P2{"org security policy<br/>IP allowlist via access.OrgSecurityPolicies"}
+  P3{"write guard (WRITE/DESTRUCTIVE only)<br/>maintenance window · paused subscription"}
+  H["handler — one port call<br/>caller's SecurityContext installed, restored in finally"]
+  OUT["result + requestId in _meta<br/>audit (mutations) · metrics (all)"]
+  E1["FORBIDDEN"]:::deny
+  E2["FORBIDDEN (ip-allowlist)"]:::deny
+  E3["SERVICE_UNAVAILABLE / SUBSCRIPTION_PAUSED"]:::deny
+  IN --> P1 -->|holds it| P2 -->|allowed| P3 -->|open| H --> OUT
+  P1 -->|missing| E1
+  P2 -->|blocked| E2
+  P3 -->|blocked| E3
+  classDef deny stroke-dasharray: 4 3;
+</pre>
+        <figcaption>The two write gates mirror the <code>/api/**</code> filters (<code>MaintenanceFilter</code>,
+          <code>SubscriptionAccessFilter</code>) through ports into the same modules — the surfaces cannot drift. Reads
+          keep working through both.</figcaption>
+      </figure>
+    </section>
+
+    <section>
+      <h2 id="catalog"><span class="n">06 — The surface</span>Tool catalog — 35 tools, 8 modules</h2>
+      <p class="section-intro">Every tool carries spec-standard safety annotations (<code>readOnlyHint</code> /
+        <code>destructiveHint</code> / <code>idempotentHint</code>) plus <code>_meta</code> with
+        <code>smsone/toolVersion</code> and <code>smsone/area</code>. Permissions are copied from the REST controllers'
+        <code>hasPermission</code> gates — twin surfaces, one vocabulary. A tool is never renamed; breaking schema
+        changes bump its version.</p>
+
+      <h3>Foundation</h3>
+      <div class="tablewrap"><table>
+        <tr><th>Tool</th><th>Kind</th><th>Permission</th><th>Does</th></tr>
+        <tr><td><code>whoami</code></td><td><span class="pill read">READ</span></td><td><em>any authenticated</em></td>
+          <td>Subject, credential kind, the scoped org, the exact permission codes held — the agent's bootstrap.</td></tr>
+      </table></div>
+
+      <h3>Organization</h3>
+      <div class="tablewrap"><table>
+        <tr><th>Tool</th><th>Kind</th><th>Permission</th><th>Does</th></tr>
+        <tr><td><code>org_get</code></td><td><span class="pill read">READ</span></td><td><code>org:read</code></td><td>Profile: alias, name, status, created.</td></tr>
+        <tr><td><code>org_update</code></td><td><span class="pill write">WRITE</span></td><td><code>org:update</code></td><td>Rename (display name; the alias is permanent).</td></tr>
+        <tr><td><code>members_list</code></td><td><span class="pill read">READ</span></td><td><code>member:read</code></td><td>Members with role code and status; cursor-paged.</td></tr>
+        <tr><td><code>member_invite</code></td><td><span class="pill write">WRITE</span></td><td><code>member:invite</code></td><td>Provision + link + record; idempotent re-invite; escalation-guarded.</td></tr>
+        <tr><td><code>member_role_assign</code></td><td><span class="pill write">WRITE</span></td><td><code>member:role:assign</code></td><td>Re-role a member; last-owner protected; escalation-guarded.</td></tr>
+        <tr><td><code>member_remove</code></td><td><span class="pill destr">DESTRUCTIVE</span></td><td><code>member:remove</code></td><td>End a membership (account survives); last-owner protected.</td></tr>
+        <tr><td><code>roles_list</code></td><td><span class="pill read">READ</span></td><td><code>role:read</code></td><td>Roles with permission bundles. Role CRUD is deliberately not on MCP.</td></tr>
+      </table></div>
+
+      <h3>Standing — subscription &amp; usage</h3>
+      <div class="tablewrap"><table>
+        <tr><th>Tool</th><th>Kind</th><th>Permission</th><th>Does</th></tr>
+        <tr><td><code>subscription_get</code></td><td><span class="pill read">READ</span></td><td><code>subscription:read</code></td><td>Plan, status, trial/period dates, entitlements (null = on, number = cap).</td></tr>
+        <tr><td><code>usage_summary</code></td><td><span class="pill read">READ</span></td><td><code>usage:read</code></td><td>Ledger totals + per-day counts over a trailing window (1–90 days).</td></tr>
+      </table></div>
+
+      <h3>Webhooks</h3>
+      <div class="tablewrap"><table>
+        <tr><th>Tool</th><th>Kind</th><th>Permission</th><th>Does</th></tr>
+        <tr><td><code>webhooks_list</code> / <code>webhook_get</code></td><td><span class="pill read">READ</span></td><td><code>webhook:manage</code></td><td>Subscriptions; secrets always masked on reads.</td></tr>
+        <tr><td><code>webhook_create</code></td><td><span class="pill write">WRITE</span></td><td><code>webhook:manage</code></td><td>Register endpoint + events. Secret returned in full exactly once. SSRF-guarded URL.</td></tr>
+        <tr><td><code>webhook_update</code></td><td><span class="pill write">WRITE</span></td><td><code>webhook:manage</code></td><td>URL/events replaced wholesale; omitted status resets to ACTIVE.</td></tr>
+        <tr><td><code>webhook_rotate_secret</code></td><td><span class="pill write">WRITE</span></td><td><code>webhook:manage</code></td><td>New secret shown once; old one stops verifying immediately.</td></tr>
+        <tr><td><code>webhook_delete</code></td><td><span class="pill destr">DESTRUCTIVE</span></td><td><code>webhook:manage</code></td><td>Stops matching + cancels queued; the delivery log survives.</td></tr>
+        <tr><td><code>webhook_deliveries</code></td><td><span class="pill read">READ</span></td><td><code>webhook:manage</code></td><td>Delivery log: attempts, responseStatus, lastError; readable after delete.</td></tr>
+        <tr><td><code>webhook_redeliver</code></td><td><span class="pill write">WRITE</span></td><td><code>webhook:manage</code></td><td>Re-queue one FAILED delivery (fenced — only FAILED qualifies).</td></tr>
+      </table></div>
+
+      <h3>Support</h3>
+      <div class="tablewrap"><table>
+        <tr><th>Tool</th><th>Kind</th><th>Permission</th><th>Does</th></tr>
+        <tr><td><code>tickets_list</code> / <code>ticket_get</code></td><td><span class="pill read">READ</span></td><td><code>ticket:read</code></td><td>Tickets: subject, category, priority (P1–P4), status.</td></tr>
+        <tr><td><code>ticket_create</code></td><td><span class="pill write">WRITE</span></td><td><code>ticket:write</code></td><td>Open a ticket; opener recorded as the key's subject.</td></tr>
+        <tr><td><code>ticket_messages</code></td><td><span class="pill read">READ</span></td><td><code>ticket:read</code></td><td>The tenant-visible conversation; internal notes never cross.</td></tr>
+        <tr><td><code>ticket_reply</code></td><td><span class="pill write">WRITE</span></td><td><code>ticket:write</code></td><td>Add a tenant reply.</td></tr>
+      </table></div>
+
+      <h3>Documents</h3>
+      <div class="tablewrap"><table>
+        <tr><th>Tool</th><th>Kind</th><th>Permission</th><th>Does</th></tr>
+        <tr><td><code>documents_list</code> / <code>document_get</code></td><td><span class="pill read">READ</span></td><td><code>document:read</code></td><td>Metadata: name, type, size, source.</td></tr>
+        <tr><td><code>document_download_url</code></td><td><span class="pill read">READ</span></td><td><code>document:read</code></td><td>Short-lived presigned URL; bytes never transit MCP.</td></tr>
+        <tr><td><code>document_delete</code></td><td><span class="pill destr">DESTRUCTIVE</span></td><td><code>document:manage</code></td><td>Bytes removed now; row soft-deleted for the retention window.</td></tr>
+      </table></div>
+
+      <h3>Exchange</h3>
+      <div class="tablewrap"><table>
+        <tr><th>Tool</th><th>Kind</th><th>Permission</th><th>Does</th></tr>
+        <tr><td><code>exchange_handlers</code></td><td><span class="pill read">READ</span></td><td><code>exchange:read</code></td><td>The movable datasets, each handler's permissions and formats.</td></tr>
+        <tr><td><code>exchange_jobs_list</code> / <code>exchange_job_get</code></td><td><span class="pill read">READ</span></td><td><code>exchange:read</code></td><td>Jobs and per-job progress; poll until terminal.</td></tr>
+        <tr><td><code>exchange_submit</code></td><td><span class="pill write">WRITE</span></td><td><code>exchange:submit</code> + handler's own</td><td>Submit an EXPORT; the handler's export permission is enforced at submit.</td></tr>
+        <tr><td><code>exchange_cancel</code></td><td><span class="pill write">WRITE</span></td><td><code>exchange:submit</code></td><td>Request cancellation; finished jobs answer a conflict.</td></tr>
+        <tr><td><code>exchange_result_url</code> / <code>exchange_error_report_url</code></td><td><span class="pill read">READ</span></td><td><code>exchange:read</code></td><td>Short-lived artifact URLs (requester or handler-permission holders).</td></tr>
+      </table></div>
+
+      <h3>Search</h3>
+      <div class="tablewrap"><table>
+        <tr><th>Tool</th><th>Kind</th><th>Permission</th><th>Does</th></tr>
+        <tr><td><code>search_query</code></td><td><span class="pill read">READ</span></td><td><code>search:query</code></td><td>Ranked org-scoped full-text (websearch syntax) with trigram fallback.</td></tr>
+      </table></div>
+    </section>
+
+    <section>
+      <h2 id="content"><span class="n">07 — Agent content</span>Prompts &amp; resources</h2>
+      <div class="grid2">
+        <div class="card">
+          <h4>Prompts — worked procedures, few by design</h4>
+          <p><code>diagnose_failed_webhooks</code> — walk the delivery log, separate receiver bugs from signature
+            disputes, redeliver only after the fix. <code>usage_review</code> — usage vs entitlements, flag anything past
+            80% of a cap.</p>
+        </div>
+        <div class="card">
+          <h4>Resources — drift-free reference</h4>
+          <p><code>smsone://guide/agent</code> (conventions, bundled in the jar) ·
+            <code>smsone://reference/permissions</code> and <code>smsone://reference/webhook-events</code> — rendered
+            from the enums on every read, so they cannot rot.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2 id="conventions"><span class="n">08 — Contract</span>Conventions every tool honors</h2>
+      <ul>
+        <li><strong>Request id, always.</strong> Every result and error carries the requestId
+          (<code>_meta["smsone/requestId"]</code> and inside error payloads) — the same correlation id the REST envelope
+          returns, joinable to server logs.</li>
+        <li><strong>Errors are the REST vocabulary.</strong> <code>error.code</code> is a stable
+          <code>ErrorCode</code> name (<code>FORBIDDEN</code>, <code>VALIDATION_FAILED</code>,
+          <code>SUBSCRIPTION_PAUSED</code>, …) with a curated, client-safe <code>detail</code>. Never a stack trace,
+          never an internal message.</li>
+        <li><strong>Cursors, no totals.</strong> Collections take <code>page_size</code> (≤ 100) /
+          <code>page_after</code> and return <code>page.nextCursor</code> — the house keyset pagination on a new wire.</li>
+        <li><strong>Payload ceiling.</strong> A result stays small; bulk data moves as short-lived URLs
+          (documents, export results), never through tool results.</li>
+        <li><strong>Secrets shown once.</strong> <code>webhook_create</code> / <code>webhook_rotate_secret</code> return
+          the signing secret exactly once, marked SENSITIVE in the description; reads mask it forever after.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2 id="async"><span class="n">09 — Long work</span>The async pattern (exchange is the model)</h2>
+      <figure class="diagram">
+        <pre class="mermaid">
+sequenceDiagram
+  participant A as Agent
+  participant M as /mcp
+  participant W as Exchange worker
+  A->>M: exchange_submit {handler: org-members, format: csv}
+  M-->>A: job {id, status: PENDING}
+  W->>W: claims job (skip locked) · streams the export · uploads artifact
+  loop until terminal
+    A->>M: exchange_job_get {job_id}
+    M-->>A: {status, processed, failed}
+  end
+  A->>M: exchange_result_url {job_id}
+  M-->>A: {url: presigned, short-lived}
+  A->>A: fetch the file directly from storage
+</pre>
+        <figcaption>Tools stay interactive; anything slow is submit-then-poll. This is also why the 60-second edge
+          timeout is generous rather than binding.</figcaption>
+      </figure>
+    </section>
+
+    <section>
+      <h2 id="ops"><span class="n">10 — Ops</span>Operating it</h2>
+      <ul>
+        <li><strong>Metrics.</strong> <code>smsone.mcp.tool.calls{tool,kind,outcome}</code>
+          (<code>ok · denied · guard_maintenance · guard_subscription · error</code>) and
+          <code>smsone.mcp.tool.duration{tool}</code> — top tools, slowest tools, denied tools, failure mix. Caller
+          identity is deliberately NOT a metric tag (unbounded cardinality); who-did-what lives in logs (requestId +
+          <code>key:&lt;id&gt;</code> in MDC) and, for mutations, in <code>audit_log</code>
+          (<code>mcp.tool_invoked</code>).</li>
+        <li><strong>Kill switch.</strong> <code>app.mcp.enabled=false</code> REFUSES every request with a named JSON-RPC
+          error rather than unregistering the servlet — a vanished route reads as version skew; a named refusal reads as
+          what it is (the impersonation-switch rule).</li>
+        <li><strong>Rate limits.</strong> Gateway token bucket on the route, plus the app-side <code>mcp</code> tier —
+          a per-key bucket (one org may run several agents; a runaway one shouldn't starve its siblings).</li>
+        <li><strong>Revocation is immediate.</strong> Keys verify against the live row on every request; a revoked key's
+          very next call is a 401.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2 id="tests"><span class="n">11 — Proof</span>How it is tested</h2>
+      <p class="section-intro">House rules (ADR 0003): real containers, no mocks below the module edge. The MCP suite's
+        harness is the <strong>real SDK client speaking streamable HTTP to the booted app</strong> — protocol, gateway-less
+        auth path, dispatcher and ports exercised as one loop, with keys minted by the production hashing scheme straight
+        into Postgres.</p>
+      <ul>
+        <li><code>McpServerIntegrationTest</code> — initialize → filtered tools/list → whoami; bearer spelling; 401s
+          (missing and revoked keys); hidden-tool-called-directly denies.</li>
+        <li><code>McpGuardrailsTest</code> — maintenance and paused-subscription refuse writes but not reads; IP
+          allowlist gates every call; denials happen BEFORE side effects (a counting tool proves the handler never ran).</li>
+        <li><code>McpToolCatalogTest</code> — every tool: snake_case name, version ≥ 1, area tag, real permission code,
+          truthful safety annotations on the wire.</li>
+        <li>Per-phase suites — member writes under the escalation guard (from the org package, Keycloak gateway stubbed);
+          webhook lifecycle incl. fenced redelivery; tickets + documents (storage mocked at the port, like
+          <code>DocumentApiTest</code>); exchange submit-poll-cancel under handler permissions; tenant-scoped search.</li>
+        <li><code>ShippedRouteTableTest</code> (gateway) — <code>/mcp</code> routes authenticated on
+          <code>edge-mcp</code> with the 60 s / 2 MiB shape.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2 id="nongoals"><span class="n">12 — Edges</span>Boundaries &amp; non-goals (decisions, not gaps)</h2>
+      <ul>
+        <li><strong>No API-key management tools</strong> — an agent must not rotate or mint the credential it
+          authenticates with.</li>
+        <li><strong>No platform-operator tools</strong> — impersonation and cross-tenant admin stay human + REST.</li>
+        <li><strong>No role CRUD</strong> — editing permission bundles is governance; <code>roles_list</code> only.</li>
+        <li><strong>No LLM-generated SQL</strong> — <code>AnalyticsEngine</code>'s contract is developer-authored SQL.</li>
+        <li><strong>No payment writes</strong> — money moves through Kill Bill / Pesapal flows with human consent.</li>
+        <li><strong>No binary transfer</strong> — uploads are REST multipart; downloads are presigned URLs.</li>
+        <li><strong>OAuth for claude.ai connectors</strong> — designed-for, deliberately later (plan phase 7): API keys
+          serve every current client; the tool layer never looks at credentials, so OAuth arrives as one filter-level
+          change.</li>
+      </ul>
+      <p class="section-intro">Full decision record: <code>docs/adr/0009-mcp-server.md</code> · living plan:
+        <code>docs/plans/MCP_PLAN.md</code> · REST twin documentation: <code>api-guide.html</code> Part F.</p>
+    </section>
+  </main>
+</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>
+(function () {
+  var stored = null;
+  try { stored = localStorage.getItem("smsone-mcp-doc-theme"); } catch (e) {}
+  var theme = stored || (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+  var dark = {
+    background: "transparent", fontFamily: "ui-sans-serif, system-ui, sans-serif", fontSize: "13px",
+    primaryColor: "#14212a", primaryTextColor: "#e6eef4", primaryBorderColor: "#2d3e49",
+    lineColor: "#3f5563", clusterBkg: "#0e1720", clusterBorder: "#223039",
+    titleColor: "#93a4b1", edgeLabelBackground: "#0e1720",
+    actorBkg: "#14212a", actorTextColor: "#e6eef4", actorBorder: "#2d3e49",
+    signalColor: "#93a4b1", signalTextColor: "#e6eef4",
+    loopTextColor: "#93a4b1", noteBkgColor: "#123037", noteTextColor: "#e6eef4", noteBorderColor: "#2d3e49"
+  };
+  var light = {
+    background: "transparent", fontFamily: "ui-sans-serif, system-ui, sans-serif", fontSize: "13px",
+    primaryColor: "#e4f2f2", primaryTextColor: "#10171d", primaryBorderColor: "#b8ccce",
+    lineColor: "#8aa8ab", clusterBkg: "#eef2f5", clusterBorder: "#d8e0e6",
+    titleColor: "#566673", edgeLabelBackground: "#eef2f5",
+    actorBkg: "#e4f2f2", actorTextColor: "#10171d", actorBorder: "#b8ccce",
+    signalColor: "#566673", signalTextColor: "#10171d",
+    loopTextColor: "#566673", noteBkgColor: "#daf0f1", noteTextColor: "#10171d", noteBorderColor: "#b8ccce"
+  };
+  var holders = Array.prototype.slice.call(document.querySelectorAll(".mermaid"));
+  var sources = holders.map(function (el) { return el.textContent; });
+  function apply(next) {
+    if (next === "light") document.documentElement.setAttribute("data-theme", "light");
+    else document.documentElement.removeAttribute("data-theme");
+    mermaid.initialize({ startOnLoad: false, securityLevel: "loose", theme: "base",
+      themeVariables: next === "light" ? light : dark });
+    holders.forEach(function (el, i) { el.removeAttribute("data-processed"); el.textContent = sources[i]; });
+    mermaid.run();
+  }
+  apply(theme);
+  var btn = document.getElementById("themeToggle");
+  if (btn) btn.addEventListener("click", function () {
+    theme = theme === "light" ? "dark" : "light";
+    try { localStorage.setItem("smsone-mcp-doc-theme", theme); } catch (e) {}
+    apply(theme);
+  });
+})();
+</script>
+
+</body>
+</html>

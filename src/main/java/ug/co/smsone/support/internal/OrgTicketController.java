@@ -18,9 +18,9 @@ import ug.co.smsone.shared.web.ResourceObject;
 import ug.co.smsone.shared.web.WindowedResult;
 
 /**
- * A tenant's support tickets — open, read, reply. Any member with {@code org:read} sees the org's
- * tickets and its public messages; INTERNAL platform notes are never returned here. Escalation and
- * assignment are the platform's job ({@code /api/v1/admin/tickets}).
+ * A tenant's support tickets — open, read, reply. {@code ticket:read} sees the org's tickets and
+ * their public messages; {@code ticket:write} opens and replies; INTERNAL platform notes are never
+ * returned here. Escalation and assignment are the platform's job ({@code /api/v1/admin/tickets}).
  */
 @RestController
 @RequestMapping("/api/v1/orgs/{orgId}/tickets")
@@ -40,7 +40,7 @@ class OrgTicketController {
 
     @PostMapping
     @Operation(summary = "Open a support ticket")
-    @PreAuthorize("hasPermission(#orgId, 'organization', 'org:read')")
+    @PreAuthorize("hasPermission(#orgId, 'organization', 'ticket:write')")
     @ResponseStatus(HttpStatus.CREATED)
     ResourceObject open(@PathVariable UUID orgId, @RequestBody OpenRequest request, CurrentUser user) {
         return TicketResources.toResource(
@@ -49,14 +49,14 @@ class OrgTicketController {
 
     @GetMapping
     @Operation(summary = "List the organization's tickets")
-    @PreAuthorize("hasPermission(#orgId, 'organization', 'org:read')")
+    @PreAuthorize("hasPermission(#orgId, 'organization', 'ticket:read')")
     WindowedResult<ResourceObject> list(@PathVariable UUID orgId, CursorPageRequest page) {
         return WindowedResult.of(support.listForOrg(orgId, page), page, TicketResources::toResource);
     }
 
     @GetMapping("/{id}")
     @Operation(summary = "Get one ticket")
-    @PreAuthorize("hasPermission(#orgId, 'organization', 'org:read')")
+    @PreAuthorize("hasPermission(#orgId, 'organization', 'ticket:read')")
     ResourceObject get(@PathVariable UUID orgId, @PathVariable UUID id) {
         return TicketResources.toResource(support.requireInOrg(orgId, id));
     }
@@ -64,7 +64,7 @@ class OrgTicketController {
     @GetMapping("/{id}/messages")
     @Operation(summary = "The ticket's public messages",
             description = "Internal platform notes are never shown to the tenant.")
-    @PreAuthorize("hasPermission(#orgId, 'organization', 'org:read')")
+    @PreAuthorize("hasPermission(#orgId, 'organization', 'ticket:read')")
     List<ResourceObject> messages(@PathVariable UUID orgId, @PathVariable UUID id) {
         support.requireInOrg(orgId, id); // 404 for a foreign org's ticket
         return support.messages(id, false).stream().map(TicketResources::toResource).toList();
@@ -72,7 +72,7 @@ class OrgTicketController {
 
     @PostMapping("/{id}/messages")
     @Operation(summary = "Reply to your ticket")
-    @PreAuthorize("hasPermission(#orgId, 'organization', 'org:read')")
+    @PreAuthorize("hasPermission(#orgId, 'organization', 'ticket:write')")
     @ResponseStatus(HttpStatus.CREATED)
     ResourceObject reply(@PathVariable UUID orgId, @PathVariable UUID id,
             @RequestBody ReplyRequest request, CurrentUser user) {

@@ -152,6 +152,23 @@ class WebhookSubscriptionService {
                 q -> q.limit(page.size()).sortBy(DELIVERY_SORT).scroll(page.scrollPosition(DELIVERY_SORT)));
     }
 
+    /**
+     * Re-queue one dead-lettered delivery. Requires a LIVE subscription (unlike the read-only
+     * delivery log): redelivering to a deleted endpoint would resurrect traffic its owner revoked.
+     * The state test lives in the queue's fenced UPDATE, not here — a pre-read would be TOCTOU.
+     */
+    void redeliver(UUID orgId, UUID subscriptionId, UUID deliveryId, java.time.Instant now) {
+        require(orgId, subscriptionId);
+        WebhookDelivery delivery = deliveries.findById(deliveryId)
+                .filter(row -> subscriptionId.equals(row.getSubscriptionId()) && orgId.equals(row.getOrgId()))
+                .orElseThrow(() -> new NotFoundException("Delivery not found."));
+        if (queue.requeueFailed(deliveryId, subscriptionId, orgId, now) == 0) {
+            throw new ug.co.smsone.shared.error.ConflictException(
+                    "Only FAILED deliveries can be redelivered; this one is " + delivery.getStatus() + ".");
+        }
+        auditLog.record("webhooks.delivery_redelivered", orgId, deliveryId.toString());
+    }
+
     private void requireSafeUrl(String url) {
         try {
             SafeOutboundUrl.requireSafe(url, properties.allowPrivateHosts());

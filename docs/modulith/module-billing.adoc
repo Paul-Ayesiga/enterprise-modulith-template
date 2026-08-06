@@ -2,6 +2,8 @@
 |===
 |Base package
 |`ug.co.smsone.billing`
+|Spring components
+|* `u.c.s.b.UsageSummaries` (via `u.c.s.b.internal.UsageSummariesImpl`)
 |Bean references
 |* `u.c.s.s.Subscriptions` (in Subscription)
 * `u.c.s.s.audit.AuditLog` (in Shared Kernel)

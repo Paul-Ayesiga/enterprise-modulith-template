@@ -32,6 +32,7 @@ flowchart TB
         payments["payments\nPSP collections · Pesapal / Yo! adapters"]
         signup["signup\nself-service org creation (opt-in)"]
         geo["geo\ngeolocation stamps · GeoStamps port · Geocoder SPI"]
+        mcp["mcp\nagent surface — MCP tools at /mcp over module ports"]
     end
 
     settings --> shared
@@ -45,6 +46,18 @@ flowchart TB
     audit --> shared
     webhooks --> shared
     geo --> shared
+    mcp --> shared
+
+    mcp --> organization
+    mcp --> subscription
+    mcp --> billing
+    mcp --> webhooks
+    mcp --> support
+    mcp --> document
+    mcp --> exchange
+    mcp --> search
+    mcp --> maintenance
+    mcp --> access
 
     organization --> identity
     notification --> identity

@@ -4,6 +4,7 @@
 |`ug.co.smsone.search`
 |Spring components
 |* `u.c.s.s.SearchIndex` (via `u.c.s.s.internal.SearchIndexImpl`)
+* `u.c.s.s.SearchQueries` (via `u.c.s.s.internal.SearchQueriesImpl`)
 |Bean references
 |* `u.c.s.s.events.EventInbox` (in Shared Kernel)
 |Events listened to

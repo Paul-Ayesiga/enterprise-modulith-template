@@ -1,0 +1,23 @@
+[%autowidth.stretch, cols="h,a"]
+|===
+|Base package
+|`ug.co.smsone.mcp`
+|Bean references
+|* `u.c.s.s.security.ApiPermissionEvaluator` (in Shared Kernel)
+* `u.c.s.s.security.CurrentUserProvider` (in Shared Kernel)
+* `u.c.s.s.web.ForwardedClientIp` (in Shared Kernel)
+* `u.c.s.w.WebhookAdmin` (in Webhooks)
+* `u.c.s.a.OrgSecurityPolicies` (in Access)
+* `u.c.s.s.audit.AuditLog` (in Shared Kernel)
+* `u.c.s.m.MaintenanceState` (in Maintenance)
+* `u.c.s.s.SubscriptionGate` (in Subscription)
+* `u.c.s.d.DocumentDirectory` (in Document)
+* `u.c.s.e.ExchangeJobs` (in Exchange)
+* `u.c.s.o.OrgDirectory` (in Organization)
+* `u.c.s.o.OrgMembers` (in Organization)
+* `u.c.s.o.OrgRoles` (in Organization)
+* `u.c.s.s.SearchQueries` (in Search)
+* `u.c.s.s.SubscriptionOverview` (in Subscription)
+* `u.c.s.b.UsageSummaries` (in Billing)
+* `u.c.s.s.SupportDesk` (in Support)
+|===

@@ -80,7 +80,7 @@ class AccessPolicyForwardedIpTest extends AbstractIntegrationTest {
         jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
                 + "values (?, ?, ?, 'FwdRole', false, 0, now())", roleId, orgId,
                 "FWD_" + subject.toUpperCase().replace('-', '_'));
-        for (String permission : new String[] {"ORG_READ", "ORG_UPDATE"}) {
+        for (String permission : new String[] {"ORG_READ", "ORG_UPDATE", "SUBSCRIPTION_READ"}) {
             jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleId, permission);
         }
         jdbc.update("insert into membership (id, org_id, user_subject, role_id, status, version, created_at) "

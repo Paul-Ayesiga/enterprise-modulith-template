@@ -72,6 +72,10 @@ dependencies {
     implementation(libs.awssdk.s3)
     implementation(libs.awssdk.apache.client)
 
+    // mcp bundle (agent protocol surface — stateless streamable HTTP servlet at /mcp)
+    implementation(platform(libs.mcp.bom))
+    implementation(libs.mcp)
+
     // persistence bundle
     implementation(libs.boot.data.jpa)
     implementation(libs.boot.flyway)

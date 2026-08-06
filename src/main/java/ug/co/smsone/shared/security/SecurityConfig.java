@@ -43,6 +43,14 @@ public class SecurityConfig {
                 .csrf(CsrfConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // The container's ERROR dispatch (a servlet calling sendError → forward to
+                        // /error) re-enters this chain with no SecurityContext — the key filter
+                        // skips error dispatches — so without this rule any sendError from an
+                        // authenticated area was rewritten into the entry point's 401. First
+                        // victim: the MCP servlet's 405 for GET /mcp, which told remote MCP
+                        // clients their valid key was bad. Boot's default chain permits exactly
+                        // this; a direct request to /error is a REQUEST dispatch and stays gated.
+                        .dispatcherTypeMatchers(jakarta.servlet.DispatcherType.ERROR).permitAll()
                         .requestMatchers("/actuator/health/**", "/actuator/info").permitAll()
                         .requestMatchers("/v3/api-docs", "/v3/api-docs.yaml", "/v3/api-docs/**",
                                 "/swagger-ui/**", "/swagger-ui.html").permitAll()
@@ -62,12 +70,28 @@ public class SecurityConfig {
                         .requestMatchers("/internal/gateway/**").permitAll()
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(resourceServer -> resourceServer
+                        .bearerTokenResolver(apiKeyAwareBearerTokenResolver())
                         .authenticationEntryPoint(authenticationEntryPoint)
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter)))
                 .exceptionHandling(handling -> handling
                         .authenticationEntryPoint(authenticationEntryPoint)
                         .accessDeniedHandler(accessDeniedHandler));
         return http.build();
+    }
+
+    /**
+     * {@code Authorization: Bearer sk_…} is an API key's second spelling (remote MCP clients can
+     * only send bearer headers), consumed by {@link ApiKeyAuthenticationFilter} BEFORE the bearer
+     * filter runs. The JWT machinery must not see it: it would try to decode the key as a JWT and
+     * 401 the very request the key filter just authenticated. A JWT can never start with
+     * {@code sk_}, so nothing real is hidden.
+     */
+    private static org.springframework.security.oauth2.server.resource.web.BearerTokenResolver apiKeyAwareBearerTokenResolver() {
+        var delegate = new org.springframework.security.oauth2.server.resource.web.DefaultBearerTokenResolver();
+        return request -> {
+            String token = delegate.resolve(request);
+            return token != null && token.startsWith("sk_") ? null : token;
+        };
     }
 
     /**

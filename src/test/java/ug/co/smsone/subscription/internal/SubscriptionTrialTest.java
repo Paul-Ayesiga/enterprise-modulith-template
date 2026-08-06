@@ -45,7 +45,7 @@ class SubscriptionTrialTest extends AbstractIntegrationTest {
     @Test
     void paidTrialGrantsAccessThenExpiryPausesToReadOnlyAndAssignResumes() throws Exception {
         UUID orgId = UUID.randomUUID();
-        seedMember(orgId, "trial-op", "ORG_READ");
+        seedMember(orgId, "trial-op", "ORG_READ", "TICKET_WRITE", "SUBSCRIPTION_READ");
         double before = expiredCount();
 
         // Platform starts a 14-day PRO trial.

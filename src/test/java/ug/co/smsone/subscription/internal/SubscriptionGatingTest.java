@@ -194,7 +194,8 @@ class SubscriptionGatingTest extends AbstractIntegrationTest {
         UUID roleId = UUID.randomUUID();
         jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
                 + "values (?, ?, 'GATED', 'Gated', false, 0, now())", roleId, orgId);
-        for (String permission : new String[] {"ORG_READ", "MEMBER_READ", "MEMBER_INVITE"}) {
+        for (String permission : new String[] {"ORG_READ", "MEMBER_READ", "MEMBER_INVITE",
+                "SUBSCRIPTION_READ", "EXCHANGE_SUBMIT"}) {
             jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleId, permission);
         }
         jdbc.update("insert into membership (id, org_id, user_subject, role_id, status, version, created_at) "

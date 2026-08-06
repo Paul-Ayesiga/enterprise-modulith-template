@@ -45,7 +45,7 @@ class SupportFlowTest extends AbstractIntegrationTest {
     @Test
     void openAssignReplyWithInternalNoteAndTenantSeesOnlyPublic() throws Exception {
         UUID orgId = UUID.randomUUID();
-        seedMember(orgId, "tenant-op", "ORG_READ");
+        seedMember(orgId, "tenant-op", "TICKET_READ", "TICKET_WRITE");
 
         MvcResult opened = mockMvc.perform(post("/api/v1/orgs/{orgId}/tickets", orgId)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -93,7 +93,7 @@ class SupportFlowTest extends AbstractIntegrationTest {
     @Test
     void anSlaBreachEscalatesTheTicket() throws Exception {
         UUID orgId = UUID.randomUUID();
-        seedMember(orgId, "tenant-sla", "ORG_READ");
+        seedMember(orgId, "tenant-sla", "TICKET_READ", "TICKET_WRITE");
         MvcResult opened = mockMvc.perform(post("/api/v1/orgs/{orgId}/tickets", orgId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"subject\":\"urgent\",\"priority\":\"P3\"}")

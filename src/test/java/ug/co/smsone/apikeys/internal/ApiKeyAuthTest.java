@@ -37,12 +37,12 @@ class ApiKeyAuthTest extends AbstractIntegrationTest {
     @Test
     void anOrgKeyCarriesASubsetAuthenticatesAndIsRevocable() throws Exception {
         UUID orgId = UUID.randomUUID();
-        seedMember(orgId, "key-admin", "ORG_READ", "MEMBER_READ", "APIKEY_MANAGE");
+        seedMember(orgId, "key-admin", "ORG_READ", "MEMBER_READ", "SUBSCRIPTION_READ", "APIKEY_MANAGE");
 
         // Mint a key with a subset of what the caller holds.
         MvcResult minted = mockMvc.perform(post("/api/v1/orgs/{orgId}/api-keys", orgId)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"name\":\"ci-bot\",\"permissions\":[\"org:read\"]}")
+                        .content("{\"name\":\"ci-bot\",\"permissions\":[\"subscription:read\"]}")
                         .with(member(orgId, "key-admin")))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.attributes.secret").exists())
@@ -51,7 +51,7 @@ class ApiKeyAuthTest extends AbstractIntegrationTest {
         String secret = JsonPath.read(minted.getResponse().getContentAsString(), "$.data.attributes.secret");
         String keyId = JsonPath.read(minted.getResponse().getContentAsString(), "$.data.id");
 
-        // The key reaches org:read...
+        // The key reaches subscription:read...
         mockMvc.perform(get("/api/v1/orgs/{orgId}/subscription", orgId)
                         .header("X-Api-Key", secret))
                 .andExpect(status().isOk());

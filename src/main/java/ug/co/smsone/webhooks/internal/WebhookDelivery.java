@@ -59,8 +59,16 @@ class WebhookDelivery {
         return id;
     }
 
+    UUID getSubscriptionId() {
+        return subscriptionId;
+    }
+
     UUID getOrgId() {
         return orgId;
+    }
+
+    Instant getDeliveredAt() {
+        return deliveredAt;
     }
 
     String getEventType() {

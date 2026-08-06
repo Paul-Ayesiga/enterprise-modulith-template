@@ -239,7 +239,7 @@ valid JWT alone is not access: the subject also needs a local `app_user` row. `m
 | `GET`/`POST` | `/api/v1/documents` | USER | Personal documents (support may read others', admin delete) |
 | `GET` | `/api/v1/orgs/{orgId}/search` · `/api/v1/admin/search` | `org:read` / **platform-support** | Ranked FTS (org-scoped / platform-wide) |
 | `GET` | `/api/v1/audit` · `/api/v1/orgs/{orgId}/audit` | **platform-support** / `audit:read` | Audit trail (all orgs / that org); filter `action`/`from`/`to` |
-| `GET`/`POST`/`PUT`/`DELETE` | `/api/v1/orgs/{orgId}/webhooks[/{id}]` | `webhook:manage` | Outbound webhook subscriptions (secret shown once); `/{id}/deliveries` = delivery log |
+| `GET`/`POST`/`PUT`/`DELETE` | `/api/v1/orgs/{orgId}/webhooks[/{id}]` | `webhook:manage` | Outbound webhook subscriptions (secret shown once); `/{id}/deliveries` = delivery log; `POST …/deliveries/{deliveryId}/redeliver` re-queues a FAILED one (202) |
 | `POST`/`GET` | `/api/v1/orgs/{orgId}/geo/stamps` | `geo:capture` / `geo:read` | Attach a location; query by subject or `bbox` (exact coords need `geo:read_precise`) |
 | `GET`/`PUT` | `/api/v1/orgs/{orgId}/geo/policies/{subjectType}` | `geo:policy:manage` | Per-record-type capture policy (OFF/OPTIONAL/REQUIRED) |
 | `GET` | `/api/v1/scheduler/locks` | **platform-support** | ShedLock rows (clustered-job observability) |
@@ -305,3 +305,26 @@ scripts/api.sh DELETE "/api/v1/admin/impersonations/$SESSION"                 # 
 - **`meta.requestId`** is on every response (+ the `X-Request-Id` header) — quote it in bug reports.
 - Errors use `{"errors":[{id,status,code,title,detail,source}], "meta":{requestId}}` — **never** a stack trace.
 - **Cursor pagination**: `meta.page {size,count,hasMore,nextCursor}` + `links.next` (no total counts).
+
+## Agents (MCP)
+
+The platform speaks the Model Context Protocol at `POST /mcp` (via the gateway:
+`http://localhost:28090/mcp` — the production-faithful path and the `.mcp.json` default; direct to
+the modulith: `http://localhost:28080/mcp` when the gateway isn't running). Auth is an **org API key** — mint one with
+`POST /api/v1/orgs/{orgId}/api-keys` (permissions capped to what you hold), then either header works:
+`X-Api-Key: sk_…` or `Authorization: Bearer sk_…`.
+
+- **Claude Code**: the repo ships `.mcp.json` — `export SMSONE_API_KEY=sk_…` and the `smsone-local`
+  server appears with the tools your key allows (`tools/list` is permission-filtered).
+- **Smoke test** (JSON-RPC by hand):
+
+```bash
+curl -s http://localhost:28080/mcp \
+  -H "Content-Type: application/json" -H "Accept: application/json" \
+  -H "X-Api-Key: $SMSONE_API_KEY" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"whoami","arguments":{}}}'
+```
+
+- 35 tools across organization, subscription/usage, webhooks, support, documents, exchange and
+  search; every result carries the `requestId`; writes are refused during maintenance windows and
+  paused subscriptions. Full catalog + diagrams: [guides/mcp-guide.html](guides/mcp-guide.html).

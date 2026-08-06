@@ -2,6 +2,8 @@
 |===
 |Base package
 |`ug.co.smsone.maintenance`
+|Spring components
+|* `u.c.s.m.MaintenanceState` (via `u.c.s.m.internal.MaintenanceStateImpl`)
 |Bean references
 |* `u.c.s.s.security.CurrentUserProvider` (in Shared Kernel)
 * `u.c.s.s.web.EnvelopeErrorWriter` (in Shared Kernel)

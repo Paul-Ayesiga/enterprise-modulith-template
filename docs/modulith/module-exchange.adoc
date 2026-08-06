@@ -2,10 +2,13 @@
 |===
 |Base package
 |`ug.co.smsone.exchange`
+|Spring components
+|* `u.c.s.e.ExchangeJobs` (via `u.c.s.e.internal.ExchangeJobsImpl`)
 |Bean references
 |* `u.c.s.f.FileStorageProvider` (in Files)
 * `u.c.s.s.document.Documents` (in Shared Kernel)
 * `u.c.s.s.persistence.DbDialect` (in Shared Kernel)
+* `u.c.s.s.security.CurrentUserProvider` (in Shared Kernel)
 * `u.c.s.s.retention.RetentionOverrides` (in Shared Kernel)
 * `u.c.s.s.security.OrgAuthorization` (in Shared Kernel)
 * `u.c.s.s.audit.AuditLog` (in Shared Kernel)

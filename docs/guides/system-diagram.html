@@ -141,6 +141,8 @@ flowchart TB
     curl["curl / Postman — Bearer JWT"]
   end
 
+  agents["AI agents — MCP clients"]
+
   kc["KEYCLOAK :28081<br/>realm smsone · KC organizations · JWKS<br/>login+email theme · BRAND_NAME"]
 
   subgraph EDGE["API GATEWAY — reactive :28090 · admin :29090"]
@@ -157,7 +159,9 @@ flowchart TB
     chain["filter chain −100…5: security → impersonation → MDC →<br/>rate limit → idempotency → provisioning gate → org policy →<br/>maintenance → subscription access"]
     modules["26 modules · ArchUnit-enforced boundaries · shared kernel ports"]
     outbox["event publication registry (outbox, same TX)"]
+    mcp["/mcp — MCP stateless streamable HTTP<br/>35 tools · permission-filtered"]
     chain --> modules --> outbox
+    mcp --> modules
   end
 
   subgraph ASYNC["ASYNC CONSUMERS — @ApplicationModuleListener"]
@@ -182,10 +186,12 @@ flowchart TB
   otel["OBSERVABILITY — otel-lgtm :23000<br/>OTLP :24317 · Grafana · Prometheus scrape"]
 
   CLIENTS --> EDGE
+  agents --> EDGE
   web -. "login redirect" .-> kc
   kc -. "JWKS" .-> EDGE
   kc -. "JWKS + admin API" .-> CORE
   EDGE -- "proxy /api/v1/**" --> CORE
+  EDGE -- "proxy /mcp (route mcp-api)" --> mcp
   EDGE -. "seams: introspect · audit · quota<br/>(shared GATEWAY_SECRET)" .-> CORE
   CORE --> ASYNC
   wh --> recv
@@ -890,6 +896,51 @@ flowchart LR
           <tr><td>visibility</td><td>orgs see their own usage in the developer portal; platform sees per-consumer counts via <code>gatewayusage</code></td></tr>
           <tr><td>plans</td><td>a usage-priced KB plan bills from these records; entitlement caps stay the access authority (§09)</td></tr>
         </table></div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 17 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">17</span><h2>MCP — the agent surface</h2></div>
+    <p class="sec-sub">A second protocol surface for AI agents — JSON-RPC 2.0 over <b>stateless streamable HTTP</b> at
+      <code>POST /mcp</code> (a servlet, not an MVC controller) — over the <b>same module ports</b> the REST controllers
+      call.</p>
+    <p class="sec-sub">Org-implicit by construction: no tool takes an <code>orgId</code> — the org comes from the API
+      key — and discovery is permission-filtered (<code>tools/list</code> shows only what the key may call; a hidden
+      tool still refuses on a direct call, fail-closed). 35 tools, 2 prompts, 3 <code>smsone://</code> resources; the
+      deep dive is <a href="mcp-guide.html">docs/guides/mcp-guide.html</a>.</p>
+    <div class="chain">
+      <div class="stagebox"><span class="ord">edge</span>
+        <span class="what"><b>Gateway — route <code>mcp-api</code> · policy <code>edge-mcp</code></b> — order 80, product <code>agents</code>: authenticated at the edge, rate-limited, response timeout <b>60&nbsp;s</b> (tool calls outlive REST's 15&nbsp;s), body cap <b>2&nbsp;MiB</b>.</span>
+        <span class="fail"><span class="pill bad">401 / 429</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox core"><span class="ord">identity</span>
+        <span class="what"><b>Request id + key auth</b> — adopts/mints the request id, then resolves the org API key: <code>X-Api-Key: sk_…</code> or <code>Authorization: Bearer sk_…</code> (both tiers understand the bearer spelling; JWTs still work).</span>
+        <span class="fail"><span class="pill bad">401</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox core"><span class="ord">limit</span>
+        <span class="what"><b>Rate limit — tier <code>mcp</code></b> — a per-key PRINCIPAL bucket, <b>300/min</b> default; its own tier, distinct from the read/write tiers REST uses.</span>
+        <span class="fail"><span class="pill bad">429</span><span class="pill store">Valkey</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox core"><span class="ord">perm</span>
+        <span class="what"><b>Permission check</b> — every call re-checked <b>fail-closed</b> via <code>ApiPermissionEvaluator</code>; the filtered <code>tools/list</code> is a convenience, never the enforcement.</span>
+        <span class="fail"><span class="pill bad">FORBIDDEN</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox core"><span class="ord">policy</span>
+        <span class="what"><b>Org IP allowlist</b> — the tenant's own security policy judges the MCP caller exactly as it judges REST.</span>
+        <span class="fail"><span class="pill bad">FORBIDDEN</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox core"><span class="ord">guard</span>
+        <span class="what"><b>Write guard</b> — WRITE / DESTRUCTIVE tools refuse during a <code>RESTRICT</code> maintenance window (<code>SERVICE_UNAVAILABLE</code>) or a paused subscription (<code>SUBSCRIPTION_PAUSED</code>); READ tools pass.</span>
+        <span class="fail"><span class="pill bad">503 / 402</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox core"><span class="ord">port</span>
+        <span class="what"><b>Module port</b> — the same shared-kernel port the REST controller calls; results and errors carry <code>_meta["smsone/requestId"]</code>, errors reuse the REST <code>ErrorCode</code> names, collections page by <code>page_size</code>/<code>page_after</code> cursors (max 100).</span>
+        <span class="fail"><span class="pill ok">result + _meta</span></span></div>
+      <div class="connector">│▼</div>
+      <div class="stagebox core"><span class="ord">after</span>
+        <span class="what"><b>Audit + metrics</b> — mutations audit as <code>mcp.tool_invoked</code>; <code>smsone.mcp.tool.calls{tool,kind,outcome}</code> + a duration timer. Kill switch <code>app.mcp.enabled=false</code> refuses everything with named JSON-RPC error <code>-32050</code>.</span>
+        <span class="fail"><span class="pill store">Postgres · Prometheus</span></span></div>
     </div>
   </section>
 

@@ -3,9 +3,13 @@ package ug.co.smsone.organization.internal;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import ug.co.smsone.organization.Permission;
 import ug.co.smsone.shared.error.ForbiddenException;
+import ug.co.smsone.shared.security.ApiKeyAuthenticationToken;
+import ug.co.smsone.shared.security.ApiKeyPrincipal;
 import ug.co.smsone.shared.security.CurrentUser;
 import ug.co.smsone.shared.security.CurrentUserProvider;
 
@@ -28,6 +32,20 @@ class PermissionEscalationGuard {
     }
 
     void requireCallerHolds(UUID orgId, Set<Permission> granted) {
+        // A machine caller is never a member, so the subject lookup below would resolve to nothing
+        // and every key-driven grant would 403. Its held set is the key's minted permission subset:
+        // capped at mint by a human who HELD those permissions, so the no-escalation invariant
+        // carries transitively — a key hands on at most what its minter could have handed on, and
+        // only inside its own org (strict id equality, same rule as the evaluator's machine branch).
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication instanceof ApiKeyAuthenticationToken apiKey) {
+            ApiKeyPrincipal principal = apiKey.getPrincipal();
+            if (principal.orgId() == null || !principal.orgId().equals(orgId)) {
+                throw new ForbiddenException("This API key cannot grant permissions in this organization.");
+            }
+            requireHeld(principal.permissions(), granted, "You cannot grant permissions you do not hold: ");
+            return;
+        }
         CurrentUser caller = currentUser.requireCurrentUser();
         require(orgId, caller.subject(), granted, "You cannot grant permissions you do not hold: ");
     }
@@ -43,7 +61,10 @@ class PermissionEscalationGuard {
     }
 
     private void require(UUID orgId, String subject, Set<Permission> granted, String message) {
-        Set<String> held = permissions.resolve(subject, orgId);
+        requireHeld(permissions.resolve(subject, orgId), granted, message);
+    }
+
+    private static void requireHeld(Set<String> held, Set<Permission> granted, String message) {
         List<String> escalated = granted.stream()
                 .map(Permission::code)
                 .filter(code -> !held.contains(code))

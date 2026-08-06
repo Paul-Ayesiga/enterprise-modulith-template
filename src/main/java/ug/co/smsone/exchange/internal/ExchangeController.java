@@ -25,8 +25,9 @@ import ug.co.smsone.shared.web.WindowedResult;
 /**
  * The exchange surface: submit is a 202 (the work is a background job, never the request), progress
  * is polled on the job resource, artifacts download as 302s to short-lived presigned URLs. Listing
- * and reading job metadata needs {@code org:read}; submitting and downloading are additionally
- * gated on the handler's own permission inside {@link ExchangeService}.
+ * and reading job metadata needs {@code exchange:read}; submitting and cancelling need {@code
+ * exchange:submit} — and submits/downloads are additionally gated on the handler's own permission
+ * inside {@link ExchangeService}.
  */
 @RestController
 @RequestMapping("/api/v1/orgs/{orgId}/exchange")
@@ -55,7 +56,7 @@ class ExchangeController {
                     `format` (CSV or JSONL) parameters. Answers 202 immediately — processing is a \
                     durable background job; poll the returned resource for progress. The submitter \
                     must hold the handler's import permission.""")
-    @PreAuthorize("hasPermission(#orgId, 'organization', 'org:read')")
+    @PreAuthorize("hasPermission(#orgId, 'organization', 'exchange:submit')")
     @ResponseStatus(HttpStatus.ACCEPTED)
     ResourceObject submitImport(@PathVariable UUID orgId, @RequestParam("handler") String handler,
             @RequestParam(name = "format", defaultValue = "CSV") String format,
@@ -68,7 +69,7 @@ class ExchangeController {
             description = """
                     Answers 202; when the job completes, its result downloads via \
                     `GET /jobs/{id}/result`. The submitter must hold the handler's export permission.""")
-    @PreAuthorize("hasPermission(#orgId, 'organization', 'org:read')")
+    @PreAuthorize("hasPermission(#orgId, 'organization', 'exchange:submit')")
     @ResponseStatus(HttpStatus.ACCEPTED)
     ResourceObject submitExport(@PathVariable UUID orgId, @RequestBody ExportRequest request,
             CurrentUser user) {
@@ -77,14 +78,14 @@ class ExchangeController {
 
     @GetMapping("/jobs")
     @Operation(summary = "List the organization's exchange jobs")
-    @PreAuthorize("hasPermission(#orgId, 'organization', 'org:read')")
+    @PreAuthorize("hasPermission(#orgId, 'organization', 'exchange:read')")
     WindowedResult<ResourceObject> list(@PathVariable UUID orgId, CursorPageRequest page) {
         return exchange.list(orgId, page, ExchangeController::toResource);
     }
 
     @GetMapping("/jobs/{id}")
     @Operation(summary = "Get one exchange job with its progress")
-    @PreAuthorize("hasPermission(#orgId, 'organization', 'org:read')")
+    @PreAuthorize("hasPermission(#orgId, 'organization', 'exchange:read')")
     ResourceObject get(@PathVariable UUID orgId, @PathVariable UUID id) {
         return toResource(exchange.require(id, orgId));
     }
@@ -95,7 +96,7 @@ class ExchangeController {
                     Best-effort: a PENDING job never starts; a running import stops at its next \
                     batch boundary (already-committed records stay applied); an export already in \
                     flight completes.""")
-    @PreAuthorize("hasPermission(#orgId, 'organization', 'org:read')")
+    @PreAuthorize("hasPermission(#orgId, 'organization', 'exchange:submit')")
     ResourceObject cancel(@PathVariable UUID orgId, @PathVariable UUID id, CurrentUser user) {
         return toResource(exchange.cancel(user, orgId, id));
     }
@@ -103,7 +104,7 @@ class ExchangeController {
     @GetMapping("/jobs/{id}/report")
     @Operation(summary = "Download a job's row-addressed error report",
             description = "302 to a short-lived presigned URL. CSV with `row_number,error` columns.")
-    @PreAuthorize("hasPermission(#orgId, 'organization', 'org:read')")
+    @PreAuthorize("hasPermission(#orgId, 'organization', 'exchange:read')")
     ResponseEntity<Void> report(@PathVariable UUID orgId, @PathVariable UUID id, CurrentUser user) {
         return redirect(exchange.errorReportUrl(user, orgId, id));
     }
@@ -111,7 +112,7 @@ class ExchangeController {
     @GetMapping("/jobs/{id}/result")
     @Operation(summary = "Download a completed export's result file",
             description = "302 to a short-lived presigned URL; follow the redirect for the bytes.")
-    @PreAuthorize("hasPermission(#orgId, 'organization', 'org:read')")
+    @PreAuthorize("hasPermission(#orgId, 'organization', 'exchange:read')")
     ResponseEntity<Void> result(@PathVariable UUID orgId, @PathVariable UUID id, CurrentUser user) {
         return redirect(exchange.resultUrl(user, orgId, id));
     }

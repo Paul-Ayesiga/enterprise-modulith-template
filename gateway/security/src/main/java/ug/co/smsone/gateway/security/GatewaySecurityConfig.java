@@ -47,9 +47,29 @@ public class GatewaySecurityConfig {
                 .cors(cors -> cors.configurationSource(corsConfigurationSource(properties)))
                 .authorizeExchange(exchange -> exchange.anyExchange().permitAll())
                 .oauth2ResourceServer(oauth2 -> oauth2
+                        .bearerTokenConverter(apiKeyAwareBearerConverter())
                         .authenticationEntryPoint(unauthorizedEntryPoint(meterRegistry.getIfAvailable()))
                         .jwt(jwt -> jwt.jwtDecoder(jwtDecoder)))
                 .build();
+    }
+
+    /**
+     * {@code Authorization: Bearer sk_…} is an API key's second spelling — remote MCP clients can
+     * only send bearer headers. The JWT layer must not try to decode it (it would 401 before
+     * {@link EdgeAuthorizationFilter} could introspect it); a JWT can never start with {@code sk_},
+     * so skipping these hides nothing real. Mirrors the modulith's resolver rule exactly.
+     */
+    private static org.springframework.security.web.server.authentication.ServerAuthenticationConverter apiKeyAwareBearerConverter() {
+        var delegate = new org.springframework.security.oauth2.server.resource.web.server.authentication.ServerBearerTokenAuthenticationConverter();
+        String keyBearer = "Bearer sk_";
+        return exchange -> {
+            String authorization = exchange.getRequest().getHeaders()
+                    .getFirst(org.springframework.http.HttpHeaders.AUTHORIZATION);
+            if (authorization != null && authorization.regionMatches(true, 0, keyBearer, 0, keyBearer.length())) {
+                return Mono.empty();
+            }
+            return delegate.convert(exchange);
+        };
     }
 
     /** An invalid/expired bearer token → 401 in the gateway's error envelope, not Security's default. */

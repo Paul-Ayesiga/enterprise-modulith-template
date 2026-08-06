@@ -1075,12 +1075,17 @@ codes (`org:read`, `member:invite`) — see §2.5. An unknown code on a role wri
 `Permission.isValid` with a 422; the column itself has no CHECK constraint, so a value written by hand
 would fail at read time as an enum-mapping error, not at write time.
 
-The catalog is 15 codes (`organization/Permission.java:13-30`): `org:read`, `org:update`, `org:delete`,
+The catalog is 29 codes (`organization/Permission.java`): `org:read`, `org:update`, `org:delete`,
 `org:settings:read`, `org:settings:update`, `member:read`, `member:invite`, `member:remove`,
 `member:role:assign`, `role:read`, `role:create`, `role:update`, `role:delete`, `audit:read`,
-`webhook:manage`. Three of them — `org:delete`, `org:settings:read`, `org:settings:update` — are
-grantable (OWNER holds them via `EnumSet.allOf`) but **no endpoint checks them**; they are catalog
-entries awaiting the endpoints they name.
+`webhook:manage`, `document:read`, `document:manage`, `apikey:manage`, `subscription:read`,
+`usage:read`, `ticket:read`, `ticket:write`, `exchange:read`, `exchange:submit`, `search:query`,
+`geo:capture`, `geo:read`, `geo:read_precise`, `geo:policy:manage`. The seven area codes
+(`subscription:read` … `search:query`) arrived with `V48`, which backfills them onto every role
+holding `ORG_READ` — behavior-preserving for humans; API keys are deliberately NOT backfilled (a
+key's grant is exactly what a human minted). Three codes — `org:delete`, `org:settings:read`,
+`org:settings:update` — are grantable (OWNER holds them via `EnumSet.allOf`) but **no endpoint
+checks them**; they are catalog entries awaiting the endpoints they name.
 
 **No `deleted_at`, deliberately** (`V17:7`): the collection's lifecycle follows `org_role`'s. It is
 **not** in `PURGE_ORDER` either, because its FK cascades — Postgres removes these rows with the parent,

@@ -51,7 +51,11 @@ public class RateLimitFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = RequestPaths.of(request);
-        return !(path.equals("/api") || path.startsWith("/api/")) || "OPTIONS".equals(request.getMethod());
+        // /mcp is covered deliberately: the agent surface must share the same identity-aware quota
+        // discipline as /api — it is outside the prefix, not outside the policy (MCP plan §3).
+        boolean covered = path.equals("/api") || path.startsWith("/api/")
+                || path.equals("/mcp") || path.startsWith("/mcp/");
+        return !covered || "OPTIONS".equals(request.getMethod());
     }
 
     @Override

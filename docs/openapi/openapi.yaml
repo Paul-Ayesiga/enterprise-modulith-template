@@ -2058,6 +2058,56 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/orgs/{orgId}/webhooks/{id}/deliveries/{deliveryId}/redeliver:
+    post:
+      tags:
+      - Organization · Webhooks
+      summary: Redeliver a dead-lettered delivery
+      description: "Re-queues one FAILED delivery for a fresh retry cycle — after\
+        \ the receiver is fixed. Only FAILED deliveries qualify (409 otherwise: pending/processing\
+        \ rows are the worker's, delivered ones are done); the subscription must still\
+        \ be live (redelivering to a deleted endpoint would resurrect traffic its\
+        \ owner revoked). 202 because delivery is asynchronous — poll the delivery\
+        \ log for the outcome."
+      operationId: redeliver
+      parameters:
+      - name: orgId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: deliveryId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "202":
+          description: Accepted
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
   /api/v1/orgs/{orgId}/tickets:
     get:
       tags:

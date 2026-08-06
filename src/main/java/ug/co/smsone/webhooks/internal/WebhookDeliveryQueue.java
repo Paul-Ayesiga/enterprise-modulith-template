@@ -123,6 +123,23 @@ class WebhookDeliveryQueue {
     }
 
     /**
+     * Re-queue a dead-lettered delivery for a fresh retry cycle (operator/agent-initiated, after
+     * fixing the receiver). Fenced on {@code FAILED}: the worker never touches FAILED rows, so the
+     * only race is two redeliveries — one wins, the other reads 0 rows and reports the conflict.
+     * Attempts reset so backoff restarts; {@code last_error} is kept until the next attempt writes
+     * its own outcome (an operator reading the log mid-retry still sees why it dead-lettered).
+     *
+     * @return 1 when re-queued; 0 when the row is not FAILED (or not this org's/subscription's)
+     */
+    int requeueFailed(UUID deliveryId, UUID subscriptionId, UUID orgId, Instant now) {
+        return jdbc.update(
+                "update webhook_delivery set status = 'PENDING', attempts = 0, next_attempt_at = ?, "
+                        + "locked_at = null where id = ? and subscription_id = ? and org_id = ? "
+                        + "and status = 'FAILED'",
+                Timestamp.from(now), deliveryId, subscriptionId, orgId);
+    }
+
+    /**
      * Dead-letters everything still outstanding for a subscription. The claim above simply stops
      * seeing those rows, which would leave them PENDING until the retention purge — indistinguishable
      * from "still trying". Cancelling them makes the delivery log say what actually happened, and the

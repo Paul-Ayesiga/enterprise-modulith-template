@@ -32,6 +32,14 @@ public enum Permission {
     DOCUMENT_MANAGE("document:manage"),
     APIKEY_MANAGE("apikey:manage"),
 
+    SUBSCRIPTION_READ("subscription:read"),
+    USAGE_READ("usage:read"),
+    TICKET_READ("ticket:read"),
+    TICKET_WRITE("ticket:write"),
+    EXCHANGE_READ("exchange:read"),
+    EXCHANGE_SUBMIT("exchange:submit"),
+    SEARCH_QUERY("search:query"),
+
     GEO_CAPTURE("geo:capture"),
     GEO_READ("geo:read"),
     GEO_READ_PRECISE("geo:read_precise"),

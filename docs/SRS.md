@@ -85,7 +85,7 @@ Terms are defined as the code uses them, not generically.
 | **Subject** | The Keycloak user id — the JWT `sub` claim. The system's only durable identity. It is what `created_by`/`updated_by`, `audit_log.actor`, `membership.user_subject`, `in_app_notification.recipient`, idempotency principals and rate-limit buckets all key on. It is **never** `preferred_username`, which Keycloak allows to be renamed and, once freed, reassigned. |
 | **Username** | `preferred_username`, exposed as `CurrentUser.username()` and used as the Spring principal name. Display only. Nothing durable may key on it (`AGENTS.md` §1). |
 | **Platform role** | One of three hierarchical Keycloak **realm** roles — `platform-superadmin` > `platform-admin` > `platform-support` — declared as constants in `shared/security/PlatformRole.java`. Grants platform-wide authority. Grants **zero** organization permissions. |
-| **Permission** | One of 15 fixed codes in the `organization.Permission` enum (`org:read` … `webhook:manage`). The organization authorization vocabulary. Roles are DB-editable bundles of permissions; every org-scoped authorization decision is made on a permission, never on a role code. |
+| **Permission** | One of 29 fixed codes in the `organization.Permission` enum (`org:read` … `search:query`), including the per-area codes `ticket:read`/`ticket:write`, `exchange:read`/`exchange:submit`, `search:query`, `subscription:read` and `usage:read` (added with `V48`, which backfills them onto every role holding `ORG_READ`). The organization authorization vocabulary. Roles are DB-editable bundles of permissions; every org-scoped authorization decision is made on a permission, never on a role code. |
 | **Org role** | A named, DB-editable bundle of permissions inside one organization (`org_role` + `role_permission`). Exactly one role is seeded — `OWNER`, holding `EnumSet.allOf(Permission.class)`. All others are created by an owner. |
 | **Provisioning** | The admin-driven creation of access: a Keycloak account (created if absent), a baseline realm role, temporary credentials delivered by Keycloak action-email, and a local `app_user` row in status `INVITED`. There is **no** just-in-time provisioning — a valid JWT is not access. |
 | **Envelope** | The single JSON response shape: `{data, errors, meta, links}` with `data` XOR `errors`, `meta.requestId` always present. Applied by `shared/web/EnvelopeResponseBodyAdvice.java`; never hand-built in a controller. |
@@ -802,7 +802,7 @@ The system SHALL:
 
 | ID | Requirement | Where | Verified by |
 |---|---|---|---|
-| FR-SRCH-1 | serve org-scoped full-text search at `GET /api/v1/orgs/{orgId}/search` gated on `org:read`, with the tenant cut applied **inside** the SQL, never after; platform-wide (null-org) rows are invisible to it | `main:search/internal/{SearchController,SearchQueryService}.java` | `test:search/internal/SearchApiTest.tenantSearchFindsOwnDocumentsAndNeverAnotherOrgs`, `.platformWideRowsAreInvisibleToTenantSearchButFoundByAdminSearch` |
+| FR-SRCH-1 | serve org-scoped full-text search at `GET /api/v1/orgs/{orgId}/search` gated on `search:query`, with the tenant cut applied **inside** the SQL, never after; platform-wide (null-org) rows are invisible to it | `main:search/internal/{SearchController,SearchQueryService}.java` | `test:search/internal/SearchApiTest.tenantSearchFindsOwnDocumentsAndNeverAnotherOrgs`, `.platformWideRowsAreInvisibleToTenantSearchButFoundByAdminSearch` |
 | FR-SRCH-2 | serve platform search at `GET /api/v1/admin/search` (`platform-support`), reaching org and platform-wide rows, optionally narrowed by `org` | same | same |
 | FR-SRCH-3 | rank with `ts_rank_cd` over `websearch_to_tsquery('simple', q)`, falling back to trigram `word_similarity` over titles when nothing token-matches; the cursor carries the mode so later pages never re-decide, and ranks travel as `float8` (the float4 text round-trip would repeat page 1) | `main:search/internal/SearchQueryService.java` (the cast's why-comment) | `test:search/internal/SearchApiTest.aPrefixThatMatchesNoTokenFallsBackToTrigramAndTheCursorKeepsTheMode` |
 | FR-SRCH-4 | index idempotently: the `(entity_type, entity_id)` upsert plus the `EventInbox` guard make at-least-once redelivery produce exactly one document | `main:search/internal/{SearchIndexStore,SearchEventListeners}.java` | `test:search/internal/SearchApiTest.anEventRedeliveryDoesNotDuplicateTheDocument` |
@@ -852,7 +852,7 @@ The system SHALL:
 | FR-SUB-1 | seed a plan catalog (FREE/PRO/ENTERPRISE, rank-ordered, create-if-absent) whose entitlement encoding is: key present = feature on, positive value = numeric cap, absent = off/unlimited | `main:subscription/internal/{Plan,PlanSeeder}.java`, `V26` | `test:subscription/internal/SubscriptionGatingTest.theSeededCatalogIsDiscoverableToSupport` |
 | FR-SUB-2 | resolve an org's effective entitlements from its subscription (no row = FREE), cached per org and evicted through `SubscriptionChanged` so a plan change — especially a DOWNGRADE — bites the very next gate check | `main:subscription/internal/{EntitlementResolver,EntitlementsImpl,SubscriptionCacheEvictor}.java` | `SubscriptionGatingTest.aCappedPlanRefusesTheGatesUntilUpgraded` (Awaitility on the async evictor) |
 | FR-SUB-3 | gate real capabilities through the `Entitlements` port with upgrade-shaped 403s, BEFORE side effects: member count at invite (pre-provisioning), webhook count at create, the exchange feature and schedule cap at submit | `organization/internal/MemberService.doInvite`, `webhooks/internal/WebhookSubscriptionService.create`, `exchange/internal/{ExchangeService,ExchangeScheduleService}` | same test (403 details name the upgrade) |
-| FR-SUB-4 | expose the commercial state on both axes: platform assigns (`PUT /api/v1/admin/orgs/{id}/subscription`, `platform-admin`, audited, fans out `org.subscription_changed`) and reads (`GET`, + `GET /api/v1/admin/plans`, `platform-support`); the tenant reads its own (`GET /api/v1/orgs/{orgId}/subscription`, `org:read`) | `subscription/internal/{AdminSubscriptionController,OrgSubscriptionController}.java` | same test |
+| FR-SUB-4 | expose the commercial state on both axes: platform assigns (`PUT /api/v1/admin/orgs/{id}/subscription`, `platform-admin`, audited, fans out `org.subscription_changed`) and reads (`GET`, + `GET /api/v1/admin/plans`, `platform-support`); the tenant reads its own (`GET /api/v1/orgs/{orgId}/subscription`, `subscription:read`) | `subscription/internal/{AdminSubscriptionController,OrgSubscriptionController}.java` | same test |
 | FR-SUB-5 | manage the tenant lifecycle end to end per `docs/plans/TENANT_LIFECYCLE.md`: platform list/get/members views (`platform-support`), and delete only from SUSPENDED (409 otherwise) — soft, audited, `OrganizationDeleted` published (caches evicted, `org.deleted` webhook), Keycloak org deliberately kept | `organization/internal/{AdminOrganizationController,OrganizationService}.java` | `test:organization/internal/AdminOrganizationApiTest` |
 | FR-SUB-6 | offer paid-plan TRIAL mode: start (or restart) a `PRO`/`ENTERPRISE` trial with `trial_ends_at` and full access (`POST /api/v1/admin/orgs/{id}/subscription/trial`, `platform-admin`, audited; also the `Subscriptions.startTrial` port), refusing FREE with 422; the hourly `TrialExpiryJob` PAUSES a lapsed trial (idempotent, counts `smsone.subscription.trial_expired`, publishes `SubscriptionChanged(PAUSED)`) | `main:subscription/internal/{SubscriptionService,TrialExpiryJob,OrgSubscription}.java`, `V37` | `test:subscription/internal/SubscriptionTrialTest.paidTrialGrantsAccessThenExpiryPausesToReadOnlyAndAssignResumes`, `.freePlanCannotBeTrialed` |
 | FR-SUB-7 | a PAUSED subscription makes the org READ-ONLY — org-scoped writes answer **402** (`SUBSCRIPTION_PAUSED`) while reads pass, with the org's own `/billing/**` the pay-to-recover hatch; assigning a plan or a payment (`markStatus(ACTIVE)`) lifts the pause and clears the trial | `main:subscription/internal/SubscriptionAccessFilter.java` (order 5), `main:subscription/internal/OrgSubscription.java` | `test:subscription/internal/SubscriptionTrialTest.paidTrialGrantsAccessThenExpiryPausesToReadOnlyAndAssignResumes` |
@@ -941,7 +941,7 @@ The system SHALL:
 
 | ID | Requirement | Where | Verified by |
 |---|---|---|---|
-| FR-SUP-1 | let a tenant open, read and reply to its own org's tickets (org:read); SLA due dates stamped at open from the org's SLA override when set, else the seeded per-priority policy | `main:support/internal/{Ticket,SupportService.open,OrgTicketController}`, `SlaPolicySeeder`, `V36` | `test:support/internal/SupportFlowTest.openAssignReplyWithInternalNoteAndTenantSeesOnlyPublic` |
+| FR-SUP-1 | let a tenant open, read and reply to its own org's tickets (`ticket:read` reads, `ticket:write` opens/replies); SLA due dates stamped at open from the org's SLA override when set, else the seeded per-priority policy | `main:support/internal/{Ticket,SupportService.open,OrgTicketController}`, `SlaPolicySeeder`, `V36` | `test:support/internal/SupportFlowTest.openAssignReplyWithInternalNoteAndTenantSeesOnlyPublic` |
 | FR-SUP-2 | give platform-support a cross-tenant queue with assignment, public replies (which stamp the first-response SLA and notify the opener in-app) and INTERNAL notes never shown to the tenant, and status transitions | `AdminTicketController`, `SupportService.{platformReply,assign,changeStatus}`, `SupportNotifier` | same test (tenant sees only the public message; opener notified) |
 | FR-SUP-3 | escalate SLA breaches automatically — a ShedLock minute job bumps a breached ticket's priority, counts it (`smsone.support.breached`), notifies the queue, and publishes `TicketEscalated` (fanned out as `org.ticket.escalated`); SKIP-LOCKED rows so a re-run never double-escalates | `SlaEscalationJob`, `support/TicketEscalated.java`, `webhooks/internal/WebhookEventListener` | `SupportFlowTest.anSlaBreachEscalatesTheTicket` |
 | FR-SUP-4 | let the platform set per-org SLA overrides (`PUT`/`DELETE /api/v1/admin/orgs/{id}/sla/{priority}`, platform-admin; `GET`, platform-support) — first-response/resolution targets tighter or looser than the seeded default, consulted at ticket open; clearing one falls the org back to the seeded policy | `main:support/internal/{AdminSlaController,OrgSlaOverride,SupportService}`, `V38` | `test:support/internal/SlaOverrideTest.anOrgSlaOverrideRetargetsDueDatesAtOpenAndClearingFallsBack` |
@@ -1114,6 +1114,7 @@ no `@PreAuthorize`. Every endpoint can additionally return 401, 403 `ACCOUNT_NOT
 | Method | Path | Required authority | Success | Notable errors |
 |---|---|---|---|---|
 | GET | `/api/v1/me` | authenticated **(exempt from the provisioning gate)** | 200 | 401 |
+| POST | `/mcp` | API key (org) — JSON-RPC; per-tool permissions re-checked inside (§4.7) | 200 | 401; tool errors in-band with `ErrorCode` + requestId |
 | GET | `/api/v1/admin/users` | `platform-support` | 200 (paged) | — |
 | POST | `/api/v1/admin/impersonations` | `platform-support` (`mode=WRITE` needs `platform-admin`) | **201** | 403 write mode / target holds a platform role, 404 unknown target, 409 target deleted or `DISABLED`, 422 blank or short `reason` / self / over-cap `ttl` / bad `mode` |
 | GET | `/api/v1/admin/impersonations` | `platform-support`; `?actor=<subject>` needs `platform-admin` | 200 (paged) | 403 another operator's sessions |
@@ -1148,6 +1149,7 @@ no `@PreAuthorize`. Every endpoint can additionally return 401, 403 `ACCOUNT_NOT
 | PUT | `/api/v1/orgs/{orgId}/webhooks/{id}` | `webhook:manage` | 200 (secret masked). Also sets `status`: an **omitted, null or blank** `status` is read as `ACTIVE`, so a `PUT` that does not mention it **re-enables** a `DISABLED` subscription | 404, 422 unsafe URL / unknown event / empty `events` / unparseable `status` (`source.pointer = /data/attributes/status`) |
 | DELETE | `/api/v1/orgs/{orgId}/webhooks/{id}` | `webhook:manage` | **204** | 404 |
 | GET | `/api/v1/orgs/{orgId}/webhooks/{id}/deliveries` | `webhook:manage` | 200 (paged; survives subscription delete) | 404 |
+| POST | `/api/v1/orgs/{orgId}/webhooks/{id}/deliveries/{deliveryId}/redeliver` | `webhook:manage` | **202** (re-queues one FAILED delivery; fenced) | 404 unknown/deleted subscription or delivery, 409 not FAILED |
 | GET | `/api/v1/settings` | authenticated | 200 (paged) | — |
 | GET | `/api/v1/settings/{key}` | authenticated | 200 | 404 |
 | PUT | `/api/v1/settings/{key}` | `platform-admin` | 200 (upsert — never 201) | 422 blank value |
@@ -1158,7 +1160,7 @@ no `@PreAuthorize`. Every endpoint can additionally return 401, 403 `ACCOUNT_NOT
 | GET | `/api/v1/translations/{locale}/{key}` | authenticated | 200 | 404, 422 bad locale |
 | PUT | `/api/v1/translations/{locale}/{key}` | `platform-admin` | 200 (upsert) | 422 bad locale / blank `value` |
 | DELETE | `/api/v1/translations/{locale}/{key}` | `platform-admin` | **204** | 404, 422 bad locale |
-| GET | `/api/v1/orgs/{orgId}/search` | `org:read` | 200 (paged, ranked) | 422 blank/over-long `q` or foreign cursor |
+| GET | `/api/v1/orgs/{orgId}/search` | `search:query` | 200 (paged, ranked) | 422 blank/over-long `q` or foreign cursor |
 | GET | `/api/v1/admin/search` | `platform-support` | 200 (paged, ranked) | 422 |
 | POST | `/api/v1/orgs/{orgId}/documents` | `document:manage` | **201** | 422 empty file |
 | GET | `/api/v1/orgs/{orgId}/documents` | `document:read` | 200 (paged) | — |
@@ -1169,15 +1171,15 @@ no `@PreAuthorize`. Every endpoint can additionally return 401, 403 `ACCOUNT_NOT
 | GET | `/api/v1/exchange/handlers` | authenticated | 200 (list, un-paged — the handler catalogue with header templates + versions) | — |
 | GET | `/api/v1/exchange/handlers/{id}/template` | authenticated | 200 (ready-to-fill file in the requested format; filename carries the template version) | 404 unknown handler, 422 bad format |
 | GET | `/api/v1/webhooks/event-types` | authenticated | 200 (list, un-paged — the subscribable vocabulary with descriptions) | — |
-| POST / GET | `/api/v1/orgs/{orgId}/exchange/schedules` | `org:read` **plus the handler's export permission** to create | **201** / 200 (paged) | 403, 404, 422 bad cron |
-| DELETE | `/api/v1/orgs/{orgId}/exchange/schedules/{id}` | creator, or the handler's export permission | **204** | 403, 404 |
+| POST / GET | `/api/v1/orgs/{orgId}/exchange/schedules` | `exchange:submit` **plus the handler's export permission** to create; `exchange:read` lists | **201** / 200 (paged) | 403, 404, 422 bad cron |
+| DELETE | `/api/v1/orgs/{orgId}/exchange/schedules/{id}` | `exchange:submit` (creator, or the handler's export permission) | **204** | 403, 404 |
 | GET | `/api/v1/admin/orgs` | `platform-support` | 200 (paged; `?status=` filter) | 422 bad status |
 | GET | `/api/v1/admin/orgs/{orgId}` | `platform-support` | 200 | 404 |
 | GET | `/api/v1/admin/orgs/{orgId}/members` | `platform-support` | 200 (paged, read-only roster) | 404 |
 | DELETE | `/api/v1/admin/orgs/{orgId}` | `platform-admin` | **204** (soft; only from SUSPENDED) | 404, **409 not suspended** |
 | GET / PUT | `/api/v1/admin/orgs/{orgId}/subscription` | `platform-support` reads / `platform-admin` assigns | 200 | 404 unknown org-plan |
 | GET | `/api/v1/admin/plans` | `platform-support` | 200 (list, un-paged) | — |
-| GET | `/api/v1/orgs/{orgId}/subscription` | `org:read` | 200 (plan + entitlements; no row = FREE) | — |
+| GET | `/api/v1/orgs/{orgId}/subscription` | `subscription:read` | 200 (plan + entitlements; no row = FREE) | — |
 | POST | `/api/v1/admin/orgs/{orgId}/billing/account` | `platform-admin` | **201** (idempotent linkage) | — |
 | GET | `/api/v1/admin/orgs/{orgId}/billing` | `platform-support` | 200 (balance + live KB subscriptions) | 404 not provisioned |
 | POST | `/api/v1/admin/orgs/{orgId}/billing/subscription` | `platform-admin` | **202** (KB subscription + immediate reconcile) | 404, 422 unbillable plan |
@@ -1204,7 +1206,7 @@ no `@PreAuthorize`. Every endpoint can additionally return 401, 403 `ACCOUNT_NOT
 | POST / GET / DELETE | `/api/v1/admin/maintenance` | `platform-admin` schedule/cancel, `platform-support` list | **201** / 200 / **204** | 422 |
 | GET | `/api/v1/orgs/{orgId}/maintenance` | `org:read` | 200 (`?active=true` narrows to in-effect) | — |
 | — | (enforcement) org writes during a RESTRICT window | | **503** + Retry-After | — |
-| POST / GET | `/api/v1/orgs/{orgId}/tickets[/{id}]` + `/messages` | `org:read` | **201** open/reply / 200 (paged; public messages only) | 404, 422 |
+| POST / GET | `/api/v1/orgs/{orgId}/tickets[/{id}]` + `/messages` | `ticket:write` opens/replies · `ticket:read` reads | **201** open/reply / 200 (paged; public messages only) | 404, 422 |
 | GET | `/api/v1/admin/tickets` | `platform-support` | 200 (queue; `?status=`) | — |
 | POST | `/api/v1/admin/tickets/{id}/messages` | `platform-support` | **201** (public or internal note) | 404 |
 | POST / PUT | `/api/v1/admin/tickets/{id}/assignment\|status` | `platform-support` | 200 | 404, 422 |
@@ -1213,13 +1215,13 @@ no `@PreAuthorize`. Every endpoint can additionally return 401, 403 `ACCOUNT_NOT
 | PUT / GET / DELETE | `/api/v1/orgs/{orgId}/integrations` | `org:update` write / `org:read` list | 200 (secrets masked) / **204** | 409 duplicate, 422 |
 | POST | `/api/v1/orgs/{orgId}/integrations/{id}/test` | `org:update` | 200 (`{result}`) | 404 |
 | PUT / GET / DELETE | `/api/v1/admin/integrations` | `platform-admin` write / `platform-support` list | 200 / **204** | 409, 422 |
-| POST | `/api/v1/orgs/{orgId}/exchange/imports` (multipart `file` + `handler`, `format`) | `org:read` **plus the handler's import permission** (checked programmatically) | **202** | 403 missing handler permission, 404 unknown handler, 422 empty file / bad format |
-| POST | `/api/v1/orgs/{orgId}/exchange/exports` | `org:read` **plus the handler's export permission** | **202** | 403, 404, 422 |
-| GET | `/api/v1/orgs/{orgId}/exchange/jobs` | `org:read` | 200 (paged) | — |
-| GET | `/api/v1/orgs/{orgId}/exchange/jobs/{id}` | `org:read` | 200 (progress counters) | 404 (incl. foreign org) |
-| POST | `/api/v1/orgs/{orgId}/exchange/jobs/{id}/cancel` | requester, or the handler permission | 200 (best-effort; batch-boundary) | 403, 404, 409 already finished |
-| GET | `/api/v1/orgs/{orgId}/exchange/jobs/{id}/report` | requester, or the handler permission | **302** presigned (`row_number,error` CSV) | 403, 404 no report |
-| GET | `/api/v1/orgs/{orgId}/exchange/jobs/{id}/result` | requester, or the handler permission | **302** presigned | 403, 404 no result |
+| POST | `/api/v1/orgs/{orgId}/exchange/imports` (multipart `file` + `handler`, `format`) | `exchange:submit` **plus the handler's import permission** (checked programmatically) | **202** | 403 missing handler permission, 404 unknown handler, 422 empty file / bad format |
+| POST | `/api/v1/orgs/{orgId}/exchange/exports` | `exchange:submit` **plus the handler's export permission** | **202** | 403, 404, 422 |
+| GET | `/api/v1/orgs/{orgId}/exchange/jobs` | `exchange:read` | 200 (paged) | — |
+| GET | `/api/v1/orgs/{orgId}/exchange/jobs/{id}` | `exchange:read` | 200 (progress counters) | 404 (incl. foreign org) |
+| POST | `/api/v1/orgs/{orgId}/exchange/jobs/{id}/cancel` | `exchange:submit` (requester, or the handler permission) | 200 (best-effort; batch-boundary) | 403, 404, 409 already finished |
+| GET | `/api/v1/orgs/{orgId}/exchange/jobs/{id}/report` | `exchange:read` (requester, or the handler permission) | **302** presigned (`row_number,error` CSV) | 403, 404 no report |
+| GET | `/api/v1/orgs/{orgId}/exchange/jobs/{id}/result` | `exchange:read` (requester, or the handler permission) | **302** presigned | 403, 404 no result |
 | GET | `/api/v1/notifications` | authenticated (scoped to caller's subject) | 200 (paged) | — |
 | POST | `/api/v1/notifications/{id}/read` | authenticated (scoped) | 200 | 404 (also when it is another user's) |
 | POST | `/api/v1/files` (multipart `file`) | authenticated | **201** | 422 empty / unreadable |
@@ -1289,6 +1291,22 @@ schema.
 it is not a security exclusion — `/test/**` still requires a token.
 
 ---
+
+### 4.7 MCP agent surface
+
+The platform serves the Model Context Protocol at `POST /mcp` (JSON-RPC 2.0 over stateless
+streamable HTTP; API-key authenticated, both `X-Api-Key` and `Authorization: Bearer sk_…`).
+Tool-level authorization mirrors the REST vocabulary; errors are in-band tool results carrying the
+`ErrorCode` name, a client-safe detail and the `requestId`. Deep-dive: `docs/guides/mcp-guide.html`.
+
+| ID | The system SHALL | Implemented by | Verified by |
+|---|---|---|---|
+| FR-MCP-1 | serve MCP tools/prompts/resources at `/mcp` over the STATELESS streamable HTTP transport (no session state on any replica) | `main:mcp/internal/McpEndpointConfig.java` | `test:mcp/internal/McpServerIntegrationTest.aRealClientInitializesListsAndCallsWhoamiWithAnOrgKey` |
+| FR-MCP-2 | filter `tools/list` to the tools the caller's permissions allow, and INDEPENDENTLY re-check the permission on every `tools/call`, denying before any side effect | `main:mcp/internal/McpCatalogFilteringTransport.java`, `main:mcp/internal/McpToolDispatcher.java`, `main:mcp/internal/McpAccessPolicy.java` | `test:mcp/internal/McpServerIntegrationTest.toolsListShowsOnlyWhatTheKeysPermissionsAllow`, `.aHiddenToolCalledDirectlyIsDeniedNotJustHidden`, `test:organization/internal/McpMemberWriteToolsTest.aKeyWithoutThePermissionNeverReachesProvisioning` |
+| FR-MCP-3 | scope every tool to the authenticated principal's organization with no organization parameter on any tool | `main:mcp/internal/ToolContext.java`, `main:mcp/internal/McpRequestContextExtractor.java` | `test:mcp/internal/McpExchangeSearchToolsIntegrationTest.searchFindsOnlyThisOrgsIndexedRecords` |
+| FR-MCP-4 | refuse WRITE/DESTRUCTIVE tools during a RESTRICT maintenance window (`SERVICE_UNAVAILABLE`) and while the subscription is PAUSED (`SUBSCRIPTION_PAUSED`), while reads pass, and enforce the org IP allowlist on every call | `main:mcp/internal/McpWriteGuard.java`, `main:mcp/internal/McpToolDispatcher.java` | `test:mcp/internal/McpGuardrailsTest.aMaintenanceWindowRefusesWritesButNotReads`, `.aPausedSubscriptionMakesTheOrgReadOnly`, `.theOrgIpAllowlistGatesEveryCallNotJustWrites` |
+| FR-MCP-5 | accept the API key as `Authorization: Bearer sk_…` in addition to `X-Api-Key`, at the gateway and the modulith, without disturbing JWT authentication | `main:shared/security/ApiKeyAuthenticationFilter.java`, `main:shared/security/SecurityConfig.java`, `gateway:security/GatewaySecurityConfig.java`, `gateway:security/EdgeAuthorizationFilter.java` | `test:mcp/internal/McpServerIntegrationTest.theBearerSkSpellingAuthenticatesLikeTheHeader` |
+| FR-MCP-6 | carry the request id on every tool result and error, audit every mutation as `mcp.tool_invoked` with the key subject as actor, and refuse ALL requests with a named error when `app.mcp.enabled=false` | `main:mcp/internal/McpToolDispatcher.java`, `main:mcp/internal/McpCatalogFilteringTransport.java` | `test:mcp/internal/McpServerIntegrationTest.aRealClientInitializesListsAndCallsWhoamiWithAnOrgKey` (requestId), `test:mcp/internal/McpAccountToolsIntegrationTest.orgGetReadsAndOrgUpdateRenamesWithAnAuditTrail` |
 
 ## 5. Non-functional requirements
 

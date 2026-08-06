@@ -548,10 +548,17 @@ echo -n "$RAW_BODY" | openssl dgst -sha256 -hmac "$WHSEC" -hex   # must equal th
   <pre><code>POST /api/v1/orgs/{orgId}/webhooks/{id}/rotate-secret
 # → 200 {"attributes":{"secret":"whsec_1c9e…full…"}}     ← store it NOW; reads stay masked</code></pre></div></div>
 
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/webhooks/{id}/deliveries/{deliveryId}/redeliver</span><span class="perm org">webhook:manage</span></div>
+  <div class="ep-body"><p>Re-queue one <code>FAILED</code> (dead-lettered) delivery for a fresh retry cycle — after the receiver is fixed.
+  Only FAILED rows qualify (<code>409 CONFLICT</code> otherwise: pending/processing rows belong to the worker, delivered ones are
+  done), and the check is a <em>fenced UPDATE</em>, so a concurrent redeliver can't double-apply. The subscription must still be
+  live — redelivering to a deleted endpoint would resurrect traffic its owner revoked. Answers <code>202</code>: delivery is
+  asynchronous, poll the <code>…/deliveries</code> log for the outcome. Audited. The MCP twin is <code>webhook_redeliver</code>.</p></div></div>
+
 <h2 id="exchange">D4 · Exchange — imports &amp; exports at scale</h2>
 <p>Import/export is <strong>jobs, never long requests</strong> (CSV/JSONL/XLSX/XML). Submitting needs the handler's own
 permission (e.g. <code>org-members</code> import needs <code>member:invite</code>).</p>
-<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/exchange/imports?handler=&amp;format=</span><span class="perm org">handler's permission</span></div>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/exchange/imports?handler=&amp;format=</span><span class="perm org">exchange:submit + handler's permission</span></div>
   <div class="ep-body"><p>Discover handlers + template, then submit (multipart <code>file</code>) → <code>202</code> with a job id. Poll the job; a
   crashed run <em>resumes</em> from its last committed batch (at-least-once into idempotent handlers).</p>
   <pre><code>GET  /api/v1/exchange/handlers                                   # importPermission, header, formats
@@ -561,7 +568,7 @@ curl -X POST "$BASE/api/v1/orgs/{orgId}/exchange/imports?handler=org-members&for
 GET  /api/v1/orgs/{orgId}/exchange/jobs/{jobId}          # {"status":"COMPLETED_WITH_ERRORS","processed":2,"failed":1}
 GET  /api/v1/orgs/{orgId}/exchange/jobs/{jobId}/report   # 302 → row-addressed CSV: row_number,error
 GET  /api/v1/orgs/{orgId}/exchange/jobs/{jobId}/result   # 302 → the output file (exports)</code></pre></div></div>
-<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/exchange/schedules</span><span class="perm org">handler's permission</span></div>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/exchange/schedules</span><span class="perm org">exchange:submit + handler's permission</span></div>
   <div class="ep-body"><p>A recurring export (six-field Spring cron, UTC) — fires AS you; revoking your permission disables it.</p>
   <pre><code>POST …/exchange/schedules {"handler":"org-members","format":"CSV","cron":"0 0 2 * * *"}</code></pre></div></div>
 
@@ -630,10 +637,10 @@ POST …/security-policy/trusted-devices {"subject":"kc-7d2e…","deviceId":"…
 <div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/documents</span><span class="perm org">document:manage</span></div>
   <div class="ep-body"><p>Org document catalog (multipart <code>file</code>). <code>GET …/{id}</code> 302s to a presigned URL; <code>DELETE</code> drops the bytes
   but the metadata row soft-remains (the trail). Exchange artifacts appear here with <code>source:"EXCHANGE"</code>.</p></div></div>
-<div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/orgs/{orgId}/search?q=</span><span class="perm org">org:read</span></div>
+<div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/orgs/{orgId}/search?q=</span><span class="perm org">search:query</span></div>
   <div class="ep-body"><p>Ranked full-text (with trigram fallback for typos), tenant cut inside the SQL. Platform-wide search is
   <code>/api/v1/admin/search</code> (<code>platform-support</code>).</p></div></div>
-<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/tickets</span><span class="perm org">org:read</span></div>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/tickets</span><span class="perm org">ticket:write · reads ticket:read</span></div>
   <div class="ep-body"><p>Open + converse on your support tickets (<code>…/{id}/messages</code> — public messages only; internal notes hidden).
   The platform side is C4.</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/orgs/{orgId}/audit</span><span class="perm org">audit:read</span></div>
@@ -707,6 +714,111 @@ five seams — the <code>SKIP&nbsp;LOCKED</code> queue claims (already isolated 
 seam map, a per-vendor SQL translation table, and the step-by-step procedure are in <code>docs/PORTING.md</code>. For the
 deepest coupling (search), the recommended approach is to replace the search adapter with OpenSearch or Elasticsearch —
 it already sits behind a port — rather than reimplement full-text search per vendor.</p>
+
+<!-- ============================ PART F ============================ -->
+<div class="part" id="mcp"><h2>F · Agents (MCP)</h2>
+  <p>The platform's agent surface: a <strong>Model Context Protocol</strong> server at <code>/mcp</code> — a second
+  protocol surface over the same services, with permissions identical to REST. Everything in Parts A–D about who may do
+  what still applies; this part covers what an agent sees. Deep dive: <a href="mcp-guide.html">the MCP guide</a>.</p></div>
+
+<h2 id="mcp-connect">F1 · Connecting an agent</h2>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/mcp</span><span class="perm any">API key (org)</span></div>
+  <div class="ep-body"><p>JSON-RPC 2.0 over <b>stateless streamable HTTP</b> — one endpoint, no session to keep alive.
+  Authenticate with an org API key (D2), spelled either <code>X-Api-Key: sk_…</code> or
+  <code>Authorization: Bearer sk_…</code> — both tiers understand the bearer form, and JWTs still work.</p>
+  <pre><code># Claude Code — .mcp.json
+{ "mcpServers": { "smsone": {
+    "type": "http", "url": "http://localhost:28090/mcp",
+    "headers": { "X-Api-Key": "${SMSONE_API_KEY}" } } } }</code></pre>
+  <p class="mut">Claude API: list the server under <code>mcp_servers</code> with <code>authorization_token</code> set to
+  the key (it arrives as <code>Bearer sk_…</code>). Managed Agents: store the key in the vault as a
+  <code>static_bearer</code> credential. Claude Desktop (custom connectors want OAuth, which is Phase 7):
+  bridge through <code>npx mcp-remote http://localhost:28090/mcp --header "X-Api-Key:sk_…"</code> —
+  no space after that colon, and Node must be on Desktop's PATH.</p></div></div>
+<div class="card tip"><strong>Tools are org-implicit.</strong> No tool takes an <code>orgId</code> — the org comes from
+the key. <code>tools/list</code> is filtered to what the key's permissions allow, and a hidden tool still denies on a
+direct call — discovery is a convenience, never the enforcement. The five area surfaces (tickets, exchange, search,
+subscription, usage) gate on their own codes since <code>V48</code> — a key minted before then holds none of them and
+must be re-minted (or have the codes appended) to keep seeing those tools.</div>
+
+<h2 id="mcp-tools">F2 · Tool catalog</h2>
+<p>Each tool declares its <b>kind</b> — READ / WRITE / DESTRUCTIVE — and the kinds ride the wire as MCP annotations. A
+tool is never renamed; a breaking change bumps its version instead.</p>
+<table class="params">
+  <tr><th>Tool</th><th>Kind</th><th>Permission</th><th>What it does</th></tr>
+  <tr><td colspan="4"><b>Foundation</b></td></tr>
+  <tr><td>whoami</td><td>READ</td><td>any authenticated</td><td>Caller identity, org, held permissions.</td></tr>
+  <tr><td colspan="4"><b>Organization</b></td></tr>
+  <tr><td>org_get</td><td>READ</td><td>org:read</td><td>Org profile.</td></tr>
+  <tr><td>org_update</td><td>WRITE</td><td>org:update</td><td>Rename the display name.</td></tr>
+  <tr><td>members_list</td><td>READ</td><td>member:read</td><td>Members with role + status, paged.</td></tr>
+  <tr><td>member_invite</td><td>WRITE</td><td>member:invite</td><td>Provision + link + record — idempotent, escalation-guarded.</td></tr>
+  <tr><td>member_role_assign</td><td>WRITE</td><td>member:role:assign</td><td>Re-role a member; last-owner protected.</td></tr>
+  <tr><td>member_remove</td><td>DESTRUCTIVE</td><td>member:remove</td><td>End a membership.</td></tr>
+  <tr><td>roles_list</td><td>READ</td><td>role:read</td><td>Roles with their permission bundles (role CRUD deliberately absent).</td></tr>
+  <tr><td colspan="4"><b>Standing</b></td></tr>
+  <tr><td>subscription_get</td><td>READ</td><td>subscription:read</td><td>Plan / status / dates / entitlements.</td></tr>
+  <tr><td>usage_summary</td><td>READ</td><td>usage:read</td><td>Ledger totals + per-day (1–90 days).</td></tr>
+  <tr><td colspan="4"><b>Webhooks</b></td></tr>
+  <tr><td>webhooks_list</td><td>READ</td><td>webhook:manage</td><td>Subscriptions, secrets masked.</td></tr>
+  <tr><td>webhook_get</td><td>READ</td><td>webhook:manage</td><td>One subscription, secret masked.</td></tr>
+  <tr><td>webhook_create</td><td>WRITE</td><td>webhook:manage</td><td>Register; secret shown once; SSRF-guarded.</td></tr>
+  <tr><td>webhook_update</td><td>WRITE</td><td>webhook:manage</td><td>Wholesale replace; omitted status → ACTIVE.</td></tr>
+  <tr><td>webhook_rotate_secret</td><td>WRITE</td><td>webhook:manage</td><td>New secret, shown once.</td></tr>
+  <tr><td>webhook_delete</td><td>DESTRUCTIVE</td><td>webhook:manage</td><td>Stops + cancels queued deliveries; the log survives.</td></tr>
+  <tr><td>webhook_deliveries</td><td>READ</td><td>webhook:manage</td><td>Delivery log, paged — survives delete.</td></tr>
+  <tr><td>webhook_redeliver</td><td>WRITE</td><td>webhook:manage</td><td>Re-queue one FAILED delivery (fenced).</td></tr>
+  <tr><td colspan="4"><b>Support</b></td></tr>
+  <tr><td>tickets_list</td><td>READ</td><td>ticket:read</td><td>Tickets (priority P1–P4), paged.</td></tr>
+  <tr><td>ticket_get</td><td>READ</td><td>ticket:read</td><td>One ticket.</td></tr>
+  <tr><td>ticket_create</td><td>WRITE</td><td>ticket:write</td><td>Open a ticket; opener = the key's subject.</td></tr>
+  <tr><td>ticket_messages</td><td>READ</td><td>ticket:read</td><td>The tenant-visible conversation.</td></tr>
+  <tr><td>ticket_reply</td><td>WRITE</td><td>ticket:write</td><td>A tenant reply.</td></tr>
+  <tr><td colspan="4"><b>Documents</b></td></tr>
+  <tr><td>documents_list</td><td>READ</td><td>document:read</td><td>Catalog metadata, paged.</td></tr>
+  <tr><td>document_get</td><td>READ</td><td>document:read</td><td>One document's metadata.</td></tr>
+  <tr><td>document_download_url</td><td>READ</td><td>document:read</td><td>Short-lived presigned URL.</td></tr>
+  <tr><td>document_delete</td><td>DESTRUCTIVE</td><td>document:manage</td><td>Bytes now, row soft.</td></tr>
+  <tr><td colspan="4"><b>Exchange</b></td></tr>
+  <tr><td>exchange_handlers</td><td>READ</td><td>exchange:read</td><td>Movable datasets + their permissions / formats.</td></tr>
+  <tr><td>exchange_jobs_list</td><td>READ</td><td>exchange:read</td><td>Jobs + progress, paged.</td></tr>
+  <tr><td>exchange_job_get</td><td>READ</td><td>exchange:read</td><td>One job (PENDING→…→COMPLETED / COMPLETED_WITH_ERRORS / FAILED / CANCELLED).</td></tr>
+  <tr><td>exchange_submit</td><td>WRITE</td><td>exchange:submit + handler's export</td><td>Submit an EXPORT (async; imports are REST-only).</td></tr>
+  <tr><td>exchange_cancel</td><td>WRITE</td><td>exchange:submit</td><td>Request cancellation.</td></tr>
+  <tr><td>exchange_result_url</td><td>READ</td><td>exchange:read</td><td>Short-lived result-artifact URL.</td></tr>
+  <tr><td>exchange_error_report_url</td><td>READ</td><td>exchange:read</td><td>Short-lived row-error-report URL.</td></tr>
+  <tr><td colspan="4"><b>Search</b></td></tr>
+  <tr><td>search_query</td><td>READ</td><td>search:query</td><td>Ranked org-scoped full-text (websearch syntax).</td></tr>
+</table>
+
+<h2 id="mcp-conventions">F3 · Conventions &amp; guardrails</h2>
+<p>The REST contract restated in MCP terms — nothing here is a new rule, only the same rules on a second wire.</p>
+<ul>
+  <li><strong>Request id everywhere</strong> — every result <em>and</em> every error carries
+      <code>_meta["smsone/requestId"]</code>; quote it in bug reports exactly like <code>meta.requestId</code> (A2).</li>
+  <li><strong>Same error vocabulary</strong> — tool errors name the REST <a href="#errors">error codes</a>
+      (<code>FORBIDDEN</code>, <code>VALIDATION_FAILED</code>, <code>RATE_LIMITED</code>…), so one runbook serves both surfaces.</li>
+  <li><strong>Cursor pagination</strong> — collections take <code>page_size</code> / <code>page_after</code> (max 100) and
+      return the next cursor: the same keyset model as A3, spelled tool-argument style.</li>
+  <li><strong>Write guard</strong> — WRITE/DESTRUCTIVE tools refuse during a <code>RESTRICT</code> maintenance window
+      (<code>SERVICE_UNAVAILABLE</code>) and while the subscription is paused (<code>SUBSCRIPTION_PAUSED</code>); READ tools pass.</li>
+  <li><strong>Org security policy applies</strong> — the org's IP allowlist (D6) judges MCP calls too.</li>
+  <li><strong>Secrets shown once</strong> — <code>webhook_create</code> / <code>webhook_rotate_secret</code> return the
+      signing secret in that result only, exactly like the REST endpoints.</li>
+  <li><strong>Async pattern</strong> — <code>exchange_submit</code> → poll <code>exchange_job_get</code> →
+      <code>exchange_result_url</code>; never a long-running call.</li>
+  <li><strong>Audited + measured</strong> — every mutation lands in the audit trail as <code>mcp.tool_invoked</code>;
+      metrics <code>smsone.mcp.tool.calls{tool,kind,outcome}</code> plus a duration timer.</li>
+  <li><strong>Kill switch</strong> — <code>app.mcp.enabled=false</code> refuses every call with a named JSON-RPC error
+      (<code>-32050</code>), leaving REST untouched.</li>
+  <li><strong>Edge policy</strong> — the gateway route <code>mcp-api</code> runs policy <code>edge-mcp</code>:
+      authenticated, rate-limited, 60&nbsp;s response timeout, 2&nbsp;MiB body cap. Inside, the modulith applies
+      rate-limit tier <code>mcp</code> — a per-key bucket, 300/min default.</li>
+</ul>
+<p class="mut">Beyond tools, the server publishes two <b>prompts</b> (<code>diagnose_failed_webhooks</code>,
+<code>usage_review</code>) and three <b>resources</b> — <code>smsone://guide/agent</code>,
+<code>smsone://reference/permissions</code>, <code>smsone://reference/webhook-events</code> — so an agent can load the
+ground rules without leaving the protocol.</p>
 
   </main>
   <aside class="toc"><div class="toc-label">On this page</div><div id="toc"></div></aside>

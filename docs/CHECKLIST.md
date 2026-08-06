@@ -801,6 +801,49 @@ have closed the cycle `document → search → organization → exchange`, and `
       Load balancing is Kubernetes' (gateway → `modulith` Service → kube-proxy); zero-downtime is rolling
       updates + readiness probes
 
+## MCP — the agent surface ✅ (2026-08-06)
+
+Plan: [plans/MCP_PLAN.md](plans/MCP_PLAN.md) · ADR 0009 · guide: [guides/mcp-guide.html](guides/mcp-guide.html)
+
+- [x] **Phase 0 — foundation**: `mcp` module; MCP Java SDK 2.0.0 stateless streamable HTTP servlet at
+      `/mcp`; `ToolContext`/manifests/metadata (version · area · READ/WRITE/DESTRUCTIVE) from day one;
+      dispatcher pipeline (permission → IP allowlist → write guard → port → audit + metrics + requestId);
+      `Bearer sk_…` accepted at gateway + modulith; rate-limit tier `mcp`; gateway `mcp-api` route +
+      `edge-mcp` policy; kill switch `app.mcp.enabled` (refuses, never vanishes); `.mcp.json`
+- [x] **Gate:** real SDK client initialize → permission-filtered tools/list → whoami on real Postgres;
+      401 on missing/revoked keys; hidden tool called directly denies; write guard + IP allowlist refuse
+      before any side effect (`McpServerIntegrationTest`, `McpGuardrailsTest`, `McpToolCatalogTest`)
+- [x] **Phase 1 — account & standing** (9 tools): org profile/rename, members list/invite/re-role/remove,
+      roles list, subscription, usage — ports `OrgDirectory`/`OrgMembers`/`OrgRoles`/`SubscriptionOverview`/
+      `UsageSummaries`; escalation guard's machine branch (a key's minted subset is its held set)
+- [x] **Gate:** invite lands membership + Keycloak calls; beyond-subset grant refused BEFORE provisioning
+      (`McpMemberWriteToolsTest`, `McpAccountToolsIntegrationTest`)
+- [x] **Phase 2 — webhooks** (8 tools) incl. NEW fenced redelivery of FAILED deliveries, with REST
+      parity (`POST …/deliveries/{deliveryId}/redeliver`, 202/409 — `WebhookApiTest`)
+      (`WebhookAdmin`; `McpWebhookToolsIntegrationTest` — secret-shown-once, SSRF refusal, log survives delete)
+- [x] **Phase 3 — support + documents** (9 tools): tickets open/converse (key subject attributed),
+      documents metadata/presigned URL/delete (`SupportDesk`, `DocumentDirectory`;
+      `McpSupportDocumentToolsIntegrationTest`)
+- [x] **Phase 4 — exchange + search** (8 tools): handlers/submit/poll/cancel/artifact URLs under each
+      handler's own permission; org-scoped ranked search (`ExchangeJobs`, `SearchQueries`;
+      `McpExchangeSearchToolsIntegrationTest`)
+- [x] **Phases 5–6 — agent content**: prompts `diagnose_failed_webhooks` + `usage_review`; drift-free
+      resources `smsone://guide/agent`, `smsone://reference/permissions`, `smsone://reference/webhook-events`
+      (`McpAgentContentTest`)
+- [ ] Phase 7 (flagged, not v1): OAuth 2.1 for browser-consented connectors (claude.ai) — Keycloak AS +
+      protected-resource metadata; nothing in 0–6 blocks it
+- [x] **Post-ship hardening (2026-08-06 PM)**: gateway `QuotaFilter` double-subscribe fixed — the chain
+      re-ran onto a committed response and the rate limiter's late header write closed connections
+      under keep-alive clients (mcp-remote's "other side closed" / Desktop "Server disconnected")
+      (`QuotaFilterChainTest`); Boot ERROR dispatch permitted so the SDK servlet's `GET /mcp` 405 is no
+      longer rewritten into a 401 (`McpServerIntegrationTest.aGetWithAValidKeyIsA405NotA401`); gateway
+      `agents` product entry added
+- [x] **Phase 8 — permission vocabulary deepening (2026-08-06 PM)**: 7 area codes (`ticket:read/write`,
+      `exchange:read/submit`, `search:query`, `subscription:read`, `usage:read`) gate REST + MCP
+      together; `V48` backfills roles holding `ORG_READ` (behavior-preserving for humans; keys
+      deliberately narrow — re-mint to opt in); the filtered `tools/list` now has real teeth — an
+      `org:read`-only key sees none of the five areas (extended `McpServerIntegrationTest`)
+
 | Reference | What it is |
 |---|---|
 | [AGENTS.md](../AGENTS.md) | Engineering standards — §1 is the rules that fail the build, §14 the review checklist |

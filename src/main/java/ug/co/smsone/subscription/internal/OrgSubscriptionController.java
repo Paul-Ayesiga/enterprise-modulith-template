@@ -24,7 +24,7 @@ class OrgSubscriptionController {
     @Operation(summary = "Read the organization's subscription and entitlements",
             description = "No subscription row means the seeded FREE plan. `entitlements`: null "
                     + "value = feature on, number = cap, absent key = off/unlimited.")
-    @PreAuthorize("hasPermission(#orgId, 'organization', 'org:read')")
+    @PreAuthorize("hasPermission(#orgId, 'organization', 'subscription:read')")
     ResourceObject get(@PathVariable UUID orgId) {
         return SubscriptionResources.toResource(subscriptions.view(orgId));
     }

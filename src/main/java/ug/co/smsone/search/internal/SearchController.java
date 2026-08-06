@@ -42,7 +42,7 @@ class SearchController {
                     Full-text first (`websearch_to_tsquery` syntax: quoted phrases, `-exclusions`, \
                     `or`); when nothing token-matches, a trigram pass over titles catches prefixes \
                     and typos. Ranked, cursor-paginated; `type` narrows to one entity type.""")
-    @PreAuthorize("hasPermission(#orgId, 'organization', 'org:read')")
+    @PreAuthorize("hasPermission(#orgId, 'organization', 'search:query')")
     WindowedResult<ResourceObject> search(@PathVariable UUID orgId,
             @RequestParam String q,
             @RequestParam(required = false) String type,

@@ -20,4 +20,14 @@ class OrgSecurityPoliciesImpl implements OrgSecurityPolicies {
     public boolean requiresMfa(UUID orgId) {
         return policies.findByOrgId(orgId).map(OrgSecurityPolicy::isRequireMfa).orElse(false);
     }
+
+    @Override
+    @Transactional(readOnly = true)
+    public boolean ipAllowed(UUID orgId, String clientIp) {
+        return policies.findByOrgId(orgId)
+                .map(OrgSecurityPolicy::getIpAllowlist)
+                .filter(allowlist -> !allowlist.isBlank())
+                .map(allowlist -> CidrMatcher.matchesAny(allowlist, clientIp))
+                .orElse(true);
+    }
 }

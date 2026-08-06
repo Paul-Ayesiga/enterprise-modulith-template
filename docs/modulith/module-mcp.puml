@@ -1,0 +1,74 @@
+@startuml
+title <size:24>MCP</size>
+
+set separator none
+top to bottom direction
+
+<style>
+  root {
+    BackgroundColor: #ffffff
+    FontColor: #444444
+  }
+</style>
+
+!include <C4/C4>
+!include <C4/C4_Context>
+!include <C4/C4_Component>
+
+System_Boundary("Application_boundary", "Application", $tags="") {
+  Container_Boundary("Application.Application_boundary", "Application", $tags="") {
+    Component(Application.Application.Maintenance, "Maintenance", $techn="Module", $descr="", $tags="", $link="")
+    Component(Application.Application.Subscription, "Subscription", $techn="Module", $descr="", $tags="", $link="")
+    Component(Application.Application.Exchange, "Exchange", $techn="Module", $descr="", $tags="", $link="")
+    Component(Application.Application.Organization, "Organization", $techn="Module", $descr="", $tags="", $link="")
+    Component(Application.Application.Billing, "Billing", $techn="Module", $descr="", $tags="", $link="")
+    Component(Application.Application.Search, "Search", $techn="Module", $descr="", $tags="", $link="")
+    Component(Application.Application.Support, "Support", $techn="Module", $descr="", $tags="", $link="")
+    Component(Application.Application.Document, "Document", $techn="Module", $descr="", $tags="", $link="")
+    Component(Application.Application.Webhooks, "Webhooks", $techn="Module", $descr="", $tags="", $link="")
+    Component(Application.Application.MCP, "MCP", $techn="Module", $descr="", $tags="", $link="")
+    Component(Application.Application.SharedKernel, "Shared Kernel", $techn="Module", $descr="", $tags="", $link="")
+    Component(Application.Application.Access, "Access", $techn="Module", $descr="", $tags="", $link="")
+  }
+
+}
+
+Rel(Application.Application.Access, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Search, Application.Application.Organization, "listens to", $techn="", $tags="", $link="")
+Rel(Application.Application.Search, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Organization, Application.Application.Access, "depends on", $techn="", $tags="", $link="")
+Rel(Application.Application.Organization, Application.Application.Exchange, "depends on", $techn="", $tags="", $link="")
+Rel(Application.Application.Organization, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Organization, Application.Application.Subscription, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Subscription, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Exchange, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Exchange, Application.Application.Subscription, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Document, Application.Application.Search, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Document, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.MCP, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.MCP, Application.Application.Webhooks, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.MCP, Application.Application.Access, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.MCP, Application.Application.Maintenance, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.MCP, Application.Application.Subscription, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.MCP, Application.Application.Document, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.MCP, Application.Application.Exchange, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.MCP, Application.Application.Organization, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.MCP, Application.Application.Search, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.MCP, Application.Application.Billing, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.MCP, Application.Application.Support, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Billing, Application.Application.Subscription, "listens to", $techn="", $tags="", $link="")
+Rel(Application.Application.Billing, Application.Application.Organization, "listens to", $techn="", $tags="", $link="")
+Rel(Application.Application.Billing, Application.Application.Subscription, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Billing, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Maintenance, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Webhooks, Application.Application.Organization, "listens to", $techn="", $tags="", $link="")
+Rel(Application.Application.Webhooks, Application.Application.Exchange, "listens to", $techn="", $tags="", $link="")
+Rel(Application.Application.Webhooks, Application.Application.Support, "listens to", $techn="", $tags="", $link="")
+Rel(Application.Application.Webhooks, Application.Application.Subscription, "listens to", $techn="", $tags="", $link="")
+Rel(Application.Application.Webhooks, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Webhooks, Application.Application.Subscription, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Support, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+
+SHOW_LEGEND(true)
+hide stereotypes
+@enduml

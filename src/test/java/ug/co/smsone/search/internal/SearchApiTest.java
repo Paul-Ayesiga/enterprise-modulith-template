@@ -140,7 +140,7 @@ class SearchApiTest extends AbstractIntegrationTest {
         });
     }
 
-    /** Org + membership + role with org:read, straight into the tables — search's own concern is the projection. */
+    /** Org + membership + role with search:query, straight into the tables — search's own concern is the projection. */
     private void seedOrgRead(UUID orgId, String subject) {
         jdbc.update("insert into organization (id, kc_org_id, alias, name, status, version, created_at) "
                 + "values (?, ?, ?, ?, 'ACTIVE', 0, now())",
@@ -148,8 +148,8 @@ class SearchApiTest extends AbstractIntegrationTest {
         UUID roleId = UUID.randomUUID();
         jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
                 + "values (?, ?, 'OWNER', 'Owner', true, 0, now())", roleId, orgId);
-        // The column stores the enum NAME (ORG_READ), not the wire code (org:read) — see DATA_MODEL §4.4.3.
-        jdbc.update("insert into role_permission (role_id, permission) values (?, 'ORG_READ')", roleId);
+        // The column stores the enum NAME (SEARCH_QUERY), not the wire code (search:query) — see DATA_MODEL §4.4.3.
+        jdbc.update("insert into role_permission (role_id, permission) values (?, 'SEARCH_QUERY')", roleId);
         jdbc.update("insert into membership (id, org_id, user_subject, role_id, status, version, created_at) "
                 + "values (?, ?, ?, ?, 'ACTIVE', 0, now())",
                 UUID.randomUUID(), orgId, subject, roleId);

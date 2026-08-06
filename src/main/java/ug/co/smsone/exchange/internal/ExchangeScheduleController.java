@@ -48,7 +48,7 @@ class ExchangeScheduleController {
                     Fires the handler's export on a six-field Spring cron (UTC), running as YOU — \
                     if your export permission is later revoked, the schedule disables itself \
                     rather than keep exporting. Exports only: an import has no source to re-read.""")
-    @PreAuthorize("hasPermission(#orgId, 'organization', 'org:read')")
+    @PreAuthorize("hasPermission(#orgId, 'organization', 'exchange:submit')")
     @ResponseStatus(HttpStatus.CREATED)
     ResourceObject create(@PathVariable UUID orgId, @RequestBody CreateRequest request,
             CurrentUser user) {
@@ -58,7 +58,7 @@ class ExchangeScheduleController {
 
     @GetMapping
     @Operation(summary = "List the organization's recurring exports")
-    @PreAuthorize("hasPermission(#orgId, 'organization', 'org:read')")
+    @PreAuthorize("hasPermission(#orgId, 'organization', 'exchange:read')")
     WindowedResult<ResourceObject> list(@PathVariable UUID orgId, CursorPageRequest page) {
         return WindowedResult.of(schedules.list(orgId, page), page,
                 ExchangeScheduleController::toResource);
@@ -67,7 +67,7 @@ class ExchangeScheduleController {
     @DeleteMapping("/{id}")
     @Operation(summary = "Delete a recurring export",
             description = "Allowed to its creator, or to anyone holding the handler's export permission.")
-    @PreAuthorize("hasPermission(#orgId, 'organization', 'org:read')")
+    @PreAuthorize("hasPermission(#orgId, 'organization', 'exchange:submit')")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     void delete(@PathVariable UUID orgId, @PathVariable UUID id, CurrentUser user) {
         schedules.delete(user, orgId, id);

@@ -65,7 +65,7 @@ class AccessPolicyTest extends AbstractIntegrationTest {
     @Test
     void theThreePolicyRulesEachDenyWithTheirName() throws Exception {
         UUID orgId = UUID.randomUUID();
-        seedMember(orgId, "policed-1", "ORG_READ", "ORG_UPDATE");
+        seedMember(orgId, "policed-1", "ORG_READ", "ORG_UPDATE", "SUBSCRIPTION_READ");
 
         // IP allowlist: MockMvc's remote addr is 127.0.0.1, so an allowlist of 10.0.0.0/8 blocks it.
         setPolicy(orgId, "policed-1","{\"ipAllowlist\":\"10.0.0.0/8\",\"requireTrustedDevice\":false}");
@@ -115,7 +115,7 @@ class AccessPolicyTest extends AbstractIntegrationTest {
     @Test
     void mfaRuleRefusesSingleFactorSessionsButExemptsThePolicyEndpoint() throws Exception {
         UUID orgId = UUID.randomUUID();
-        seedMember(orgId, "policed-mfa", "ORG_READ", "ORG_UPDATE");
+        seedMember(orgId, "policed-mfa", "ORG_READ", "ORG_UPDATE", "SUBSCRIPTION_READ");
         setPolicy(orgId, "policed-mfa", "{\"requireTrustedDevice\":false,\"requireMfa\":true}");
 
         // Single-factor session (no amr claim): refused, naming the rule.

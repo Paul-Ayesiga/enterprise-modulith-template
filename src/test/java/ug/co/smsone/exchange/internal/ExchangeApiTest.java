@@ -69,7 +69,7 @@ class ExchangeApiTest extends AbstractIntegrationTest {
     @Test
     void submittingWithoutTheHandlersPermissionIsRefused() throws Exception {
         UUID orgId = UUID.randomUUID();
-        seedMember(orgId, "plain-reader", "ORG_READ"); // org-members imports need member:invite
+        seedMember(orgId, "plain-reader", "EXCHANGE_READ", "EXCHANGE_SUBMIT"); // org-members imports need member:invite
 
         mockMvc.perform(multipart("/api/v1/orgs/{orgId}/exchange/imports", orgId)
                         .file(csv("members.csv", "email,firstName,lastName,roleCode\n"))
@@ -87,7 +87,7 @@ class ExchangeApiTest extends AbstractIntegrationTest {
         double failedBefore = counter("smsone.exchange.records",
                 "handler", "test-counter", "result", "failed");
         UUID orgId = UUID.randomUUID();
-        seedMember(orgId, "importer-1", "ORG_READ", "MEMBER_READ");
+        seedMember(orgId, "importer-1", "ORG_READ", "MEMBER_READ", "EXCHANGE_READ", "EXCHANGE_SUBMIT");
         String source = "key,value\nk1,v1\n,v2\nk3,bad\nk4,v4\n"; // rows 2 and 3 are data errors
 
         MvcResult accepted = mockMvc.perform(multipart("/api/v1/orgs/{orgId}/exchange/imports", orgId)
@@ -144,8 +144,8 @@ class ExchangeApiTest extends AbstractIntegrationTest {
     @Test
     void exportRoundTripsAndItsResultIsGatedOnTheHandlersPermission() throws Exception {
         UUID orgId = UUID.randomUUID();
-        seedMember(orgId, "exporter-1", "ORG_READ", "MEMBER_READ");
-        seedMember(orgId, "bystander", "ORG_READ"); // org:read but NOT member:read
+        seedMember(orgId, "exporter-1", "ORG_READ", "MEMBER_READ", "EXCHANGE_READ", "EXCHANGE_SUBMIT");
+        seedMember(orgId, "bystander", "EXCHANGE_READ"); // reaches job metadata but NOT member:read
 
         MvcResult accepted = mockMvc.perform(post("/api/v1/orgs/{orgId}/exchange/exports", orgId)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -188,8 +188,8 @@ class ExchangeApiTest extends AbstractIntegrationTest {
     void anotherOrgsJobIsNotFoundNotForbidden() throws Exception {
         UUID orgA = UUID.randomUUID();
         UUID orgB = UUID.randomUUID();
-        seedMember(orgA, "a-member", "ORG_READ", "MEMBER_READ");
-        seedMember(orgB, "b-member", "ORG_READ");
+        seedMember(orgA, "a-member", "ORG_READ", "MEMBER_READ", "EXCHANGE_READ", "EXCHANGE_SUBMIT");
+        seedMember(orgB, "b-member", "EXCHANGE_READ");
 
         MvcResult accepted = mockMvc.perform(post("/api/v1/orgs/{orgId}/exchange/exports", orgA)
                         .contentType(MediaType.APPLICATION_JSON)

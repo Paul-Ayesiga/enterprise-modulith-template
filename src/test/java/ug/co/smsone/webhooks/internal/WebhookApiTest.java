@@ -11,11 +11,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.jayway.jsonpath.JsonPath;
 import java.util.Map;
 import java.util.UUID;
+import org.assertj.core.api.Assertions;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
@@ -31,6 +33,9 @@ class WebhookApiTest extends AbstractIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private JdbcTemplate jdbc;
 
     @MockitoBean
     private OrgAuthorization orgAuthorization;
@@ -152,5 +157,72 @@ class WebhookApiTest extends AbstractIntegrationTest {
         // No active-org scope on the token -> the evaluator denies before consulting OrgAuthorization.
         mockMvc.perform(get("/api/v1/orgs/{orgId}/webhooks", orgId).with(jwt()))
                 .andExpect(status().isForbidden());
+    }
+
+    /**
+     * The redelivery surface (REST twin of the MCP {@code webhook_redeliver} tool): only a FAILED
+     * row re-queues, exactly once — the second attempt hits the fenced UPDATE and reports the
+     * conflict instead of double-applying. The permission gate is asserted with the row untouched.
+     */
+    @Test
+    void aFailedDeliveryRedeliversOnceThenConflicts() throws Exception {
+        UUID orgId = UUID.randomUUID();
+        RequestPostProcessor manager = manager(orgId, "mgr-" + UUID.randomUUID());
+        String body = mockMvc.perform(post("/api/v1/orgs/{orgId}/webhooks", orgId).with(manager)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"https://hooks.example.com/dead\",\"events\":[\"org.member.added\"]}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        UUID subscriptionId = UUID.fromString(JsonPath.read(body, "$.data.id"));
+        UUID deliveryId = UUID.randomUUID();
+        jdbc.update("""
+                insert into webhook_delivery (id, subscription_id, org_id, event_type, payload, status,
+                                              attempts, max_attempts, next_attempt_at, last_error, created_at)
+                values (?, ?, ?, 'org.member.added', '{}', 'FAILED', 8, 8, now(), 'receiver answered 500', now())
+                """, deliveryId, subscriptionId, orgId);
+
+        mockMvc.perform(post("/api/v1/orgs/{orgId}/webhooks/{id}/deliveries/{deliveryId}/redeliver",
+                        orgId, subscriptionId, deliveryId).with(manager))
+                .andExpect(status().isAccepted());
+        Assertions.assertThat(jdbc.queryForObject(
+                        "select status from webhook_delivery where id = ?", String.class, deliveryId))
+                .isEqualTo("PENDING");
+        Assertions.assertThat(jdbc.queryForObject(
+                        "select attempts from webhook_delivery where id = ?", Integer.class, deliveryId))
+                .isZero(); // a fresh retry cycle, not a resumed one
+
+        // The fence: no longer FAILED, so a repeat is a 409 — never a silent double-requeue.
+        mockMvc.perform(post("/api/v1/orgs/{orgId}/webhooks/{id}/deliveries/{deliveryId}/redeliver",
+                        orgId, subscriptionId, deliveryId).with(manager))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errors[0].code").value("CONFLICT"));
+    }
+
+    @Test
+    void redeliverIsDeniedWithoutWebhookManageAndTheRowStaysFailed() throws Exception {
+        UUID orgId = UUID.randomUUID();
+        RequestPostProcessor manager = manager(orgId, "mgr-" + UUID.randomUUID());
+        String body = mockMvc.perform(post("/api/v1/orgs/{orgId}/webhooks", orgId).with(manager)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"https://hooks.example.com/locked\",\"events\":[\"org.member.added\"]}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        UUID subscriptionId = UUID.fromString(JsonPath.read(body, "$.data.id"));
+        UUID deliveryId = UUID.randomUUID();
+        jdbc.update("""
+                insert into webhook_delivery (id, subscription_id, org_id, event_type, payload, status,
+                                              attempts, max_attempts, next_attempt_at, last_error, created_at)
+                values (?, ?, ?, 'org.member.added', '{}', 'FAILED', 8, 8, now(), 'x', now())
+                """, deliveryId, subscriptionId, orgId);
+
+        // OrgAuthorization is stubbed only for manager()'s subject — this one resolves to nothing.
+        mockMvc.perform(post("/api/v1/orgs/{orgId}/webhooks/{id}/deliveries/{deliveryId}/redeliver",
+                        orgId, subscriptionId, deliveryId)
+                        .with(jwt().jwt(builder -> builder.subject("outsider-" + UUID.randomUUID())
+                                .claim("organization", Map.of("acme", Map.of("id", orgId.toString()))))))
+                .andExpect(status().isForbidden());
+        Assertions.assertThat(jdbc.queryForObject(
+                        "select status from webhook_delivery where id = ?", String.class, deliveryId))
+                .isEqualTo("FAILED");
     }
 }

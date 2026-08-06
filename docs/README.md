@@ -39,6 +39,7 @@ Rendered HTML explainers, each with diagrams and a light/dark toggle.
 | [api-guide.html](guides/api-guide.html) | The API surface — endpoints, auth, the response envelope, and worked examples |
 | [k8s-local-walkthrough.html](guides/k8s-local-walkthrough.html) | Newcomer-friendly walkthrough of the local k3s deployment — the vocabulary, topology, the traced request path, the issuer/CoreDNS trick, the two bugs, and the zero-downtime proof |
 | [cicd-gitops-and-cluster.html](guides/cicd-gitops-and-cluster.html) | CI/CD, GitOps & cluster ops — what Jenkins / Argo CD / Rancher are and where each fits, the target pipeline, and where things live on the cluster |
+| [mcp-guide.html](guides/mcp-guide.html) | The MCP agent surface — how AI agents connect, the 35-tool catalog, the dispatch pipeline, guards, and the async pattern, with diagrams |
 
 ## Decisions — [adr/](adr/)
 
@@ -52,6 +53,7 @@ Rendered HTML explainers, each with diagrams and a light/dark toggle.
 | [0006](adr/0006-embedded-duckdb.md) | Embedded DuckDB for analytics, UTC marts, exact decimals |
 | [0007](adr/0007-api-gateway.md) | API gateway: a reactive Spring Cloud Gateway as a hexagonal platform product |
 | [0008](adr/0008-geolocation-storage.md) | Geolocation stored as numeric lat/lng behind a spatial port (`GeoSearch`), PostGIS deferred |
+| [0009](adr/0009-mcp-server.md) | MCP server: the agent surface as a second protocol surface over the same module ports — stateless streamable HTTP, API-key auth |
 
 ## Plans — [plans/](plans/)
 
@@ -67,6 +69,7 @@ The living plans and architecture north-stars. Plan first, then code (AGENTS §1
 | [GATEWAY_ARCHITECTURE.md](plans/GATEWAY_ARCHITECTURE.md) | The gateway north star: a stateless reactive Spring Cloud Gateway, hexagonal ports & adapters, the request pipeline, coarse-vs-fine authZ |
 | [GATEWAY_PLAN.md](plans/GATEWAY_PLAN.md) | The phased gateway build (Core → Security → Traffic → Observability → Extensibility → Admin → Enterprise), each with its gate |
 | [K8S_LOCAL_PLAN.md](plans/K8S_LOCAL_PLAN.md) | Deploying the platform on local k3s (Ubuntu/UTM, arm64): ctr-imported images, in-cluster state, the Keycloak-issuer/CoreDNS crux, and the "production feeling" demo — **SHIPPED**; operator guide in `../deploy/k3s-local/README.md` |
+| [MCP_PLAN.md](plans/MCP_PLAN.md) | The MCP agent surface: locked decisions, the tool catalog, phases 0–6 (shipped) and the flagged OAuth phase |
 | [PERF_PLAN.md](plans/PERF_PLAN.md) | The load-test plan (k6, in `perf/`): scenarios, thresholds, and what the numbers mean |
 | [reusable-data-exchange-platform-guidelines.md](plans/reusable-data-exchange-platform-guidelines.md) | Principles for the exchange (import/export) platform — the spec the `exchange` module implements |
 

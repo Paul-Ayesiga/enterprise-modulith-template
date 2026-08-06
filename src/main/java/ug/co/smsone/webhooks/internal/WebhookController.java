@@ -36,9 +36,11 @@ class WebhookController {
     private static final String DELIVERY_TYPE = "webhook-delivery";
 
     private final WebhookSubscriptionService service;
+    private final java.time.Clock clock;
 
-    WebhookController(WebhookSubscriptionService service) {
+    WebhookController(WebhookSubscriptionService service, java.time.Clock clock) {
         this.service = service;
+        this.clock = clock;
     }
 
     record WebhookAttributes(String url, Set<String> events, String status, String secret) {
@@ -125,6 +127,20 @@ class WebhookController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     void delete(@PathVariable UUID orgId, @PathVariable UUID id) {
         service.delete(orgId, id);
+    }
+
+    @PostMapping("/{id}/deliveries/{deliveryId}/redeliver")
+    @Operation(summary = "Redeliver a dead-lettered delivery",
+            description = """
+                    Re-queues one FAILED delivery for a fresh retry cycle — after the receiver is \
+                    fixed. Only FAILED deliveries qualify (409 otherwise: pending/processing rows are \
+                    the worker's, delivered ones are done); the subscription must still be live \
+                    (redelivering to a deleted endpoint would resurrect traffic its owner revoked). \
+                    202 because delivery is asynchronous — poll the delivery log for the outcome.""")
+    @PreAuthorize("hasPermission(#orgId, 'organization', 'webhook:manage')")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    void redeliver(@PathVariable UUID orgId, @PathVariable UUID id, @PathVariable UUID deliveryId) {
+        service.redeliver(orgId, id, deliveryId, clock.instant());
     }
 
     @GetMapping("/{id}/deliveries")

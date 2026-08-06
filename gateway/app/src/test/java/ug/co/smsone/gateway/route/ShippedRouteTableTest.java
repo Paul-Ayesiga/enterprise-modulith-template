@@ -108,6 +108,29 @@ class ShippedRouteTableTest {
         }
     }
 
+    /**
+     * The agent surface must be reachable ({@code /mcp} and {@code /mcp/**} both — an MCP client
+     * POSTs the bare endpoint), authenticated, and on its OWN traffic policy: edge-api's 15 s
+     * response timeout would cut off a legitimate long tool call, while MCP's JSON-RPC bodies never
+     * justify the 10 MB cap. A silent fall-through to no-route would 404 every agent; a fall-through
+     * to edge-api would fail them slowly and only under load — this pins both halves.
+     */
+    @Test
+    void theMcpAgentSurfaceRoutesAuthenticatedOnItsOwnPolicy() {
+        for (String path : List.of("/mcp", "/mcp/anything")) {
+            RouteDefinition route = route(path);
+            assertThat(route.id()).as("%s must match the dedicated mcp-api route", path).isEqualTo("mcp-api");
+            assertThat(route.auth().requiresToken()).as("the agent surface is never public").isTrue();
+            assertThat(route.traffic().rateLimited()).as("agents are rate limited like everyone").isTrue();
+            assertThat(route.traffic().responseTimeoutMs())
+                    .as("a tool call gets more than an interactive API call, not unlimited")
+                    .isEqualTo(60000L);
+            assertThat(route.traffic().maxRequestBytes())
+                    .as("JSON-RPC requests are text; bulk data moves by download URL")
+                    .isEqualTo(2_097_152L);
+        }
+    }
+
     /** The first route matching {@code path} by ascending {@code order} — the runtime's own resolution. */
     private static RouteDefinition route(String path) {
         return ROUTES.stream()

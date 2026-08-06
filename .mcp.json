@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "smsone-local": {
+      "type": "http",
+      "url": "http://localhost:28090/mcp",
+      "headers": {
+        "X-Api-Key": "${SMSONE_API_KEY}"
+      }
+    }
+  }
+}

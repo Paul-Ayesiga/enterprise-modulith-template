@@ -129,6 +129,16 @@ gateway:
         response-timeout-ms: 15000
         max-request-bytes: 10485760   # 10 MB
         rate-limited: true
+    # The MCP agent surface: authenticated like edge-api, but its own traffic shape — a tool call is
+    # allowed a minute (agents poll async jobs rather than hold connections, but a single call may do
+    # real work), and JSON-RPC requests are text (2 MiB is generous; bulk data moves by download URL).
+    edge-mcp:
+      auth:
+        authenticated: true
+      traffic:
+        response-timeout-ms: 60000
+        max-request-bytes: 2097152    # 2 MiB
+        rate-limited: true
     # The pre-authentication surface. These callers cannot hold a token by nature — a prospect signing up
     # has no account yet, and Pesapal / Kill Bill are external systems that never see one — so demanding a
     # JWT here contradicted the modulith, which deliberately permits the very same paths. Before this
@@ -170,6 +180,9 @@ gateway:
     operations:
       name: Operations
       description: Operational surface — scheduler lock observability and the analytics report catalog.
+    agents:
+      name: Agents (MCP)
+      description: The MCP agent surface — permission-gated tools over JSON-RPC at /mcp for AI agents holding org API keys.
     platform:
       name: Platform (catch-all)
       description: Any /api/v1 path not yet grouped into a product still routes to the backend here.
@@ -275,6 +288,20 @@ gateway:
           args:
             - /api/v1/scheduler/**
             - /api/v1/analytics/**
+    # The agent surface (MCP over stateless streamable HTTP). Its own policy, not edge-api: agent
+    # tool calls may legitimately run longer than an interactive API call (edge-api's 15 s would cut
+    # them off), while JSON-RPC bodies are small (2 MiB cap, not 10). Auth at the edge is the same
+    # token-or-key check — the modulith re-checks per tool.
+    - id: mcp-api
+      order: 80
+      service-id: modulith
+      product: agents
+      policy-ref: edge-mcp
+      predicates:
+        - kind: PATH
+          args:
+            - /mcp
+            - /mcp/**
     - id: platform-api
       order: 100
       service-id: modulith

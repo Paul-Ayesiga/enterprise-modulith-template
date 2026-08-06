@@ -41,7 +41,7 @@ class SlaOverrideTest extends AbstractIntegrationTest {
     @Test
     void anOrgSlaOverrideRetargetsDueDatesAtOpenAndClearingFallsBack() throws Exception {
         UUID orgId = UUID.randomUUID();
-        seedMember(orgId, "sla-op", "ORG_READ");
+        seedMember(orgId, "sla-op", "TICKET_READ", "TICKET_WRITE");
 
         // Platform sets a tight P3 SLA for this org: 5m first response, 30m resolution.
         mockMvc.perform(put("/api/v1/admin/orgs/{orgId}/sla/{priority}", orgId, "P3")

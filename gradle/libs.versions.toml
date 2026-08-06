@@ -17,11 +17,14 @@ commonsCsv = "1.14.1"        # exchange module CSV reader/writer — small, bori
 poi = "5.4.1"                # exchange XLSX codec — SAX streaming read, SXSSF streaming write
 bucket4j = "8.14.0"          # note the _jdk17 artifact suffix
 resilience4j = "2.4.0"       # -spring-boot4 artifact (verified on repo1; search.maven index lags)
+mcp = "2.0.0"                # MCP Java SDK — `mcp` bundle = core + Jackson 3 (matches Boot 4.1's tools.jackson)
 
 [libraries]
 boot-bom            = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "springBoot" }
 spring-modulith-bom = { module = "org.springframework.modulith:spring-modulith-bom", version.ref = "springModulith" }
 awssdk-bom          = { module = "software.amazon.awssdk:bom", version.ref = "awssdk" }
+mcp-bom             = { module = "io.modelcontextprotocol.sdk:mcp-bom", version.ref = "mcp" }
+mcp                 = { module = "io.modelcontextprotocol.sdk:mcp" }
 spring-cloud-bom    = { module = "org.springframework.cloud:spring-cloud-dependencies", version.ref = "springCloud" }
 
 # Spring Boot starters (BOM-managed — no version)

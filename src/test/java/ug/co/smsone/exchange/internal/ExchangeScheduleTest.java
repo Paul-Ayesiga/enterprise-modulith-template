@@ -60,7 +60,7 @@ class ExchangeScheduleTest extends AbstractIntegrationTest {
     @Test
     void aScheduleFiresAsItsRequesterAndDisablesOnRevocation() throws Exception {
         UUID orgId = UUID.randomUUID();
-        UUID roleId = seedMember(orgId, "scheduler-1", "ORG_READ", "MEMBER_READ");
+        UUID roleId = seedMember(orgId, "scheduler-1", "ORG_READ", "MEMBER_READ", "EXCHANGE_READ", "EXCHANGE_SUBMIT");
 
         MvcResult created = mockMvc.perform(post("/api/v1/orgs/{orgId}/exchange/schedules", orgId)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -106,7 +106,7 @@ class ExchangeScheduleTest extends AbstractIntegrationTest {
     @Test
     void aBadCronIsA422AtCreateNeverAFiringTimeSurprise() throws Exception {
         UUID orgId = UUID.randomUUID();
-        seedMember(orgId, "scheduler-2", "ORG_READ", "MEMBER_READ");
+        seedMember(orgId, "scheduler-2", "ORG_READ", "MEMBER_READ", "EXCHANGE_READ", "EXCHANGE_SUBMIT");
         mockMvc.perform(post("/api/v1/orgs/{orgId}/exchange/schedules", orgId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"handler\":\"test-counter\",\"format\":\"CSV\",\"cron\":\"not-a-cron\"}")

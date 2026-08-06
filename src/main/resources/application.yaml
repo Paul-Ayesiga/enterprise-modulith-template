@@ -176,11 +176,23 @@ app:
         scope: TENANT
         capacity: ${RATE_LIMIT_READ_CAPACITY:600}
         refill-period: PT1M
+      # The agent surface: every JSON-RPC call is a POST, so one PRINCIPAL bucket (the key's
+      # key:<id> subject) covers reads and writes alike — per-key, not per-tenant, because one
+      # org may run several agents and one runaway agent shouldn't starve its siblings.
+      - id: mcp
+        path-pattern: /mcp/**
+        scope: PRINCIPAL
+        capacity: ${RATE_LIMIT_MCP_CAPACITY:300}
+        refill-period: PT1M
     default-tier:
       id: default
       scope: PRINCIPAL
       capacity: 300
       refill-period: PT1M
+  # The MCP agent surface (/mcp). Disabled = every JSON-RPC request answers a named error — the
+  # surface refuses, it never vanishes (a 404 reads as version skew; see McpProperties).
+  mcp:
+    enabled: ${MCP_ENABLED:true}
   webhooks:
     worker-auto-start: ${WEBHOOKS_WORKER_AUTOSTART:true}
     batch-size: ${WEBHOOKS_BATCH_SIZE:50}

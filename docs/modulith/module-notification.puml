@@ -33,9 +33,9 @@ Rel(Application.Application.Notification, Application.Application.Settings, "lis
 Rel(Application.Application.Notification, Application.Application.IntegrationHub, "depends on", $techn="", $tags="", $link="")
 Rel(Application.Application.Notification, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Notification, Application.Application.Identity, "uses", $techn="", $tags="", $link="")
-Rel(Application.Application.IntegrationHub, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
-Rel(Application.Application.Settings, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Exchange, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Settings, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.IntegrationHub, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 
 SHOW_LEGEND(true)
 hide stereotypes

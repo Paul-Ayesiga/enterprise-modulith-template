@@ -105,3 +105,7 @@ include::module-document.adoc[]
 plantuml::module-webhooks.puml[,,format=svg]
 include::module-webhooks.adoc[]
 
+== MCP
+plantuml::module-mcp.puml[,,format=svg]
+include::module-mcp.adoc[]
+

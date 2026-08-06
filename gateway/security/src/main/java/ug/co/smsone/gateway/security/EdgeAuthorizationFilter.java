@@ -105,6 +105,21 @@ public class EdgeAuthorizationFilter implements GlobalFilter, Ordered, Applicati
                 .flatMap(principal -> authorize(exchange, chain, compiled, principal));
     }
 
+    /**
+     * The bearer spelling of an API key. {@code GatewaySecurityConfig} keeps the JWT layer's hands
+     * off {@code Bearer sk_…}; this is the half that puts those tokens through introspection instead.
+     */
+    private static String bearerApiKey(ServerWebExchange exchange) {
+        String authorization = exchange.getRequest().getHeaders()
+                .getFirst(org.springframework.http.HttpHeaders.AUTHORIZATION);
+        String prefix = "Bearer ";
+        if (authorization == null || !authorization.regionMatches(true, 0, prefix, 0, prefix.length())) {
+            return null;
+        }
+        String token = authorization.substring(prefix.length()).trim();
+        return token.startsWith("sk_") ? token : null;
+    }
+
     /** Precedence: a trusted internal-service token, then an API key (if an introspector exists), then the JWT. */
     private Mono<EdgePrincipal> resolvePrincipal(ServerWebExchange exchange) {
         String internalToken = exchange.getRequest().getHeaders().getFirst(INTERNAL_TOKEN_HEADER);
@@ -112,6 +127,9 @@ public class EdgeAuthorizationFilter implements GlobalFilter, Ordered, Applicati
             return matchInternalToken(internalToken); // empty when it matches nothing → 401
         }
         String apiKey = exchange.getRequest().getHeaders().getFirst(API_KEY_HEADER);
+        if (apiKey == null || apiKey.isBlank()) {
+            apiKey = bearerApiKey(exchange); // Bearer sk_… — the only spelling remote MCP clients have
+        }
         if (apiKey != null && !apiKey.isBlank() && introspector != null) {
             return introspector.introspect(apiKey);
         }

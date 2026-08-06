@@ -156,6 +156,17 @@ class ExchangeService {
         if (user.activeOrgId() == null || !user.activeOrgId().equals(orgId)) {
             throw new ForbiddenException("Your token is not scoped to this organization.");
         }
+        // A machine caller is never a member, so the subject lookup below would always deny it. Its
+        // held set is the key's minted permission subset — capped at mint by a human who held those
+        // permissions — the same machine rule ApiPermissionEvaluator and the escalation guard apply.
+        if (org.springframework.security.core.context.SecurityContextHolder.getContext()
+                .getAuthentication() instanceof ug.co.smsone.shared.security.ApiKeyAuthenticationToken apiKey) {
+            if (!apiKey.getPrincipal().permissions().contains(permissionCode)) {
+                throw new ForbiddenException("You need the '" + permissionCode
+                        + "' permission to use this exchange handler.");
+            }
+            return;
+        }
         if (!authorization.hasPermission(user.subject(), orgId, permissionCode)) {
             throw new ForbiddenException("You need the '" + permissionCode
                     + "' permission to use this exchange handler.");
