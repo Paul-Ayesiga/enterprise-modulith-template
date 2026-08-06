@@ -111,8 +111,17 @@ spec:
         container('git') {
           script {
             sh 'git config --global --add safe.directory "$PWD"'
-            String head = sh(script: 'git log -1 --pretty=%B', returnStdout: true).trim()
-            env.SELF_TRIGGERED = head.contains('[skip ci]') ? 'true' : 'false'
+            // Identify the bump by WHO wrote it and its subject line — not by searching the whole
+            // message for "[skip ci]". That first attempt matched any commit that merely *mentioned*
+            // the marker: the very commit documenting this guard contained the string in a sentence,
+            // so build #27 skipped every stage and reported SUCCESS having built nothing. A guard that
+            // silently no-ops real builds is worse than the loop it was written to stop.
+            // The author is deterministic — the GitOps stage below sets it explicitly before committing.
+            String author = sh(script: 'git log -1 --pretty=%ae', returnStdout: true).trim()
+            String subject = sh(script: 'git log -1 --pretty=%s', returnStdout: true).trim()
+            env.SELF_TRIGGERED =
+                (author == 'jenkins@smsone.local' && subject.startsWith('chore(gitops):')) ? 'true' : 'false'
+            echo "HEAD author=${author} subject=${subject} -> selfTriggered=${env.SELF_TRIGGERED}"
             if (env.SELF_TRIGGERED == 'true') {
               echo 'HEAD is this pipeline\'s own GitOps bump — skipping every stage so the loop ends here.'
             }
