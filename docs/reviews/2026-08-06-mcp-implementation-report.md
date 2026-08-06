@@ -157,7 +157,7 @@ RFC 9728 challenge, the metadata document (served by **Spring Security 7's own
 `OAuth2ProtectedResourceMetadataFilter`** — discovered mid-build when it answered before a custom
 servlet, which was then deleted; a `SecurityConfig` customizer pins the external resource id,
 Keycloak realm and `mcp` scope) names the authorization server, the connector self-registers under
-POLICED anonymous registration (trusted hosts `localhost`, consent forced, default scopes only —
+POLICED anonymous registration (trusted hosts: loopback + the pinned compose-network gateway — docker port-mapping means registrations never arrive from localhost; consent forced; `mcp` explicitly allowlisted —
 mirrored into `docker/keycloak/realm-smsone.json` after learning the exact component shapes from a
 live Keycloak's own defaults), and the browser consent mints a token whose `mcp` scope stamps BOTH
 audiences (`smsone-api` for the global resource-server check, `smsone-mcp` for the `/mcp` door).

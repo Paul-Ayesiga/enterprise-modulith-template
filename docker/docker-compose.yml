@@ -125,3 +125,15 @@ volumes:
   seaweedfs-data:
   valkey-data:
   killbill-db-data:
+
+# The default network's subnet is PINNED so its gateway IP (172.18.0.1) is a committable fact:
+# Keycloak's anonymous client-registration policy trusts registrations by SOURCE HOST, and through
+# docker port-mapping every host-originated request (Claude Desktop's mcp-remote included) arrives
+# from this gateway — never from "localhost". The realm file's Trusted Hosts policy names this IP;
+# an unpinned subnet would break that trust on every network recreate or new machine.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.18.0.0/16
+          gateway: 172.18.0.1
