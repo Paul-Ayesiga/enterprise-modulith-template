@@ -737,7 +737,8 @@ it already sits behind a port — rather than reimplement full-text search per v
   consent, and calls with a JWT whose <code>mcp</code> scope stamps the <code>smsone-mcp</code> audience
   (tokens without it — a web login, say — are refused at <code>/mcp</code>). The
   <code>npx mcp-remote … --header "X-Api-Key:sk_…"</code> bridge remains the headless/CI fallback —
-  no space after that colon, and Node must be on Desktop's PATH.</p></div></div>
+  no space after that colon, and Node must be on Desktop's PATH. Full connect recipes, diagrams and the
+  OAuth flow live in <a href="mcp-guide.html#connect">the MCP guide</a>.</p></div></div>
 <div class="card tip"><strong>Tools are org-implicit.</strong> No tool takes an <code>orgId</code> — the org comes from
 the key. <code>tools/list</code> is filtered to what the key's permissions allow, and a hidden tool still denies on a
 direct call — discovery is a convenience, never the enforcement. The five area surfaces (tickets, exchange, search,

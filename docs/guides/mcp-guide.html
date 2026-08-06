@@ -215,26 +215,32 @@ auth: {type: static_bearer, mcp_server_url: "https://api.example.smsone.co.ug/mc
     </section>
 
     <section>
-      <h2 id="auth"><span class="n">03 — Identity</span>Auth &amp; scoping: the key is the whole model</h2>
+      <h2 id="auth"><span class="n">03 — Identity</span>Auth &amp; scoping: two credentials, one model</h2>
       <ul>
-        <li><strong>Org-implicit, always.</strong> A key belongs to exactly one organization; no tool takes an
-          <code>orgId</code> argument. Cross-tenant addressing is not a forbidden input — it is an input that does not
+        <li><strong>Org-implicit, always.</strong> An API key belongs to exactly one organization; an OAuth token
+          carries the <code>organization</code> claim its consent minted. Either way, no tool takes an
+          <code>orgId</code> argument — cross-tenant addressing is not a forbidden input, it is an input that does not
           exist. Prompt injection cannot name another tenant.</li>
-        <li><strong>The permission subset is the scope model.</strong> Keys are minted with a subset of
-          <code>organization.Permission</code> codes, capped by what the minter holds. Every tool declares the same
-          permission its REST twin requires — one vocabulary, both surfaces.</li>
-        <li><strong>Discovery is filtered; the call is the boundary.</strong> <code>tools/list</code> shows only tools the
-          key may call (agents plan with real capabilities instead of discovering them by 403). A hidden tool invoked
-          directly is re-checked and denied — fail closed, before any side effect.</li>
+        <li><strong>Two scope models, one vocabulary.</strong> Keys are minted with a subset of
+          <code>organization.Permission</code> codes, capped by what the minter holds — frozen at mint. OAuth callers
+          resolve their permissions per call from their live memberships, exactly like REST. Every tool declares the
+          same permission its REST twin requires — one vocabulary, both surfaces, both credential kinds.</li>
+        <li><strong>Discovery is filtered; the call is the boundary.</strong> <code>tools/list</code> shows only tools
+          the caller may invoke (agents plan with real capabilities instead of discovering them by 403). A hidden tool
+          invoked directly is re-checked and denied — fail closed, before any side effect.</li>
         <li><strong><code>Bearer sk_…</code> is understood at both tiers.</strong> Remote MCP clients can only send
           bearer headers; the gateway routes <code>sk_</code>-prefixed bearers to key introspection, the modulith's key
           filter consumes them before the JWT machinery ever sees them. A JWT can never start with <code>sk_</code>, so
           nothing real is hidden from the JWT path.</li>
+        <li><strong>OAuth tokens enter only with the MCP audience.</strong> <code>/mcp</code> admits a JWT only when its
+          <code>aud</code> carries <code>smsone-mcp</code> — stamped exclusively by the consented <code>mcp</code>
+          client scope. A web login token, though valid platform-wide, is refused here, and an MCP token cannot ride the
+          web app: cross-surface token reuse dies in both directions.</li>
         <li><strong>Machine grants stay un-escalatable.</strong> When a key invites or re-roles a member, the escalation
           guard treats the key's minted subset as its held set — capped at mint by a human who held those permissions, so
           a key can hand on at most what its minter could have. A role carrying anything beyond the subset refuses.</li>
-        <li><strong>Attribution is honest.</strong> Everything a key does is recorded as <code>key:&lt;id&gt;</code> —
-          job requesters, ticket openers, audit actors.</li>
+        <li><strong>Attribution is honest.</strong> A key acts as <code>key:&lt;id&gt;</code>; a consented connector
+          acts as the person who consented — job requesters, ticket openers and audit actors name the real caller.</li>
       </ul>
     </section>
 
@@ -243,7 +249,7 @@ auth: {type: static_bearer, mcp_server_url: "https://api.example.smsone.co.ug/mc
       <figure class="diagram">
         <pre class="mermaid">
 flowchart TB
-  A["Agent — JSON-RPC POST /mcp<br/>Authorization: Bearer sk_…  or  X-Api-Key"]
+  A["Agent — JSON-RPC POST /mcp<br/>X-Api-Key / Bearer sk_… · or OAuth JWT (aud smsone-mcp)"]
   subgraph GW["API gateway — route mcp-api · policy edge-mcp"]
     G1["blocklist · abuse guard"]
     G2["edge auth: sk_ bearer → key introspection (JWKS for JWTs)"]
