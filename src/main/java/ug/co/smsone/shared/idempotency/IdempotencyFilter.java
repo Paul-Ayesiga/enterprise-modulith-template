@@ -33,7 +33,8 @@ import ug.co.smsone.shared.web.RequestPaths;
  * same request replay the stored response instead of re-executing. Claim-first design with a
  * takeover lease (a crashed instance never wedges a key); keys are scoped per authenticated
  * principal; only successful outcomes (status &lt; 400) are stored — errors stay retryable.
- * Ordered after the security chain — unauthenticated requests never claim keys.
+ * Unauthenticated requests never claim keys — enforced in {@code shouldNotFilter}, because ordering
+ * after the security chain does not achieve it on {@code permitAll} routes.
  */
 @Component
 @Order(1) // rate limit (0) first — a replayed response must still spend a token; MDC (-1) covers replay logs
@@ -70,7 +71,26 @@ public class IdempotencyFilter extends OncePerRequestFilter {
     protected boolean shouldNotFilter(HttpServletRequest request) {
         return !(UNSAFE_METHODS.contains(request.getMethod())
                 && RequestPaths.of(request).startsWith("/api/")
-                && request.getHeader(KEY_HEADER) != null);
+                && request.getHeader(KEY_HEADER) != null
+                // Keys are scoped per principal, and an anonymous caller has none — every one of them
+                // would share a single "anonymous" bucket. This class already ASSUMED that could not
+                // happen ("they never get this far: this filter runs after the security chain"), and
+                // for authenticated routes it cannot. But permitAll routes — signup and the payment /
+                // billing webhooks — pass the security chain unauthenticated and reached here anyway,
+                // putting attacker and victim in one namespace. Two consequences, both real:
+                //
+                //   * an enumeration oracle on signup, which is otherwise carefully built to answer a
+                //     constant 202: claim a key derived from a victim's address (the obvious way a
+                //     front-end de-duplicates a form) with a different body, and 409 "already used
+                //     with a different request payload" vs 202 answers "has this address signed up?";
+                //   * key squatting — pre-claim the key a victim's client will derive and their real
+                //     signup gets a 409 instead of a 202. ADR 0005 names this, and says per-principal
+                //     scoping is the defence. Anonymous callers have no principal to scope by.
+                //
+                // So an anonymous request is not rejected, it is simply not idempotent: the header is
+                // ignored and the request runs normally. Rejecting would itself add a non-202 outcome
+                // to an endpoint whose contract is that every caller gets the same answer.
+                && currentUserProvider.currentSubject().isPresent());
     }
 
     @Override
@@ -171,8 +191,12 @@ public class IdempotencyFilter extends OncePerRequestFilter {
      * The key's owner. Must be the immutable SUBJECT, never the display name: usernames are mutable and
      * reassignable in Keycloak, so keying on one would let a recycled username inherit — and replay —
      * the previous holder's stored responses, which is a cross-account disclosure, not just bad
-     * bookkeeping. Unauthenticated requests share the {@code anonymous} bucket, but they never get this
-     * far: this filter runs after the security chain.
+     * bookkeeping.
+     *
+     * <p>The {@code anonymous} fallback is now unreachable and kept only as a defensive default:
+     * {@code shouldNotFilter} skips any request without a subject. It did NOT used to — running after
+     * the security chain stops unauthenticated callers only on routes the security chain rejects, and
+     * {@code permitAll} routes sail straight through. See the reasoning there.
      */
     private String currentPrincipal() {
         return currentUserProvider.currentSubject().orElse("anonymous");

@@ -6,6 +6,7 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -21,6 +22,7 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import ug.co.smsone.organization.Organizations;
+import ug.co.smsone.shared.idempotency.IdempotencyFilter;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
 /**
@@ -79,7 +81,7 @@ class SignupFlowTest extends AbstractIntegrationTest {
 
         // Single-use: the same link now answers the generic 422.
         mockMvc.perform(get("/api/v1/signup/verify").param("token", token))
-                .andExpect(status().isUnprocessableEntity());
+                .andExpect(status().isUnprocessableContent());
     }
 
     /**
@@ -123,10 +125,40 @@ class SignupFlowTest extends AbstractIntegrationTest {
                 .isEqualTo(firstTokenHash);
     }
 
+    /**
+     * Idempotency keys are scoped per principal, and an anonymous caller has none — so before
+     * {@code IdempotencyFilter.shouldNotFilter} started requiring a subject, every unauthenticated
+     * caller shared a single {@code "anonymous"} bucket. On this endpoint that was an enumeration
+     * oracle: claim a key derived from someone's address (the obvious way a front-end de-duplicates a
+     * form submit) with a different body, and 409 "already used with a different request payload"
+     * versus 202 answers the exact question the constant 202 exists to refuse. It also allowed key
+     * squatting — pre-claim the key a victim's client will derive and their real signup gets a 409.
+     *
+     * <p>The header must now be inert here: same key, different payload, still 202.
+     */
+    @Test
+    void anAnonymousIdempotencyKeyCannotCollideWithAnotherCallers() throws Exception {
+        String sharedKey = "shared-" + UUID.randomUUID().toString().replace("-", "");
+        String first = "{\"organizationName\":\"Alpha Co\",\"email\":\"alpha-"
+                + UUID.randomUUID() + "@acme.test\"}";
+        String second = "{\"organizationName\":\"Beta Co\",\"email\":\"beta-"
+                + UUID.randomUUID() + "@acme.test\"}";
+
+        mockMvc.perform(post("/api/v1/signup").contentType(MediaType.APPLICATION_JSON)
+                        .header(IdempotencyFilter.KEY_HEADER, sharedKey).content(first))
+                .andExpect(status().isAccepted());
+
+        // A different anonymous caller, same key, different body — 409 here would be the oracle.
+        mockMvc.perform(post("/api/v1/signup").contentType(MediaType.APPLICATION_JSON)
+                        .header(IdempotencyFilter.KEY_HEADER, sharedKey).content(second))
+                .andExpect(status().isAccepted())
+                .andExpect(header().doesNotExist(IdempotencyFilter.REPLAYED_HEADER));
+    }
+
     @Test
     void aGarbageTokenAnswersTheSameGeneric422() throws Exception {
         mockMvc.perform(get("/api/v1/signup/verify").param("token", "not-a-real-token"))
-                .andExpect(status().isUnprocessableEntity())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.errors[0].code").value("VALIDATION_FAILED"));
     }
 }
