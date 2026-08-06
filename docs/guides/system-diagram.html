@@ -915,7 +915,7 @@ flowchart LR
         <span class="fail"><span class="pill bad">401 / 429</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox core"><span class="ord">identity</span>
-        <span class="what"><b>Request id + key auth</b> — adopts/mints the request id, then resolves the org API key: <code>X-Api-Key: sk_…</code> or <code>Authorization: Bearer sk_…</code> (both tiers understand the bearer spelling; JWTs still work).</span>
+        <span class="what"><b>Request id + key auth</b> — adopts/mints the request id, then resolves the org API key: <code>X-Api-Key: sk_…</code> or <code>Authorization: Bearer sk_…</code> (both tiers understand the bearer spelling). OAuth connectors ride the JWT path instead — but <code>/mcp</code> admits a JWT only when its <code>aud</code> carries <code>smsone-mcp</code> (the consented <code>mcp</code> scope stamps it); a web login token is refused there.</span>
         <span class="fail"><span class="pill bad">401</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox core"><span class="ord">limit</span>

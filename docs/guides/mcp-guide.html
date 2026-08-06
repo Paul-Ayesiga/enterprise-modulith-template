@@ -164,9 +164,11 @@ flowchart LR
 
     <section>
       <h2 id="connect"><span class="n">02 — Ten minutes</span>Connect an agent</h2>
-      <p class="section-intro">One credential works everywhere: an <strong>org API key</strong> (minted in the console or
-        via <code>POST /api/v1/orgs/{orgId}/api-keys</code>, permissions capped to what the minter holds). Send it as
-        <code>X-Api-Key</code> or as <code>Authorization: Bearer sk_…</code> — both spellings authenticate identically.</p>
+      <p class="section-intro">Two credentials, one surface. Headless agents use an <strong>org API key</strong> (minted in
+        the console or via <code>POST /api/v1/orgs/{orgId}/api-keys</code>, permissions capped to what the minter holds),
+        sent as <code>X-Api-Key</code> or <code>Authorization: Bearer sk_…</code>. Interactive connectors (Claude Desktop,
+        claude.ai) use <strong>OAuth</strong>: a browser consent against Keycloak mints a token carrying the
+        <code>smsone-mcp</code> audience, and the caller acts as <em>you</em> — your memberships, your permissions.</p>
 
       <h3>Claude Code (this repo ships <code>.mcp.json</code>)</h3>
       <pre><code>{
@@ -199,6 +201,17 @@ tools: [{type: agent_toolset_20260401}, {type: mcp_toolset, mcp_server_name: sms
 
 # vault holds the key as a static bearer, matched to the server by URL
 auth: {type: static_bearer, mcp_server_url: "https://api.example.smsone.co.ug/mcp", token: "sk_…"}</code></pre>
+
+      <h3>Claude Desktop / claude.ai — native OAuth connector</h3>
+      <p>Add a custom connector with just the URL — <code>http://localhost:28090/mcp</code> locally,
+        <code>https://api.&lt;host&gt;/mcp</code> deployed. The client discovers everything else itself: an anonymous call
+        answers 401 with <code>WWW-Authenticate: Bearer resource_metadata="…"</code>, the RFC&nbsp;9728 document at
+        <code>/.well-known/oauth-protected-resource</code> names Keycloak as the authorization server, the connector
+        self-registers (anonymous registration is <em>policed</em>: trusted hosts only, consent forced, default scopes
+        only), and the browser consent mints a token whose <code>mcp</code> scope stamps the <code>smsone-mcp</code>
+        audience. Tokens without that audience — a web login, for instance — are refused at <code>/mcp</code>: neither
+        surface's tokens work on the other. No bridge process, no key handling; <code>mcp-remote</code> with a key remains
+        the right tool for headless or CI use.</p>
     </section>
 
     <section>

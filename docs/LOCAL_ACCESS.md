@@ -310,7 +310,17 @@ scripts/api.sh DELETE "/api/v1/admin/impersonations/$SESSION"                 # 
 
 The platform speaks the Model Context Protocol at `POST /mcp` (via the gateway:
 `http://localhost:28090/mcp` — the production-faithful path and the `.mcp.json` default; direct to
-the modulith: `http://localhost:28080/mcp` when the gateway isn't running). Auth is an **org API key** — mint one with
+the modulith: `http://localhost:28080/mcp` when the gateway isn't running).
+
+**Native OAuth connectors** (Claude Desktop / claude.ai custom connectors): add the URL and let the
+client run the browser consent — it discovers Keycloak via `/.well-known/oauth-protected-resource`,
+self-registers (policed: localhost only, consent forced), and logs in as YOU (e.g. `paul`), acting
+with your memberships. The `mcp` client scope stamps the `smsone-mcp` audience; a fresh `make nuke`
+realm gets all of this from `docker/keycloak/realm-smsone.json`, and an already-running dev realm
+can be brought up to date live via the Keycloak admin API (scope + trusted-hosts — see the Phase 7
+notes in `docs/plans/MCP_PLAN.md`).
+
+For headless agents, auth is an **org API key** — mint one with
 `POST /api/v1/orgs/{orgId}/api-keys` (permissions capped to what you hold), then either header works:
 `X-Api-Key: sk_…` or `Authorization: Bearer sk_…`.
 

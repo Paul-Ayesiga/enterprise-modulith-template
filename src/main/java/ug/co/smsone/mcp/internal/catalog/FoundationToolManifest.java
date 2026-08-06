@@ -46,6 +46,10 @@ class FoundationToolManifest implements ToolManifest {
             payload.put("keyName", key.name());
             payload.put("permissions", key.permissions().stream().sorted().toList());
             payload.put("platformTier", key.platformTier());
+        } else if (context.authentication()
+                instanceof org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken) {
+            payload.put("authKind", "oauth"); // a consented connector token (Phase 7)
+            payload.put("permissions", null); // membership permissions resolve per call, not per token
         } else {
             payload.put("authKind", "user");
             payload.put("permissions", null); // human permissions resolve per call, not per token

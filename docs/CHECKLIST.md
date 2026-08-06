@@ -830,8 +830,18 @@ Plan: [plans/MCP_PLAN.md](plans/MCP_PLAN.md) · ADR 0009 · guide: [guides/mcp-g
 - [x] **Phases 5–6 — agent content**: prompts `diagnose_failed_webhooks` + `usage_review`; drift-free
       resources `smsone://guide/agent`, `smsone://reference/permissions`, `smsone://reference/webhook-events`
       (`McpAgentContentTest`)
-- [ ] Phase 7 (flagged, not v1): OAuth 2.1 for browser-consented connectors (claude.ai) — Keycloak AS +
-      protected-resource metadata; nothing in 0–6 blocks it
+- [x] **Phase 7 — OAuth 2.1 for consented connectors (2026-08-06 evening)**: RFC 9728 discovery via
+      Spring Security 7's own metadata filter (external resource id + Keycloak AS + `mcp` scope pinned in
+      `SecurityConfig`); anonymous `/mcp` 401s carry the `WWW-Authenticate … resource_metadata` challenge;
+      `/mcp` admits exactly two credentials — `sk_` keys, or JWTs whose `aud` carries `smsone-mcp` (the
+      consented `mcp` scope stamps it; a web login token is refused); realm-as-code ships the scope (dual
+      audience mappers), realm-optional defaults, and POLICED anonymous client registration (trusted hosts
+      localhost, consent forced, default scopes only); gateway `mcp-oauth-metadata` route (edge-public)
+- [x] **Gate:** real Keycloak importing the committed realm — an `mcp`-scoped token initializes and
+      `whoami`s as `oauth` while the same user's web token is refused at the door; anonymous DCR from an
+      untrusted host refuses; metadata + challenge pinned (`McpOAuthIntegrationTest`,
+      `McpServerIntegrationTest.theOauthDiscoveryDocumentAndChallengeBootstrapNativeConnectors`,
+      `ShippedRouteTableTest.theOauthDiscoveryDocumentRoutesPublicButRateLimited`)
 - [x] **Post-ship hardening (2026-08-06 PM)**: gateway `QuotaFilter` double-subscribe fixed — the chain
       re-ran onto a committed response and the rate limiter's late header write closed connections
       under keep-alive clients (mcp-remote's "other side closed" / Desktop "Server disconnected")

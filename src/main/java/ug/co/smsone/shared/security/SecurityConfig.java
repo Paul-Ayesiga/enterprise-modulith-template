@@ -34,7 +34,13 @@ public class SecurityConfig {
             KeycloakJwtAuthenticationConverter jwtAuthenticationConverter,
             ApiAuthenticationEntryPoint authenticationEntryPoint,
             ApiAccessDeniedHandler accessDeniedHandler,
-            ApiKeyAuthenticationFilter apiKeyAuthenticationFilter) throws Exception {
+            ApiKeyAuthenticationFilter apiKeyAuthenticationFilter,
+            McpTokenAuthorizationManager mcpTokenAuthorizationManager,
+            @org.springframework.beans.factory.annotation.Value(
+                    "${spring.security.oauth2.resourceserver.jwt.issuer-uri}") String issuerUri,
+            @org.springframework.beans.factory.annotation.Value(
+                    "${app.mcp.public-base-url:http://localhost:28090}") String mcpPublicBaseUrl)
+            throws Exception {
         http
                 // Machine keys authenticate before the bearer path; an absent/invalid key changes
                 // nothing (the request stays anonymous and authorization answers).
@@ -68,11 +74,29 @@ public class SecurityConfig {
                         // The API gateway's key-introspection seam authenticates by the shared gateway
                         // secret (constant-time compare) inside the controller, not OAuth.
                         .requestMatchers("/internal/gateway/**").permitAll()
+                        // RFC 9728 discovery for native MCP connectors — public by definition
+                        // (it says WHO authorizes /mcp; it grants nothing).
+                        .requestMatchers("/.well-known/oauth-protected-resource",
+                                "/.well-known/oauth-protected-resource/*").permitAll()
+                        // The MCP door policy: an org API key, or a JWT minted for this surface
+                        // (aud carries the mcp audience). A web login token is refused here.
+                        .requestMatchers("/mcp", "/mcp/**").access(mcpTokenAuthorizationManager)
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(resourceServer -> resourceServer
                         .bearerTokenResolver(apiKeyAwareBearerTokenResolver())
                         .authenticationEntryPoint(authenticationEntryPoint)
-                        .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter)))
+                        .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter))
+                        // RFC 9728 discovery for native MCP connectors (Phase 7). Security 7 serves
+                        // /.well-known/oauth-protected-resource itself; without this customizer it
+                        // derives a per-request document with NO authorization_servers — valid,
+                        // useless for bootstrap. Pin the EXTERNAL resource id (the gateway origin
+                        // agents actually dial), the realm as the authorization server, and the
+                        // consent scope. bearer_methods already defaults to "header".
+                        .protectedResourceMetadata(metadata -> metadata
+                                .protectedResourceMetadataCustomizer(builder -> builder
+                                        .resource(mcpPublicBaseUrl + "/mcp")
+                                        .authorizationServer(issuerUri)
+                                        .scope("mcp"))))
                 .exceptionHandling(handling -> handling
                         .authenticationEntryPoint(authenticationEntryPoint)
                         .accessDeniedHandler(accessDeniedHandler));

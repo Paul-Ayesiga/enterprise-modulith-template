@@ -160,6 +160,34 @@ class McpServerIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void theOauthDiscoveryDocumentAndChallengeBootstrapNativeConnectors() throws Exception {
+        HttpClient http = HttpClient.newHttpClient();
+
+        // RFC 9728 metadata is public by definition — it names WHO authorizes /mcp, grants nothing.
+        HttpResponse<String> metadata = http.send(
+                HttpRequest.newBuilder(URI.create(
+                                "http://localhost:" + port + "/.well-known/oauth-protected-resource"))
+                        .GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(metadata.statusCode()).isEqualTo(200);
+        assertThat(metadata.body())
+                .contains("\"resource\"").contains("/mcp")
+                .contains("\"authorization_servers\"").contains("\"scopes_supported\"");
+
+        // An anonymous /mcp call is refused WITH the challenge a connector bootstraps from.
+        HttpRequest anonymous = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/mcp"))
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .POST(HttpRequest.BodyPublishers.ofString("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}"))
+                .build();
+        HttpResponse<String> refused = http.send(anonymous, HttpResponse.BodyHandlers.ofString());
+        assertThat(refused.statusCode()).isEqualTo(401);
+        assertThat(refused.headers().firstValue("WWW-Authenticate").orElse(""))
+                .contains("resource_metadata")
+                .contains("/.well-known/oauth-protected-resource");
+    }
+
+    @Test
     void aRevokedKeyIsA401OnItsVeryNextRequest() {
         UUID orgId = UUID.randomUUID();
         McpTestSupport.SeededKey key = McpTestSupport.seedOrgKey(jdbc, orgId, "revoked", "org:read");

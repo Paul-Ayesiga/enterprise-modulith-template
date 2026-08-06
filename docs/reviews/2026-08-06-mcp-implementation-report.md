@@ -149,6 +149,32 @@ mirror had nothing finer to check. Approved same-day (with the key-narrowing opt
 - Docs synced: SRS §4.6 permission column + definitions row, DATA_MODEL's catalog paragraph,
   api-guide endpoint chips + Part F table, mcp-guide catalog tables, MCP_PLAN §4 + new Phase 8.
 
+## The evening's close — Phase 7, OAuth 2.1 for native connectors
+
+The last flagged phase shipped the same day, so the plan has no deferred phases left. Claude
+Desktop / claude.ai custom connectors now connect with just the URL: the anonymous 401 carries the
+RFC 9728 challenge, the metadata document (served by **Spring Security 7's own
+`OAuth2ProtectedResourceMetadataFilter`** — discovered mid-build when it answered before a custom
+servlet, which was then deleted; a `SecurityConfig` customizer pins the external resource id,
+Keycloak realm and `mcp` scope) names the authorization server, the connector self-registers under
+POLICED anonymous registration (trusted hosts `localhost`, consent forced, default scopes only —
+mirrored into `docker/keycloak/realm-smsone.json` after learning the exact component shapes from a
+live Keycloak's own defaults), and the browser consent mints a token whose `mcp` scope stamps BOTH
+audiences (`smsone-api` for the global resource-server check, `smsone-mcp` for the `/mcp` door).
+
+The door policy (`McpTokenAuthorizationManager`) admits exactly two credentials at `/mcp`: `sk_`
+keys, or JWTs carrying `smsone-mcp` — the SAME user's web login token is refused there, killing
+cross-surface token reuse in both directions (user-approved decision, alongside keys-narrow and
+policed-DCR). OAuth callers resolve like REST humans (subject, tenant-claim org, membership
+permissions), so the filter, dispatcher re-check, guards and audit all work unchanged; `whoami`
+answers `authKind: "oauth"`.
+
+Verified: `McpOAuthIntegrationTest` against a real Keycloak importing the committed realm (both
+door directions + policed DCR + dual-audience claim), the discovery/challenge pins in
+`McpServerIntegrationTest`, the gateway metadata route pin, and full root + gateway suites. The
+live dev Keycloak was brought up to date non-destructively via the admin API (scope, optional
+wiring, trusted hosts) — no `make nuke` required.
+
 ## Verification
 
 - **30 MCP tests** across 8 classes — all through the real SDK client over real HTTP against real

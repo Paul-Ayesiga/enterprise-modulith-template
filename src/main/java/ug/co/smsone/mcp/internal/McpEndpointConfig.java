@@ -72,4 +72,5 @@ class McpEndpointConfig {
         registration.setAsyncSupported(true);
         return registration;
     }
+
 }

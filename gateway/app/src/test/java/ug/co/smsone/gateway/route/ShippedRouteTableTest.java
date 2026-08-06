@@ -131,6 +131,23 @@ class ShippedRouteTableTest {
         }
     }
 
+    /**
+     * The RFC 9728 discovery document must reach the modulith unauthenticated (a connector reads it
+     * BEFORE it has any credential) but never unmetered — the public-route bargain: no token, tighter
+     * traffic. A fall-through to the platform-api catch-all would 401 the very bootstrap step.
+     */
+    @Test
+    void theOauthDiscoveryDocumentRoutesPublicButRateLimited() {
+        for (String path : List.of("/.well-known/oauth-protected-resource",
+                "/.well-known/oauth-protected-resource/mcp")) {
+            RouteDefinition route = route(path);
+            assertThat(route.id()).as("%s must match the dedicated metadata route", path)
+                    .isEqualTo("mcp-oauth-metadata");
+            assertThat(route.auth().requiresToken()).as("discovery is public by definition").isFalse();
+            assertThat(route.traffic().rateLimited()).as("public never means unmetered").isTrue();
+        }
+    }
+
     /** The first route matching {@code path} by ascending {@code order} — the runtime's own resolution. */
     private static RouteDefinition route(String path) {
         return ROUTES.stream()

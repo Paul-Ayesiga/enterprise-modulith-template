@@ -208,6 +208,18 @@ gateway:
             # Mirrors the modulith's own permitAll list exactly — POST /signup, GET+POST /signup/verify.
             - /api/v1/signup
             - /api/v1/signup/verify
+    - id: mcp-oauth-metadata
+      order: 7
+      service-id: modulith
+      product: agents
+      policy-ref: edge-public
+      predicates:
+        - kind: PATH
+          args:
+            # RFC 9728 discovery for native MCP connectors — public by definition (names the
+            # authorization server; grants nothing). Both the root form and the /mcp-suffixed one.
+            - /.well-known/oauth-protected-resource
+            - /.well-known/oauth-protected-resource/**
     - id: provider-callbacks
       order: 6
       service-id: modulith

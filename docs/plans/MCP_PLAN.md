@@ -297,12 +297,56 @@ is.
 
 **Gate.** `resources/list` + `resources/read` round-trip in the harness.
 
-### Phase 7 — OAuth for consented connectors (flagged, not v1)
+### Phase 7 — OAuth 2.1 for consented connectors (SHIPPED 2026-08-06 evening; decisions user-approved)
 
-claude.ai custom connectors require the MCP OAuth 2.1 flow (protected-resource metadata → Keycloak
-as the authorization server, dynamic client registration). Designed-for but explicitly out of v1;
-gets its own plan addendum when scheduled. Nothing in Phases 0–6 blocks it: auth is a request-time
-concern in one filter, and the tool layer never looks at credentials.
+**Goal.** claude.ai and Claude Desktop custom connectors connect natively — the user clicks
+*Connect*, consents in a Keycloak browser flow, and the client calls `/mcp` with
+`Authorization: Bearer <JWT>`. No `mcp-remote` bridge, no key pasting. The resource-server path
+already accepts realm JWTs, so this phase is **discovery + challenge + client registration +
+audience discipline**, not a new auth system.
+
+**What the MCP auth spec (2025-06-18) requires, mapped to us:**
+
+| Requirement | Where it lands |
+|---|---|
+| Protected Resource Metadata (RFC 9728) at `/.well-known/oauth-protected-resource` naming the resource id + `authorization_servers` | Spring Security 7's own `OAuth2ProtectedResourceMetadataFilter` (as-built discovery: the framework serves the endpoint; a `SecurityConfig` customizer pins the external resource id, authorization server and scope — a custom servlet was written first and deleted); gateway routes it on `edge-public` |
+| 401s carry `WWW-Authenticate: Bearer resource_metadata="…"` so clients can bootstrap | the entry point adds the header for `/mcp` requests only |
+| AS metadata (RFC 8414 / OIDC discovery) | Keycloak already serves it for the realm — zero work |
+| Dynamic Client Registration (RFC 7591) so connectors self-register | Keycloak anonymous DCR, **gated by client-registration policies** (trusted hosts, consent forced on, minimal scope allowlist) — configured in `docker/keycloak/realm-smsone.json` |
+| Resource indicators / audience (RFC 8707) | Keycloak doesn't do RFC 8707 proper; equivalent: a dedicated client scope `mcp` carrying an audience mapper → `aud: smsone-mcp` |
+
+**The security decisions (each reversible, all enforced in one place):**
+
+1. **`/mcp` accepts exactly two credentials**: `sk_` API keys (unchanged) and realm JWTs whose
+   `aud` contains `smsone-mcp`. A web-app token (`smsone-web`, no mcp audience) is refused at
+   `/mcp` even though it is a valid realm JWT — no cross-surface token reuse in either direction.
+2. **Human callers resolve like REST**: subject = JWT `sub`, org = the tenant claim, permissions =
+   membership lookup (the existing human path of `ApiPermissionEvaluator`) — so `tools/list`
+   filtering, the dispatcher re-check, IP allowlist, write guard and audit all work unchanged;
+   audit actors become the real user instead of `key:<id>`.
+3. **DCR is anonymous-but-policed in dev** (trusted-hosts + forced consent + scope allowlist),
+   with a documented prod posture (initial-access tokens or pre-registered clients).
+
+**Slices & gates:**
+
+- **7a — discovery + challenge**: well-known endpoint (modulith) + `WWW-Authenticate` on `/mcp`
+  401s + gateway `edge-public` route for the metadata path. *Gate:* metadata round-trips through
+  `:28090`; an anonymous `/mcp` POST's 401 names the metadata URL.
+- **7b — realm as code**: client scope `mcp` + audience mapper + DCR policies in
+  `realm-smsone.json` (dev realms re-import via `make fresh`; note in LOCAL_ACCESS). *Gate:* a
+  Testcontainers Keycloak boots the edited realm; a token minted with scope `mcp` carries
+  `aud: smsone-mcp`.
+- **7c — audience gate + human ToolContext**: `/mcp` JWT path enforces the audience; ToolContext
+  built from JWT subjects; `whoami` answers `authKind: "oauth"` with the member's permission set.
+  *Gate:* mcp-audience JWT lists/calls per membership permissions; a `smsone-web` JWT at `/mcp`
+  is 401; an `sk_` key still works byte-identically.
+- **7d — end-to-end + docs**: DCR registration API exercised in tests; full flow documented
+  (guide Part F1 native-connector recipe + mcp-guide §connect + LOCAL_ACCESS); CHECKLIST tick.
+  *Gate:* full root + gateway suites green; live: claude.ai/Desktop custom connector completes
+  the browser consent against the dev stack and lists tools.
+
+Nothing in Phases 0–6 changes shape: auth stays a request-time concern in one filter, and the
+tool layer never sees credentials.
 
 ### Phase 8 — permission vocabulary deepening (shipped 2026-08-06 PM, user-approved)
 

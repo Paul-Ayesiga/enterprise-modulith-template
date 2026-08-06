@@ -193,6 +193,11 @@ app:
   # surface refuses, it never vanishes (a 404 reads as version skew; see McpProperties).
   mcp:
     enabled: ${MCP_ENABLED:true}
+    # The EXTERNAL origin agents reach /mcp on (the gateway in every shipped topology) — names the
+    # RFC 9728 resource id and the WWW-Authenticate challenge URL for native OAuth connectors.
+    public-base-url: ${MCP_PUBLIC_BASE_URL:http://localhost:28090}
+    # The JWT audience the OAuth path demands; Keycloak's `mcp` client scope stamps it.
+    audience: ${MCP_AUDIENCE:smsone-mcp}
   webhooks:
     worker-auto-start: ${WEBHOOKS_WORKER_AUTOSTART:true}
     batch-size: ${WEBHOOKS_BATCH_SIZE:50}
