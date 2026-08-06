@@ -6,7 +6,7 @@
 # loop. Fill in the real hostnames/endpoints for your environment (the base values.yaml carries examples).
 global:
   imageBase: ghcr.io/paul-ayesiga/enterprise-modulith-template
-  imageTag: 4c07bfe55289b05f3ce175f96d957759135d99ea # gitops-bump: CI overwrites this with the built commit SHA
+  imageTag: c2d2979dfcddff9e0d5e6576350c5ced8cfd25ea # gitops-bump: CI overwrites this with the built commit SHA
   imagePullPolicy: IfNotPresent
 
 # --- Fill these for your cluster; until then the chart's example.com placeholders apply ---
