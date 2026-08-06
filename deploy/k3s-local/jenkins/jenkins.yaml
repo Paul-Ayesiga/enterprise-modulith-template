@@ -63,6 +63,25 @@ spec:
     requests:
       storage: 6Gi
 ---
+# Gradle's dependency cache, kept OUT of the agent pod so it survives between builds. Agent pods are
+# ephemeral, so without this every build re-downloads the whole dependency graph plus the Gradle
+# distribution over the VM's uplink — which is how builds #10 and #15 died (a JRE tarball and a handful
+# of Maven Central jars, both "Read timed out"). Nothing about the build needed to change; it just had to
+# stop fetching the internet twice an hour.
+#
+# ReadWriteOnce is fine because the Jenkinsfile sets disableConcurrentBuilds(), so only one agent ever
+# mounts it. Delete the PVC to force a cold rebuild.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jenkins-gradle-cache
+  namespace: jenkins
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:

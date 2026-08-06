@@ -34,6 +34,10 @@ spec:
         # nothing but forward to the daemon. Adding that to the daemon's heap and the page cache left by
         # the previous image build is what OOMKilled this container between the two bootBuildImage calls.
         - { name: GRADLE_OPTS, value: "-Xmx256m" }
+        # Points Gradle at the PVC mounted below rather than the pod's ephemeral filesystem.
+        - { name: GRADLE_USER_HOME, value: "/gradle-cache" }
+      volumeMounts:
+        - { name: gradle-cache, mountPath: /gradle-cache }
       resources:
         # Back to 2 Gi: this container runs the Gradle JVM *and* the forked test JVM. Trimming it to
         # 1600 Mi to fund dind is what OOMKilled build #3. The two containers peak in different stages
@@ -61,6 +65,12 @@ spec:
       resources:
         requests: { memory: "512Mi" }
         limits:   { memory: "1800Mi" }
+  volumes:
+    # Survives the pod, so dependencies are downloaded once rather than every build. Declared in
+    # deploy/k3s-local/jenkins/jenkins.yaml; delete the PVC to force a cold rebuild.
+    - name: gradle-cache
+      persistentVolumeClaim:
+        claimName: jenkins-gradle-cache
 '''
     }
   }
