@@ -48,6 +48,7 @@ modulith:
     - { name: OTEL_SDK_DISABLED, value: "true" }
     # No OTLP collector locally — stop the 1-minute push to localhost:4318 (and its shutdown stack trace).
     - { name: MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED, value: "false" }
+    - { name: SIGNUP_ENABLED, value: "true" }
   resources:
     requests: { cpu: 250m, memory: 448Mi }
     limits: { memory: 1024Mi }
