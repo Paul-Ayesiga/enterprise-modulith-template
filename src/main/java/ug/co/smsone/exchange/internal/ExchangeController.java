@@ -1,7 +1,6 @@
 package ug.co.smsone.exchange.internal;
 
 import io.swagger.v3.oas.annotations.Operation;
-import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.time.Instant;

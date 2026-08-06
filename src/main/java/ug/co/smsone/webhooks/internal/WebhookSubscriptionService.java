@@ -3,7 +3,6 @@ package ug.co.smsone.webhooks.internal;
 import java.security.SecureRandom;
 import java.util.HexFormat;
 import java.util.LinkedHashSet;
-import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.data.domain.Sort;

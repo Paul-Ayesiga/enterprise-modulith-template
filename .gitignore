@@ -9,6 +9,9 @@ build/
 *.iws
 .vscode/
 out/
+# Eclipse / VS Code Java compile output — one bin/ per Gradle project (root + each gateway/*).
+# Unanchored so it catches them all; our own scripts live in scripts/, never bin/.
+bin/
 
 # OS
 .DS_Store

@@ -13,7 +13,6 @@ import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
-import ug.co.smsone.integration.Integrations;
 import ug.co.smsone.shared.audit.AuditLog;
 import ug.co.smsone.subscription.Subscriptions;
 

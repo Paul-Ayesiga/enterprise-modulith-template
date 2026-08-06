@@ -1,7 +1,6 @@
 package ug.co.smsone.profile.internal;
 
 import io.swagger.v3.oas.annotations.Operation;
-import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.List;
 import java.util.Map;
