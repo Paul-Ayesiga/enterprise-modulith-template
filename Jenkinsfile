@@ -75,7 +75,11 @@ spec:
     }
   }
   options { disableConcurrentBuilds(); timeout(time: 40, unit: 'MINUTES') }
-  triggers { pollSCM('H/5 * * * *') }
+  // No triggers block on purpose. This is a MULTIBRANCH job, and jcasc.yaml already gives the folder a
+  // 5-minute periodicFolderTrigger that scans and starts branch builds. Declaring pollSCM here as well
+  // meant two independent trigger sources firing on the same commit — which is why one GitOps bump
+  // produced two builds (#25 and #26) instead of one. Re-add a trigger here only if the folder scan is
+  // removed, not alongside it.
   parameters {
     // Narrowed by default so a build actually completes on the 8 GB k3s VM. The modulith's `:test`
     // starts Keycloak (~540 MB), Postgres and SeaweedFS as Testcontainers INSIDE dind; the gateway
