@@ -84,20 +84,53 @@ class CacheTest {
 
     @Test
     void sameTenantIsServedFromCache() {
-        String first = get("/cache/same", "acme");
-        String second = get("/cache/same", "acme");
-        String third = get("/cache/same", "acme");
-        assertThat(second).as("second request cached").isEqualTo(first);
-        assertThat(third).as("third request cached").isEqualTo(first);
+        String cached = awaitCached("/cache/same", "acme");
+        assertThat(get("/cache/same", "acme")).as("still served from cache").isEqualTo(cached);
+        assertThat(get("/cache/same", "acme")).as("still served from cache").isEqualTo(cached);
     }
 
     @Test
     void differentTenantNeverReadsAnothersCachedResponse() {
-        String acme = get("/cache/isolation", "acme");
-        String globex = get("/cache/isolation", "globex");
-        assertThat(globex).as("a different tenant misses and reaches the backend").isNotEqualTo(acme);
-        // And globex is now itself cached — its own partition, not acme's.
-        assertThat(get("/cache/isolation", "globex")).isEqualTo(globex);
+        String acme = awaitCached("/cache/isolation", "acme");
+        assertThat(get("/cache/isolation", "globex"))
+                .as("a different tenant misses and reaches the backend")
+                .isNotEqualTo(acme);
+        // And globex settles into its OWN partition — never acme's entry.
+        assertThat(awaitCached("/cache/isolation", "globex"))
+                .as("globex is cached separately from acme")
+                .isNotEqualTo(acme);
+    }
+
+    /**
+     * Returns the body once the edge is demonstrably serving it from cache.
+     *
+     * <p>The cache is written asynchronously, after the response has already gone back to the client, so
+     * a request issued immediately after the first can still miss and reach the backend. The bodies then
+     * differ and an eager assertion fails — which is exactly how this test passed on a laptop and failed
+     * under CI load, where the write loses that race more often.
+     *
+     * <p>Waiting does not weaken what is being tested. The stub increments a counter and returns a fresh
+     * {@code call-N} on every request that actually reaches it, so two consecutive identical bodies are
+     * only possible when the cache served at least one of them. A gateway that never cached would return
+     * a new value every time and this would time out rather than pass.
+     */
+    private String awaitCached(String path, String tenant) {
+        String previous = get(path, tenant);
+        for (int attempt = 0; attempt < 50; attempt++) { // ~5s ceiling
+            String current = get(path, tenant);
+            if (current.equals(previous)) {
+                return current;
+            }
+            previous = current;
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        throw new AssertionError("responses never stabilised for tenant '" + tenant
+                + "' — the edge is not caching " + path);
     }
 
     private String get(String path, String tenant) {
