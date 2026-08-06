@@ -1,4 +1,9 @@
-<#macro registrationLayout displayInfo=false displayMessage=true displayRequiredFields=false wide=false>
+<#-- bodyClass must be DECLARED even though this theme barely uses it: FreeMarker macros reject
+     unknown parameters, and Keycloak's stock login-oauth-grant.ftl (the OAuth CONSENT page, which
+     this theme does not override) calls the layout with bodyClass="oauth". Until MCP's consented
+     connectors (Phase 7) no client required consent, so that page had never rendered — the missing
+     parameter 500'd the very first consent screen. -->
+<#macro registrationLayout displayInfo=false displayMessage=true displayRequiredFields=false wide=false bodyClass="">
 <!DOCTYPE html>
 <html lang="${properties.kcHtmlLanguage!'en'}">
 <head>
@@ -17,7 +22,7 @@
     <link rel="icon" href="${url.resourcesPath}/img/favicon.svg" type="image/svg+xml" />
 </head>
 
-<body>
+<body class="${bodyClass}">
     <#-- Two-column shell: brand panel (sticky, collapses to a compact bar on small
          screens) beside the form panel. The product name everywhere is the realm's
          displayName — set from the BRAND_NAME env var at realm import — with a
