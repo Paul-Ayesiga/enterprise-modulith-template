@@ -82,6 +82,47 @@ class SignupFlowTest extends AbstractIntegrationTest {
                 .andExpect(status().isUnprocessableEntity());
     }
 
+    /**
+     * The endpoint is unauthenticated by nature and used to dispatch a verification email on EVERY
+     * call, so anyone could aim it at a stranger's address and send them a thousand messages. The
+     * per-IP limiter does not help — the abuse is per-recipient. A pending request now suppresses
+     * further mail to that address for the cooldown.
+     *
+     * <p>The response must NOT change, which is the subtle half: answering 409 to the second call
+     * would tell an attacker which addresses already have a live request, turning the endpoint into
+     * the enumeration oracle it is carefully written not to be. So both calls are 202 and the proof
+     * lives in what did NOT happen — no second email, and the original token still valid.
+     */
+    @Test
+    void aRepeatRequestIsAcceptedButSendsNoSecondEmail() throws Exception {
+        String email = "repeat-" + UUID.randomUUID() + "@acme.test";
+        String payload = "{\"organizationName\":\"Repeat Rockets\",\"email\":\"" + email + "\"}";
+
+        mockMvc.perform(post("/api/v1/signup").contentType(MediaType.APPLICATION_JSON).content(payload))
+                .andExpect(status().isAccepted());
+        String firstTokenHash = jdbc.queryForObject(
+                "select token_hash from signup_request where email = ?", String.class, email);
+
+        // Five more attempts, as an abuser would.
+        for (int i = 0; i < 5; i++) {
+            mockMvc.perform(post("/api/v1/signup").contentType(MediaType.APPLICATION_JSON).content(payload))
+                    .andExpect(status().isAccepted()); // same answer every time — no oracle
+        }
+
+        assertThat(jdbc.queryForObject(
+                "select count(*) from notification_delivery where recipient = ?", Integer.class, email))
+                .as("six requests, one verification email")
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "select count(*) from signup_request where email = ?", Integer.class, email))
+                .as("no extra handshake rows")
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "select token_hash from signup_request where email = ?", String.class, email))
+                .as("the original link keeps working — a resend must not invalidate it")
+                .isEqualTo(firstTokenHash);
+    }
+
     @Test
     void aGarbageTokenAnswersTheSameGeneric422() throws Exception {
         mockMvc.perform(get("/api/v1/signup/verify").param("token", "not-a-real-token"))

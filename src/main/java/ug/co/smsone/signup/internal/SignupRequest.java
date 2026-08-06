@@ -81,6 +81,10 @@ class SignupRequest {
         return email;
     }
 
+    Instant getCreatedAt() {
+        return createdAt;
+    }
+
     String getOrgName() {
         return orgName;
     }

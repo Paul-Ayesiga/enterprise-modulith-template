@@ -8,5 +8,8 @@ interface SignupRepository extends JpaRepository<SignupRequest, UUID> {
 
     Optional<SignupRequest> findByTokenHashAndStatus(String tokenHash, String status);
 
+    /** The newest live handshake for an address — backs the resend cooldown. */
+    Optional<SignupRequest> findFirstByEmailAndStatusOrderByCreatedAtDesc(String email, String status);
+
     void deleteByEmailAndStatus(String email, String status);
 }

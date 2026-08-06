@@ -285,6 +285,9 @@ app:
     # carries: point it at a front-end page in production; the API's own GET works out of the box.
     enabled: ${SIGNUP_ENABLED:false}
     token-ttl: ${SIGNUP_TOKEN_TTL:PT24H}
+    # Anti-abuse: a pending request suppresses another verification email to the same address for this
+    # long. Unauthenticated endpoint + one email per call = an email cannon aimed at any address.
+    resend-cooldown: ${SIGNUP_RESEND_COOLDOWN:PT5M}
     verify-url: ${SIGNUP_VERIFY_URL:http://localhost:28080/api/v1/signup/verify}
   payments:
     # Payment collection gateways. mode switches sandbox <-> live per gateway; nothing touches real

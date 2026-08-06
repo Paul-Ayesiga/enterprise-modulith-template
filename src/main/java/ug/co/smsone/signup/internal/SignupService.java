@@ -5,6 +5,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
@@ -68,6 +69,28 @@ class SignupService {
             throw new ValidationException("A valid email is required.",
                     ApiSource.pointer("/data/attributes/email"));
         }
+        // Resend cooldown. Without it this endpoint is an email cannon: it is unauthenticated by
+        // nature, and every call dispatched a fresh verification mail, so anyone could point it at a
+        // victim's address and send them a thousand messages — harassing them and burning our sending
+        // reputation. The shared per-IP limiter does not help, because the abuse is per-RECIPIENT.
+        //
+        // Returning early here rather than throwing is deliberate: this endpoint is enumeration-safe
+        // and must answer the same 202 whether or not the address is known or pending. A 409 "already
+        // requested" would turn it into an oracle for which addresses have accounts.
+        Instant now = clock.instant();
+        var live = requests.findFirstByEmailAndStatusOrderByCreatedAtDesc(
+                normalizedEmail, SignupRequest.PENDING);
+        if (live.isPresent()
+                && live.get().getCreatedAt().isAfter(now.minus(properties.resendCooldown()))) {
+            // Deliberately does not log the address — this line would otherwise become the enumeration
+            // oracle the response refuses to be.
+            log.info("Signup re-requested inside the {} cooldown; no verification email sent",
+                    properties.resendCooldown());
+            auditLog.record("signup.throttled", null, normalizedEmail, null,
+                    "cooldown=" + properties.resendCooldown());
+            return;
+        }
+
         // One live handshake per address: a new request supersedes the pending one.
         requests.deleteByEmailAndStatus(normalizedEmail, SignupRequest.PENDING);
 
