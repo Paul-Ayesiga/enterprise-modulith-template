@@ -41,6 +41,16 @@ spec:
         # node could serve at once — it is the requests that must fit, and they do.
         requests: { memory: "1Gi", cpu: "500m" }
         limits:   { memory: "2Gi" }
+    # The JDK image ships neither `docker` nor `git`. Checkout works because the Jenkins git plugin does
+    # it over its own channel, but the GitOps bump shells out to git and died on "git: not found". This
+    # container exists solely for that stage; it shares the workspace volume, so it sees the same files.
+    - name: git
+      image: alpine/git:latest
+      command: ["sleep"]
+      args: ["infinity"]
+      resources:
+        requests: { memory: "32Mi", cpu: "50m" }
+        limits:   { memory: "128Mi" }
     - name: dind
       image: docker:27-dind
       securityContext: { privileged: true }
@@ -102,9 +112,13 @@ spec:
             # Two separate gradlew runs were OOMKilled at the seam every time: the second JVM pair started
             # while the first image build's memory was still resident. Names come from -PimageBase and
             # -PimageTag (see the build files) because --imageName cannot differ per task in one run.
+            # --publishImage is a per-TASK option: written once at the end it bound only to the task it
+            # followed, so build #12 pushed the gateway and left the modulith built-but-unpublished.
+            # It has to be repeated after each task.
             ./gradlew --no-daemon --no-parallel $GRADLE_JVM_IMAGE \
               -PimageBase="$IMAGE_BASE" -PimageTag="${GIT_COMMIT}" \
-              :bootBuildImage :gateway:app:bootBuildImage --publishImage
+              :bootBuildImage --publishImage \
+              :gateway:app:bootBuildImage --publishImage
           '''
         }
       }
@@ -113,8 +127,13 @@ spec:
     stage('GitOps bump') {
       when { branch 'main' }
       steps {
+        // Runs in the `git` container: the default `build` container is a bare JDK image with no git.
+        container('git') {
         withCredentials([sshUserPrivateKey(credentialsId: 'git-push', keyFileVariable: 'SSH_KEY')]) {
           sh '''
+            # The workspace arrives from the git plugin's own checkout, which leaves no usable remote or
+            # user identity in this container — set both before committing.
+            git config --global --add safe.directory "$PWD"
             f=deploy/helm/smsone/values-prod.yaml
             sed -i -E "s|^(  imageTag: ).*# gitops-bump.*$|\\1${GIT_COMMIT} # gitops-bump: CI overwrites this with the built commit SHA|" "$f"
             git config user.name  "jenkins"
@@ -125,6 +144,7 @@ spec:
             git commit -m "chore(gitops): deploy ${GIT_COMMIT} [skip ci]"
             git push origin HEAD:main
           '''
+        }
         }
       }
     }
