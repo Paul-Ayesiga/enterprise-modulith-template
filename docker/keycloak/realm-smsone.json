@@ -777,6 +777,16 @@
         "config": {
           "allow-default-scopes": [
             "true"
+          ],
+          "allowed-client-scopes": [
+            "acr",
+            "basic",
+            "email",
+            "mcp",
+            "openid",
+            "profile",
+            "roles",
+            "web-origins"
           ]
         }
       },
