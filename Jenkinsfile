@@ -98,13 +98,32 @@ spec:
   }
 
   stages {
+    // Breaks the self-feeding poll loop. The GitOps stage pushes a bump to main, pollSCM sees a new
+    // commit and builds it, that build pushes another bump — builds #20-#23 were each triggered by the
+    // previous one's commit, forever. `[skip ci]` in the message does NOT stop this: that is a GitHub
+    // Actions convention and Jenkins' pollSCM has never honoured it. So the pipeline checks for itself.
+    stage('Preflight') {
+      steps {
+        container('git') {
+          script {
+            sh 'git config --global --add safe.directory "$PWD"'
+            String head = sh(script: 'git log -1 --pretty=%B', returnStdout: true).trim()
+            env.SELF_TRIGGERED = head.contains('[skip ci]') ? 'true' : 'false'
+            if (env.SELF_TRIGGERED == 'true') {
+              echo 'HEAD is this pipeline\'s own GitOps bump — skipping every stage so the loop ends here.'
+            }
+          }
+        }
+      }
+    }
     stage('Test') {
+      when { environment name: 'SELF_TRIGGERED', value: 'false' }
       steps { sh "./gradlew --no-daemon --max-workers=2 $GRADLE_JVM ${params.TEST_TASKS}" }
       post { always { junit allowEmptyResults: true, testResults: '**/build/test-results/test/*.xml' } }
     }
 
     stage('Build & push images') {
-      when { branch 'main' }
+      when { allOf { branch 'main'; environment name: 'SELF_TRIGGERED', value: 'false' } }
       steps {
         withCredentials([usernamePassword(credentialsId: 'ghcr', usernameVariable: 'GHCR_USER', passwordVariable: 'GHCR_PAT')]) {
           sh '''
@@ -135,7 +154,7 @@ spec:
     }
 
     stage('GitOps bump') {
-      when { branch 'main' }
+      when { allOf { branch 'main'; environment name: 'SELF_TRIGGERED', value: 'false' } }
       steps {
         // Runs in the `git` container: the default `build` container is a bare JDK image with no git.
         container('git') {
