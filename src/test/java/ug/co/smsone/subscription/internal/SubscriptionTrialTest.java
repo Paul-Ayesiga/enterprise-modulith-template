@@ -102,7 +102,7 @@ class SubscriptionTrialTest extends AbstractIntegrationTest {
         mockMvc.perform(post("/api/v1/admin/orgs/{orgId}/subscription/trial", UUID.randomUUID())
                         .contentType(MediaType.APPLICATION_JSON).content("{\"plan\":\"FREE\"}")
                         .with(admin()))
-                .andExpect(status().isUnprocessableEntity());
+                .andExpect(status().isUnprocessableContent());
     }
 
     private double expiredCount() {

@@ -75,11 +75,11 @@ class SettingsApiIntegrationTest extends AbstractIntegrationTest {
     @Test
     void invalidCursorYields422() throws Exception {
         mockMvc.perform(get("/api/v1/settings").param("page[after]", "not-a-cursor!!!").with(jwt()))
-                .andExpect(status().isUnprocessableEntity())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.errors[0].source.parameter").value("page[after]"));
 
         mockMvc.perform(get("/api/v1/settings").param("page[size]", "9999").with(jwt()))
-                .andExpect(status().isUnprocessableEntity())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.errors[0].source.parameter").value("page[size]"));
     }
 
@@ -107,7 +107,7 @@ class SettingsApiIntegrationTest extends AbstractIntegrationTest {
                         .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_platform-admin")))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"value\":\"\"}"))
-                .andExpect(status().isUnprocessableEntity())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.errors[0].source.pointer").value("/data/attributes/value"));
     }
 }

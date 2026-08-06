@@ -156,7 +156,7 @@ class SubscriptionGatingTest extends AbstractIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"code\":\"bad\",\"name\":\"Bad\",\"rank\":9,\"entitlements\":{\"nope.max\":1}}")
                         .with(admin()))
-                .andExpect(status().isUnprocessableEntity())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.errors[0].code").value("VALIDATION_FAILED"));
 
         // Duplicate code conflicts.

@@ -52,7 +52,7 @@ class RetentionOverrideApiTest extends AbstractIntegrationTest {
         // An unknown scope is a 422, not a silent no-op.
         mockMvc.perform(put("/api/v1/admin/orgs/{orgId}/retention/{scope}", orgId, "bogus-scope")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"days\":10}").with(admin()))
-                .andExpect(status().isUnprocessableEntity());
+                .andExpect(status().isUnprocessableContent());
 
         mockMvc.perform(delete("/api/v1/admin/orgs/{orgId}/retention/{scope}", orgId, "exchange-job")
                         .with(admin()))

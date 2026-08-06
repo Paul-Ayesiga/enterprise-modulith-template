@@ -21,6 +21,7 @@ import ug.co.smsone.testsupport.AbstractIntegrationTest;
 class ValkeyOutageIntegrationTest extends AbstractIntegrationTest {
 
     @ServiceConnection(name = "redis")
+    @SuppressWarnings("resource") // Testcontainers owns this lifecycle — see AbstractIntegrationTest.POSTGRES
     static final GenericContainer<?> DOOMED_VALKEY =
             new GenericContainer<>("valkey/valkey:8-alpine").withExposedPorts(6379);
 

@@ -90,7 +90,7 @@ class LocalizationApiTest extends AbstractIntegrationTest {
     @Test
     void anUnparseableLocaleIsA422NotA500() throws Exception {
         mockMvc.perform(adminPut("not a locale!", "api.bad", "x"))
-                .andExpect(status().isUnprocessableEntity())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.errors[0].code").value("VALIDATION_FAILED"))
                 .andExpect(jsonPath("$.errors[0].source.parameter").value("locale"));
     }

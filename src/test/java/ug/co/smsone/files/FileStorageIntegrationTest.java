@@ -26,6 +26,7 @@ class FileStorageIntegrationTest extends AbstractIntegrationTest {
 
     private static final int S3_PORT = 8333;
 
+    @SuppressWarnings("resource") // Testcontainers owns this lifecycle — see AbstractIntegrationTest.POSTGRES
     private static final GenericContainer<?> SEAWEEDFS =
             new GenericContainer<>("chrislusf/seaweedfs:4.40")
                     .withCommand("server", "-s3", "-s3.config=/etc/seaweedfs/s3-config.json")

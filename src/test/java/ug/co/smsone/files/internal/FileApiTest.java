@@ -169,7 +169,7 @@ class FileApiTest extends AbstractIntegrationTest {
     void emptyUploadIs422() throws Exception {
         MockMultipartFile empty = new MockMultipartFile("file", "empty.txt", "text/plain", new byte[0]);
         mockMvc.perform(multipart("/api/v1/files").file(empty).with(user("user-" + UUID.randomUUID())))
-                .andExpect(status().isUnprocessableEntity())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.errors[0].source.parameter").value("file"));
     }
 }

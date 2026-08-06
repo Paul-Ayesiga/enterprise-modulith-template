@@ -144,7 +144,7 @@ class CursorPaginationContractTest extends AbstractIntegrationTest {
 
         // Over the maximum is a 422, not a silent clamp — the behaviour the flat name hid.
         mockMvc.perform(get("/api/v1/admin/users").param("page[size]", "3919").with(admin))
-                .andExpect(status().isUnprocessableEntity())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.errors[0].source.parameter").value("page[size]"));
     }
 }

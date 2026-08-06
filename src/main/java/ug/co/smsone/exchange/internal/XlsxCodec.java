@@ -105,12 +105,11 @@ class XlsxCodec implements FormatCodec {
 
             @Override
             public void close() throws IOException {
+                // SXSSFWorkbook.close() deletes the flush temp files itself (it calls the now-deprecated
+                // dispose() internally, before delegating to the backing workbook), so try-with-resources
+                // is the whole cleanup — an explicit dispose() here would only repeat it.
                 try (workbook) {
                     workbook.write(out);
-                } finally {
-                    if (workbook instanceof SXSSFWorkbook sxssf) {
-                        sxssf.dispose(); // removes the flush temp files
-                    }
                 }
             }
         };

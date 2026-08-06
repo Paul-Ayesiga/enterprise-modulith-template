@@ -271,7 +271,7 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"code\":\"platform-admin\",\"name\":\"Sneaky\","
                                 + "\"permissions\":[\"org:read\"]}"))
-                .andExpect(status().isUnprocessableEntity())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.errors[0].source.pointer").value("/data/attributes/code"));
     }
 
@@ -281,7 +281,7 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
                         .with(token(owner, orgId))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"code\":\"BADROLE\",\"name\":\"Bad\",\"permissions\":[\"org:teleport\"]}"))
-                .andExpect(status().isUnprocessableEntity())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.errors[0].source.pointer").value("/data/attributes/permissions"));
     }
 

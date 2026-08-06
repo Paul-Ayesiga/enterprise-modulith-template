@@ -75,7 +75,7 @@ class WebhookApiTest extends AbstractIntegrationTest {
         mockMvc.perform(post("/api/v1/orgs/{orgId}/webhooks", orgId).with(manager(orgId, "mgr"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"url\":\"https://hooks.example.com/x\",\"events\":[\"org.does_not_exist\"]}"))
-                .andExpect(status().isUnprocessableEntity())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.errors[0].source.pointer").value("/data/attributes/events"));
     }
 
@@ -85,7 +85,7 @@ class WebhookApiTest extends AbstractIntegrationTest {
         mockMvc.perform(post("/api/v1/orgs/{orgId}/webhooks", orgId).with(manager(orgId, "mgr"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"url\":\"ftp://internal/x\",\"events\":[\"org.member.added\"]}"))
-                .andExpect(status().isUnprocessableEntity())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.errors[0].source.pointer").value("/data/attributes/url"));
     }
 

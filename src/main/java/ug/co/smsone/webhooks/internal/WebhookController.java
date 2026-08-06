@@ -4,7 +4,6 @@ import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
-import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.data.domain.Window;

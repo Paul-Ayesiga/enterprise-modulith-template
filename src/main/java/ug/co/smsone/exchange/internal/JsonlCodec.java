@@ -67,7 +67,7 @@ class JsonlCodec implements FormatCodec {
                 Map<String, String> map = new LinkedHashMap<>();
                 for (String column : header) {
                     JsonNode value = node.get(column);
-                    map.put(column, value == null || value.isNull() ? "" : value.asText());
+                    map.put(column, value == null || value.isNull() ? "" : value.asString());
                 }
                 return map;
             }

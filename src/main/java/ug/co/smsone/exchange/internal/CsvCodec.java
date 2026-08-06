@@ -81,6 +81,11 @@ class CsvCodec implements FormatCodec {
         };
     }
 
+    // ECJ flags the CSVPrinter below as "never closed". It is: the returned RecordSink captures it and
+    // its close() calls printer.close(true). Ownership passes to the caller, which is the whole point of
+    // handing back a sink. Wrapping it in try-with-resources would close the printer before a single
+    // record is written — the "fix" would be the only bug here.
+    @SuppressWarnings("resource")
     @Override
     public RecordSink writer(OutputStream out, List<String> header) throws IOException {
         CSVPrinter printer = new CSVPrinter(new OutputStreamWriter(out, StandardCharsets.UTF_8),

@@ -69,7 +69,7 @@ class SlaOverrideTest extends AbstractIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"firstResponseMinutes\":10}")
                         .with(admin()))
-                .andExpect(status().isUnprocessableEntity());
+                .andExpect(status().isUnprocessableContent());
     }
 
     private Instant resolutionDueOfNewTicket(UUID orgId) throws Exception {

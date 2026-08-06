@@ -61,7 +61,7 @@ class EnvelopeContractTest extends AbstractIntegrationTest {
         mockMvc.perform(post("/test/signup").with(jwt())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\":\"not-an-email\",\"name\":\"\"}"))
-                .andExpect(status().isUnprocessableEntity())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.data").doesNotExist())
                 .andExpect(jsonPath("$.errors", Matchers.hasSize(2)))
                 .andExpect(jsonPath("$.errors[*].status", Matchers.everyItem(Matchers.is("422"))))

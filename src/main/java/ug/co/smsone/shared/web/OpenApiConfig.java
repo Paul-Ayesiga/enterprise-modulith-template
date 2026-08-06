@@ -6,6 +6,7 @@ import io.swagger.v3.oas.models.headers.Header;
 import io.swagger.v3.oas.models.info.Contact;
 import io.swagger.v3.oas.models.info.Info;
 import io.swagger.v3.oas.models.media.IntegerSchema;
+import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.media.StringSchema;
 import io.swagger.v3.oas.models.parameters.Parameter;
 import io.swagger.v3.oas.models.security.OAuthFlow;
@@ -456,14 +457,20 @@ public class OpenApiConfig {
                 operation.getParameters().removeIf(parameter -> parameter.getSchema() != null
                         && CURSOR_SCHEMA_REF.equals(parameter.getSchema().get$ref()));
             }
+            // Schema's fluent minimum()/maximum() return the RAW Schema type, so chaining off them
+            // drops the type argument and erases _default(T) to _default(Object). Holding the
+            // parameterized type instead keeps the default type-checked; the setters are the same
+            // field assignments the fluent pair makes. _default() stays — setDefault() is NOT a
+            // synonym, it runs the value through cast() and flips defaultSetFlag.
+            Schema<Number> pageSize = new IntegerSchema();
+            pageSize.setMinimum(BigDecimal.ONE);
+            pageSize.setMaximum(BigDecimal.valueOf(CursorPageRequest.MAX_SIZE));
+            pageSize._default(CursorPageRequest.DEFAULT_SIZE);
             operation.addParametersItem(new Parameter()
                     .in("query").name("page[size]").required(false)
                     .description("Items per page, 1–" + CursorPageRequest.MAX_SIZE
                             + ". Defaults to " + CursorPageRequest.DEFAULT_SIZE + ".")
-                    .schema(new IntegerSchema()
-                            .minimum(BigDecimal.ONE)
-                            .maximum(BigDecimal.valueOf(CursorPageRequest.MAX_SIZE))
-                            ._default(CursorPageRequest.DEFAULT_SIZE)));
+                    .schema(pageSize));
             operation.addParametersItem(new Parameter()
                     .in("query").name("page[after]").required(false)
                     .description("Opaque keyset cursor taken from a previous response's "

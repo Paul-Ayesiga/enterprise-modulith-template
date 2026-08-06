@@ -12,7 +12,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.modulith.test.ApplicationModuleTest;
 import org.springframework.modulith.test.Scenario;
 import org.springframework.test.context.ActiveProfiles;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import ug.co.smsone.organization.MembershipCreated;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
@@ -25,7 +25,7 @@ import ug.co.smsone.testsupport.AbstractIntegrationTest;
 class WebhookEventTest {
 
     @ServiceConnection
-    static final PostgreSQLContainer<?> POSTGRES = AbstractIntegrationTest.POSTGRES;
+    static final PostgreSQLContainer POSTGRES = AbstractIntegrationTest.POSTGRES;
 
     @Autowired
     private WebhookSubscriptionService subscriptions;

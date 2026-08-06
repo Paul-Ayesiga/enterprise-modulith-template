@@ -29,8 +29,8 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import ug.co.smsone.notification.internal.NotificationDeliveryWorker;
 import ug.co.smsone.settings.FeatureFlagChanged;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
@@ -52,8 +52,9 @@ class NotificationDeliveryTest {
     private static final String ADMIN_SUBJECT = "kc-sub-admin-0001"; // app_user row seeded per test
 
     @ServiceConnection
-    static final PostgreSQLContainer<?> POSTGRES = AbstractIntegrationTest.POSTGRES;
+    static final PostgreSQLContainer POSTGRES = AbstractIntegrationTest.POSTGRES;
 
+    @SuppressWarnings("resource") // Testcontainers owns this lifecycle — see AbstractIntegrationTest.POSTGRES
     static final GenericContainer<?> MAILPIT =
             new GenericContainer<>("axllent/mailpit:v1.30.2")
                     .withExposedPorts(MAILPIT_SMTP, MAILPIT_HTTP)

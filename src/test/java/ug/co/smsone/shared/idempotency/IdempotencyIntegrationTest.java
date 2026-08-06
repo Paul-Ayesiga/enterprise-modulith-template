@@ -143,7 +143,7 @@ class IdempotencyIntegrationTest extends AbstractIntegrationTest {
     void oversizedBodyIsRejectedNotBuffered() throws Exception {
         String bigValue = "x".repeat(300_000); // above the 256KiB default cap
         mockMvc.perform(adminPut("idem.big", bigValue, "key-big-1"))
-                .andExpect(status().isPayloadTooLarge())
+                .andExpect(status().isContentTooLarge())
                 .andExpect(jsonPath("$.errors[0].code").value("PAYLOAD_TOO_LARGE"));
     }
 
@@ -151,7 +151,7 @@ class IdempotencyIntegrationTest extends AbstractIntegrationTest {
     void errorResponsesAreNotStored() throws Exception {
         // 422 (blank value) with a key: outcome is an error -> the key stays free
         mockMvc.perform(adminPut("idem.errfree", "", "key-err-1"))
-                .andExpect(status().isUnprocessableEntity());
+                .andExpect(status().isUnprocessableContent());
 
         // the same key retries successfully — no replay of the stored error, no conflict
         mockMvc.perform(adminPut("idem.errfree", "recovered", "key-err-1"))
@@ -174,7 +174,7 @@ class IdempotencyIntegrationTest extends AbstractIntegrationTest {
     @Test
     void malformedKeyIsRejected() throws Exception {
         mockMvc.perform(adminPut("idem.badkey", "x", "not valid!!"))
-                .andExpect(status().isUnprocessableEntity())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.errors[0].code").value("VALIDATION_FAILED"))
                 .andExpect(jsonPath("$.errors[0].source.header").value(IdempotencyFilter.KEY_HEADER));
     }

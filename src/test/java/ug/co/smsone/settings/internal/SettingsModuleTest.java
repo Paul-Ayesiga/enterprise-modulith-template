@@ -8,7 +8,7 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.modulith.test.ApplicationModuleTest;
 import org.springframework.modulith.test.Scenario;
 import org.springframework.test.context.ActiveProfiles;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import ug.co.smsone.settings.SettingChanged;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
@@ -18,7 +18,7 @@ import ug.co.smsone.testsupport.AbstractIntegrationTest;
 class SettingsModuleTest {
 
     @ServiceConnection
-    static final PostgreSQLContainer<?> POSTGRES = AbstractIntegrationTest.POSTGRES;
+    static final PostgreSQLContainer POSTGRES = AbstractIntegrationTest.POSTGRES;
 
     @Autowired
     private SettingService settingService;

@@ -46,7 +46,7 @@ class ProblemDetailContractTest extends AbstractIntegrationTest {
                         .header(HttpHeaders.ACCEPT, MediaType.APPLICATION_PROBLEM_JSON_VALUE)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\":\"nope\",\"name\":\"\"}"))
-                .andExpect(status().isUnprocessableEntity())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.errors.length()").value(2))
                 .andExpect(jsonPath("$.requestId").isNotEmpty());
@@ -58,7 +58,7 @@ class ProblemDetailContractTest extends AbstractIntegrationTest {
                         .header(HttpHeaders.ACCEPT, MediaType.APPLICATION_PROBLEM_JSON_VALUE)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\":\"ok@smsone.co.ug\",\"name\":\"\"}"))
-                .andExpect(status().isUnprocessableEntity())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.errors.length()").value(1))
                 .andExpect(jsonPath("$.errors[0].source.pointer").value("/data/attributes/name"));
     }

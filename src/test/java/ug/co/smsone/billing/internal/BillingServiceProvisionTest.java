@@ -32,7 +32,9 @@ class BillingServiceProvisionTest {
 
         given(killBill.ensureAccount(any(), any())).willReturn(kbAccountId);
         // Outer existence check misses; after losing the insert race, the winner's row is present.
-        given(accounts.findByOrgId(orgId)).willReturn(Optional.empty(), Optional.of(winner));
+        // Chained rather than the varargs willReturn(a, b) — identical consecutive stubbing, but the
+        // varargs form builds a generic Optional[] and warns about it.
+        given(accounts.findByOrgId(orgId)).willReturn(Optional.empty()).willReturn(Optional.of(winner));
         // The row write races and loses the unique org_id constraint.
         given(tx.execute(any())).willThrow(new DataIntegrityViolationException("uq_billing_account_org"));
 

@@ -1,5 +1,7 @@
 package ug.co.smsone.gateway;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Value;
@@ -56,7 +58,10 @@ class LifecycleTest {
                 .expectHeader().valueEquals("Sunset", "Sun, 30 Jun 2024 23:59:59 GMT")
                 .expectBody()
                 .jsonPath("$.errors[0].code").isEqualTo("GONE")
-                .jsonPath("$.errors[0].detail").value(org.hamcrest.Matchers.containsString("retired"));
+                // Consumer form, not value(Matcher): every Hamcrest overload here is @Deprecated
+                // (since = "7.0", forRemoval = true) — see AbstractJsonPathAssertions.
+                .jsonPath("$.errors[0].detail")
+                .value(String.class, detail -> assertThat(detail).contains("retired"));
     }
 
     @Test

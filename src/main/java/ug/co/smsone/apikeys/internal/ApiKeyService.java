@@ -1,6 +1,5 @@
 package ug.co.smsone.apikeys.internal;
 
-import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Set;
@@ -34,15 +33,13 @@ class ApiKeyService {
     private final OrgAuthorization orgAuthorization;
     private final CurrentUserProvider currentUser;
     private final AuditLog auditLog;
-    private final Clock clock;
 
     ApiKeyService(ApiKeyRepository keys, OrgAuthorization orgAuthorization,
-            CurrentUserProvider currentUser, AuditLog auditLog, Clock clock) {
+            CurrentUserProvider currentUser, AuditLog auditLog) {
         this.keys = keys;
         this.orgAuthorization = orgAuthorization;
         this.currentUser = currentUser;
         this.auditLog = auditLog;
-        this.clock = clock;
     }
 
     record Minted(ApiKey key, String secret) {

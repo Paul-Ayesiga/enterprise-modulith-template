@@ -36,6 +36,7 @@ class KeycloakIntegrationTest extends AbstractIntegrationTest {
 
     private static final int KEYCLOAK_PORT = 8080;
 
+    @SuppressWarnings("resource") // Testcontainers owns this lifecycle — see AbstractIntegrationTest.POSTGRES
     private static final GenericContainer<?> KEYCLOAK =
             new GenericContainer<>("quay.io/keycloak/keycloak:26.7.0")
                     .withEnv("KC_BOOTSTRAP_ADMIN_USERNAME", "admin")

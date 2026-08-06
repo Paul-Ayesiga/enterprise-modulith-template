@@ -274,7 +274,7 @@ class ExchangeJobStore {
     <T> WindowedResult<T> list(UUID orgId, CursorPageRequest page,
             java.util.function.Function<ExchangeJob, T> mapper) {
         Cursor cursor = decode(page);
-        List<Object> params = new java.util.ArrayList<>(List.of(orgId));
+        List<Object> params = new ArrayList<>(List.of(orgId));
         String keyset = "";
         if (cursor != null) {
             keyset = " and (created_at, id) < (?, ?)";

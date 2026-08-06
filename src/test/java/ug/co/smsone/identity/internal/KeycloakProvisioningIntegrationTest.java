@@ -42,6 +42,7 @@ class KeycloakProvisioningIntegrationTest extends AbstractIntegrationTest {
 
     private static final Network NETWORK = Network.newNetwork();
 
+    @SuppressWarnings("resource") // Testcontainers owns this lifecycle — see AbstractIntegrationTest.POSTGRES
     private static final GenericContainer<?> MAILPIT =
             new GenericContainer<>("axllent/mailpit:v1.30.2")
                     .withNetwork(NETWORK)
@@ -49,6 +50,7 @@ class KeycloakProvisioningIntegrationTest extends AbstractIntegrationTest {
                     .withExposedPorts(MAILPIT_SMTP, MAILPIT_HTTP)
                     .waitingFor(Wait.forHttp("/api/v1/info").forPort(MAILPIT_HTTP).forStatusCode(200));
 
+    @SuppressWarnings("resource") // Testcontainers owns this lifecycle — see AbstractIntegrationTest.POSTGRES
     private static final GenericContainer<?> KEYCLOAK =
             new GenericContainer<>("quay.io/keycloak/keycloak:26.7.0")
                     .withNetwork(NETWORK)

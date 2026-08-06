@@ -115,7 +115,7 @@ class SearchApiTest extends AbstractIntegrationTest {
         UUID orgId = UUID.randomUUID();
         seedOrgRead(orgId, "searcher");
         mockMvc.perform(orgSearch(orgId, " "))
-                .andExpect(status().isUnprocessableEntity())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.errors[0].source.parameter").value("q"));
     }
 

@@ -92,7 +92,7 @@ class AuditApiTest extends AbstractIntegrationTest {
     void badInstantFilterIs422() throws Exception {
         mockMvc.perform(get("/api/v1/audit").param("from", "not-a-date")
                         .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_platform-support"))))
-                .andExpect(status().isUnprocessableEntity())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.errors[0].source.parameter").value("from"));
     }
 
@@ -108,7 +108,7 @@ class AuditApiTest extends AbstractIntegrationTest {
 
         mockMvc.perform(get("/api/v1/audit").param("page[after]", foreign)
                         .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_platform-support"))))
-                .andExpect(status().isUnprocessableEntity())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.errors[0].code").value("VALIDATION_FAILED"))
                 .andExpect(jsonPath("$.errors[0].source.parameter").value("page[after]"));
     }

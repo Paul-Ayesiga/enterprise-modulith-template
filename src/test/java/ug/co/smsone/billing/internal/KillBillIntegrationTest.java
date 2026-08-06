@@ -26,12 +26,14 @@ class KillBillIntegrationTest extends AbstractIntegrationTest {
 
     static final Network NETWORK = Network.newNetwork();
 
+    @SuppressWarnings("resource") // Testcontainers owns this lifecycle — see AbstractIntegrationTest.POSTGRES
     static final GenericContainer<?> KILLBILL_DB =
             new GenericContainer<>("killbill/mariadb:0.24")
                     .withNetwork(NETWORK)
                     .withNetworkAliases("killbill-db")
                     .withEnv("MYSQL_ROOT_PASSWORD", "killbill");
 
+    @SuppressWarnings("resource") // Testcontainers owns this lifecycle — see AbstractIntegrationTest.POSTGRES
     static final GenericContainer<?> KILLBILL =
             new GenericContainer<>("killbill/killbill:0.24.10")
                     .withNetwork(NETWORK)
