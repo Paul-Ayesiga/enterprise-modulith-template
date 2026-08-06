@@ -82,6 +82,26 @@ spec:
     requests:
       storage: 5Gi
 ---
+# dind's /var/lib/docker, kept across builds. The Gradle cache PVC above stopped Java dependencies being
+# re-fetched, but it does not touch anything Docker-side: the Paketo builder image (~1 GB+), the run
+# image, and the buildpack cache volumes holding the BellSoft JRE all lived in the agent pod's ephemeral
+# storage and were re-pulled every single build. That download is what failed build #10.
+#
+# CAUTION: local-path does NOT enforce the size below — it is a directory on the node, so a runaway dind
+# can fill the VM disk and take the cluster with it (DiskPressure evicts everything). The VM had ~9.8 GB
+# free when this was added, hence the modest request; the pipeline also prunes dangling images after each
+# image build. Check with `df -h /` on the VM, and delete this PVC to reset Docker state entirely.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jenkins-dind-cache
+  namespace: jenkins
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 6Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:

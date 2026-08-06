@@ -65,12 +65,19 @@ spec:
       resources:
         requests: { memory: "512Mi" }
         limits:   { memory: "1800Mi" }
+      volumeMounts:
+        # Persists the Paketo builder/run images and the buildpack cache volumes (including the JRE)
+        # across builds, instead of re-pulling ~1 GB every run over a link that has dropped it before.
+        - { name: dind-cache, mountPath: /var/lib/docker }
   volumes:
     # Survives the pod, so dependencies are downloaded once rather than every build. Declared in
     # deploy/k3s-local/jenkins/jenkins.yaml; delete the PVC to force a cold rebuild.
     - name: gradle-cache
       persistentVolumeClaim:
         claimName: jenkins-gradle-cache
+    - name: dind-cache
+      persistentVolumeClaim:
+        claimName: jenkins-dind-cache
 '''
     }
   }
@@ -162,6 +169,17 @@ spec:
               :bootBuildImage --publishImage \
               :gateway:app:bootBuildImage --publishImage
           '''
+        }
+      }
+      post {
+        always {
+          // The dind cache PVC is persistent AND unenforced by local-path, so left alone it would grow
+          // until it filled the VM disk. Dangling (untagged) layers are the part that accumulates;
+          // pruning them keeps the builder and run images, which are tagged and are the whole point of
+          // caching. Never fail the build over housekeeping.
+          container('dind') {
+            sh 'docker image prune -f || true; df -h /var/lib/docker | tail -1'
+          }
         }
       }
     }
