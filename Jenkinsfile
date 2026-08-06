@@ -194,15 +194,28 @@ spec:
             # The workspace arrives from the git plugin's own checkout, which leaves no usable remote or
             # user identity in this container — set both before committing.
             git config --global --add safe.directory "$PWD"
-            f=deploy/helm/smsone/values-prod.yaml
-            sed -i -E "s|^(  imageTag: ).*# gitops-bump.*$|\\1${GIT_COMMIT} # gitops-bump: CI overwrites this with the built commit SHA|" "$f"
             git config user.name  "jenkins"
             git config user.email "jenkins@smsone.local"
-            git add "$f"
-            if git diff --cached --quiet; then echo "image tag unchanged"; exit 0; fi
             export GIT_SSH_COMMAND="ssh -i $SSH_KEY -o StrictHostKeyChecking=no"
-            git commit -m "chore(gitops): deploy ${GIT_COMMIT} [skip ci]"
-            git push origin HEAD:main
+            f=deploy/helm/smsone/values-prod.yaml
+
+            # Build the bump on top of whatever main is NOW, not on the revision this build checked out
+            # seven minutes ago. Committing onto the stale checkout meant any human push during the build
+            # made this fail with "! [rejected] (fetch first)" — AFTER both images had been published, so
+            # a wholly successful build reported FAILURE (build #28). Re-applying the one-line edit to the
+            # current head is safe: nothing else in the pipeline touches this file.
+            for attempt in 1 2 3; do
+              git fetch --quiet origin main
+              git checkout --quiet -B gitops-bump origin/main
+              sed -i -E "s|^(  imageTag: ).*# gitops-bump.*$|\\1${GIT_COMMIT} # gitops-bump: CI overwrites this with the built commit SHA|" "$f"
+              git add "$f"
+              if git diff --cached --quiet; then echo "image tag unchanged"; exit 0; fi
+              git commit --quiet -m "chore(gitops): deploy ${GIT_COMMIT} [skip ci]"
+              if git push origin HEAD:main; then exit 0; fi
+              echo "push rejected — main moved mid-build; retrying on the new head (attempt ${attempt}/3)"
+            done
+            echo "gitops bump could not be pushed after 3 attempts" >&2
+            exit 1
           '''
         }
         }
