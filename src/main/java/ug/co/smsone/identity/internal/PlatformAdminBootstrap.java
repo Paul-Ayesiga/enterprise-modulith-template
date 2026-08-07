@@ -54,8 +54,13 @@ class PlatformAdminBootstrap implements ApplicationRunner {
                             email, provisioning.adopt(email, account.id())),
                     () -> log.warn("Dev bootstrap: no Keycloak account for '{}' — platform admin not seeded", email));
         } catch (RuntimeException ex) {
-            log.warn("Dev bootstrap skipped for platform admin '{}' — is Keycloak reachable? ({})",
-                    email, ex.getMessage());
+            // Do not name a cause this catch cannot know. It used to say "is Keycloak reachable?" for
+            // every RuntimeException, and the one it actually caught in practice was a duplicate
+            // external_identity from its own database — sending the reader to check a healthy Keycloak
+            // while the real fault sat two lines away in adopt(). Print what happened; let the message
+            // say where to look rather than guessing why.
+            log.warn("Dev bootstrap skipped for platform admin '{}' — {}: {}",
+                    email, ex.getClass().getSimpleName(), ex.getMessage());
         }
     }
 }

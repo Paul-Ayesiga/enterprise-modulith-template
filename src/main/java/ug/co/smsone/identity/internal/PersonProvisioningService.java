@@ -123,6 +123,17 @@ class PersonProvisioningService implements PersonProvisioning {
     UUID adopt(String rawEmail, String keycloakSubject) {
         String email = normalize(rawEmail);
         UUID personId = findOrCreatePerson(email, PersonName.UNKNOWN);
+        // The same already-linked check provision() makes, and for the same reason: the link is unique
+        // per (provider, issuer, subject), so a second insert is a constraint violation, not a no-op.
+        // Its absence here was exactly the drift the javadoc above warns about — this method shared
+        // find-or-create and link with provision() but not the guard that makes them idempotent. It
+        // surfaced the moment both dev bootstraps were enabled together: OrgDevBootstrap provisions the
+        // owner first, so PlatformAdminBootstrap then ran into a duplicate link on EVERY startup, and
+        // its catch-all reported it as "is Keycloak reachable?" — a misdiagnosis of its own database.
+        if (identities.findByPersonIdAndProviderAndIssuer(
+                personId, IdentityProvider.KEYCLOAK, resolver.keycloakIssuer()).isPresent()) {
+            return personId;
+        }
         transactionTemplate.executeWithoutResult(
                 tx -> link(personId, new KeycloakUser(keycloakSubject, email), email));
         resolver.forget(keycloakSubject); // after the commit, same reason as provision()
