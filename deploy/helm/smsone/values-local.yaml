@@ -49,6 +49,22 @@ modulith:
     # No OTLP collector locally — stop the 1-minute push to localhost:4318 (and its shutdown stack trace).
     - { name: MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED, value: "false" }
     - { name: SIGNUP_ENABLED, value: "true" }
+    # Provision the demo identity at startup. Both default OFF in the chart (and so in prod); they are
+    # on here because a freshly built local cluster is otherwise in a state that reads as broken but is
+    # working as designed: Keycloak's realm import creates `paul`, so he authenticates perfectly, and
+    # the platform admits nobody — no-JIT provisioning means a valid JWT is not access, and the `person`
+    # row has to come from somewhere. Locally this is that somewhere. Both are idempotent and both need
+    # Keycloak reachable; neither ever creates a Keycloak account.
+    #
+    # The two do different halves and a demo wants both:
+    #   IDENTITY_* projects the person + external_identity link for an EXISTING account, which is what
+    #             gets a realm-imported platform admin past the gate WITHOUT owning any org;
+    #   ORG_*     seeds the `acme` tenant and makes that person its OWNER, which is what makes org RBAC
+    #             exercisable at all — platform roles and org permissions are disjoint axes.
+    # Their default e-mails already agree with the realm's `paul` (ayesigapo@gmail.com), which is what
+    # makes them resolve to the same person rather than creating two.
+    - { name: IDENTITY_DEV_BOOTSTRAP_ENABLED, value: "true" }
+    - { name: ORG_DEV_BOOTSTRAP_ENABLED, value: "true" }
   resources:
     requests: { cpu: 250m, memory: 448Mi }
     limits: { memory: 1024Mi }

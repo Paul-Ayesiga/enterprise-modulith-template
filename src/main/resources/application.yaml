@@ -113,15 +113,17 @@ app:
     default-realm-role: ${PROVISIONING_DEFAULT_REALM_ROLE:USER}
   identity:
     dev-bootstrap:
-      # Off by default. When on, projects the local app_user row for an EXISTING Keycloak account so a
-      # realm-imported platform admin passes the no-JIT gate without owning an org. Never creates the
+      # Off by default. When on, projects the local person row + external_identity link for an EXISTING
+      # Keycloak account, so a realm-imported platform admin passes the no-JIT gate without owning an
+      # org. Never creates the
       # Keycloak account. Idempotent; needs Keycloak reachable.
       enabled: ${IDENTITY_DEV_BOOTSTRAP_ENABLED:false}
       email: ${IDENTITY_DEV_BOOTSTRAP_EMAIL:ayesigapo@gmail.com}
     reconciliation:
-      # Keycloak is the system of record; app_user is a projection, and nothing pushes deletions to it.
+      # Keycloak is an authentication channel, not the directory; external_identity is the link and
+      # nothing pushes provider deletions to it.
       # Without this pull a deleted account lingers as an ACTIVE-looking row forever. Access is never at
-      # risk from the lag (no-JIT means a deleted account cannot mint a token whatever this table says)
+      # risk from the lag (no-JIT means a deleted account cannot mint a token whatever this row says)
       # — the job corrects the RECORD.
       enabled: ${IDENTITY_RECONCILIATION_ENABLED:true}
       # REPORT ships as the default deliberately: this is the only scheduled job that can revoke access,
