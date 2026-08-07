@@ -67,8 +67,11 @@ class McpResourceCatalog {
                 .mimeType(mimeType)
                 .build();
         return new McpStatelessServerFeatures.SyncResourceSpecification(resource,
-                (context, request) -> new McpSchema.ReadResourceResult(
-                        List.of(new McpSchema.TextResourceContents(uri, mimeType, body.apply(context)))));
+                (context, request) -> McpSchema.ReadResourceResult.builder(
+                        List.of(McpSchema.TextResourceContents.builder(uri, body.apply(context))
+                                .mimeType(mimeType)
+                                .build()))
+                        .build());
     }
 
     private static String readClasspath(String location) {

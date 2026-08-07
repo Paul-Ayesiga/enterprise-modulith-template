@@ -27,7 +27,7 @@ class OrgDirectoryImpl implements OrgDirectory {
     }
 
     static OrgSummary toSummary(Organization organization) {
-        return new OrgSummary(organization.getKcOrgId(), organization.getAlias(), organization.getName(),
+        return new OrgSummary(organization.getId(), organization.getAlias(), organization.getName(),
                 organization.getStatus().name(), organization.getCreatedAt());
     }
 }

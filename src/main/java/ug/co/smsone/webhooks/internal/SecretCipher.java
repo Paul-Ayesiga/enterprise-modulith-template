@@ -68,10 +68,6 @@ class SecretCipher {
         }
     }
 
-    boolean isEncrypted(String stored) {
-        return stored != null && stored.startsWith(PREFIX);
-    }
-
     private static byte[] sha256(String passphrase) {
         try {
             return MessageDigest.getInstance("SHA-256").digest(passphrase.getBytes(StandardCharsets.UTF_8));

@@ -37,7 +37,7 @@ class OrgSecurityPolicyController {
             Boolean requireMfa) { // boxed: an absent field means the platform default (off)
     }
 
-    record TrustRequest(String subject, String deviceId, boolean trusted) {
+    record TrustRequest(String personId, String deviceId, boolean trusted) {
     }
 
     @GetMapping
@@ -68,7 +68,8 @@ class OrgSecurityPolicyController {
             description = "Trust is the org's grant, not a self-claim — that is why it lives here.")
     @PreAuthorize("hasPermission(#orgId, 'organization', 'org:update')")
     ResourceObject trust(@PathVariable UUID orgId, @RequestBody TrustRequest request) {
-        policies.setDeviceTrust(orgId, request.subject(), UUID.fromString(request.deviceId()), request.trusted());
+        policies.setDeviceTrust(orgId, UUID.fromString(request.personId()),
+                UUID.fromString(request.deviceId()), request.trusted());
         return toResource(policies.view(orgId));
     }
 

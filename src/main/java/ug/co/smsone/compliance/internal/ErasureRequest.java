@@ -7,7 +7,14 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.UUID;
 
-/** A GDPR art. 17 request and its outcome. Kept as a compliance record — not soft-deletable. */
+/**
+ * A GDPR art. 17 request and its outcome. Kept as a compliance record — not soft-deletable.
+ *
+ * <p>The two person ids stay separate on purpose (V34): on a self-service request they are equal, on an
+ * admin-initiated one they are not, and which of the two it was is the question an auditor asks first.
+ * {@code requestedByPersonId} is NOT NULL, so a machine cannot file one — an erasure with no accountable
+ * human is not a record worth keeping.
+ */
 @Entity
 @Table(name = "erasure_request")
 class ErasureRequest {
@@ -15,11 +22,11 @@ class ErasureRequest {
     @Id
     private UUID id;
 
-    @Column(nullable = false, length = 64)
-    private String subject;
+    @Column(name = "person_id", nullable = false)
+    private UUID personId;
 
-    @Column(name = "requested_by", nullable = false, length = 100)
-    private String requestedBy;
+    @Column(name = "requested_by_person_id", nullable = false)
+    private UUID requestedByPersonId;
 
     @Column(nullable = false, length = 20)
     private String status; // RECEIVED | EXECUTED | REFUSED
@@ -37,11 +44,11 @@ class ErasureRequest {
         // JPA
     }
 
-    static ErasureRequest received(String subject, String requestedBy, Instant when) {
+    static ErasureRequest received(UUID personId, UUID requestedByPersonId, Instant when) {
         ErasureRequest request = new ErasureRequest();
         request.id = UUID.randomUUID();
-        request.subject = subject;
-        request.requestedBy = requestedBy;
+        request.personId = personId;
+        request.requestedByPersonId = requestedByPersonId;
         request.status = "RECEIVED";
         request.createdAt = when;
         return request;
@@ -63,8 +70,8 @@ class ErasureRequest {
         return id;
     }
 
-    String getSubject() {
-        return subject;
+    UUID getPersonId() {
+        return personId;
     }
 
     String getStatus() {

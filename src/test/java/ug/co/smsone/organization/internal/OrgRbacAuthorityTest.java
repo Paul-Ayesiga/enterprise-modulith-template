@@ -56,28 +56,30 @@ class OrgRbacAuthorityTest extends AbstractIntegrationTest {
     private ApplicationEventPublisher events;
 
     private UUID orgId;
-    private String owner;
-    private String manager;
-    private String viewer;
+    private UUID owner;
+    private UUID manager;
+    private UUID viewer;
 
     @BeforeEach
     void seed() {
-        orgId = UUID.randomUUID();
-        // The resolver grants nothing without an ACTIVE org projection — seed it like production does.
-        organizations.save(Organization.register(orgId, "auth-" + orgId, "Auth Org"));
+        // organization.id is Hibernate-assigned at persist and IS the tenant key now, so the seed reads
+        // it back off the saved row instead of minting one — there is no provider id to mint.
+        orgId = organizations.save(Organization.register("auth-" + UUID.randomUUID(), "Auth Org")).getId();
         roleSeeder.seedSystemRoles(orgId);
 
-        owner = attachToSeededOwner("owner-" + UUID.randomUUID());
-        manager = attachToNewRole("manager-" + UUID.randomUUID(), "MANAGER", MANAGER_PERMISSIONS);
-        viewer = attachToNewRole("viewer-" + UUID.randomUUID(), "VIEWER", VIEWER_PERMISSIONS);
+        // Members are person ids. membership.person_id is a soft ref with no FK (AGENTS §1), so a bare
+        // uuid seeds a member exactly as a provisioned person would — which is the point of the soft ref.
+        owner = attachToSeededOwner(UUID.randomUUID());
+        manager = attachToNewRole(UUID.randomUUID(), "MANAGER", MANAGER_PERMISSIONS);
+        viewer = attachToNewRole(UUID.randomUUID(), "VIEWER", VIEWER_PERMISSIONS);
     }
 
-    private String attachToSeededOwner(String subject) {
-        return OrgRbacFixtures.attachToSeededOwner(roles, memberships, orgId, subject);
+    private UUID attachToSeededOwner(UUID personId) {
+        return OrgRbacFixtures.attachToSeededOwner(roles, memberships, orgId, personId);
     }
 
-    private String attachToNewRole(String subject, String code, Set<Permission> permissions) {
-        return OrgRbacFixtures.attachToNewRole(roles, memberships, orgId, subject, code, permissions);
+    private UUID attachToNewRole(UUID personId, String code, Set<Permission> permissions) {
+        return OrgRbacFixtures.attachToNewRole(roles, memberships, orgId, personId, code, permissions);
     }
 
     @Test
@@ -123,8 +125,8 @@ class OrgRbacAuthorityTest extends AbstractIntegrationTest {
      */
     @Test
     void aRoleCodeGrantsNothingByItself() {
-        String onAdmin = attachToNewRole("looks-privileged-" + UUID.randomUUID(), "ADMIN", VIEWER_PERMISSIONS);
-        String onPlain = attachToNewRole("looks-ordinary-" + UUID.randomUUID(), "SOMETHING_ELSE", VIEWER_PERMISSIONS);
+        UUID onAdmin = attachToNewRole(UUID.randomUUID(), "ADMIN", VIEWER_PERMISSIONS);
+        UUID onPlain = attachToNewRole(UUID.randomUUID(), "SOMETHING_ELSE", VIEWER_PERMISSIONS);
 
         assertThat(authorization.permissions(onAdmin, orgId))
                 .isEqualTo(authorization.permissions(onPlain, orgId));
@@ -134,8 +136,8 @@ class OrgRbacAuthorityTest extends AbstractIntegrationTest {
 
     @Test
     void nonMemberHasNoPermissions() {
-        assertThat(authorization.permissions("stranger-" + UUID.randomUUID(), orgId)).isEmpty();
-        assertThat(authorization.hasPermission("stranger", orgId, Permission.ORG_READ.code())).isFalse();
+        assertThat(authorization.permissions(UUID.randomUUID(), orgId)).isEmpty();
+        assertThat(authorization.hasPermission(UUID.randomUUID(), orgId, Permission.ORG_READ.code())).isFalse();
     }
 
     @Test
@@ -150,14 +152,14 @@ class OrgRbacAuthorityTest extends AbstractIntegrationTest {
     void suspendedOrganizationGrantsNothingUntilReactivated() {
         assertThat(authorization.hasPermission(owner, orgId, Permission.ORG_READ.code())).isTrue();
 
-        Organization organization = organizations.findByKcOrgId(orgId).orElseThrow();
+        Organization organization = organizations.findById(orgId).orElseThrow();
         organization.suspend(); // publishes OrganizationStatusChanged -> async cache eviction
         organizations.save(organization);
 
         await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
                 assertThat(authorization.permissions(owner, orgId)).isEmpty());
 
-        Organization suspended = organizations.findByKcOrgId(orgId).orElseThrow();
+        Organization suspended = organizations.findById(orgId).orElseThrow();
         suspended.reactivate();
         organizations.save(suspended);
 
@@ -195,21 +197,21 @@ class OrgRbacAuthorityTest extends AbstractIntegrationTest {
 
     /**
      * Soft delete must REVOKE, not merely hide: the membership row survives with {@code deleted_at}
-     * set, and the resolver — which reads through {@code @SQLRestriction} — must resolve the subject
+     * set, and the resolver — which reads through {@code @SQLRestriction} — must resolve the person
      * to nothing. A soft delete that only hid the row from listings while authorization kept passing
      * would be the worst possible outcome of this change.
      */
     @Test
     void aSoftDeletedMembershipResolvesToZeroPermissions() {
         assertThat(authorization.hasPermission(viewer, orgId, Permission.ORG_READ.code())).isTrue();
-        UUID membershipId = memberships.findByOrgIdAndUserSubject(orgId, viewer).orElseThrow().getId();
+        UUID membershipId = memberships.findByOrgIdAndPersonId(orgId, viewer).orElseThrow().getId();
 
         removeMemberAsProductionDoes(viewer);
 
         await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
                 assertThat(authorization.permissions(viewer, orgId)).isEmpty());
         assertThat(authorization.hasPermission(viewer, orgId, Permission.ORG_READ.code())).isFalse();
-        assertThat(memberships.findByOrgIdAndUserSubject(orgId, viewer)).isEmpty();
+        assertThat(memberships.findByOrgIdAndPersonId(orgId, viewer)).isEmpty();
         // The row is still there: access ended because the restriction hides it, not because it was lost.
         assertThat(jdbc.queryForObject(
                 "select count(*) from membership where id = ? and deleted_at is not null",
@@ -240,7 +242,7 @@ class OrgRbacAuthorityTest extends AbstractIntegrationTest {
      */
     @Test
     void aRemovedMemberCanBeInvitedBackIntoTheSameOrganization() {
-        Membership original = memberships.findByOrgIdAndUserSubject(orgId, viewer).orElseThrow();
+        Membership original = memberships.findByOrgIdAndPersonId(orgId, viewer).orElseThrow();
         removeMemberAsProductionDoes(viewer);
 
         UUID ownerRoleId = roles.findByOrgIdAndCode(orgId, Role.OWNER_CODE).orElseThrow().getId();
@@ -248,10 +250,10 @@ class OrgRbacAuthorityTest extends AbstractIntegrationTest {
                 Membership.create(orgId, viewer, ownerRoleId, Role.OWNER_CODE));
 
         assertThat(reinvited.getId()).isNotEqualTo(original.getId());
-        assertThat(memberships.findByOrgIdAndUserSubject(orgId, viewer).orElseThrow().getId())
+        assertThat(memberships.findByOrgIdAndPersonId(orgId, viewer).orElseThrow().getId())
                 .isEqualTo(reinvited.getId());
         assertThat(jdbc.queryForObject(
-                "select count(*) from membership where org_id = ? and user_subject = ?",
+                "select count(*) from membership where org_id = ? and person_id = ?",
                 Integer.class, orgId, viewer)).isEqualTo(2); // one dead, one live
         await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
                 assertThat(authorization.hasPermission(viewer, orgId, Permission.ORG_DELETE.code())).isTrue());
@@ -262,21 +264,21 @@ class OrgRbacAuthorityTest extends AbstractIntegrationTest {
      * does NOT fire {@code @DomainEvents}, so without it a removed member keeps their cached
      * permissions until the entry ages out of L2.
      */
-    private void removeMemberAsProductionDoes(String subject) {
+    private void removeMemberAsProductionDoes(UUID personId) {
         transactions.executeWithoutResult(tx -> {
-            memberships.delete(memberships.findByOrgIdAndUserSubject(orgId, subject).orElseThrow());
-            events.publishEvent(new MemberRemoved(orgId, subject, Instant.now()));
+            memberships.delete(memberships.findByOrgIdAndPersonId(orgId, personId).orElseThrow());
+            events.publishEvent(new MemberRemoved(orgId, personId, Instant.now()));
         });
     }
 
     @Test
     void permissionCacheIsEvictedAfterAMembershipRoleChange() {
-        // Prime the cache: on a read-only role, the subject must NOT have org:delete.
+        // Prime the cache: on a read-only role, the person must NOT have org:delete.
         assertThat(authorization.hasPermission(viewer, orgId, Permission.ORG_DELETE.code())).isFalse();
 
         // Promote to OWNER — assignRole registers MembershipRoleChanged, save() publishes it, and the
         // OrgPermissionCacheEvictor clears 'org-permissions' after commit (async).
-        Membership membership = memberships.findByOrgIdAndUserSubject(orgId, viewer).orElseThrow();
+        Membership membership = memberships.findByOrgIdAndPersonId(orgId, viewer).orElseThrow();
         UUID ownerRoleId = roles.findByOrgIdAndCode(orgId, Role.OWNER_CODE).orElseThrow().getId();
         membership.assignRole(ownerRoleId);
         memberships.save(membership);

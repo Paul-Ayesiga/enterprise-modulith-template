@@ -3,7 +3,6 @@ package ug.co.smsone.support.internal;
 import java.util.List;
 import java.util.Map;
 import org.springframework.stereotype.Component;
-import ug.co.smsone.notification.NotificationChannel;
 import ug.co.smsone.notification.NotificationRequest;
 import ug.co.smsone.notification.Notifications;
 import ug.co.smsone.notification.Recipient;
@@ -23,11 +22,16 @@ class SupportNotifier {
                 "A new support ticket was opened (priority " + ticket.getPriority() + ").");
     }
 
-    /** The opener hears "you have a reply" in-app — the JobCompleted notifier pattern. */
+    /**
+     * The opener hears "you have a reply" in-app — the JobCompleted notifier pattern. The in-app
+     * target is the opener's {@code person.id}, which is what {@code in_app_notification.person_id}
+     * holds; the named factory keeps that fact in one place instead of this call site deciding how a
+     * person is spelled on the wire to notifications.
+     */
     void ticketReplied(Ticket ticket) {
         notifications.dispatch(new NotificationRequest(
                 "Reply on your support ticket", "Support replied to your ticket: " + ticket.getSubject(),
-                List.of(new Recipient(NotificationChannel.IN_APP, ticket.getOpenerSubject())),
+                List.of(Recipient.inApp(ticket.getOpenerPersonId())),
                 Map.of("orgId", ticket.getOrgId().toString())));
     }
 

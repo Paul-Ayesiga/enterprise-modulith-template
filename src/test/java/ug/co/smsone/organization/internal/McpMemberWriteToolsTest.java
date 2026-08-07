@@ -2,6 +2,7 @@ package ug.co.smsone.organization.internal;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.never;
@@ -16,8 +17,9 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import ug.co.smsone.identity.ProvisionedUser;
-import ug.co.smsone.identity.UserProvisioning;
+import ug.co.smsone.identity.PersonProvisioning;
+import ug.co.smsone.identity.ProvisionedPerson;
+import ug.co.smsone.identity.ProviderOrgMembership;
 import ug.co.smsone.mcp.internal.McpTestSupport;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
@@ -38,7 +40,10 @@ class McpMemberWriteToolsTest extends AbstractIntegrationTest {
     private JdbcTemplate jdbc;
 
     @MockitoBean
-    private UserProvisioning userProvisioning;
+    private PersonProvisioning personProvisioning;
+
+    @MockitoBean
+    private ProviderOrgMembership providerOrgMembership;
 
     @MockitoBean
     private KeycloakOrgAdminGateway keycloakOrg;
@@ -50,8 +55,9 @@ class McpMemberWriteToolsTest extends AbstractIntegrationTest {
         McpTestSupport.seedRole(jdbc, orgId, "MEMBER", "org:read");
         McpTestSupport.SeededKey key = McpTestSupport.seedOrgKey(jdbc, orgId, "inviter",
                 "member:invite", "org:read");
-        given(userProvisioning.provision(any()))
-                .willReturn(new ProvisionedUser("subject-new", "new@acme.test", false));
+        UUID invited = UUID.randomUUID();
+        given(personProvisioning.provision(any()))
+                .willReturn(new ProvisionedPerson(invited, "new@acme.test", false));
 
         try (McpSyncClient client = McpTestSupport.client(port, Map.of("X-Api-Key", key.presented()))) {
             client.initialize();
@@ -61,10 +67,11 @@ class McpMemberWriteToolsTest extends AbstractIntegrationTest {
             assertThat(result.isError())
                     .as(McpTestSupport.textOf(result)).isNotEqualTo(Boolean.TRUE);
 
-            then(keycloakOrg).should().addMember(orgId, "subject-new");
+            // Attaching at the provider goes through identity, which owns the subject the call needs.
+            then(providerOrgMembership).should().attach(eq(invited), any());
             Integer memberships = jdbc.queryForObject(
-                    "select count(*) from membership where org_id = ? and user_subject = 'subject-new'",
-                    Integer.class, orgId);
+                    "select count(*) from membership where org_id = ? and person_id = ?",
+                    Integer.class, orgId, invited);
             assertThat(memberships).isEqualTo(1);
         }
     }
@@ -86,8 +93,8 @@ class McpMemberWriteToolsTest extends AbstractIntegrationTest {
             assertThat(result.isError()).isTrue();
             assertThat(McpTestSupport.textOf(result)).contains("FORBIDDEN").contains("member:remove");
             // The denial ran BEFORE the side effect — nothing was provisioned, nobody was linked.
-            then(userProvisioning).should(never()).provision(any());
-            then(keycloakOrg).should(never()).addMember(any(), any());
+            then(personProvisioning).should(never()).provision(any());
+            then(providerOrgMembership).should(never()).attach(any(), any());
         }
     }
 
@@ -105,7 +112,7 @@ class McpMemberWriteToolsTest extends AbstractIntegrationTest {
                     .build());
             assertThat(result.isError()).isTrue();
             assertThat(McpTestSupport.textOf(result)).contains("member:invite");
-            then(userProvisioning).should(never()).provision(any());
+            then(personProvisioning).should(never()).provision(any());
         }
     }
 
@@ -116,25 +123,27 @@ class McpMemberWriteToolsTest extends AbstractIntegrationTest {
         // An OWNER member must remain — remove() protects the last owner; the target is a MEMBER.
         UUID ownerRole = McpTestSupport.seedRole(jdbc, orgId, "OWNER", "org:read", "member:remove");
         UUID memberRole = McpTestSupport.seedRole(jdbc, orgId, "MEMBER", "org:read");
-        McpTestSupport.seedMembership(jdbc, orgId, "subject-owner", ownerRole);
-        McpTestSupport.seedMembership(jdbc, orgId, "subject-gone", memberRole);
+        UUID owner = UUID.randomUUID();
+        UUID gone = UUID.randomUUID();
+        McpTestSupport.seedMembership(jdbc, orgId, owner, ownerRole);
+        McpTestSupport.seedMembership(jdbc, orgId, gone, memberRole);
         McpTestSupport.SeededKey key = McpTestSupport.seedOrgKey(jdbc, orgId, "remover",
                 "member:remove", "org:read");
 
         try (McpSyncClient client = McpTestSupport.client(port, Map.of("X-Api-Key", key.presented()))) {
             client.initialize();
             McpSchema.CallToolResult result = client.callTool(McpSchema.CallToolRequest.builder("member_remove")
-                    .arguments(Map.of("subject", "subject-gone"))
+                    .arguments(Map.of("person_id", gone.toString()))
                     .build());
             assertThat(result.isError())
                     .as(McpTestSupport.textOf(result)).isNotEqualTo(Boolean.TRUE);
 
             Integer live = jdbc.queryForObject("""
                     select count(*) from membership
-                    where org_id = ? and user_subject = 'subject-gone' and deleted_at is null
-                    """, Integer.class, orgId);
+                    where org_id = ? and person_id = ? and deleted_at is null
+                    """, Integer.class, orgId, gone);
             assertThat(live).isZero();
-            then(keycloakOrg).should().removeMember(orgId, "subject-gone");
+            then(providerOrgMembership).should().detach(eq(gone), any());
         }
     }
 }

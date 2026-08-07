@@ -7,7 +7,13 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.UUID;
 
-/** An append-only message on a ticket. {@code internal} messages are platform-only notes. */
+/**
+ * An append-only message on a ticket. {@code internal} messages are platform-only notes.
+ *
+ * <p>{@code authorPersonId} is a tenant member or a platform operator — one column resolving through
+ * one table, where two subject strings once pointed into two different tenancy worlds. {@code
+ * internal} stays a VISIBILITY flag and not a discriminator on who wrote the message.
+ */
 @Entity
 @Table(name = "ticket_message")
 class TicketMessage {
@@ -18,8 +24,8 @@ class TicketMessage {
     @Column(name = "ticket_id", nullable = false)
     private UUID ticketId;
 
-    @Column(name = "author_subject", nullable = false, length = 64)
-    private String authorSubject;
+    @Column(name = "author_person_id", nullable = false)
+    private UUID authorPersonId;
 
     @Column(nullable = false)
     private String body;
@@ -34,11 +40,11 @@ class TicketMessage {
         // JPA
     }
 
-    static TicketMessage of(UUID ticketId, String authorSubject, String body, boolean internal, Instant when) {
+    static TicketMessage of(UUID ticketId, UUID authorPersonId, String body, boolean internal, Instant when) {
         TicketMessage message = new TicketMessage();
         message.id = UUID.randomUUID();
         message.ticketId = ticketId;
-        message.authorSubject = authorSubject;
+        message.authorPersonId = authorPersonId;
         message.body = body;
         message.internal = internal;
         message.createdAt = when;
@@ -49,8 +55,8 @@ class TicketMessage {
         return id;
     }
 
-    String getAuthorSubject() {
-        return authorSubject;
+    UUID getAuthorPersonId() {
+        return authorPersonId;
     }
 
     String getBody() {

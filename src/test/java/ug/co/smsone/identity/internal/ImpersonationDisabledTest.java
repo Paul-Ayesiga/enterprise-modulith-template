@@ -43,7 +43,7 @@ class ImpersonationDisabledTest extends AbstractIntegrationTest {
     void theRouteRefusesInsteadOfDisappearing() throws Exception {
         mockMvc.perform(post("/api/v1/admin/impersonations").with(operator(PlatformRole.SUPERADMIN))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"targetSubject\":\"kc-" + UUID.randomUUID()
+                        .content("{\"targetPersonId\":\"" + UUID.randomUUID()
                                 + "\",\"reason\":\"ticket 4711 refund missing\"}"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errors[0].code").value("FORBIDDEN"))
@@ -75,7 +75,11 @@ class ImpersonationDisabledTest extends AbstractIntegrationTest {
                 .andExpect(status().isOk());
     }
 
+    /**
+     * The switch is checked before anything else, so this operator needs no person row: the 403 under
+     * test must arrive whether or not the caller could otherwise have opened a session.
+     */
     private static JwtRequestPostProcessor operator(String role) {
-        return ImpersonationFixtures.operator(ImpersonationFixtures.actor(), role);
+        return ImpersonationFixtures.operator(UUID.randomUUID(), role);
     }
 }

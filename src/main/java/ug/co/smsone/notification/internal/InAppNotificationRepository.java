@@ -12,7 +12,7 @@ import org.springframework.data.repository.query.Param;
 interface InAppNotificationRepository
         extends JpaRepository<InAppNotification, UUID>, JpaSpecificationExecutor<InAppNotification> {
 
-    Optional<InAppNotification> findByIdAndRecipient(UUID id, String recipient);
+    Optional<InAppNotification> findByIdAndPersonId(UUID id, UUID personId);
 
     /**
      * Idempotent conditional mark-read. A bulk update on purpose: entity save() would bump
@@ -21,6 +21,6 @@ interface InAppNotificationRepository
      */
     @Modifying(clearAutomatically = true)
     @Query("update InAppNotification n set n.readAt = :when"
-            + " where n.id = :id and n.recipient = :recipient and n.readAt is null")
-    int markReadIfUnread(@Param("id") UUID id, @Param("recipient") String recipient, @Param("when") Instant when);
+            + " where n.id = :id and n.personId = :personId and n.readAt is null")
+    int markReadIfUnread(@Param("id") UUID id, @Param("personId") UUID personId, @Param("when") Instant when);
 }

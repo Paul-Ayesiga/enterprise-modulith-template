@@ -6,7 +6,7 @@ import java.util.UUID;
 /**
  * Read/rename port over an organization's profile for other protocol surfaces (the MCP module
  * today). Delegates to the same service the REST controller uses — one rename path, one audit
- * trail, whichever surface asked.
+ * trail, whichever surface asked. {@code orgId} is {@code organization.id}.
  */
 public interface OrgDirectory {
 

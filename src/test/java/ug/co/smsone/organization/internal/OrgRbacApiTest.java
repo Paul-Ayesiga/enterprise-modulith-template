@@ -30,9 +30,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.JwtRequestPostProcessor;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import ug.co.smsone.identity.PersonProvisioning;
 import ug.co.smsone.identity.ProvisionRequest;
-import ug.co.smsone.identity.ProvisionedUser;
-import ug.co.smsone.identity.UserProvisioning;
+import ug.co.smsone.identity.ProvisionedPerson;
+import ug.co.smsone.identity.ProviderOrgMembership;
 import ug.co.smsone.organization.Permission;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
@@ -70,35 +71,38 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
     private KeycloakOrgAdminGateway keycloakOrg; // no live Keycloak in the RBAC matrix
 
     @MockitoBean
-    private UserProvisioning userProvisioning; // identity port used by MemberService.invite
+    private PersonProvisioning personProvisioning; // identity port used by MemberService.invite
+
+    @MockitoBean
+    private ProviderOrgMembership providerOrgMembership; // identity port: attach/detach at Keycloak
 
     private UUID orgId;
-    private String owner;
-    private String manager;
-    private String viewer;
+    private UUID owner;
+    private UUID manager;
+    private UUID viewer;
 
     @BeforeEach
     void seed() {
-        orgId = UUID.randomUUID();
-        organizations.save(Organization.register(orgId, "acme-" + orgId, "Acme"));
+        // organization.id is Hibernate-assigned and IS the tenant key — read it back off the saved row.
+        orgId = organizations.save(Organization.register("acme-" + UUID.randomUUID(), "Acme")).getId();
         roleSeeder.seedSystemRoles(orgId); // seeds OWNER, and only OWNER
-        owner = attachToSeededOwner("owner-" + UUID.randomUUID());
-        manager = attachToNewRole("manager-" + UUID.randomUUID(), "MANAGER", MANAGER_PERMISSIONS);
-        viewer = attachToNewRole("viewer-" + UUID.randomUUID(), "VIEWER", VIEWER_PERMISSIONS);
+        owner = attachToSeededOwner(UUID.randomUUID());
+        manager = attachToNewRole(UUID.randomUUID(), "MANAGER", MANAGER_PERMISSIONS);
+        viewer = attachToNewRole(UUID.randomUUID(), "VIEWER", VIEWER_PERMISSIONS);
     }
 
-    private String attachToSeededOwner(String subject) {
-        return OrgRbacFixtures.attachToSeededOwner(roles, memberships, orgId, subject);
+    private UUID attachToSeededOwner(UUID personId) {
+        return OrgRbacFixtures.attachToSeededOwner(roles, memberships, orgId, personId);
     }
 
-    private String attachToNewRole(String subject, String code, Set<Permission> permissions) {
-        return OrgRbacFixtures.attachToNewRole(roles, memberships, orgId, subject, code, permissions);
+    private UUID attachToNewRole(UUID personId, String code, Set<Permission> permissions) {
+        return OrgRbacFixtures.attachToNewRole(roles, memberships, orgId, personId, code, permissions);
     }
 
-    /** A JWT scoped to {@code activeOrg} (alias-keyed 'organization' claim) for the given subject. */
-    private JwtRequestPostProcessor token(String subject, UUID activeOrg) {
-        return jwt().jwt(jwt -> jwt.subject(subject)
-                .claim("email", subject + "@smsone.co.ug")
+    /** A JWT scoped to {@code activeOrg} (alias-keyed 'organization' claim) for the given person. */
+    private JwtRequestPostProcessor token(UUID personId, UUID activeOrg) {
+        return jwt().jwt(jwt -> jwt.subject(personId.toString())
+                .claim("email", personId + "@smsone.co.ug")
                 .claim("organization", Map.of("acme", Map.of("id", activeOrg.toString()))));
     }
 
@@ -115,27 +119,28 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errors[0].code").value("FORBIDDEN"));
 
-        then(userProvisioning).should(never()).provision(any()); // denied before any provisioning
+        then(personProvisioning).should(never()).provision(any()); // denied before any provisioning
     }
 
     @Test
     void ownerInviteProvisionsAcrossModulesAndCreatesMembership() throws Exception {
-        String newSubject = "kc-" + UUID.randomUUID();
-        given(userProvisioning.provision(any(ProvisionRequest.class)))
-                .willReturn(new ProvisionedUser(newSubject, "new@smsone.co.ug", false));
+        UUID newPersonId = UUID.randomUUID();
+        given(personProvisioning.provision(any(ProvisionRequest.class)))
+                .willReturn(new ProvisionedPerson(newPersonId, "new@smsone.co.ug", false));
 
         mockMvc.perform(post("/api/v1/orgs/{orgId}/members", orgId)
                         .with(token(owner, orgId))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"email\":\"new@smsone.co.ug\",\"firstName\":\"New\",\"roleCode\":\"VIEWER\"}"))
+                        .content("{\"email\":\"new@smsone.co.ug\",\"givenName\":\"New\",\"roleCode\":\"VIEWER\"}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.type").value("member"))
                 .andExpect(jsonPath("$.data.attributes.roleCode").value("VIEWER"))
-                .andExpect(jsonPath("$.data.attributes.subject").value(newSubject));
+                .andExpect(jsonPath("$.data.attributes.personId").value(newPersonId.toString()));
 
-        then(keycloakOrg).should().addMember(eq(orgId), eq(newSubject)); // linked in Keycloak too
+        // Attaching at the provider now goes through identity, which owns the subject the call needs.
+        then(providerOrgMembership).should().attach(eq(newPersonId), any());
         org.junit.jupiter.api.Assertions.assertTrue(
-                memberships.findByOrgIdAndUserSubject(orgId, newSubject).isPresent());
+                memberships.findByOrgIdAndPersonId(orgId, newPersonId).isPresent());
     }
 
     @Test
@@ -191,7 +196,7 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
                                 + "\"permissions\":[\"org:read\",\"member:read\"]}"))
                 .andExpect(status().isCreated());
 
-        mockMvc.perform(put("/api/v1/orgs/{orgId}/members/{subject}/role", orgId, viewer)
+        mockMvc.perform(put("/api/v1/orgs/{orgId}/members/{personId}/role", orgId, viewer)
                         .with(token(owner, orgId))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"roleCode\":\"AUDITOR\"}"))
@@ -223,7 +228,7 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.attributes.systemRole").value(false));
 
-        mockMvc.perform(put("/api/v1/orgs/{orgId}/members/{subject}/role", orgId, viewer)
+        mockMvc.perform(put("/api/v1/orgs/{orgId}/members/{personId}/role", orgId, viewer)
                         .with(token(owner, orgId))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"roleCode\":\"ADMIN\"}"))
@@ -252,10 +257,9 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
     void aCustomRoleCarryingMemberInviteCanInvite() throws Exception {
         Set<Permission> recruiterPermissions = EnumSet.copyOf(VIEWER_PERMISSIONS);
         recruiterPermissions.add(Permission.MEMBER_INVITE);
-        String recruiter = attachToNewRole("recruiter-" + UUID.randomUUID(), "RECRUITER", recruiterPermissions);
-        String newSubject = "kc-" + UUID.randomUUID();
-        given(userProvisioning.provision(any(ProvisionRequest.class)))
-                .willReturn(new ProvisionedUser(newSubject, "hire@smsone.co.ug", false));
+        UUID recruiter = attachToNewRole(UUID.randomUUID(), "RECRUITER", recruiterPermissions);
+        given(personProvisioning.provision(any(ProvisionRequest.class)))
+                .willReturn(new ProvisionedPerson(UUID.randomUUID(), "hire@smsone.co.ug", false));
 
         mockMvc.perform(post("/api/v1/orgs/{orgId}/members", orgId)
                         .with(token(recruiter, orgId))
@@ -321,7 +325,8 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
 
     @Test
     void tokenWithNoActiveOrgIsDenied() throws Exception {
-        mockMvc.perform(get("/api/v1/orgs/{orgId}/members", orgId).with(jwt().jwt(jwt -> jwt.subject(owner))))
+        mockMvc.perform(get("/api/v1/orgs/{orgId}/members", orgId)
+                        .with(jwt().jwt(jwt -> jwt.subject(owner.toString()))))
                 .andExpect(status().isForbidden());
     }
 
@@ -329,7 +334,7 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
     void aNonOwnerCannotSelfPromoteToOwner() throws Exception {
         // The escalation guard applies to role ASSIGNMENT too: handing yourself OWNER would grant
         // org:delete, which MANAGER does not hold. Without this, member:role:assign == OWNER.
-        mockMvc.perform(put("/api/v1/orgs/{orgId}/members/{subject}/role", orgId, manager)
+        mockMvc.perform(put("/api/v1/orgs/{orgId}/members/{personId}/role", orgId, manager)
                         .with(token(manager, orgId))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"roleCode\":\"OWNER\"}"))
@@ -338,7 +343,7 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
 
         org.junit.jupiter.api.Assertions.assertEquals(
                 roles.findByOrgIdAndCode(orgId, "MANAGER").orElseThrow().getId(),
-                memberships.findByOrgIdAndUserSubject(orgId, manager).orElseThrow().getRoleId());
+                memberships.findByOrgIdAndPersonId(orgId, manager).orElseThrow().getRoleId());
     }
 
     @Test
@@ -349,12 +354,12 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
                         .content("{\"email\":\"boss@smsone.co.ug\",\"roleCode\":\"OWNER\"}"))
                 .andExpect(status().isForbidden());
 
-        then(userProvisioning).should(never()).provision(any()); // rejected before provisioning
+        then(personProvisioning).should(never()).provision(any()); // rejected before provisioning
     }
 
     @Test
     void ownerCanPromoteAMemberToOwner() throws Exception {
-        mockMvc.perform(put("/api/v1/orgs/{orgId}/members/{subject}/role", orgId, viewer)
+        mockMvc.perform(put("/api/v1/orgs/{orgId}/members/{personId}/role", orgId, viewer)
                         .with(token(owner, orgId))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"roleCode\":\"OWNER\"}"))
@@ -364,7 +369,7 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
 
     @Test
     void duplicateAliasCreateIsConflictNotAdoption() throws Exception {
-        Organization existing = organizations.findByKcOrgId(orgId).orElseThrow();
+        Organization existing = organizations.findById(orgId).orElseThrow();
 
         mockMvc.perform(post("/api/v1/orgs")
                         .with(platformAdmin())
@@ -373,7 +378,7 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
                                 + "\"ownerEmail\":\"evil@smsone.co.ug\"}"))
                 .andExpect(status().isConflict());
 
-        then(userProvisioning).should(never()).provision(any()); // no second OWNER ever provisioned
+        then(personProvisioning).should(never()).provision(any()); // no second OWNER ever provisioned
         then(keycloakOrg).should(never()).createOrganization(any(), any());
     }
 
@@ -381,7 +386,10 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
     void createRefusesToAdoptAnExistingKeycloakOrg() throws Exception {
         // Local projection absent but the alias exists Keycloak-side (e.g. a concurrent create won):
         // strict create must 409, never silently attach a new OWNER to someone else's org.
-        given(keycloakOrg.findOrganizationIdByAlias("taken-alias")).willReturn(java.util.Optional.of(UUID.randomUUID()));
+        // The provider's org id is opaque to us and is a String, not a UUID (V11: varchar so a Google
+        // customer id fits) — stubbing it as one is what made the shape assumption invisible.
+        given(keycloakOrg.findOrganizationIdByAlias("taken-alias"))
+                .willReturn(java.util.Optional.of("kc-org-" + UUID.randomUUID()));
 
         mockMvc.perform(post("/api/v1/orgs")
                         .with(platformAdmin())
@@ -390,7 +398,7 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
                                 + "\"ownerEmail\":\"evil@smsone.co.ug\"}"))
                 .andExpect(status().isConflict());
 
-        then(userProvisioning).should(never()).provision(any());
+        then(personProvisioning).should(never()).provision(any());
         then(keycloakOrg).should(never()).createOrganization(any(), any());
     }
 
@@ -405,7 +413,7 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.data.attributes.status").value("SUSPENDED"));
 
         // Fresh subject: nothing cached, so the resolver's org-status check applies immediately.
-        String lateJoiner = attachToSeededOwner("late-" + UUID.randomUUID());
+        UUID lateJoiner = attachToSeededOwner(UUID.randomUUID());
         mockMvc.perform(get("/api/v1/orgs/{orgId}/members", orgId).with(token(lateJoiner, orgId)))
                 .andExpect(status().isForbidden());
 
@@ -422,11 +430,11 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
 
     @Test
     void removingTheLastOwnerIsBlocked() throws Exception {
-        mockMvc.perform(delete("/api/v1/orgs/{orgId}/members/{subject}", orgId, owner).with(token(owner, orgId)))
+        mockMvc.perform(delete("/api/v1/orgs/{orgId}/members/{personId}", orgId, owner).with(token(owner, orgId)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errors[0].code").value("CONFLICT"));
 
-        then(keycloakOrg).should(never()).removeMember(any(), any()); // guarded before any Keycloak call
+        then(providerOrgMembership).should(never()).detach(any(), any()); // guarded before any Keycloak call
     }
 
     /**
@@ -462,7 +470,7 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
     void aRemovedMemberLeavesTheListingAndReleasesTheirRole() throws Exception {
         createAuditorRole();
         UUID auditorId = roles.findByOrgIdAndCode(orgId, "AUDITOR").orElseThrow().getId();
-        mockMvc.perform(put("/api/v1/orgs/{orgId}/members/{subject}/role", orgId, viewer)
+        mockMvc.perform(put("/api/v1/orgs/{orgId}/members/{personId}/role", orgId, viewer)
                         .with(token(owner, orgId))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"roleCode\":\"AUDITOR\"}"))
@@ -472,14 +480,14 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errors[0].code").value("CONFLICT"));
 
-        mockMvc.perform(delete("/api/v1/orgs/{orgId}/members/{subject}", orgId, viewer).with(token(owner, orgId)))
+        mockMvc.perform(delete("/api/v1/orgs/{orgId}/members/{personId}", orgId, viewer).with(token(owner, orgId)))
                 .andExpect(status().isNoContent());
 
         mockMvc.perform(get("/api/v1/orgs/{orgId}/members", orgId).with(token(owner, orgId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[?(@.id=='" + owner + "')]").exists())   // listing reaches the org
                 .andExpect(jsonPath("$.data[?(@.id=='" + viewer + "')]").doesNotExist());
-        assertThat(jdbc.queryForObject("select count(*) from membership where org_id = ? and user_subject = ?",
+        assertThat(jdbc.queryForObject("select count(*) from membership where org_id = ? and person_id = ?",
                 Integer.class, orgId, viewer)).isEqualTo(1); // hidden, not gone
 
         mockMvc.perform(delete("/api/v1/orgs/{orgId}/roles/{roleId}", orgId, auditorId).with(token(owner, orgId)))

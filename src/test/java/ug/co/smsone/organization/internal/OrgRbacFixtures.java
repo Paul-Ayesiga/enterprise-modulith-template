@@ -27,19 +27,19 @@ final class OrgRbacFixtures {
     static final Set<Permission> VIEWER_PERMISSIONS = EnumSet.of(
             Permission.ORG_READ, Permission.MEMBER_READ, Permission.ROLE_READ, Permission.ORG_SETTINGS_READ);
 
-    /** The one role {@code RoleSeeder} creates; the subject joins it as a member. */
-    static String attachToSeededOwner(RoleRepository roles, MembershipRepository memberships,
-            UUID orgId, String subject) {
+    /** The one role {@code RoleSeeder} creates; the person joins it as a member. */
+    static UUID attachToSeededOwner(RoleRepository roles, MembershipRepository memberships,
+            UUID orgId, UUID personId) {
         Role role = roles.findByOrgIdAndCode(orgId, Role.OWNER_CODE).orElseThrow();
-        memberships.save(Membership.create(orgId, subject, role.getId(), Role.OWNER_CODE));
-        return subject;
+        memberships.save(Membership.create(orgId, personId, role.getId(), Role.OWNER_CODE));
+        return personId;
     }
 
     /** An owner-created role: {@code system_role=false}, any permission subset, org-scoped. */
-    static String attachToNewRole(RoleRepository roles, MembershipRepository memberships,
-            UUID orgId, String subject, String code, Set<Permission> permissions) {
+    static UUID attachToNewRole(RoleRepository roles, MembershipRepository memberships,
+            UUID orgId, UUID personId, String code, Set<Permission> permissions) {
         Role role = roles.save(Role.create(orgId, code, code, false, null, permissions));
-        memberships.save(Membership.create(orgId, subject, role.getId(), code));
-        return subject;
+        memberships.save(Membership.create(orgId, personId, role.getId(), code));
+        return personId;
     }
 }

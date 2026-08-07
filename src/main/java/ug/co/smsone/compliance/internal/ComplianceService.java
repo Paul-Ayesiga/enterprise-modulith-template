@@ -18,18 +18,54 @@ import ug.co.smsone.shared.security.PlatformAdmins;
 import ug.co.smsone.shared.web.ApiSource;
 
 /**
- * Consent history, legal holds, and GDPR erasure. Erasure is the sharp edge: a subject under an
- * active hold is REFUSED (the hold outranks the request); otherwise their owned rows are
- * soft-deleted now — invisible immediately — and the nightly purge hard-deletes them at the
- * retention window (which itself honors holds). The soft-delete is raw JDBC across the owned
- * tables, the same cross-cutting data-lifecycle reach the purge job has (AGENTS §7).
+ * Consent history, legal holds, and GDPR erasure. Erasure is the sharp edge: a person under an active
+ * hold is REFUSED (the hold outranks the request); otherwise their owned rows are soft-deleted now —
+ * invisible immediately — and the nightly purge hard-deletes them at the retention window (which itself
+ * honors holds). The soft-delete is raw JDBC across the owned tables, the same cross-cutting
+ * data-lifecycle reach the purge job has (AGENTS §7).
+ *
+ * <p>Every identity this service handles is a {@code person.id}. It used to be a Keycloak subject, and
+ * V34 says why that was the worst place in the schema for a foreign identifier to live: an erasure that
+ * matches the wrong rows — or none — is a legal problem rather than a bug.
  */
 @Service
 class ComplianceService {
 
     private static final Logger log = LoggerFactory.getLogger(ComplianceService.class);
-    /** Subject-owned tables an erasure clears. Constants — never input. */
-    private static final List<String> SUBJECT_TABLES = List.of("app_user", "user_profile", "user_device");
+
+    /** A table an erasure clears, and the column it is keyed by. Constants — never input. */
+    private record OwnedTable(String table, String keyColumn) {
+    }
+
+    /**
+     * The person-owned tables an erasure soft-deletes. Two shapes, hence the record rather than one
+     * reused column name: {@code person} is keyed by its own {@code id}, everything else soft-references
+     * it as {@code person_id}.
+     *
+     * <p>The two ADDITIONS over the old (account, profile, device) list are load-bearing, not tidying:
+     *
+     * <ul>
+     *   <li>{@code external_identity} — the resolution key. A person soft-deleted while their link is
+     *       still live is an account that reads as erased and still authenticates, because the edge
+     *       resolves {@code (issuer, sub)} through that table and its unique index is partial on
+     *       {@code deleted_at is null}.</li>
+     *   <li>{@code person_contact} — {@code uq_person_contact_verified_live} is partial the same way, so
+     *       a live contact row goes on holding the erased human's verified address hostage against
+     *       every future signup at it.</li>
+     * </ul>
+     *
+     * <p>Both of those DO have real FKs to {@code person} with {@code on delete cascade}, which is
+     * exactly why leaving them out would look correct: the cascade fires on the HARD delete, thirty days
+     * later, and erasure is meant to take effect now. {@code person_profile} and {@code user_device}
+     * have no FK at all (V28/V31 — profile is a pre-drawn service seam), so nothing but this list ever
+     * reaches them.
+     */
+    private static final List<OwnedTable> ERASED_TABLES = List.of(
+            new OwnedTable("person", "id"),
+            new OwnedTable("external_identity", "person_id"),
+            new OwnedTable("person_contact", "person_id"),
+            new OwnedTable("person_profile", "person_id"),
+            new OwnedTable("user_device", "person_id"));
 
     private final ConsentRepository consents;
     private final LegalHoldRepository holds;
@@ -57,38 +93,42 @@ class ComplianceService {
     // ---- Consent (append-only) ----
 
     @Transactional
-    ConsentRecord recordConsent(String subject, String purpose, boolean granted, String source) {
+    ConsentRecord recordConsent(UUID personId, String purpose, boolean granted, String source) {
         if (purpose == null || purpose.isBlank() || purpose.length() > 60) {
             throw new ValidationException("purpose is required (max 60 characters).",
                     ApiSource.pointer("/data/attributes/purpose"));
         }
         ConsentRecord record = consents.save(
-                ConsentRecord.of(subject, purpose.trim(), granted, source, clock.instant()));
-        auditLog.record("compliance.consent_recorded", null, subject,
+                ConsentRecord.of(personId, purpose.trim(), granted, source, clock.instant()));
+        auditLog.record("compliance.consent_recorded", null, personId.toString(),
                 null, "purpose=" + purpose.trim() + " granted=" + granted);
         return record;
     }
 
     @Transactional(readOnly = true)
-    List<ConsentRecord> consentHistory(String subject) {
-        return consents.findBySubjectOrderByCreatedAtDesc(subject);
+    List<ConsentRecord> consentHistory(UUID personId) {
+        return consents.findByPersonIdOrderByCreatedAtDesc(personId);
     }
 
     // ---- Legal holds ----
 
     @Transactional
-    LegalHold placeSubjectHold(String subject, String reason, String placedBy) {
+    LegalHold placePersonHold(UUID personId, String reason, UUID placedByPersonId) {
         requireReason(reason);
-        LegalHold hold = holds.save(LegalHold.onSubject(subject, reason.trim(), placedBy, clock.instant()));
-        auditLog.record("compliance.legal_hold_placed", null, subject, null, "reason=" + reason.trim());
+        LegalHold hold = holds.save(
+                LegalHold.onPerson(personId, reason.trim(), placedByPersonId, clock.instant()));
+        auditLog.record("compliance.legal_hold_placed", null, personId.toString(), null,
+                "reason=" + reason.trim());
         return hold;
     }
 
     @Transactional
-    LegalHold placeOrgHold(UUID orgId, String reason, String placedBy) {
+    LegalHold placeOrgHold(UUID orgId, String reason, UUID placedByPersonId) {
         requireReason(reason);
-        LegalHold hold = holds.save(LegalHold.onOrg(orgId, reason.trim(), placedBy, clock.instant()));
-        auditLog.record("compliance.legal_hold_placed", orgId, orgId.toString(), null, "reason=" + reason.trim());
+        LegalHold hold = holds.save(
+                LegalHold.onOrg(orgId, reason.trim(), placedByPersonId, clock.instant()));
+        auditLog.record("compliance.legal_hold_placed", orgId, orgId.toString(), null,
+                "reason=" + reason.trim());
         return hold;
     }
 
@@ -98,62 +138,74 @@ class ComplianceService {
     }
 
     @Transactional
-    void releaseHold(UUID id, String releasedBy) {
+    void releaseHold(UUID id, UUID releasedByPersonId) {
         LegalHold hold = holds.findByIdAndReleasedAtIsNull(id)
                 .orElseThrow(() -> new NotFoundException("Active legal hold not found."));
-        hold.release(releasedBy, clock.instant());
+        hold.release(releasedByPersonId, clock.instant());
         holds.save(hold);
+        // The target names whichever half of the hold was set — a person id or an org id — read through
+        // `scope`, which is what audit_log.target being polymorphic text is for (V13).
         auditLog.record("compliance.legal_hold_released", hold.getOrgId(),
-                hold.getSubject() != null ? hold.getSubject() : String.valueOf(hold.getOrgId()), null, null);
+                String.valueOf(hold.getPersonId() != null ? hold.getPersonId() : hold.getOrgId()), null, null);
     }
 
     // ---- Erasure ----
 
     @Transactional
-    ErasureRequest requestErasure(String subject, String requestedBy) {
-        ErasureRequest request = erasures.save(ErasureRequest.received(subject, requestedBy, clock.instant()));
-        if (legalHolds.subjectHeld(subject)) {
-            request.refused("A legal hold is in force for this subject; erasure is deferred until it is released.",
+    ErasureRequest requestErasure(UUID personId, UUID requestedByPersonId) {
+        ErasureRequest request = erasures.save(
+                ErasureRequest.received(personId, requestedByPersonId, clock.instant()));
+        if (legalHolds.personHeld(personId)) {
+            request.refused("A legal hold is in force for this person; erasure is deferred until it is released.",
                     clock.instant());
             erasures.save(request);
-            auditLog.record("compliance.erasure_refused", null, subject, null, "reason=legal-hold");
+            auditLog.record("compliance.erasure_refused", null, personId.toString(), null, "reason=legal-hold");
             return request;
         }
         // Never erase the platform's last super-admin — it would lock out role administration until the
         // bootstrap re-seeds one on the next restart. Grant the role elsewhere first, then erase.
         PlatformAdmins admins = platformAdmins.getIfAvailable();
-        if (admins != null && admins.isSoleSuperAdmin(subject)) {
+        if (admins != null && admins.isSoleSuperAdmin(personId)) {
             request.refused("This account is the last platform super-admin; grant that role to another "
                     + "account before erasing this one.", clock.instant());
             erasures.save(request);
-            auditLog.record("compliance.erasure_refused", null, subject, null, "reason=last-super-admin");
+            auditLog.record("compliance.erasure_refused", null, personId.toString(), null, "reason=last-super-admin");
             return request;
         }
         int cleared = 0;
-        for (String table : SUBJECT_TABLES) {
-            cleared += jdbc.update("update " + table + " set deleted_at = now() "
-                    + "where subject = ? and deleted_at is null", subject);
+        for (OwnedTable owned : ERASED_TABLES) {
+            cleared += jdbc.update("update " + owned.table() + " set deleted_at = now() "
+                    + "where " + owned.keyColumn() + " = ? and deleted_at is null", personId);
         }
+        // person_preference is the one thing erasure REMOVES outright, because it is the one thing that
+        // cannot be soft-deleted: V28 gave it no deleted_at (it has no lifecycle beyond its person) and
+        // no FK (profile is a pre-drawn service seam), so there is no state that means "erased" and no
+        // cascade that will ever come for it. Not deleting it here means it survives the human forever.
+        // The hold check above has already run, so the only cost is that restoring a person inside the
+        // recovery window restores them without their preferences — the right trade against keeping data
+        // somebody exercised a legal right to have destroyed.
+        int preferences = jdbc.update("delete from person_preference where person_id = ?", personId);
         request.executed(clock.instant());
         erasures.save(request);
-        auditLog.record("compliance.erasure_executed", null, subject, null, "rowsSoftDeleted=" + cleared);
-        log.info("Erasure executed for subject {} — {} rows soft-deleted; purge hard-deletes at retention",
-                subject, cleared);
+        auditLog.record("compliance.erasure_executed", null, personId.toString(), null,
+                "rowsSoftDeleted=" + cleared + " preferencesDeleted=" + preferences);
+        log.info("Erasure executed for person {} — {} rows soft-deleted, {} preference rows deleted; "
+                + "purge hard-deletes the rest at retention", personId, cleared, preferences);
         return request;
     }
 
     // ---- Privacy / portability ----
 
     @Transactional(readOnly = true)
-    Map<String, Object> dataExport(String subject) {
+    Map<String, Object> dataExport(UUID personId) {
         return Map.of(
-                "subject", subject,
+                "personId", personId.toString(),
                 "generatedAtHint", "server clock",
-                "consents", consentHistory(subject).stream()
+                "consents", consentHistory(personId).stream()
                         .map(c -> Map.of("purpose", c.getPurpose(), "granted", c.isGranted(),
                                 "source", c.getSource() == null ? "" : c.getSource()))
                         .toList(),
-                "underLegalHold", legalHolds.subjectHeld(subject));
+                "underLegalHold", legalHolds.personHeld(personId));
     }
 
     private static void requireReason(String reason) {

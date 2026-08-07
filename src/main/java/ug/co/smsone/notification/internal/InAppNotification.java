@@ -4,15 +4,22 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Table;
 import java.time.Instant;
+import java.util.UUID;
 import ug.co.smsone.shared.persistence.BaseEntity;
 
-/** An in-app notification addressed to a user (by immutable Keycloak subject), readable via the REST API. */
+/**
+ * An in-app notification addressed to a PERSON, readable via the REST API.
+ *
+ * <p>{@code personId} is a soft ref to {@code person.id} with no FK — identity is another module
+ * (AGENTS §1). The column was {@code recipient varchar(150)} holding a Keycloak subject behind a
+ * neutral name; V8 renamed it and this field says the same thing the column now does.
+ */
 @Entity
 @Table(name = "in_app_notification")
 class InAppNotification extends BaseEntity {
 
-    @Column(nullable = false, length = 150)
-    private String recipient;
+    @Column(name = "person_id", nullable = false)
+    private UUID personId;
 
     @Column(nullable = false, length = 255)
     private String subject;
@@ -27,9 +34,9 @@ class InAppNotification extends BaseEntity {
         // JPA
     }
 
-    static InAppNotification create(String recipient, String subject, String body) {
+    static InAppNotification create(UUID personId, String subject, String body) {
         InAppNotification notification = new InAppNotification();
-        notification.recipient = recipient;
+        notification.personId = personId;
         notification.subject = subject;
         notification.body = body;
         return notification;

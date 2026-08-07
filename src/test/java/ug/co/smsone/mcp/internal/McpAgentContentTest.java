@@ -34,8 +34,10 @@ class McpAgentContentTest extends AbstractIntegrationTest {
                     .extracting(McpSchema.Prompt::name)
                     .contains("diagnose_failed_webhooks", "usage_review");
 
-            McpSchema.GetPromptResult rendered = client.getPrompt(new McpSchema.GetPromptRequest(
-                    "diagnose_failed_webhooks", Map.of("subscription_id", "sub-42")));
+            McpSchema.GetPromptResult rendered = client.getPrompt(
+                    McpSchema.GetPromptRequest.builder("diagnose_failed_webhooks")
+                            .arguments(Map.of("subscription_id", "sub-42"))
+                            .build());
             assertThat(rendered.messages()).hasSize(1);
             McpSchema.TextContent text = (McpSchema.TextContent) rendered.messages().get(0).content();
             assertThat(text.text()).contains("For subscription sub-42").contains("webhook_redeliver");
@@ -61,7 +63,8 @@ class McpAgentContentTest extends AbstractIntegrationTest {
     }
 
     private String read(McpSyncClient client, String uri) {
-        McpSchema.ReadResourceResult result = client.readResource(new McpSchema.ReadResourceRequest(uri));
+        McpSchema.ReadResourceResult result =
+                client.readResource(McpSchema.ReadResourceRequest.builder(uri).build());
         return ((McpSchema.TextResourceContents) result.contents().get(0)).text();
     }
 

@@ -61,8 +61,7 @@ class SearchQueryService {
             keys.put("rank", last.rank());
             keys.put("id", last.id());
             keys.put("mode", mode);
-            nextCursor = Cursors.encode(
-                    (KeysetScrollPosition) org.springframework.data.domain.ScrollPosition.forward(keys));
+            nextCursor = Cursors.encode(org.springframework.data.domain.ScrollPosition.forward(keys));
         }
         List<T> items = pageHits.stream().map(mapper).toList();
         return new WindowedResult<>(items, new PageMeta(page.size(), items.size(), hasMore, nextCursor));

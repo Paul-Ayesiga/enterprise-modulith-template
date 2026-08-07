@@ -70,10 +70,6 @@ class ApiKey extends SoftDeletableEntity {
         return expiresAt != null && !expiresAt.isAfter(now);
     }
 
-    void touch(Instant now) {
-        this.lastUsedAt = now;
-    }
-
     UUID getOrgId() {
         return orgId;
     }

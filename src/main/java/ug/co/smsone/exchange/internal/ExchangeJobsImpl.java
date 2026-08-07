@@ -13,8 +13,12 @@ import ug.co.smsone.shared.web.WindowedResult;
 
 /**
  * The {@link ExchangeJobs} port: mappings over {@link ExchangeService}, with the caller resolved
- * from the security context exactly as the REST controllers resolve it — the requester on the job
- * row is the honest subject either way ({@code key:<id>} for agents).
+ * from the security context exactly as the REST controllers resolve it.
+ *
+ * <p>READS work for any caller; SUBMIT and CANCEL need a person, so an API-key agent is refused by
+ * {@code ExchangeService.requireRequester} while an OAuth agent (which resolves to a person like any
+ * other sign-in) is not. That is the schema's rule, not this port's: a job re-checks its requester's
+ * permissions when it runs, and a machine key has no membership to re-check.
  */
 @Component
 class ExchangeJobsImpl implements ExchangeJobs {

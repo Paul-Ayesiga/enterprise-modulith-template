@@ -7,25 +7,25 @@
 -- job stop at the next batch boundary without anyone yanking its row.
 create table exchange_job
 (
-    id               uuid         primary key,
-    org_id           uuid,                          -- tenant scope (soft ref); null = platform-scoped handler
-    requester        varchar(64)  not null,         -- token subject; per-record escalation checks resolve THIS subject's permissions at processing time
-    job_type         varchar(10)  not null,         -- IMPORT | EXPORT
-    handler          varchar(60)  not null,         -- ExchangeHandler id
-    format           varchar(10)  not null,         -- CSV | JSONL
-    status           varchar(30)  not null,         -- PENDING | VALIDATING | PROCESSING | COMPLETED | COMPLETED_WITH_ERRORS | FAILED | CANCELLED
-    source_key       varchar(300),                  -- import source (files namespace)
-    result_key       varchar(300),                  -- export output
-    error_report_key varchar(300),                  -- row-addressed error CSV, when failures happened
-    processed        bigint       not null default 0,
-    failed           bigint       not null default 0,
-    next_offset      bigint       not null default 0,
-    attempts         int          not null default 0,
-    cancel_requested boolean      not null default false,
-    locked_at        timestamptz,
-    last_error       text,
-    created_at       timestamptz  not null,
-    updated_at       timestamptz
+    id                  uuid         primary key,
+    org_id              uuid,                          -- organization.id — tenant scope (soft ref); null = platform-scoped handler
+    requester_person_id uuid         not null,         -- person.id; per-record escalation checks resolve THIS person's permissions at processing time
+    job_type            varchar(10)  not null,         -- IMPORT | EXPORT
+    handler             varchar(60)  not null,         -- ExchangeHandler id
+    format              varchar(10)  not null,         -- CSV | JSONL
+    status              varchar(30)  not null,         -- PENDING | VALIDATING | PROCESSING | COMPLETED | COMPLETED_WITH_ERRORS | FAILED | CANCELLED
+    source_key          varchar(300),                  -- import source (files namespace)
+    result_key          varchar(300),                  -- export output
+    error_report_key    varchar(300),                  -- row-addressed error CSV, when failures happened
+    processed           bigint       not null default 0,
+    failed              bigint       not null default 0,
+    next_offset         bigint       not null default 0,
+    attempts            int          not null default 0,
+    cancel_requested    boolean      not null default false,
+    locked_at           timestamptz,
+    last_error          text,
+    created_at          timestamptz  not null,
+    updated_at          timestamptz
 );
 
 -- The claim: eligible work only (partial keeps the index tight as terminal rows pile up).

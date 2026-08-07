@@ -1,5 +1,6 @@
 package ug.co.smsone.shared.security;
 
+import java.io.Serial;
 import java.util.List;
 import org.springframework.security.authentication.AbstractAuthenticationToken;
 import org.springframework.security.core.GrantedAuthority;
@@ -10,8 +11,15 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
  * ROLE authority (so {@code hasRole('platform-support')} routes just work); org keys carry NO
  * authorities — their permission subset is enforced by {@code ApiPermissionEvaluator}'s dedicated
  * branch, never by roles.
+ *
+ * <p>{@code final}, like {@link ImpersonatedAuthenticationToken}: the constructor calls
+ * {@code setAuthenticated(true)}, so a subclass could observe a half-built {@code this} — and a subclass
+ * of an authentication token is a way to claim authority the mint never granted. Nothing extends it.
  */
-public class ApiKeyAuthenticationToken extends AbstractAuthenticationToken {
+public final class ApiKeyAuthenticationToken extends AbstractAuthenticationToken {
+
+    @Serial
+    private static final long serialVersionUID = 1L;
 
     private final ApiKeyPrincipal principal;
 
@@ -33,8 +41,13 @@ public class ApiKeyAuthenticationToken extends AbstractAuthenticationToken {
         return "N/A";
     }
 
+    /**
+     * The key's own id. Framework-facing only (logs, {@code authentication.name} expressions) — it names
+     * a CREDENTIAL, not a who, and nothing may read it as an identity: the caller behind this token has
+     * no person, which {@link CurrentUser#authenticationMethod()} states outright.
+     */
     @Override
     public String getName() {
-        return principal.subject();
+        return principal.keyId().toString();
     }
 }

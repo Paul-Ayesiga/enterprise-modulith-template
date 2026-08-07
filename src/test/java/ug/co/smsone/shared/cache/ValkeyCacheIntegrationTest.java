@@ -111,6 +111,36 @@ class ValkeyCacheIntegrationTest extends AbstractIntegrationTest {
         assertSurvivesL2RoundTrip("record", new CachedShape(Set.of("org:read"), 2), CachedShape.class);
     }
 
+    /**
+     * The SCALAR shape, and it is the mirror image of the test above: a scalar does NOT keep its type.
+     * A JSON string has no property to hang a type id on, so a cached {@link java.util.UUID} comes back
+     * as a {@code String} — and a {@code @Cacheable} method declared to return {@code UUID} would then
+     * ClassCastException inside the CGLIB proxy, on every authenticated request, but only once L1 had
+     * expired.
+     *
+     * <p>This is asserted rather than fixed because it is the constraint the edge resolvers were
+     * designed around, and the design is only readable if the constraint is written down: {@code
+     * identity.internal.PersonResolutionCache} and {@code organization.internal.OrgResolutionCache}
+     * cache the id AS TEXT for exactly this reason. If a later change ever makes scalars carry their
+     * type, this test fails and points at the two classes that may then be simplified.
+     */
+    @Test
+    void aScalarLosesItsTypeAcrossL2WhichIsWhyTheEdgeResolversCacheText() {
+        java.util.UUID id = java.util.UUID.randomUUID();
+        Cache cache = cacheManager.getCache("cache.typeprobe");
+        cache.put("bare-uuid", id);
+        caffeineCacheManager.getCache("cache.typeprobe").clear(); // wipe L1 — force the L2 round-trip
+
+        assertThat(cache.get("bare-uuid").get())
+                .as("a bare UUID reconstructs as a String — cache the text, never the UUID")
+                .isInstanceOf(String.class)
+                .isEqualTo(id.toString());
+
+        // The shape the resolvers actually cache. It survives BECAUSE String is what a JSON scalar
+        // reconstructs as whether or not a type id was written.
+        assertSurvivesL2RoundTrip("uuid-text", id.toString(), String.class);
+    }
+
     /** A record with a collection field — the other shape modules cache. */
     record CachedShape(Set<String> codes, int count) {
     }

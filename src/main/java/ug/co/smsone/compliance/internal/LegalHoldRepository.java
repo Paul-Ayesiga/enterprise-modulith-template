@@ -7,9 +7,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 interface LegalHoldRepository extends JpaRepository<LegalHold, UUID> {
 
-    boolean existsBySubjectAndReleasedAtIsNull(String subject);
-
-    boolean existsByOrgIdAndReleasedAtIsNull(UUID orgId);
+    boolean existsByPersonIdAndReleasedAtIsNull(UUID personId);
 
     List<LegalHold> findByReleasedAtIsNullOrderByPlacedAtDesc();
 

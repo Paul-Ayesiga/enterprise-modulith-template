@@ -42,7 +42,7 @@ class AdminOrganizationController {
     record AdminOrgAttributes(String alias, String name, String status, Instant createdAt) {
     }
 
-    record AdminMemberAttributes(String subject, String roleCode, String status, Instant createdAt) {
+    record AdminMemberAttributes(UUID personId, String roleCode, String status, Instant createdAt) {
     }
 
     @GetMapping
@@ -65,7 +65,7 @@ class AdminOrganizationController {
     @GetMapping("/{orgId}/members")
     @Operation(summary = "List an organization's members as the platform",
             description = """
-                    The support view of a tenant's roster — subjects and role codes, read-only. \
+                    The support view of a tenant's roster — person ids and role codes, read-only. \
                     Managing members stays a tenant action (or an impersonation session's).""")
     @PreAuthorize("hasRole('platform-support')")
     WindowedResult<ResourceObject> listMembers(@PathVariable UUID orgId, CursorPageRequest page) {
@@ -73,7 +73,7 @@ class AdminOrganizationController {
         Map<UUID, String> roleCodes = members.roleCodes(orgId);
         return WindowedResult.of(members.list(orgId, page), page,
                 membership -> new ResourceObject(membership.getId().toString(), "membership",
-                        new AdminMemberAttributes(membership.getUserSubject(),
+                        new AdminMemberAttributes(membership.getPersonId(),
                                 roleCodes.get(membership.getRoleId()),
                                 membership.getStatus().name(), membership.getCreatedAt())));
     }
@@ -83,8 +83,8 @@ class AdminOrganizationController {
             description = """
                     Terminal lifecycle step, `platform-admin`, and only from SUSPENDED (409 \
                     otherwise) — suspension is the reversible step that already cut access. The \
-                    row soft-deletes and is restorable until the retention purge; the Keycloak \
-                    organization is kept (see the lifecycle doc).""")
+                    row soft-deletes and is restorable until the retention purge; the identity \
+                    provider's organization is kept (see the lifecycle doc).""")
     @PreAuthorize("hasRole('platform-admin')")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     void delete(@PathVariable UUID orgId) {
@@ -104,7 +104,7 @@ class AdminOrganizationController {
     }
 
     private static ResourceObject toResource(Organization organization) {
-        return new ResourceObject(organization.getKcOrgId().toString(), RESOURCE_TYPE,
+        return new ResourceObject(organization.getId().toString(), RESOURCE_TYPE,
                 new AdminOrgAttributes(organization.getAlias(), organization.getName(),
                         organization.getStatus().name(), organization.getCreatedAt()));
     }

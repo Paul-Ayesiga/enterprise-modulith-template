@@ -9,7 +9,6 @@ import java.time.Instant;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
-import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -18,6 +17,7 @@ import ug.co.smsone.notification.NotificationRequest;
 import ug.co.smsone.notification.Notifications;
 import ug.co.smsone.notification.Recipient;
 import ug.co.smsone.organization.Organizations;
+import ug.co.smsone.organization.ProvisionedOrganization;
 import ug.co.smsone.shared.audit.AuditLog;
 import ug.co.smsone.shared.error.ConflictException;
 import ug.co.smsone.shared.error.ForbiddenException;
@@ -57,7 +57,7 @@ class SignupService {
     }
 
     @Transactional
-    void request(String organizationName, String email, String firstName, String lastName) {
+    void request(String organizationName, String email, String givenName, String familyName) {
         requireEnabled();
         String name = organizationName == null ? "" : organizationName.trim();
         if (name.length() < 2 || name.length() > 80) {
@@ -97,8 +97,8 @@ class SignupService {
         byte[] tokenBytes = new byte[32];
         RANDOM.nextBytes(tokenBytes);
         String token = Base64.getUrlEncoder().withoutPadding().encodeToString(tokenBytes);
-        requests.save(SignupRequest.pending(normalizedEmail, name, blankToNull(firstName),
-                blankToNull(lastName), sha256(token), clock.instant().plus(properties.tokenTtl()),
+        requests.save(SignupRequest.pending(normalizedEmail, name, blankToNull(givenName),
+                blankToNull(familyName), sha256(token), clock.instant().plus(properties.tokenTtl()),
                 clock.instant()));
 
         String link = properties.verifyUrl() + "?token=" + token;
@@ -125,22 +125,25 @@ class SignupService {
         if (request.expired(clock.instant())) {
             throw invalidToken();
         }
-        UUID orgId = createWithAliasRetry(request);
-        request.completed(orgId, clock.instant());
+        // Both ids come back from the ONE call that created them, and both are written here. V42's
+        // point: a completed request used to record no link to the person it produced, so the
+        // request -> person relationship was recoverable only by matching the email string back.
+        ProvisionedOrganization created = createWithAliasRetry(request);
+        request.completed(created.organizationId(), created.ownerPersonId(), clock.instant());
         requests.save(request);
-        auditLog.record("signup.completed", orgId, request.getEmail(), null,
+        auditLog.record("signup.completed", created.organizationId(), request.getEmail(), null,
                 "org=" + request.getOrgName());
         return request;
     }
 
     /** The standard path throws 409 on a taken alias; suffix and retry a bounded number of times. */
-    private UUID createWithAliasRetry(SignupRequest request) {
+    private ProvisionedOrganization createWithAliasRetry(SignupRequest request) {
         String base = slug(request.getOrgName());
         for (int attempt = 0; attempt < MAX_ALIAS_ATTEMPTS; attempt++) {
             String candidate = attempt == 0 ? base : base + "-" + (attempt + 1);
             try {
                 return organizations.create(candidate, request.getOrgName(), request.getEmail(),
-                        request.getFirstName(), request.getLastName());
+                        request.getGivenName(), request.getFamilyName());
             } catch (ConflictException taken) {
                 // try the next suffix
             }

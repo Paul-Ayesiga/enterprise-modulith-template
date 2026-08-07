@@ -6,22 +6,24 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
 import java.time.Instant;
-import java.util.UUID;
 import org.hibernate.annotations.SQLDelete;
 import org.hibernate.annotations.SQLRestriction;
-import ug.co.smsone.organization.OrganizationRegistered;
 import ug.co.smsone.organization.OrganizationStatusChanged;
 import ug.co.smsone.shared.persistence.SoftDeletableEntity;
 
-/** Local projection of a Keycloak organization. {@code kcOrgId} is the tenant key used everywhere. */
+/**
+ * The tenant. Its {@code id} is the tenant key used everywhere — this row is no longer a projection of
+ * something Keycloak owns. The provider's organization id lives in {@link ExternalOrganization} and is
+ * resolved through {@link OrgResolver}; V11's header records what it cost to have it here instead.
+ *
+ * <p>{@code alias} is the local slug and also the key Keycloak's {@code organization} claim is keyed by,
+ * but the claim is resolved through the link table — an alias is never trusted as an identifier.
+ */
 @Entity
 @Table(name = "organization")
 @SQLDelete(sql = "update organization set deleted_at = now(), version = version + 1 where id = ? and version = ?")
 @SQLRestriction("deleted_at is null")
 class Organization extends SoftDeletableEntity {
-
-    @Column(name = "kc_org_id", nullable = false, updatable = false)
-    private UUID kcOrgId;
 
     @Column(nullable = false, length = 120)
     private String alias;
@@ -37,13 +39,17 @@ class Organization extends SoftDeletableEntity {
         // JPA
     }
 
-    static Organization register(UUID kcOrgId, String alias, String name) {
+    /**
+     * No {@code OrganizationRegistered} is registered here, and that is forced rather than chosen: the
+     * id is assigned by Hibernate at persist, so inside this factory there is no tenant key to put in
+     * the event. {@link OrgProjectionWriter} publishes it once the row exists — the same explicit
+     * publication a delete already needs, and in the same transaction, so listeners see no difference.
+     */
+    static Organization register(String alias, String name) {
         Organization organization = new Organization();
-        organization.kcOrgId = kcOrgId;
         organization.alias = alias;
         organization.name = name;
         organization.status = OrganizationStatus.ACTIVE;
-        organization.registerEvent(new OrganizationRegistered(kcOrgId, alias, Instant.now()));
         return organization;
     }
 
@@ -56,7 +62,7 @@ class Organization extends SoftDeletableEntity {
             return; // idempotent — no spurious event/cache flush
         }
         this.status = OrganizationStatus.SUSPENDED;
-        registerEvent(new OrganizationStatusChanged(kcOrgId, status.name(), Instant.now()));
+        registerEvent(new OrganizationStatusChanged(getId(), status.name(), Instant.now()));
     }
 
     void reactivate() {
@@ -64,11 +70,7 @@ class Organization extends SoftDeletableEntity {
             return;
         }
         this.status = OrganizationStatus.ACTIVE;
-        registerEvent(new OrganizationStatusChanged(kcOrgId, status.name(), Instant.now()));
-    }
-
-    UUID getKcOrgId() {
-        return kcOrgId;
+        registerEvent(new OrganizationStatusChanged(getId(), status.name(), Instant.now()));
     }
 
     String getAlias() {

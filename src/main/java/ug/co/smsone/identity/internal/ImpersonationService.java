@@ -29,6 +29,10 @@ import ug.co.smsone.shared.web.CursorPageRequest;
  * decide per request — who may be worn, for how long, in which mode — has to be settled once, at the
  * moment the session is authorized, and written into the row the filter later reads.
  *
+ * <p>Sessions name people by {@code person.id}. The caller's own id is resolved from the edge subject
+ * once, at the top of each entry point; the target arrives as a person id already, because an operator
+ * picking somebody out of the platform listing is picking a person, not a Keycloak account.
+ *
  * <p>The three lifecycle events go to the {@code audit_log} port. There is no {@code _expired} event
  * and no sweep job to raise one: expiry is evaluated on read
  * ({@link ImpersonationSession#isActive}), so a lapsed session simply stops resolving.
@@ -39,12 +43,15 @@ class ImpersonationService {
     private static final Sort NEWEST_FIRST = Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
     private static final int REASON_MIN = 8;
     private static final int REASON_MAX = 500; // impersonation_session.reason
-    private static final String TARGET_POINTER = "/data/attributes/targetSubject";
+    private static final int DISPLAY_MAX = 320; // impersonation_session.target_display
+    private static final String TARGET_POINTER = "/data/attributes/targetPersonId";
     private static final String REASON_POINTER = "/data/attributes/reason";
     private static final String TTL_POINTER = "/data/attributes/ttl";
 
     private final ImpersonationSessionRepository sessions;
-    private final UserRepository users;
+    private final PersonRepository persons;
+    private final PersonResolver resolver;
+    private final PersonContacts contacts;
     private final KeycloakUserAdminGateway keycloak;
     private final CurrentUserProvider currentUserProvider;
     private final AuditLog auditLog;
@@ -53,12 +60,15 @@ class ImpersonationService {
     private final Clock clock;
     private final io.micrometer.core.instrument.MeterRegistry meters;
 
-    ImpersonationService(ImpersonationSessionRepository sessions, UserRepository users,
-            KeycloakUserAdminGateway keycloak, CurrentUserProvider currentUserProvider, AuditLog auditLog,
-            TransactionTemplate transactionTemplate, ImpersonationProperties properties, Clock clock,
+    ImpersonationService(ImpersonationSessionRepository sessions, PersonRepository persons,
+            PersonResolver resolver, PersonContacts contacts, KeycloakUserAdminGateway keycloak,
+            CurrentUserProvider currentUserProvider, AuditLog auditLog, TransactionTemplate transactionTemplate,
+            ImpersonationProperties properties, Clock clock,
             io.micrometer.core.instrument.MeterRegistry meters) {
         this.sessions = sessions;
-        this.users = users;
+        this.persons = persons;
+        this.resolver = resolver;
+        this.contacts = contacts;
         this.keycloak = keycloak;
         this.currentUserProvider = currentUserProvider;
         this.auditLog = auditLog;
@@ -88,11 +98,11 @@ class ImpersonationService {
      * target does not belong to therefore grants exactly nothing — the same fail-closed answer a
      * membership check would produce, without a second copy of the org model living here.
      */
-    ImpersonationSession open(String targetSubject, UUID orgId, String reason, ImpersonationMode mode,
+    ImpersonationSession open(UUID targetPersonId, UUID orgId, String reason, ImpersonationMode mode,
             Duration ttl) {
         CurrentUser caller = requireCaller();
-        String actor = caller.subject();
-        String target = requireImpersonableSubject(targetSubject, actor);
+        UUID actor = requireCallerPerson(caller);
+        UUID target = requireImpersonableTarget(targetPersonId, actor);
         String justification = requireReason(reason);
         Duration lifetime = requireTtl(ttl);
         ImpersonationMode requested = mode == null ? ImpersonationMode.READ_ONLY : mode;
@@ -101,14 +111,15 @@ class ImpersonationService {
         if (requested.writeCapable() && !caller.hasRole(PlatformRole.ADMIN)) {
             throw new ForbiddenException("A write-capable impersonation session requires platform-admin.");
         }
-        requireProvisionedTarget(target);
+        Person targetPerson = requireProvisionedTarget(target);
+        String display = displayLabelOf(targetPerson);
         requireTierPermits(caller, target);
 
         Instant now = clock.instant();
         // Explicit template, not @Transactional: this is a self-invocation from a non-transactional
         // method, which never reaches the proxy — the same reason MemberService opens its writes this way.
-        return transactionTemplate.execute(
-                tx -> record(actor, target, orgId, justification, requested, now, now.plus(lifetime)));
+        return transactionTemplate.execute(tx ->
+                record(actor, target, display, orgId, justification, requested, now, now.plus(lifetime)));
     }
 
     /**
@@ -121,22 +132,16 @@ class ImpersonationService {
      * open to support, because who is being investigated is itself sensitive.
      */
     @Transactional(readOnly = true)
-    Window<ImpersonationSession> list(String actorSubject, CursorPageRequest page) {
-        String actor = requireListableActor(requireCaller(), actorSubject);
-        return sessions.findBy(
-                (root, query, cb) -> cb.equal(root.get("actorSubject"), actor),
-                query -> query.limit(page.size()).sortBy(NEWEST_FIRST).scroll(page.scrollPosition(NEWEST_FIRST)));
-    }
-
-    private static String requireListableActor(CurrentUser caller, String requested) {
-        if (requested == null || requested.isBlank()) {
-            return caller.subject();
-        }
-        String actor = requested.trim();
-        if (!actor.equals(caller.subject()) && !caller.hasRole(PlatformRole.ADMIN)) {
+    Window<ImpersonationSession> list(UUID actorPersonId, CursorPageRequest page) {
+        CurrentUser caller = requireCaller();
+        UUID callerPerson = requireCallerPerson(caller);
+        UUID actor = actorPersonId == null ? callerPerson : actorPersonId;
+        if (!actor.equals(callerPerson) && !caller.hasRole(PlatformRole.ADMIN)) {
             throw new ForbiddenException("Only a platform admin may review another operator's sessions.");
         }
-        return actor;
+        return sessions.findBy(
+                (root, query, cb) -> cb.equal(root.get("actorPersonId"), actor),
+                query -> query.limit(page.size()).sortBy(NEWEST_FIRST).scroll(page.scrollPosition(NEWEST_FIRST)));
     }
 
     /**
@@ -147,21 +152,22 @@ class ImpersonationService {
     @Transactional
     void end(UUID id) {
         CurrentUser caller = requireCaller();
+        UUID callerPerson = requireCallerPerson(caller);
         // Resolved per caller: to a non-admin, an existing-but-not-yours id answers exactly like an
         // unknown one — the repository's doctrine (a leaked session id must be worthless to anyone
         // but its operator) applies to probing this endpoint too, and a 403-vs-404 split would leak
         // which ids exist. Admins resolve by id alone: ending others' sessions is their job.
         ImpersonationSession session = (caller.hasRole(PlatformRole.ADMIN)
                 ? sessions.findById(id)
-                : sessions.findByIdAndActorSubject(id, caller.subject()))
+                : sessions.findByIdAndActorPersonId(id, callerPerson))
                 .orElseThrow(() -> new NotFoundException("Impersonation session not found."));
-        if (!session.end(caller.subject(), clock.instant())) {
+        if (!session.end(callerPerson, clock.instant())) {
             return; // already ended or superseded — re-ending changes nothing and must not re-audit
         }
         sessions.save(session);
         // Null orgId for the same reason the other two lifecycle rows carry one — see record().
-        auditLog.record("platform.impersonation_ended", null, session.getTargetSubject(),
-                "ACTIVE", "session=" + session.getId() + " endedBy=" + caller.subject());
+        auditLog.record("platform.impersonation_ended", null, session.getTargetPersonId().toString(),
+                "ACTIVE", "session=" + session.getId() + " endedBy=" + callerPerson);
         countSession("ended");
     }
 
@@ -176,25 +182,25 @@ class ImpersonationService {
      * <p>The three lifecycle rows are recorded with a null {@code orgId}, and the requested org is kept
      * in the detail instead. Opening a session is a PLATFORM act, and {@code orgId} arrives unvalidated
      * from the operator: writing it to {@code audit_log.org_id} would let anyone holding the lowest
-     * operator tier post chosen text into any tenant's {@code GET /orgs/{id}/audit} feed, about a user
+     * operator tier post chosen text into any tenant's {@code GET /orgs/{id}/audit} feed, about a person
      * with no connection to that tenant. What a session actually did inside an org still surfaces there,
      * on the rows for those actions, carrying {@code on_behalf_of} and {@code impersonation_id}.
      */
-    private ImpersonationSession record(String actor, String target, UUID orgId, String reason,
+    private ImpersonationSession record(UUID actor, UUID target, String display, UUID orgId, String reason,
             ImpersonationMode mode, Instant now, Instant expiresAt) {
         sessions.lockPair(actor + ":" + target);
         List<ImpersonationSession> previous =
-                sessions.findByActorSubjectAndTargetSubjectAndEndedAtIsNullAndExpiresAtAfter(actor, target, now);
+                sessions.findByActorPersonIdAndTargetPersonIdAndEndedAtIsNullAndExpiresAtAfter(actor, target, now);
         ImpersonationSession session = sessions.save(
-                ImpersonationSession.open(actor, target, orgId, reason, mode, now, expiresAt));
-        auditLog.record("platform.impersonation_started", null, target, null,
+                ImpersonationSession.open(actor, target, display, orgId, reason, mode, now, expiresAt));
+        auditLog.record("platform.impersonation_started", null, target.toString(), null,
                 "session=" + session.getId() + " org=" + orgId + " mode=" + mode + " expires=" + expiresAt
                         + " reason=" + reason);
         countSession("started");
         for (ImpersonationSession superseded : previous) {
             if (superseded.end(actor, now)) {
                 sessions.save(superseded);
-                auditLog.record("platform.impersonation_superseded", null, target, "ACTIVE",
+                auditLog.record("platform.impersonation_superseded", null, target.toString(), "ACTIVE",
                         "session=" + superseded.getId() + " replacedBy=" + session.getId());
                 countSession("superseded");
             }
@@ -206,18 +212,33 @@ class ImpersonationService {
         return currentUserProvider.requireCurrentUser();
     }
 
-    private static String requireImpersonableSubject(String targetSubject, String actor) {
-        String target = targetSubject == null ? "" : targetSubject.trim();
-        if (target.isEmpty()) {
-            throw new ValidationException("targetSubject is required.", ApiSource.pointer(TARGET_POINTER));
+    /**
+     * The operator's own {@code person.id}. An operator with no person cannot open, list or end a
+     * session: the row would name an actor nobody can hold answerable, which is the one thing this
+     * feature exists to prevent. In practice the gate has already refused such a caller — this is the
+     * belt for the deployments that run with the gate switched off.
+     */
+    private UUID requireCallerPerson(CurrentUser caller) {
+        UUID actor = caller.accountablePersonId();
+        if (actor == null) {
+            throw new ForbiddenException(
+                    "Your account is not provisioned on this platform, so it cannot open or hold an "
+                            + "impersonation session.");
+        }
+        return actor;
+    }
+
+    private static UUID requireImpersonableTarget(UUID targetPersonId, UUID actor) {
+        if (targetPersonId == null) {
+            throw new ValidationException("targetPersonId is required.", ApiSource.pointer(TARGET_POINTER));
         }
         // Self-impersonation grants nothing (the swapped principal holds no platform role) but it does
         // produce audit rows whose actor and on_behalf_of are the same person — a trail that reads as
         // oversight and records none.
-        if (target.equals(actor)) {
+        if (targetPersonId.equals(actor)) {
             throw new ValidationException("You cannot impersonate yourself.", ApiSource.pointer(TARGET_POINTER));
         }
-        return target;
+        return targetPersonId;
     }
 
     /** The reason is the whole justification a review ever sees; a blank or one-word one is not that. */
@@ -253,7 +274,7 @@ class ImpersonationService {
     }
 
     /**
-     * A soft-deleted account is invisible to every JPA query ({@code @SQLRestriction}), so "deleted" and
+     * A soft-deleted person is invisible to every JPA query ({@code @SQLRestriction}), so "deleted" and
      * "never existed" arrive here as the same absence and are deliberately separated: a 404 invites the
      * operator to fix what looks like a typo — or to re-provision the very account somebody erased —
      * while a 409 says the account exists and is out of reach on purpose.
@@ -261,29 +282,51 @@ class ImpersonationService {
      * <p>DISABLED is refused for the same reason it is refused everywhere: an account with no access of
      * its own must not become reachable through someone else's session.
      */
-    private void requireProvisionedTarget(String target) {
-        User user = users.findBySubject(target).orElse(null);
-        if (user == null) {
-            if (users.existsDeletedBySubject(target)) {
+    private Person requireProvisionedTarget(UUID target) {
+        Person person = persons.findById(target).orElse(null);
+        if (person == null) {
+            if (persons.existsDeletedById(target)) {
                 throw new ConflictException("That account has been deleted and cannot be impersonated.");
             }
-            throw new NotFoundException("No provisioned user with that subject.");
+            throw new NotFoundException("No provisioned person with that id.");
         }
-        if (user.getStatus() == ProvisioningStatus.DISABLED) {
+        if (person.getStatus() == ProvisioningStatus.DISABLED) {
             throw new ConflictException("That account is disabled and cannot be impersonated.");
         }
+        return person;
+    }
+
+    /**
+     * The label frozen onto the session row: the e-mail first, because that is what a support operator
+     * recognises and what the column is sized for, then the formatted name, then nothing. Never
+     * assembled from name parts — see {@link PersonName}.
+     */
+    private String displayLabelOf(Person target) {
+        String label = contacts.emailOf(target.getId()).orElseGet(target::getFormattedName);
+        if (label == null) {
+            return null;
+        }
+        return label.length() > DISPLAY_MAX ? label.substring(0, DISPLAY_MAX) : label;
     }
 
     /**
      * Wearing another operator's identity is an escalation path — their org memberships, their reach —
      * so it is reserved to the top tier. Superadmin short-circuits before the Keycloak round-trip: the
      * answer cannot change the outcome, and the check runs on every session that is opened.
+     *
+     * <p>A target with no Keycloak link holds no realm roles by definition, so there is nothing to
+     * escalate to and the check passes — the same fail-toward-permitting shape the platform-role probe
+     * already has.
      */
-    private void requireTierPermits(CurrentUser caller, String target) {
+    private void requireTierPermits(CurrentUser caller, UUID target) {
         if (caller.hasRole(PlatformRole.SUPERADMIN)) {
             return;
         }
-        Set<String> realmRoles = keycloak.realmRoles(target); // remote: OUTSIDE any local transaction
+        String targetSubject = resolver.keycloakSubjectOf(target).orElse(null);
+        if (targetSubject == null) {
+            return;
+        }
+        Set<String> realmRoles = keycloak.realmRoles(targetSubject); // remote: OUTSIDE any local transaction
         if (realmRoles.stream().anyMatch(PlatformRole::isPlatformRole)) {
             throw new ForbiddenException(
                     "Only a platform superadmin may impersonate an account that holds a platform role.");

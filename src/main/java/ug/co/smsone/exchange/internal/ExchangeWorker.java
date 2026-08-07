@@ -147,7 +147,7 @@ class ExchangeWorker implements SmartLifecycle {
             if (after.terminal()) {
                 transactions.executeWithoutResult(tx -> events.publishEvent(
                         new ug.co.smsone.exchange.JobCompleted(after.id(), after.orgId(),
-                                after.requester(), after.handler(), after.jobType(), after.status(),
+                                after.requesterPersonId(), after.handler(), after.jobType(), after.status(),
                                 after.processed(), after.failed(), clock.instant())));
             }
         });

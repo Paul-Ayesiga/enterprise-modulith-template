@@ -30,21 +30,21 @@ class ArtifactStore {
     }
 
     String store(String key, InputStream content, long sizeBytes, String contentType, String name,
-            UUID orgId, String ownerSubject) {
+            UUID orgId, UUID ownerPersonId) {
         if (sizeBytes > LARGE_UPLOAD_THRESHOLD) {
             storage.putLarge(key, content, sizeBytes, contentType);
         } else {
             storage.put(key, content, sizeBytes, contentType);
         }
-        documents.register(new NewDocument(orgId, ownerSubject, key, name, contentType, sizeBytes, "EXCHANGE"));
+        documents.register(new NewDocument(orgId, ownerPersonId, key, name, contentType, sizeBytes, "EXCHANGE"));
         return key;
     }
 
     String store(Path file, String key, String contentType, String name, UUID orgId,
-            String ownerSubject) throws IOException {
+            UUID ownerPersonId) throws IOException {
         long size = Files.size(file);
         try (InputStream in = Files.newInputStream(file)) {
-            return store(key, in, size, contentType, name, orgId, ownerSubject);
+            return store(key, in, size, contentType, name, orgId, ownerPersonId);
         }
     }
 

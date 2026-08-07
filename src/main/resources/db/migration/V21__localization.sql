@@ -11,9 +11,9 @@ create table translation
     msg_value  text         not null,
     version    bigint       not null,
     created_at timestamptz  not null,
-    created_by varchar(100),
+    created_by uuid        ,
     updated_at timestamptz,
-    updated_by varchar(100),
+    updated_by uuid        ,
     deleted_at timestamptz
 );
 

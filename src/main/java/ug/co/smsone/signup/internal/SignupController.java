@@ -32,8 +32,13 @@ class SignupController {
         this.service = service;
     }
 
+    /**
+     * {@code givenName} / {@code familyName}, not first/last, on the PUBLIC body too: the row this
+     * request becomes is a person (V10), name order is cultural, and the platform's own vocabulary
+     * applies everywhere above the Keycloak adapter. Both optional — a mononym is an ordinary name.
+     */
     record SignupBody(@NotBlank String organizationName, @NotBlank String email,
-            String firstName, String lastName) {
+            String givenName, String familyName) {
     }
 
     record SignupAttributes(String message, String organizationId, String alias) {
@@ -49,7 +54,7 @@ class SignupController {
                     answer 403 (SIGNUP_ENABLED).""")
     @ResponseStatus(HttpStatus.ACCEPTED)
     ResourceObject request(@jakarta.validation.Valid @RequestBody SignupBody body) {
-        service.request(body.organizationName(), body.email(), body.firstName(), body.lastName());
+        service.request(body.organizationName(), body.email(), body.givenName(), body.familyName());
         return new ResourceObject(UUID.randomUUID().toString(), RESOURCE_TYPE, new SignupAttributes(
                 "Check your inbox — a verification link is on its way if the address is deliverable.",
                 null, null));

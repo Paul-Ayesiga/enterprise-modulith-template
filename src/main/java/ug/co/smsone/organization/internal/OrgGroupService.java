@@ -71,7 +71,7 @@ class OrgGroupService {
         OrgGroup saved = groups.save(group);
         auditLog.record("organization.group_role_changed", orgId, id.toString(),
                 "role=" + previous, "role=" + role.getCode());
-        evict(orgId); // every member's effective permissions just changed
+        evict(); // every member's effective permissions just changed
         return saved;
     }
 
@@ -80,34 +80,34 @@ class OrgGroupService {
         OrgGroup group = require(orgId, id);
         groups.delete(group);
         auditLog.record("organization.group_deleted", orgId, id.toString(), "name=" + group.getName(), null);
-        evict(orgId);
+        evict();
     }
 
     @Transactional
-    OrgGroup addMember(UUID orgId, UUID id, String subject) {
+    OrgGroup addMember(UUID orgId, UUID id, UUID personId) {
         OrgGroup group = require(orgId, id);
         // Only an existing org member can be grouped — a group extends membership, it is not a way in.
-        if (memberships.findByOrgIdAndUserSubject(orgId, subject).isEmpty()) {
-            throw new NotFoundException("That subject is not a member of this organization.");
+        if (memberships.findByOrgIdAndPersonId(orgId, personId).isEmpty()) {
+            throw new NotFoundException("That person is not a member of this organization.");
         }
         // Adding to a group grants that group's role: same escalation rule as inviting into it.
         roles.findById(group.getRoleId())
                 .ifPresent(role -> escalationGuard.requireCallerHolds(orgId, role.getPermissions()));
-        if (group.addMember(subject)) {
+        if (group.addMember(personId)) {
             groups.save(group);
-            auditLog.record("organization.group_member_added", orgId, id.toString(), null, "subject=" + subject);
-            evict(orgId);
+            auditLog.record("organization.group_member_added", orgId, id.toString(), null, "person=" + personId);
+            evict();
         }
         return group;
     }
 
     @Transactional
-    OrgGroup removeMember(UUID orgId, UUID id, String subject) {
+    OrgGroup removeMember(UUID orgId, UUID id, UUID personId) {
         OrgGroup group = require(orgId, id);
-        if (group.removeMember(subject)) {
+        if (group.removeMember(personId)) {
             groups.save(group);
-            auditLog.record("organization.group_member_removed", orgId, id.toString(), "subject=" + subject, null);
-            evict(orgId);
+            auditLog.record("organization.group_member_removed", orgId, id.toString(), "person=" + personId, null);
+            evict();
         }
         return group;
     }
@@ -130,7 +130,7 @@ class OrgGroupService {
     }
 
     /** Coarse clear-all, exactly like OrgPermissionCacheEvictor — the org's members are few. */
-    private void evict(UUID orgId) {
+    private void evict() {
         Cache cache = cacheManager.getCache(PermissionResolver.CACHE);
         if (cache != null) {
             cache.clear();

@@ -21,6 +21,11 @@ import ug.co.smsone.shared.web.WindowedResult;
  * A tenant's support tickets — open, read, reply. {@code ticket:read} sees the org's tickets and
  * their public messages; {@code ticket:write} opens and replies; INTERNAL platform notes are never
  * returned here. Escalation and assignment are the platform's job ({@code /api/v1/admin/tickets}).
+ *
+ * <p>The reads are open to any credential holding the permission; the two WRITES additionally need a
+ * person, so an API key that holds {@code ticket:write} still gets a 403 from {@link SupportService}.
+ * That is not an oversight in the permission model — the desk records who is asking so it can answer
+ * them, and a key names no one to answer.
  */
 @RestController
 @RequestMapping("/api/v1/orgs/{orgId}/tickets")
@@ -44,7 +49,7 @@ class OrgTicketController {
     @ResponseStatus(HttpStatus.CREATED)
     ResourceObject open(@PathVariable UUID orgId, @RequestBody OpenRequest request, CurrentUser user) {
         return TicketResources.toResource(
-                support.open(orgId, user.subject(), request.subject(), request.category(), request.priority()));
+                support.open(orgId, user.personId(), request.subject(), request.category(), request.priority()));
     }
 
     @GetMapping
@@ -76,6 +81,6 @@ class OrgTicketController {
     @ResponseStatus(HttpStatus.CREATED)
     ResourceObject reply(@PathVariable UUID orgId, @PathVariable UUID id,
             @RequestBody ReplyRequest request, CurrentUser user) {
-        return TicketResources.toResource(support.tenantReply(orgId, id, user.subject(), request.body()));
+        return TicketResources.toResource(support.tenantReply(orgId, id, user.personId(), request.body()));
     }
 }

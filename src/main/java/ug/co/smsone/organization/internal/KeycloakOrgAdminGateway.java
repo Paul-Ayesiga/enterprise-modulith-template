@@ -4,7 +4,6 @@ import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -13,18 +12,21 @@ import org.springframework.web.client.RestClient;
 import ug.co.smsone.shared.error.ConflictException;
 
 /**
- * Keycloak Admin REST calls for the Organizations API (create org, add a member). Rooted at
- * {@code /admin/realms/{realm}} by {@code keycloakAdminRestClient}; needs the service account to hold
- * {@code manage-organizations}.
+ * Keycloak Admin REST calls for the Organizations API — creating the provider-side organization and
+ * finding one by alias. Rooted at {@code /admin/realms/{realm}} by {@code keycloakAdminRestClient};
+ * needs the service account to hold {@code manage-organizations}.
+ *
+ * <p><b>Member add/remove used to live here and no longer does.</b> Those endpoints take a Keycloak
+ * USER id, and nothing below the edge may see one: this module knows people as {@code person.id}. They
+ * moved behind {@code identity.ProviderOrgMembership}, implemented by the module that owns
+ * {@code external_identity} and is therefore the only one that can translate a person into a subject —
+ * the same discipline that keeps the org's provider id inside {@link ExternalOrganization}.
  *
  * <p>Contract notes (Keycloak 26 Organizations, GA), pinned by the Testcontainers Keycloak IT:
  * <ul>
  *   <li>Create: {@code POST /organizations} with an OrganizationRepresentation; the new id comes back
  *       in the {@code Location} header. A domain is supplied (KC requires at least one); it is a
  *       placeholder — membership here is admin-managed, so the member's email need not match it.</li>
- *   <li>Add member: {@code POST /organizations/{orgId}/members} whose body is the user id as a bare
- *       JSON string ({@code "abc-123"}), matching the server's {@code addMember(String)} signature —
- *       sending {@code {"id":"…"}} is rejected as "User does not exist".</li>
  * </ul>
  */
 @Component
@@ -36,8 +38,13 @@ class KeycloakOrgAdminGateway {
         this.keycloakAdminRestClient = keycloakAdminRestClient;
     }
 
-    /** Creates the Keycloak organization and returns its id (the tenant key used everywhere locally). */
-    UUID createOrganization(String alias, String name) {
+    /**
+     * Creates the Keycloak organization and returns its id — as a String, deliberately. It is
+     * UUID-shaped because Keycloak mints UUIDs, and parsing it here would put that assumption back in
+     * the type system on the way to {@code external_organization.external_org_id}, which is varchar for
+     * precisely this reason (V11). To us it is an opaque provider identifier.
+     */
+    String createOrganization(String alias, String name) {
         Map<String, Object> body = Map.of(
                 "name", name,
                 "alias", alias,
@@ -59,7 +66,7 @@ class KeycloakOrgAdminGateway {
             throw new IllegalStateException("Keycloak did not return an organization id (no Location header)");
         }
         String path = location.getPath();
-        return UUID.fromString(path.substring(path.lastIndexOf('/') + 1));
+        return path.substring(path.lastIndexOf('/') + 1);
     }
 
     /** Looks up an existing Keycloak organization id by alias — lets the dev bootstrap re-adopt an org
@@ -67,7 +74,7 @@ class KeycloakOrgAdminGateway {
      * matches an org's name/domain (not its alias), and {@code exact=true} requires an exact name/domain
      * hit — so it is a substring search here (our domain embeds the alias), pinned exact by the
      * {@code alias.equals} filter below. Verified against a live realm by the Keycloak org Admin-API IT. */
-    Optional<UUID> findOrganizationIdByAlias(String alias) {
+    Optional<String> findOrganizationIdByAlias(String alias) {
         List<?> results = keycloakAdminRestClient.get()
                 .uri(uri -> uri.path("/organizations").queryParam("search", alias).build())
                 .retrieve()
@@ -79,34 +86,7 @@ class KeycloakOrgAdminGateway {
                 .filter(Map.class::isInstance)
                 .map(Map.class::cast)
                 .filter(org -> alias.equals(String.valueOf(org.get("alias"))))
-                .map(org -> UUID.fromString(String.valueOf(org.get("id"))))
+                .map(org -> String.valueOf(org.get("id")))
                 .findFirst();
-    }
-
-    /**
-     * Adds an existing Keycloak user to the organization. Made idempotent here: Keycloak returns
-     * {@code 409 Conflict} ("User is already a member") on a re-add rather than a no-op 2xx (verified
-     * against a live realm by the IT), so a re-invite / re-adopt must not fail — we treat that 409 as
-     * success.
-     */
-    void addMember(UUID kcOrgId, String userId) {
-        keycloakAdminRestClient.post()
-                .uri("/organizations/{orgId}/members", kcOrgId)
-                .contentType(MediaType.APPLICATION_JSON)
-                // Bare JSON string body — the endpoint consumes String, not a representation.
-                .body("\"" + userId + "\"")
-                .retrieve()
-                .onStatus(status -> status.value() == 409, (request, response) -> {
-                    // Already a member — idempotent no-op.
-                })
-                .toBodilessEntity();
-    }
-
-    /** Removes a user from the organization. Never deletes the Keycloak user account itself. */
-    void removeMember(UUID kcOrgId, String userId) {
-        keycloakAdminRestClient.delete()
-                .uri("/organizations/{orgId}/members/{userId}", kcOrgId, userId)
-                .retrieve()
-                .toBodilessEntity();
     }
 }

@@ -76,7 +76,7 @@ class ExportRunner {
             AtomicLong written = new AtomicLong();
             try (OutputStream out = new BufferedOutputStream(Files.newOutputStream(temp));
                     FormatCodec.RecordSink sink = codec.writer(out, handler.header())) {
-                handler.export(new ExchangeContext(job.orgId(), job.requester()), record -> {
+                handler.export(new ExchangeContext(job.orgId(), job.requesterPersonId()), record -> {
                     try {
                         sink.write(record);
                         written.incrementAndGet();
@@ -87,7 +87,7 @@ class ExportRunner {
             }
             String fileName = handler.id() + "-export." + codec.fileExtension();
             String key = ArtifactStore.artifactKey(job.orgId(), job.id(), fileName);
-            artifacts.store(temp, key, codec.contentType(), fileName, job.orgId(), job.requester());
+            artifacts.store(temp, key, codec.contentType(), fileName, job.orgId(), job.requesterPersonId());
             if (store.progress(job.id(), job.attempts(), written.get(), 0, 0, List.of())
                     == ExchangeJobStore.Progress.LOST_CLAIM) {
                 return; // another claimant re-exports; this artifact stays as an unreferenced document

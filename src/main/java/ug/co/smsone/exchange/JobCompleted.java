@@ -11,6 +11,6 @@ import java.util.UUID;
  * A crash between the terminal write and this publish loses the event — the job row stays
  * authoritative and pollable, which is why the REST surface never depends on it.
  */
-public record JobCompleted(UUID jobId, UUID orgId, String requester, String handler,
+public record JobCompleted(UUID jobId, UUID orgId, UUID requesterPersonId, String handler,
         String jobType, String outcome, long processed, long failed, Instant occurredAt) {
 }

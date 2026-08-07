@@ -30,10 +30,16 @@ class OrgGroup extends SoftDeletableEntity {
     @Column(name = "role_id", nullable = false)
     private UUID roleId;
 
+    /**
+     * {@code person.id}, and half the primary key of {@code org_group_member} — which made it the
+     * sharpest case of the old shape: a Keycloak subject was not merely referenced here, it was
+     * load-bearing key data in a table that could not point at the thing it keyed on. Still a soft ref
+     * (person is another module), but now at least it is our identifier.
+     */
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "org_group_member", joinColumns = @JoinColumn(name = "group_id"))
-    @Column(name = "user_subject", nullable = false, length = 64)
-    private Set<String> members = new LinkedHashSet<>();
+    @Column(name = "person_id", nullable = false)
+    private Set<UUID> members = new LinkedHashSet<>();
 
     protected OrgGroup() {
         // JPA
@@ -55,12 +61,12 @@ class OrgGroup extends SoftDeletableEntity {
         this.roleId = roleId;
     }
 
-    boolean addMember(String subject) {
-        return members.add(subject);
+    boolean addMember(UUID personId) {
+        return members.add(personId);
     }
 
-    boolean removeMember(String subject) {
-        return members.remove(subject);
+    boolean removeMember(UUID personId) {
+        return members.remove(personId);
     }
 
     UUID getOrgId() {
@@ -75,7 +81,7 @@ class OrgGroup extends SoftDeletableEntity {
         return roleId;
     }
 
-    Set<String> getMembers() {
+    Set<UUID> getMembers() {
         return members;
     }
 }

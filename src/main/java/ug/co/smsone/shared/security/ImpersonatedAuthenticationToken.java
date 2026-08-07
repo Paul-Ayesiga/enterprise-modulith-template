@@ -1,11 +1,12 @@
 package ug.co.smsone.shared.security;
 
+import java.io.Serial;
 import java.util.List;
 import org.springframework.security.authentication.AbstractAuthenticationToken;
 
 /**
  * The {@code Authentication} a request carries while an impersonation session is active. The principal
- * is the {@link ImpersonatedPrincipal}; {@link #getName()} is the target's subject, so everything that
+ * is the {@link ImpersonatedPrincipal}; {@link #getName()} is the target's person id, so everything that
  * keys on the authenticated name sees the effective identity.
  *
  * <p>The authority collection is EMPTY, deliberately and permanently — that emptiness <em>is</em> the
@@ -21,6 +22,9 @@ import org.springframework.security.authentication.AbstractAuthenticationToken;
  * audit trail — the one construction path this class's guarantees assume does not exist.
  */
 final class ImpersonatedAuthenticationToken extends AbstractAuthenticationToken {
+
+    @Serial
+    private static final long serialVersionUID = 1L;
 
     private final ImpersonatedPrincipal principal;
 
@@ -40,9 +44,9 @@ final class ImpersonatedAuthenticationToken extends AbstractAuthenticationToken 
         return null; // the actor's own bearer token authenticated the request; a session id is not a credential
     }
 
-    /** The EFFECTIVE identity — the target's subject. The actor stays reachable through the principal. */
+    /** The EFFECTIVE identity — the target's person id. The actor stays reachable through the principal. */
     @Override
     public String getName() {
-        return principal.targetSubject();
+        return principal.targetPersonId().toString();
     }
 }

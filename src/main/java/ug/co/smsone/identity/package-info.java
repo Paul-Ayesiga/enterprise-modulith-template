@@ -1,10 +1,18 @@
 /**
- * Identity module: the business projection of Keycloak users plus the admin-driven provisioning
- * lifecycle. There is <b>no JIT</b> — a valid JWT is not access; a user is reachable only after an
- * admin provisions them (Keycloak user + temporary credentials + a local {@code app_user} row), and
- * a {@code ProvisioningGateFilter} rejects authenticated-but-unprovisioned subjects. Other modules
- * provision members through {@link ug.co.smsone.identity.UserProvisioning}; internals live under
- * {@code internal}.
+ * Identity module: {@code person} is the canonical identity of a human on this platform, and every
+ * identifier minted somewhere else lives beside it in {@code external_identity}. Provisioning is
+ * admin-driven and there is <b>no JIT</b> — a valid JWT is not access; a person is reachable only after
+ * an admin provisions them (a {@code person} row, a {@code person_contact} to reach them at, a linked
+ * Keycloak account and its invite), and {@code ProvisioningGateFilter} rejects
+ * authenticated-but-unprovisioned humans. Other modules provision members through
+ * {@link ug.co.smsone.identity.PersonProvisioning} and address people by {@code person.id} through
+ * {@link ug.co.smsone.identity.PersonDirectory}; internals live under {@code internal}.
+ *
+ * <p><b>This module is the only place an issuer and a subject exist.</b> The edge validates a token and
+ * hands down a provider subject; {@code PersonResolver} turns that pair into a {@code person.id} once,
+ * and nothing downstream — here or in any other module — sees it again. The same discipline keeps
+ * Keycloak's {@code firstName}/{@code lastName} vocabulary inside
+ * {@code KeycloakUserAdminGateway}: a boundary translates, it does not leak.
  *
  * <p>It also owns the <b>impersonation session</b> — an operator's audited, time-boxed reach into
  * another account — because that is an identity being worn, and the accounts it names are this

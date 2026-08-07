@@ -26,10 +26,10 @@ class WebhookEventListener {
     void on(MembershipCreated event) {
         String code = WebhookEventType.MEMBER_ADDED.code();
         dispatcher.dispatch(
-                code + ":" + event.orgId() + ":" + event.subject() + ":" + event.occurredAt(),
+                code + ":" + event.orgId() + ":" + event.personId() + ":" + event.occurredAt(),
                 event.orgId(), code,
                 WebhookPayload.of(code, event.orgId(), event.occurredAt())
-                        .with("subject", event.subject())
+                        .with("personId", event.personId().toString())
                         .with("role", event.roleCode()));
     }
 
@@ -37,20 +37,20 @@ class WebhookEventListener {
     void on(MemberRemoved event) {
         String code = WebhookEventType.MEMBER_REMOVED.code();
         dispatcher.dispatch(
-                code + ":" + event.orgId() + ":" + event.subject() + ":" + event.occurredAt(),
+                code + ":" + event.orgId() + ":" + event.personId() + ":" + event.occurredAt(),
                 event.orgId(), code,
                 WebhookPayload.of(code, event.orgId(), event.occurredAt())
-                        .with("subject", event.subject()));
+                        .with("personId", event.personId().toString()));
     }
 
     @ApplicationModuleListener
     void on(MembershipRoleChanged event) {
         String code = WebhookEventType.MEMBER_ROLE_CHANGED.code();
         dispatcher.dispatch(
-                code + ":" + event.orgId() + ":" + event.subject() + ":" + event.occurredAt(),
+                code + ":" + event.orgId() + ":" + event.personId() + ":" + event.occurredAt(),
                 event.orgId(), code,
                 WebhookPayload.of(code, event.orgId(), event.occurredAt())
-                        .with("subject", event.subject()));
+                        .with("personId", event.personId().toString()));
     }
 
     @ApplicationModuleListener

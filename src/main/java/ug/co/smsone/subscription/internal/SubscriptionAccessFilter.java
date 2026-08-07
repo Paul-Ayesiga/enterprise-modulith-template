@@ -56,7 +56,7 @@ public class SubscriptionAccessFilter extends OncePerRequestFilter {
             return;
         }
         CurrentUser caller = currentUser.currentUser().orElse(null);
-        UUID orgId = caller == null ? null : caller.activeOrgId();
+        UUID orgId = caller == null ? null : caller.organizationId();
         if (orgId == null) {
             chain.doFilter(request, response); // unauthenticated / no active org — authz handles it
             return;

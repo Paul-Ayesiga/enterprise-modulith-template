@@ -21,7 +21,21 @@ import ug.co.smsone.shared.web.CursorPageRequest;
 @Transactional(readOnly = true)
 class AuditQueryService {
 
-    private static final Sort NEWEST_FIRST = Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
+    /**
+     * Ordered by {@code occurredAt}, which is the column the {@code from}/{@code to} filter below also
+     * ranges on — and that agreement is the point. It used to keyset on {@code createdAt} while
+     * filtering on {@code occurredAt}, so no single index could serve both halves: a windowed query
+     * walked {@code idx_audit_org_created} from the newest row and threw away everything outside the
+     * range, which for a narrow window far in the past means reading the org's whole history to fill
+     * one page. The two timestamps track each other closely in practice ({@code created_at} is
+     * {@code @CreatedDate}, {@code occurred_at} is passed to {@code AuditEntry.of}), which is exactly
+     * why the mismatch looked fine in testing and only bites on real volume.
+     *
+     * <p>{@code occurredAt} is also the more honest key for an audit trail: callers asked when the thing
+     * HAPPENED, not when the row was written. {@code id desc} remains the tiebreaker that makes the
+     * keyset total. V49 adds the matching {@code (org_id, occurred_at desc, id desc)} index.
+     */
+    private static final Sort NEWEST_FIRST = Sort.by(Sort.Order.desc("occurredAt"), Sort.Order.desc("id"));
 
     private final AuditEntryRepository entries;
 

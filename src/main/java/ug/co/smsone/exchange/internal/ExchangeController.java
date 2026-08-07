@@ -42,7 +42,7 @@ class ExchangeController {
     }
 
     record JobAttributes(String jobType, String handler, int handlerVersion, String format,
-            String status, long processed, long failed, String requester, boolean cancelRequested,
+            String status, long processed, long failed, String requesterPersonId, boolean cancelRequested,
             String lastError, Instant createdAt) {
     }
 
@@ -120,7 +120,7 @@ class ExchangeController {
     static ResourceObject toResource(ExchangeJob job) {
         return new ResourceObject(job.id().toString(), RESOURCE_TYPE,
                 new JobAttributes(job.jobType(), job.handler(), job.handlerVersion(), job.format(),
-                        job.status(), job.processed(), job.failed(), job.requester(),
+                        job.status(), job.processed(), job.failed(), job.requesterPersonId().toString(),
                         job.cancelRequested(), job.lastError(), job.createdAt()));
     }
 

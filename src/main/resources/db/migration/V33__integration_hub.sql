@@ -4,19 +4,23 @@
 -- is deterministic: the org's row if present, else the platform default. Config values live in
 -- integration_setting element rows; a value marked secret is AES-GCM encrypted at rest and masked
 -- on read (the webhook signing-secret pattern). An integration is a soft-deletable aggregate.
+--
+-- org_id is organization.id (V11), a SOFT ref with no FK (integration and organization are different
+-- modules, AGENTS §1). It held a Keycloak organization id when it was written; the name and the
+-- nullable-means-platform-default meaning are unchanged, the value space is not.
 
 create table integration
 (
     id         uuid         not null primary key,
-    org_id     uuid,                                  -- null = platform default
+    org_id     uuid,                                  -- organization.id; null = platform default
     kind       varchar(20)  not null,                 -- SMS_PROVIDER | EMAIL_PROVIDER | PAYMENT_GATEWAY
     provider   varchar(40)  not null,                 -- provider code (e.g. twilio, smtp, stripe)
     enabled    boolean      not null default true,
     version    bigint       not null,
     created_at timestamptz  not null,
-    created_by varchar(100),
+    created_by uuid        ,
     updated_at timestamptz,
-    updated_by varchar(100),
+    updated_by uuid        ,
     deleted_at timestamptz
 );
 

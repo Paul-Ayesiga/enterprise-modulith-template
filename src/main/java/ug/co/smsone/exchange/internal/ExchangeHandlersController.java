@@ -66,8 +66,12 @@ class ExchangeHandlersController {
         String normalized = exchange.requireFormat(format);
         FormatCodec codec = codecs.stream().filter(c -> c.id().equals(normalized)).findFirst().orElseThrow();
         java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
-        try (FormatCodec.RecordSink sink = codec.writer(out, handler.header())) {
-            // Zero records: the template IS an empty export — one code path for every format.
+        try {
+            // Zero records: the template IS an empty export — one code path for every format. Open and
+            // close is the whole operation; close() is what flushes the header the codec buffered.
+            // Written as a statement rather than try-with-resources because a resource binding nothing
+            // ever reads is a variable javac (and every reader) has to wonder about.
+            codec.writer(out, handler.header()).close();
         } catch (java.io.IOException ex) {
             throw new IllegalStateException("Template generation failed", ex);
         }

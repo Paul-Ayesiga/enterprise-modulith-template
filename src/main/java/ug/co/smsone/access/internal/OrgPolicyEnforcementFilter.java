@@ -69,8 +69,11 @@ public class OrgPolicyEnforcementFilter extends OncePerRequestFilter {
             FilterChain chain) throws ServletException, IOException {
         Matcher match = ORG_PATH.matcher(RequestPaths.of(request));
         CurrentUser caller = match.matches() ? currentUser.currentUser().orElse(null) : null;
-        if (caller == null || caller.activeOrgId() == null
-                || !caller.activeOrgId().toString().equals(match.group(1))) {
+        // Compared as UUIDs, not as strings. The path segment is bound as a UUID downstream, so an
+        // upper-case rendering of the caller's own org authorizes normally — and a rendering
+        // comparison here would then step aside and skip the policy entirely for that request.
+        if (caller == null || caller.organizationId() == null
+                || !caller.organizationId().equals(pathOrgId(match.group(1)))) {
             chain.doFilter(request, response); // not an org call we own, or scope mismatch → RBAC decides
             return;
         }
@@ -82,7 +85,7 @@ public class OrgPolicyEnforcementFilter extends OncePerRequestFilter {
             chain.doFilter(request, response);
             return;
         }
-        OrgSecurityPolicy policy = policies.findByOrgId(caller.activeOrgId()).orElse(null);
+        OrgSecurityPolicy policy = policies.findByOrgId(caller.organizationId()).orElse(null);
         if (policy != null) {
             String denial = evaluate(policy, caller, request);
             if (denial != null) {
@@ -120,8 +123,12 @@ public class OrgPolicyEnforcementFilter extends OncePerRequestFilter {
         }
         if (policy.isRequireTrustedDevice()) {
             String fingerprint = request.getHeader(DEVICE_HEADER);
-            if (fingerprint == null || fingerprint.isBlank()
-                    || !devices.isTrusted(caller.subject(), fingerprint.trim())) {
+            // A machine has no person and therefore no registered device, so it can never satisfy
+            // this rule — the same answer it always got, now stated instead of falling out of a
+            // subject string that matched no row. An org requiring trusted devices excludes its
+            // API keys from org-scoped calls; that is the rule doing its job, not a gap.
+            if (caller.personId() == null || fingerprint == null || fingerprint.isBlank()
+                    || !devices.isTrusted(caller.personId(), fingerprint.trim())) {
                 return "trusted-device";
             }
         }
@@ -130,9 +137,18 @@ public class OrgPolicyEnforcementFilter extends OncePerRequestFilter {
 
     private void stampDevice(CurrentUser caller, HttpServletRequest request) {
         String fingerprint = request.getHeader(DEVICE_HEADER);
-        if (fingerprint != null && !fingerprint.isBlank()) {
-            devices.stampLastSeen(caller.subject(), fingerprint.trim(),
+        if (caller.personId() != null && fingerprint != null && !fingerprint.isBlank()) {
+            devices.stampLastSeen(caller.personId(), fingerprint.trim(),
                     clock.instant(), clock.instant().minus(TOUCH_THROTTLE));
+        }
+    }
+
+    /** The URL's org id, or null when the segment is not a UUID (the regex admits the shape only). */
+    private static java.util.UUID pathOrgId(String segment) {
+        try {
+            return java.util.UUID.fromString(segment);
+        } catch (IllegalArgumentException ex) {
+            return null;
         }
     }
 

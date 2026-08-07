@@ -44,8 +44,11 @@ class OrganizationController {
                     message = "must be a lowercase slug (letters, digits, hyphens)") String alias,
             @NotBlank @Size(max = 200) String name,
             @NotBlank @Email String ownerEmail,
-            String ownerFirstName,
-            String ownerLastName) {
+            // givenName/familyName, not first/last: name ORDER is cultural, so "first" names a
+            // position in one rendering rather than the part itself. Both optional — a mononym is an
+            // ordinary name — and never concatenated for display.
+            String ownerGivenName,
+            String ownerFamilyName) {
     }
 
     record UpdateOrganizationRequest(@NotBlank @Size(max = 200) String name) {
@@ -54,16 +57,16 @@ class OrganizationController {
     @PostMapping
     @Operation(summary = "Create an organization and its first owner",
             description = """
-                    Creates the Keycloak organization, provisions the named owner (Keycloak account \
-                    plus temporary credentials e-mailed to `ownerEmail`), seeds the org's roles and \
-                    writes the local projection — there is no separate step to add the first member. \
-                    An alias already in use, locally or in Keycloak, is a 409: an existing \
-                    organization is never adopted.""")
+                    Creates the tenant and its identity-provider organization, provisions the named \
+                    owner (account plus temporary credentials e-mailed to `ownerEmail`), seeds the \
+                    org's roles and records the OWNER membership — there is no separate step to add \
+                    the first member. An alias already in use, locally or at the provider, is a 409: \
+                    an existing organization is never adopted.""")
     @PreAuthorize("hasRole('platform-admin')")
     @ResponseStatus(HttpStatus.CREATED)
     ResourceObject create(@Valid @RequestBody CreateOrganizationRequest request) {
         return toResource(organizations.create(request.alias(), request.name(),
-                request.ownerEmail(), request.ownerFirstName(), request.ownerLastName()));
+                request.ownerEmail(), request.ownerGivenName(), request.ownerFamilyName()).organization());
     }
 
     @GetMapping("/{orgId}")
@@ -102,8 +105,10 @@ class OrganizationController {
         return toResource(organizations.reactivate(orgId));
     }
 
+    // The resource id is organization.id — ours. It used to be the Keycloak organization id, which is
+    // how a provider identifier became a public API resource id (V11's header is the post-mortem).
     private static ResourceObject toResource(Organization organization) {
-        return new ResourceObject(organization.getKcOrgId().toString(), RESOURCE_TYPE,
+        return new ResourceObject(organization.getId().toString(), RESOURCE_TYPE,
                 new OrganizationAttributes(organization.getAlias(), organization.getName(),
                         organization.getStatus().name()));
     }

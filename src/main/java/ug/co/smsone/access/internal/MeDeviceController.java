@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import ug.co.smsone.shared.error.ForbiddenException;
 import ug.co.smsone.shared.security.CurrentUser;
 import ug.co.smsone.shared.web.CursorPageRequest;
 import ug.co.smsone.shared.web.ResourceObject;
@@ -39,20 +40,32 @@ class MeDeviceController {
             description = "Idempotent per `fingerprint` — the same device re-registers rather than duplicating.")
     @ResponseStatus(HttpStatus.CREATED)
     ResourceObject register(@RequestBody RegisterRequest request, CurrentUser user) {
-        return DeviceResources.toResource(devices.register(user.subject(), request.name(),
+        return DeviceResources.toResource(devices.register(requirePerson(user), request.name(),
                 request.kind(), request.fingerprint(), request.pushToken()));
     }
 
     @GetMapping
     @Operation(summary = "List your devices")
     WindowedResult<ResourceObject> list(CurrentUser user, CursorPageRequest page) {
-        return WindowedResult.of(devices.list(user.subject(), page), page, DeviceResources::toResource);
+        return WindowedResult.of(devices.list(requirePerson(user), page), page, DeviceResources::toResource);
     }
 
     @DeleteMapping("/{id}")
     @Operation(summary = "Revoke a device")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     void revoke(@PathVariable UUID id, CurrentUser user) {
-        devices.revoke(user.subject(), id);
+        devices.revoke(requirePerson(user), id);
+    }
+
+    /**
+     * A device belongs to a person. A machine is refused rather than defaulted: an API key is not a
+     * device and has no person to hang one off, and {@code user_device.person_id} is NOT NULL (V31),
+     * so a null would be a constraint violation at flush instead of a 403 at the door.
+     */
+    private static UUID requirePerson(CurrentUser user) {
+        if (user.personId() == null) {
+            throw new ForbiddenException("Devices belong to a person; this caller is not one.");
+        }
+        return user.personId();
     }
 }

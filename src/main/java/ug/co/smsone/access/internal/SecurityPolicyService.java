@@ -49,13 +49,13 @@ class SecurityPolicyService {
     }
 
     @Transactional
-    void setDeviceTrust(UUID orgId, String subject, UUID deviceId, boolean trusted) {
-        UserDevice device = devices.findByIdAndSubject(deviceId, subject)
+    void setDeviceTrust(UUID orgId, UUID personId, UUID deviceId, boolean trusted) {
+        UserDevice device = devices.findByIdAndPersonId(deviceId, personId)
                 .orElseThrow(() -> new NotFoundException("Device not found for that user."));
         device.setTrusted(trusted);
         devices.save(device);
         auditLog.record(trusted ? "access.device_trusted" : "access.device_untrusted",
-                orgId, deviceId.toString(), null, "subject=" + subject);
+                orgId, deviceId.toString(), null, "personId=" + personId);
     }
 
     /** A blank/whitespace value clears the allowlist; each CIDR is validated so a typo 422s at set. */

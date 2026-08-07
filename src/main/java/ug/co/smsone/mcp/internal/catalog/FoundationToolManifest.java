@@ -23,9 +23,10 @@ class FoundationToolManifest implements ToolManifest {
         return List.of(new ToolDefinition(
                 "whoami",
                 "Who am I",
-                "Identify the authenticated caller: durable subject, credential kind, the organization "
-                        + "every tool call is scoped to, and the exact permission codes this credential "
-                        + "holds. Call this first to plan with real capabilities.",
+                "Identify the authenticated caller: the person behind the call (null for an API key — "
+                        + "a key acts for nobody), credential kind, the organization every tool call is "
+                        + "scoped to, and the exact permission codes this credential holds. Call this "
+                        + "first to plan with real capabilities.",
                 1,
                 "foundation",
                 ToolDefinition.Kind.READ,
@@ -38,11 +39,15 @@ class FoundationToolManifest implements ToolManifest {
         // LinkedHashMap over Map.of: null-tolerant (orgId is null for platform keys) and the field
         // order below is the order agents read.
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("subject", context.subject());
+        // personId, not a subject: the platform's own identifier for the caller, null for a machine
+        // because a robot is not a person. An agent that needs to know "who am I durably" reads this
+        // for a human and keyId for a key — the two id spaces are unrelated and are not merged here.
+        payload.put("personId", context.personId() == null ? null : context.personId().toString());
         payload.put("orgId", context.orgId() == null ? null : context.orgId().toString());
         if (context.authentication() instanceof ApiKeyAuthenticationToken token) {
             ApiKeyPrincipal key = token.getPrincipal();
             payload.put("authKind", "api_key");
+            payload.put("keyId", key.keyId().toString());
             payload.put("keyName", key.name());
             payload.put("permissions", key.permissions().stream().sorted().toList());
             payload.put("platformTier", key.platformTier());

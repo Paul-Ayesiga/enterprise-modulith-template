@@ -48,7 +48,7 @@ class ExchangeJobStore {
     private static final RowMapper<ExchangeJob> JOB = (rs, n) -> new ExchangeJob(
             rs.getObject("id", UUID.class),
             rs.getObject("org_id", UUID.class),
-            rs.getString("requester"),
+            rs.getObject("requester_person_id", UUID.class),
             rs.getString("job_type"),
             rs.getString("handler"),
             rs.getInt("handler_version"),
@@ -77,14 +77,14 @@ class ExchangeJobStore {
         this.dialect = dialect;
     }
 
-    UUID submit(UUID orgId, String requester, String jobType, String handler, int handlerVersion,
+    UUID submit(UUID orgId, UUID requesterPersonId, String jobType, String handler, int handlerVersion,
             String format, String sourceKey) {
         UUID id = UUID.randomUUID();
         jdbc.update("""
-                insert into exchange_job (id, org_id, requester, job_type, handler, handler_version,
+                insert into exchange_job (id, org_id, requester_person_id, job_type, handler, handler_version,
                                           format, status, source_key, created_at)
                 values (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)
-                """, id, orgId, requester, jobType, handler, handlerVersion, format, sourceKey,
+                """, id, orgId, requesterPersonId, jobType, handler, handlerVersion, format, sourceKey,
                 Timestamp.from(clock.instant()));
         return id;
     }

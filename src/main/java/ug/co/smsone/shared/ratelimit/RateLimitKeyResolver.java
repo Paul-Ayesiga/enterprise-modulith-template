@@ -43,13 +43,15 @@ class RateLimitKeyResolver {
             }
         }
         if (tier.scope() == RateLimitScope.TENANT || tier.scope() == RateLimitScope.PRINCIPAL) {
-            // The subject, not the display name — the key type has always said "sub" and now means it.
-            // A username-keyed bucket is escapable (rename yourself for a fresh quota) and inheritable
-            // (a recycled username lands in the previous holder's bucket). Falls through to IP when
-            // there is no authenticated subject.
-            String subject = currentUserProvider.currentSubject().orElse(null);
-            if (subject != null) {
-                return key(tier, "sub", subject);
+            // The durable principal key (person:<uuid> | key:<uuid>), not the display name. A
+            // username-keyed bucket is escapable (rename yourself for a fresh quota) and inheritable
+            // (a recycled username lands in the previous holder's bucket). The key type is "principal"
+            // rather than "sub" because the value is no longer a token subject — a machine has none,
+            // and papering over that collision is what the namespace prefix exists to stop. Falls
+            // through to IP when there is no authenticated principal.
+            String principal = currentUserProvider.currentPrincipalKey().orElse(null);
+            if (principal != null) {
+                return key(tier, "principal", principal);
             }
         }
         return key(tier, "ip", clientIp(request));
@@ -58,11 +60,12 @@ class RateLimitKeyResolver {
     /**
      * The tenant identity for a TENANT-scoped tier: the active organization id (parsed from the
      * Keycloak {@code organization} claim — the canonical tenant), or a configured flat tenant claim
-     * for non-org identity providers. {@code null} when neither is present (the caller then keys by sub).
+     * for non-org identity providers. {@code null} when neither is present (the caller then keys by
+     * principal).
      */
     private String tenantKey(Authentication authentication) {
         String org = currentUserProvider.currentUser()
-                .map(CurrentUser::activeOrgId)
+                .map(CurrentUser::organizationId)
                 .map(UUID::toString)
                 .orElse(null);
         if (org != null) {

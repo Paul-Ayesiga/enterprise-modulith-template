@@ -16,21 +16,22 @@ alter table exchange_job
 -- aggregate (the ELEVENTH... tenth is org_subscription in V26) with optimistic locking.
 create table exchange_schedule
 (
-    id          uuid primary key,
-    org_id      uuid         not null,
-    requester   varchar(64)  not null,          -- fired jobs run AS this subject (revocation-safe re-check per fire)
-    handler     varchar(60)  not null,
-    format      varchar(10)  not null,
-    cron        varchar(120) not null,          -- Spring cron (6 fields); validated at create
-    enabled     boolean      not null default true,
-    next_run_at timestamptz  not null,
-    last_job_id uuid,
-    version     bigint       not null,
-    created_at  timestamptz  not null,
-    created_by  varchar(100),
-    updated_at  timestamptz,
-    updated_by  varchar(100),
-    deleted_at  timestamptz
+    id                  uuid primary key,
+    org_id              uuid         not null,          -- organization.id (soft ref, no cross-module FK)
+    requester_person_id uuid         not null,          -- fired jobs run AS this person (revocation-safe re-check per fire)
+    handler             varchar(60)  not null,
+    format              varchar(10)  not null,
+    cron                varchar(120) not null,          -- Spring cron (6 fields); validated at create
+    enabled             boolean      not null default true,
+    next_run_at         timestamptz  not null,
+    last_job_id         uuid,                           -- soft ref to exchange_job; deliberately no FK,
+                                                        -- retention trims jobs and a schedule outlives them
+    version             bigint       not null,
+    created_at          timestamptz  not null,
+    created_by          uuid        ,
+    updated_at          timestamptz,
+    updated_by          uuid        ,
+    deleted_at          timestamptz
 );
 
 -- The firing scan: due, enabled, live rows only — everything else is dead weight to the poller.

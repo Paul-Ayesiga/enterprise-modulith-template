@@ -5,7 +5,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ug.co.smsone.shared.compliance.LegalHolds;
 
-/** The port impl: a cheap indexed existence check, consulted by the purge job and the erasure path. */
+/**
+ * The port impl: a cheap indexed existence check on {@code idx_legal_hold_active_person}, consulted by
+ * the erasure path. The purge job does NOT come through here — it inlines the same predicate as SQL.
+ */
 @Service
 class LegalHoldsImpl implements LegalHolds {
 
@@ -17,13 +20,7 @@ class LegalHoldsImpl implements LegalHolds {
 
     @Override
     @Transactional(readOnly = true)
-    public boolean subjectHeld(String subject) {
-        return subject != null && holds.existsBySubjectAndReleasedAtIsNull(subject);
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public boolean orgHeld(UUID organizationId) {
-        return organizationId != null && holds.existsByOrgIdAndReleasedAtIsNull(organizationId);
+    public boolean personHeld(UUID personId) {
+        return personId != null && holds.existsByPersonIdAndReleasedAtIsNull(personId);
     }
 }

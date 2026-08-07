@@ -21,6 +21,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import ug.co.smsone.shared.security.OrgAuthorization;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
+import ug.co.smsone.testsupport.EdgeSeed;
 
 /**
  * The audit query REST: the platform-admin view (all orgs), the org-scoped view gated by
@@ -41,11 +42,14 @@ class AuditApiTest extends AbstractIntegrationTest {
     private OrgAuthorization orgAuthorization;
 
     private void seed(UUID orgId, String action, String target) {
+        // actor_person_id, not actor: V13 made the acting party a person id, and NULL is its spelling
+        // for a non-person actor — which a seed row written by no one is.
         jdbc.update("""
                 insert into audit_log
-                    (id, org_id, action, actor, target, from_state, to_state, occurred_at, version, created_at)
+                    (id, org_id, action, actor_person_id, target, from_state, to_state, occurred_at,
+                     version, created_at)
                 values (?, ?, ?, ?, ?, ?, ?, now(), 0, now())
-                """, UUID.randomUUID(), orgId, action, "admin-seed", target, "before", "after");
+                """, UUID.randomUUID(), orgId, action, UUID.randomUUID(), target, "before", "after");
     }
 
     @Test
@@ -115,11 +119,14 @@ class AuditApiTest extends AbstractIntegrationTest {
 
     @Test
     void orgScopedViewReturnsOnlyThatOrgWhenPermitted() throws Exception {
-        UUID orgId = UUID.randomUUID();
+        UUID orgId = seedOrg();
         String subject = "owner-" + UUID.randomUUID();
+        UUID personId = EdgeSeed.person(jdbc, subject);
         seed(orgId, "organization.member_added", "someone");
         seed(UUID.randomUUID(), "organization.member_added", "other-org"); // a different org
-        given(orgAuthorization.hasPermission(subject, orgId, "audit:read")).willReturn(true);
+        // The edge resolves the caller's whole permission set once, so THAT is what the mock answers —
+        // a hasPermission stub is never consulted on the request path any more.
+        given(orgAuthorization.permissions(personId, orgId)).willReturn(java.util.Set.of("audit:read"));
 
         mockMvc.perform(get("/api/v1/orgs/{orgId}/audit", orgId).with(orgToken(subject, orgId)))
                 .andExpect(status().isOk())
@@ -130,8 +137,8 @@ class AuditApiTest extends AbstractIntegrationTest {
     /** The permission lookup itself: scoped to the right org, and still refused without {@code audit:read}. */
     @Test
     void orgScopedViewDeniesWithoutTheAuditPermission() throws Exception {
-        UUID orgId = UUID.randomUUID();
-        // OrgAuthorization is stubbed only for the permitted subject above, so this one resolves to false —
+        UUID orgId = seedOrg();
+        // OrgAuthorization is stubbed only for the permitted person above, so this one resolves to empty —
         // which is the branch the name promises, and the one the no-active-org case never reaches.
         mockMvc.perform(get("/api/v1/orgs/{orgId}/audit", orgId)
                         .with(orgToken("outsider-" + UUID.randomUUID(), orgId)))
@@ -146,8 +153,18 @@ class AuditApiTest extends AbstractIntegrationTest {
                 .andExpect(status().isForbidden());
     }
 
-    private static RequestPostProcessor orgToken(String subject, UUID orgId) {
+    /** A tenant the edge can resolve: an organization plus the provider link its claim names. */
+    private UUID seedOrg() {
+        return EdgeSeed.organization(jdbc, "kc-org-" + UUID.randomUUID(), "acme-" + UUID.randomUUID());
+    }
+
+    /** The alias-keyed {@code organization} claim Keycloak mints, rebuilt from the seeded link. */
+    private RequestPostProcessor orgToken(String subject, UUID orgId) {
+        Map<String, Object> link = jdbc.queryForMap(
+                "select external_org_id, external_alias from external_organization where organization_id = ?",
+                orgId);
         return jwt().jwt(builder -> builder.subject(subject)
-                .claim("organization", Map.of("acme", Map.of("id", orgId.toString()))));
+                .claim("organization", Map.of(String.valueOf(link.get("external_alias")),
+                        Map.of("id", String.valueOf(link.get("external_org_id"))))));
     }
 }

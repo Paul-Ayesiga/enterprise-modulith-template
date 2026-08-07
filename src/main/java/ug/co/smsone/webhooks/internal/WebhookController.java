@@ -76,7 +76,7 @@ class WebhookController {
     @PreAuthorize("hasPermission(#orgId, 'organization', 'webhook:manage')")
     WindowedResult<ResourceObject> list(@PathVariable UUID orgId, CursorPageRequest page) {
         return WindowedResult.of(service.list(orgId, page), page,
-                subscription -> toResource(subscription, mask(subscription.getSecret())));
+                subscription -> toResource(subscription, mask()));
     }
 
     @GetMapping("/{id}")
@@ -85,7 +85,7 @@ class WebhookController {
     @PreAuthorize("hasPermission(#orgId, 'organization', 'webhook:manage')")
     ResourceObject get(@PathVariable UUID orgId, @PathVariable UUID id) {
         WebhookSubscription subscription = service.require(orgId, id);
-        return toResource(subscription, mask(subscription.getSecret()));
+        return toResource(subscription, mask());
     }
 
     @PutMapping("/{id}")
@@ -100,7 +100,7 @@ class WebhookController {
             @Valid @RequestBody UpdateWebhookRequest request) {
         WebhookSubscription updated = service.update(orgId, id, request.url(), request.events(),
                 parseStatus(request.status()));
-        return toResource(updated, mask(updated.getSecret()));
+        return toResource(updated, mask());
     }
 
     @PostMapping("/{id}/rotate-secret")
@@ -169,10 +169,12 @@ class WebhookController {
         }
     }
 
-    private static String mask(String secret) {
-        // Reveal none of the random secret — only the (non-secret) scheme prefix every minted
-        // secret carries. The stored form is now ciphertext (enc:v1:…), so the mask is a constant
-        // rather than derived: it describes the PLAINTEXT the tenant holds, not the row.
+    /**
+     * Reveal none of the random secret — only the (non-secret) scheme prefix every minted secret
+     * carries. It takes no argument BECAUSE the stored form is ciphertext (enc:v1:…): there is nothing
+     * in the row to derive a mask from, and the constant describes the PLAINTEXT the tenant holds.
+     */
+    private static String mask() {
         return "whsec_••••••";
     }
 

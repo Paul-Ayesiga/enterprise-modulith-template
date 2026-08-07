@@ -5,14 +5,14 @@
 create table org_sla_override
 (
     id                     uuid        not null primary key,
-    org_id                 uuid        not null,          -- soft ref (no cross-module FK)
+    org_id                 uuid        not null,          -- organization.id; soft ref (no cross-module FK)
     priority               varchar(2)  not null,          -- P1 | P2 | P3 | P4
     first_response_minutes int         not null,
     resolution_minutes     int         not null,
     version                bigint      not null,
     created_at             timestamptz not null,
-    created_by             varchar(100),
+    created_by             uuid        ,
     updated_at             timestamptz,
-    updated_by             varchar(100),
+    updated_by             uuid        ,
     constraint uq_org_sla_override unique (org_id, priority)
 );

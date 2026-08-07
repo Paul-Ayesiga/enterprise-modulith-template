@@ -22,6 +22,7 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import ug.co.smsone.organization.Organizations;
+import ug.co.smsone.organization.ProvisionedOrganization;
 import ug.co.smsone.shared.idempotency.IdempotencyFilter;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
@@ -49,12 +50,14 @@ class SignupFlowTest extends AbstractIntegrationTest {
     @Test
     void requestVerifyProvisionAndSingleUse() throws Exception {
         UUID orgId = UUID.randomUUID();
-        given(organizations.create(any(), any(), any(), any(), any())).willReturn(orgId);
+        UUID ownerPersonId = UUID.randomUUID();
+        given(organizations.create(any(), any(), any(), any(), any()))
+                .willReturn(new ProvisionedOrganization(orgId, ownerPersonId));
         String email = "founder-" + UUID.randomUUID() + "@acme.test";
 
         mockMvc.perform(post("/api/v1/signup").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"organizationName\":\"Acme Rockets!\",\"email\":\"" + email
-                                + "\",\"firstName\":\"Ada\"}"))
+                                + "\",\"givenName\":\"Ada\"}"))
                 .andExpect(status().isAccepted());
 
         // The verification email is a durable delivery row; pull the link out of its body.

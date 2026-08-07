@@ -6,9 +6,11 @@ import java.util.UUID;
 /**
  * A tenant was deleted by the platform (soft — the row and its trail remain restorable until the
  * retention purge). Published explicitly, since a repository delete fires no {@code @DomainEvents}.
- * The Keycloak organization is deliberately NOT removed: with the local projection gone every
- * permission resolution fails closed, and keeping the IdP record preserves the account linkage an
- * un-delete needs.
+ * {@code orgId} is {@code organization.id}.
+ *
+ * <p>The provider organization is deliberately NOT removed: with the local tenant row gone every
+ * permission resolution fails closed anyway, and keeping the IdP record preserves both the account
+ * linkage an un-delete needs and the {@code external_organization} row that resolves its tokens.
  */
 public record OrganizationDeleted(UUID orgId, Instant occurredAt) {
 }

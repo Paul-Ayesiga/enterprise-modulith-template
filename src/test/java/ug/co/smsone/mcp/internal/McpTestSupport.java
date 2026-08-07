@@ -34,10 +34,12 @@ public final class McpTestSupport {
         UUID keyId = UUID.randomUUID();
         String prefix = "sk_" + randomHex(6);
         String secret = randomHex(24);
+        // created_by/updated_by are uuid holding person.id and are LEFT NULL: V10's rule is that null
+        // means a non-person actor, and a fixture is exactly that. The literal 'test' used to go here.
         jdbc.update("""
                 insert into api_key (id, org_id, name, prefix, secret_hash, permissions,
-                                     version, created_at, created_by, updated_at, updated_by)
-                values (?, ?, ?, ?, ?, ?, 0, now(), 'test', now(), 'test')
+                                     version, created_at, updated_at)
+                values (?, ?, ?, ?, ?, ?, 0, now(), now())
                 """, keyId, orgId, name, prefix, sha256(secret), String.join(",", permissions));
         return new SeededKey(keyId, prefix + "." + secret);
     }
@@ -49,18 +51,19 @@ public final class McpTestSupport {
     // --- Cross-module row seeding (tables, not services: MCP tests sit outside the owning
     // packages, and rows are the honest fixture for read tools) --------------------------------
 
+    /** organization.id IS the tenant key now — the caller supplies it, nothing mints a provider id. */
     public static void seedOrg(JdbcTemplate jdbc, UUID orgId, String alias, String name) {
         jdbc.update("""
-                insert into organization (id, kc_org_id, alias, name, status, version, created_at, created_by)
-                values (?, ?, ?, ?, 'ACTIVE', 0, now(), 'test')
-                """, UUID.randomUUID(), orgId, alias, name);
+                insert into organization (id, alias, name, status, version, created_at)
+                values (?, ?, ?, 'ACTIVE', 0, now())
+                """, orgId, alias, name);
     }
 
     public static UUID seedRole(JdbcTemplate jdbc, UUID orgId, String code, String... permissions) {
         UUID roleId = UUID.randomUUID();
         jdbc.update("""
-                insert into org_role (id, org_id, code, name, system_role, version, created_at, created_by)
-                values (?, ?, ?, ?, false, 0, now(), 'test')
+                insert into org_role (id, org_id, code, name, system_role, version, created_at)
+                values (?, ?, ?, ?, false, 0, now())
                 """, roleId, orgId, code, code);
         for (String permission : permissions) {
             // The @Enumerated(STRING) collection stores enum NAMES; callers pass wire codes.
@@ -70,11 +73,11 @@ public final class McpTestSupport {
         return roleId;
     }
 
-    public static void seedMembership(JdbcTemplate jdbc, UUID orgId, String subject, UUID roleId) {
+    public static void seedMembership(JdbcTemplate jdbc, UUID orgId, UUID personId, UUID roleId) {
         jdbc.update("""
-                insert into membership (id, org_id, user_subject, role_id, status, version, created_at, created_by)
-                values (?, ?, ?, ?, 'ACTIVE', 0, now(), 'test')
-                """, UUID.randomUUID(), orgId, subject, roleId);
+                insert into membership (id, org_id, person_id, role_id, status, version, created_at)
+                values (?, ?, ?, ?, 'ACTIVE', 0, now())
+                """, UUID.randomUUID(), orgId, personId, roleId);
     }
 
     /** The first text block — the human-readable mirror every tool result carries. */

@@ -1,10 +1,11 @@
 package ug.co.smsone.notification;
 
 import java.util.Objects;
+import java.util.UUID;
 
 /**
  * A single delivery target: the {@link NotificationChannel} plus its channel-specific address —
- * an email address, phone number, in-app user id, or webhook/Slack URL.
+ * an email address, phone number, {@code person.id}, or webhook/Slack URL.
  */
 public record Recipient(NotificationChannel channel, String address) {
 
@@ -21,9 +22,15 @@ public record Recipient(NotificationChannel channel, String address) {
         return new Recipient(NotificationChannel.SMS, phoneNumber);
     }
 
-    /** In-app target: the user's immutable Keycloak subject ({@code sub}), NOT a username/email. */
-    public static Recipient inApp(String subject) {
-        return new Recipient(NotificationChannel.IN_APP, subject);
+    /**
+     * In-app target: the recipient's {@code person.id}. The only channel whose address is an identity
+     * rather than a place — there is nowhere to deliver an in-app notification but this platform's own
+     * UI, so the address IS the person. It is rendered into {@link #address()} because the four other
+     * channels genuinely address a place and the record must hold all five; the string is parsed back
+     * to a {@code UUID} by the in-app sender, which is the only reader that may.
+     */
+    public static Recipient inApp(UUID personId) {
+        return new Recipient(NotificationChannel.IN_APP, Objects.requireNonNull(personId, "personId").toString());
     }
 
     public static Recipient slack(String webhookUrl) {

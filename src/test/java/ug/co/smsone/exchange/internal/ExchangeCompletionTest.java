@@ -31,6 +31,9 @@ import ug.co.smsone.testsupport.AbstractIntegrationTest;
  */
 @Import(ExchangeTestSupport.class)
 class ExchangeCompletionTest extends AbstractIntegrationTest {
+    /** exchange_job.requester_person_id is a uuid soft ref — any person id seeds a requester. */
+    private static final UUID REQUESTER = UUID.randomUUID();
+
 
     @Autowired
     private ExchangeWorker worker;
@@ -66,7 +69,7 @@ class ExchangeCompletionTest extends AbstractIntegrationTest {
         }
         String key = "exch/o/" + orgId + "/test/source.xlsx";
         storage.objects.put(key, out.toByteArray());
-        UUID jobId = store.submit(orgId, "requester-1", ExchangeJob.IMPORT,
+        UUID jobId = store.submit(orgId, REQUESTER, ExchangeJob.IMPORT,
                 ExchangeTestSupport.CountingExchangeHandler.ID, 1, "XLSX", key);
         assertThat(worker.drainOnce()).isEqualTo(1);
         ExchangeJob done = store.find(jobId, orgId).orElseThrow();
@@ -74,7 +77,7 @@ class ExchangeCompletionTest extends AbstractIntegrationTest {
         assertThat(done.processed()).isEqualTo(2);
         assertThat(handler.applied).containsExactlyInAnyOrder("k1", "k2");
 
-        UUID exportId = store.submit(orgId, "requester-1", ExchangeJob.EXPORT,
+        UUID exportId = store.submit(orgId, REQUESTER, ExchangeJob.EXPORT,
                 ExchangeTestSupport.CountingExchangeHandler.ID, 1, "XLSX", null);
         assertThat(worker.drainOnce()).isEqualTo(1);
         ExchangeJob export = store.find(exportId, orgId).orElseThrow();
@@ -100,7 +103,7 @@ class ExchangeCompletionTest extends AbstractIntegrationTest {
                 </records>""";
         String key = "exch/o/" + orgId + "/test/source.xml";
         storage.objects.put(key, xml.getBytes(StandardCharsets.UTF_8));
-        UUID jobId = store.submit(orgId, "requester-1", ExchangeJob.IMPORT,
+        UUID jobId = store.submit(orgId, REQUESTER, ExchangeJob.IMPORT,
                 ExchangeTestSupport.CountingExchangeHandler.ID, 1, "XML", key);
         assertThat(worker.drainOnce()).isEqualTo(1);
         ExchangeJob done = store.find(jobId, orgId).orElseThrow();
@@ -111,7 +114,7 @@ class ExchangeCompletionTest extends AbstractIntegrationTest {
         // Wrong root: a whole-file shape problem with a curated message.
         String badKey = "exch/o/" + orgId + "/test/bad.xml";
         storage.objects.put(badKey, "<rows><r/></rows>".getBytes(StandardCharsets.UTF_8));
-        UUID badJob = store.submit(orgId, "requester-1", ExchangeJob.IMPORT,
+        UUID badJob = store.submit(orgId, REQUESTER, ExchangeJob.IMPORT,
                 ExchangeTestSupport.CountingExchangeHandler.ID, 1, "XML", badKey);
         assertThat(worker.drainOnce()).isEqualTo(1);
         ExchangeJob failed = store.find(badJob, orgId).orElseThrow();
@@ -130,7 +133,7 @@ class ExchangeCompletionTest extends AbstractIntegrationTest {
         }
         String key = "exch/o/" + orgId + "/test/source.zip";
         storage.objects.put(key, out.toByteArray());
-        UUID jobId = store.submit(orgId, "requester-1", ExchangeJob.IMPORT,
+        UUID jobId = store.submit(orgId, REQUESTER, ExchangeJob.IMPORT,
                 ExchangeTestSupport.CountingExchangeHandler.ID, 1, "CSV", key);
         assertThat(worker.drainOnce()).isEqualTo(1);
         assertThat(store.find(jobId, orgId).orElseThrow().processed()).isEqualTo(2);
@@ -142,7 +145,7 @@ class ExchangeCompletionTest extends AbstractIntegrationTest {
         String key = "exch/o/" + orgId + "/test/broken.csv";
         storage.objects.put(key,
                 "key,value\nk1,v1\n\"unclosed,v2\n".getBytes(StandardCharsets.UTF_8));
-        UUID jobId = store.submit(orgId, "requester-1", ExchangeJob.IMPORT,
+        UUID jobId = store.submit(orgId, REQUESTER, ExchangeJob.IMPORT,
                 ExchangeTestSupport.CountingExchangeHandler.ID, 1, "CSV", key);
         assertThat(worker.drainOnce()).isEqualTo(1);
         ExchangeJob done = store.find(jobId, orgId).orElseThrow();
@@ -156,7 +159,7 @@ class ExchangeCompletionTest extends AbstractIntegrationTest {
         UUID orgId = UUID.randomUUID();
         String key = "exch/o/" + orgId + "/test/source.csv";
         storage.objects.put(key, "key,value\nk1,v1\n".getBytes(StandardCharsets.UTF_8));
-        UUID jobId = store.submit(orgId, "requester-1", ExchangeJob.IMPORT,
+        UUID jobId = store.submit(orgId, REQUESTER, ExchangeJob.IMPORT,
                 ExchangeTestSupport.CountingExchangeHandler.ID, 1, "CSV", key);
         handler.onCall = call -> {
             throw new IllegalStateException("provider down");
@@ -180,7 +183,7 @@ class ExchangeCompletionTest extends AbstractIntegrationTest {
             csv.append("k").append(i).append(",v").append(i).append('\n');
         }
         storage.objects.put(key, csv.toString().getBytes(StandardCharsets.UTF_8));
-        UUID jobId = store.submit(orgId, "requester-1", ExchangeJob.IMPORT,
+        UUID jobId = store.submit(orgId, REQUESTER, ExchangeJob.IMPORT,
                 ExchangeTestSupport.CountingExchangeHandler.ID, 1, "CSV", key);
 
         // "Instance A" claims and stalls; its lock goes stale; B reclaims and finishes the job.
@@ -202,12 +205,12 @@ class ExchangeCompletionTest extends AbstractIntegrationTest {
         storage.objects.put(key,
                 "{\"key\":\"k1\",\"value\":\"v1\"}\n{\"key\":\"k2\",\"value\":\"v2\"}\n"
                         .getBytes(StandardCharsets.UTF_8));
-        UUID jobId = store.submit(orgId, "requester-1", ExchangeJob.IMPORT,
+        UUID jobId = store.submit(orgId, REQUESTER, ExchangeJob.IMPORT,
                 ExchangeTestSupport.CountingExchangeHandler.ID, 1, "JSONL", key);
         assertThat(worker.drainOnce()).isEqualTo(1);
         assertThat(store.find(jobId, orgId).orElseThrow().processed()).isEqualTo(2);
 
-        UUID exportId = store.submit(orgId, "requester-1", ExchangeJob.EXPORT,
+        UUID exportId = store.submit(orgId, REQUESTER, ExchangeJob.EXPORT,
                 ExchangeTestSupport.CountingExchangeHandler.ID, 1, "JSONL", null);
         assertThat(worker.drainOnce()).isEqualTo(1);
         ExchangeJob export = store.find(exportId, orgId).orElseThrow();

@@ -1,8 +1,8 @@
 package ug.co.smsone.organization.internal;
 
-import java.util.UUID;
 import org.springframework.stereotype.Component;
 import ug.co.smsone.organization.Organizations;
+import ug.co.smsone.organization.ProvisionedOrganization;
 
 /** {@link Organizations} over the internal service — signup provisions exactly like the admin path. */
 @Component
@@ -15,7 +15,10 @@ class OrganizationsImpl implements Organizations {
     }
 
     @Override
-    public UUID create(String alias, String name, String ownerEmail, String ownerFirstName, String ownerLastName) {
-        return service.create(alias, name, ownerEmail, ownerFirstName, ownerLastName).getKcOrgId();
+    public ProvisionedOrganization create(String alias, String name, String ownerEmail, String ownerGivenName,
+            String ownerFamilyName) {
+        OrganizationService.NewOrganization created =
+                service.create(alias, name, ownerEmail, ownerGivenName, ownerFamilyName);
+        return new ProvisionedOrganization(created.organization().getId(), created.ownerPersonId());
     }
 }

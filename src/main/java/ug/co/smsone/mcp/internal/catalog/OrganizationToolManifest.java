@@ -3,6 +3,7 @@ package ug.co.smsone.mcp.internal.catalog;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import org.springframework.stereotype.Component;
 import ug.co.smsone.mcp.internal.ToolDefinition;
 import ug.co.smsone.mcp.internal.ToolDefinition.Kind;
@@ -10,6 +11,8 @@ import ug.co.smsone.mcp.internal.ToolManifest;
 import ug.co.smsone.organization.OrgDirectory;
 import ug.co.smsone.organization.OrgMembers;
 import ug.co.smsone.organization.OrgRoles;
+import ug.co.smsone.shared.error.ValidationException;
+import ug.co.smsone.shared.web.ApiSource;
 
 /**
  * Organization tools — profile, members, roles. Permissions mirror the REST controllers exactly;
@@ -46,7 +49,7 @@ class OrganizationToolManifest implements ToolManifest {
                                 ToolArgs.requireString(args, "name"))),
 
                 new ToolDefinition("members_list", "List members",
-                        "List this organization's members (subject, role code, status, member since). "
+                        "List this organization's members (person id, role code, status, member since). "
                                 + "Cursor-paginated.",
                         1, "organization", Kind.READ, "member:read",
                         ToolArgs.schema(ToolArgs.pageProperties()),
@@ -61,8 +64,8 @@ class OrganizationToolManifest implements ToolManifest {
                         ToolArgs.schema(inviteProperties(), "email", "role_code"),
                         (context, args) -> members.invite(context.orgId(),
                                 ToolArgs.requireString(args, "email"),
-                                ToolArgs.optionalString(args, "first_name"),
-                                ToolArgs.optionalString(args, "last_name"),
+                                ToolArgs.optionalString(args, "given_name"),
+                                ToolArgs.optionalString(args, "family_name"),
                                 ToolArgs.requireString(args, "role_code"))),
 
                 new ToolDefinition("member_role_assign", "Change a member's role",
@@ -71,11 +74,10 @@ class OrganizationToolManifest implements ToolManifest {
                                 + "is refused.",
                         1, "organization", Kind.WRITE, "member:role:assign",
                         ToolArgs.schema(Map.of(
-                                        "subject", ToolArgs.string("The member's durable subject id."),
+                                        "person_id", ToolArgs.string("The member's person id (see members_list)."),
                                         "role_code", ToolArgs.string("The role code to assign.")),
-                                "subject", "role_code"),
-                        (context, args) -> members.assignRole(context.orgId(),
-                                ToolArgs.requireString(args, "subject"),
+                                "person_id", "role_code"),
+                        (context, args) -> members.assignRole(context.orgId(), personId(args),
                                 ToolArgs.requireString(args, "role_code"))),
 
                 new ToolDefinition("member_remove", "Remove member",
@@ -83,12 +85,12 @@ class OrganizationToolManifest implements ToolManifest {
                                 + "membership ends. Removing the last OWNER is refused.",
                         1, "organization", Kind.DESTRUCTIVE, "member:remove",
                         ToolArgs.schema(Map.of(
-                                        "subject", ToolArgs.string("The member's durable subject id.")),
-                                "subject"),
+                                        "person_id", ToolArgs.string("The member's person id (see members_list).")),
+                                "person_id"),
                         (context, args) -> {
-                            String subject = ToolArgs.requireString(args, "subject");
-                            members.remove(context.orgId(), subject);
-                            return Map.of("removed", subject);
+                            UUID personId = personId(args);
+                            members.remove(context.orgId(), personId);
+                            return Map.of("removed", personId.toString());
                         }),
 
                 new ToolDefinition("roles_list", "List roles",
@@ -99,11 +101,26 @@ class OrganizationToolManifest implements ToolManifest {
                         (context, args) -> roles.list(context.orgId(), ToolArgs.page(args))));
     }
 
+    /**
+     * A member is named by their {@code person.id} — the same id {@code members_list} returns and the
+     * platform's only durable answer to "who". A malformed one is a 422 like every other bad argument,
+     * never a 500 out of the parse.
+     */
+    private static UUID personId(Map<String, Object> args) {
+        try {
+            return UUID.fromString(ToolArgs.requireString(args, "person_id"));
+        } catch (IllegalArgumentException ex) {
+            throw new ValidationException("'person_id' must be a UUID.", ApiSource.pointer("/person_id"));
+        }
+    }
+
     private static Map<String, Object> inviteProperties() {
         Map<String, Object> properties = new LinkedHashMap<>();
         properties.put("email", ToolArgs.string("The invitee's email (becomes their username)."));
-        properties.put("first_name", ToolArgs.string("Optional first name."));
-        properties.put("last_name", ToolArgs.string("Optional last name."));
+        // given/family, not first/last: name ORDER is cultural, so "first" names a position in one
+        // rendering rather than the part itself. Both optional — a mononym is an ordinary name.
+        properties.put("given_name", ToolArgs.string("Optional given name."));
+        properties.put("family_name", ToolArgs.string("Optional family name."));
         properties.put("role_code", ToolArgs.string("The role to grant, by code (see roles_list)."));
         return properties;
     }

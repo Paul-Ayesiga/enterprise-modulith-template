@@ -9,7 +9,16 @@ import org.hibernate.annotations.SQLDelete;
 import org.hibernate.annotations.SQLRestriction;
 import ug.co.smsone.shared.persistence.SoftDeletableEntity;
 
-/** A support ticket. Status and priority drive the SLA clock and the platform queue. */
+/**
+ * A support ticket. Status and priority drive the SLA clock and the platform queue.
+ *
+ * <p>The two people on it live in different tenancy worlds and resolve through one table now: the
+ * opener is a member of THIS org, the assignee is a platform operator who is a member of no tenant
+ * at all (V36). Both are {@code person.id} soft refs — support is not the identity module.
+ *
+ * <p>{@code subject} is the ticket's TITLE and keeps its name: it was never a principal, and
+ * renaming it to match a sweep over identity columns would make the field lie.
+ */
 @Entity
 @Table(name = "ticket")
 @SQLDelete(sql = "update ticket set deleted_at = now(), version = version + 1 where id = ? and version = ?")
@@ -19,8 +28,8 @@ class Ticket extends SoftDeletableEntity {
     @Column(name = "org_id", nullable = false, updatable = false)
     private UUID orgId;
 
-    @Column(name = "opener_subject", nullable = false, updatable = false, length = 64)
-    private String openerSubject;
+    @Column(name = "opener_person_id", nullable = false, updatable = false)
+    private UUID openerPersonId;
 
     @Column(nullable = false, length = 200)
     private String subject;
@@ -34,8 +43,8 @@ class Ticket extends SoftDeletableEntity {
     @Column(nullable = false, length = 25)
     private String status;
 
-    @Column(name = "assignee_subject", length = 64)
-    private String assigneeSubject;
+    @Column(name = "assignee_person_id")
+    private UUID assigneePersonId;
 
     @Column(name = "first_response_at")
     private Instant firstResponseAt;
@@ -53,11 +62,11 @@ class Ticket extends SoftDeletableEntity {
         // JPA
     }
 
-    static Ticket open(UUID orgId, String openerSubject, String subject, String category,
+    static Ticket open(UUID orgId, UUID openerPersonId, String subject, String category,
             String priority, Instant firstResponseDue, Instant resolutionDue) {
         Ticket ticket = new Ticket();
         ticket.orgId = orgId;
-        ticket.openerSubject = openerSubject;
+        ticket.openerPersonId = openerPersonId;
         ticket.subject = subject;
         ticket.category = category;
         ticket.priority = priority;
@@ -67,8 +76,8 @@ class Ticket extends SoftDeletableEntity {
         return ticket;
     }
 
-    void assign(String assignee) {
-        this.assigneeSubject = assignee;
+    void assign(UUID assigneePersonId) {
+        this.assigneePersonId = assigneePersonId;
         if ("OPEN".equals(status)) {
             status = "IN_PROGRESS";
         }
@@ -93,16 +102,12 @@ class Ticket extends SoftDeletableEntity {
         this.escalated = true;
     }
 
-    boolean isTerminal() {
-        return "RESOLVED".equals(status) || "CLOSED".equals(status);
-    }
-
     UUID getOrgId() {
         return orgId;
     }
 
-    String getOpenerSubject() {
-        return openerSubject;
+    UUID getOpenerPersonId() {
+        return openerPersonId;
     }
 
     String getSubject() {
@@ -121,8 +126,8 @@ class Ticket extends SoftDeletableEntity {
         return status;
     }
 
-    String getAssigneeSubject() {
-        return assigneeSubject;
+    UUID getAssigneePersonId() {
+        return assigneePersonId;
     }
 
     Instant getFirstResponseAt() {

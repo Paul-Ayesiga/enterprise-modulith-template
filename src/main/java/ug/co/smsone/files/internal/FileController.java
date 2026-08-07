@@ -62,7 +62,7 @@ class FileController {
     @Operation(summary = "Upload a file",
             description = """
                     Sent as `multipart/form-data` under the field name `file`. The object key is minted \
-                    server-side under the caller's own namespace (`u/<subject>/…`) — the caller never \
+                    server-side under the caller's own namespace (`u/<person-id>/…`) — the caller never \
                     chooses it, so an upload can never overwrite an existing object. The returned `key` \
                     is what every later download, presign and delete addresses.""")
     @ResponseStatus(HttpStatus.CREATED)
@@ -70,7 +70,7 @@ class FileController {
         if (file.isEmpty()) {
             throw new ValidationException("Uploaded file is empty.", ApiSource.parameter("file"));
         }
-        String key = newKey(user.subject(), file.getOriginalFilename());
+        String key = newKey(requirePerson(user), file.getOriginalFilename());
         // Stored and replayed verbatim on download — acceptable because downloads 302 to the storage
         // origin, never this API's origin; add an allowlist before ever proxying bytes through here.
         String contentType = file.getContentType() == null ? "application/octet-stream" : file.getContentType();
@@ -123,7 +123,8 @@ class FileController {
         String operation = request.operation().trim().toUpperCase(java.util.Locale.ROOT);
         return switch (operation) {
             case "PUT" -> {
-                String key = newKey(user.subject(), request.key()); // request.key() is treated as a filename hint
+                // request.key() is treated as a filename hint, never as a target
+                String key = newKey(requirePerson(user), request.key());
                 String contentType = request.contentType() == null ? "application/octet-stream" : request.contentType();
                 URL url = storage.presignPut(key, contentType, properties.presignTtl());
                 yield presignResource(key, "PUT", url);
@@ -150,11 +151,24 @@ class FileController {
                 new PresignAttributes(key, operation, url.toString(), properties.presignTtl().toSeconds()));
     }
 
-    /** {@code u/<sub>/<uuid>/<sanitized-filename>} — namespaced by owner, collision-free. */
-    private static String newKey(String subject, String filenameHint) {
+    /** {@code u/<person-id>/<uuid>/<sanitized-filename>} — namespaced by owner, collision-free. */
+    private static String newKey(UUID ownerPersonId, String filenameHint) {
         String name = filenameHint == null || filenameHint.isBlank() ? "file" : filenameHint;
         String safe = name.replaceAll("[^A-Za-z0-9._-]", "_");
-        return "u/" + subject + "/" + UUID.randomUUID() + "/" + safe;
+        return "u/" + ownerPersonId + "/" + UUID.randomUUID() + "/" + safe;
+    }
+
+    /**
+     * The owner of a personal namespace. A machine is refused rather than given one: the namespace is
+     * {@code u/<person-id>/} and an API key has no person id, so there is no namespace to mint a key
+     * in — and {@link #requireOwnerOr} would then match nothing, leaving a caller able to write
+     * objects it could never read back.
+     */
+    private static UUID requirePerson(CurrentUser user) {
+        if (user.personId() == null) {
+            throw new ForbiddenException("The personal file namespace belongs to a person; this caller is not one.");
+        }
+        return user.personId();
     }
 
     private static String normalize(String key) {
@@ -163,12 +177,13 @@ class FileController {
 
     /**
      * Within their own namespace a caller is unrestricted. Reaching into someone else's is a platform
-     * action, tiered by blast radius: support may READ another user's object (fetching a user's upload
+     * action, tiered by blast radius: support may READ another person's object (fetching an upload
      * is the support job), but destroying tenant data takes admin. There is no cross-namespace write
-     * path to tier — an upload presign always mints a key under the caller's own subject.
+     * path to tier — an upload presign always mints a key under the caller's own person id.
      */
     private static void requireOwnerOr(String key, CurrentUser user, String platformTier) {
-        if (key.startsWith("u/" + user.subject() + "/") || user.hasRole(platformTier)) {
+        if ((user.personId() != null && key.startsWith("u/" + user.personId() + "/"))
+                || user.hasRole(platformTier)) {
             return;
         }
         throw new ForbiddenException("You can only access files in your own namespace.");

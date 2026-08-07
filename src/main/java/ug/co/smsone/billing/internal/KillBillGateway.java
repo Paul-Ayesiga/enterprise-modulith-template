@@ -48,7 +48,18 @@ class KillBillGateway {
     record KbPaymentMethod(UUID paymentMethodId, String pluginName, boolean isDefault) {
     }
 
-    /** Idempotent: an existing externalKey resolves to the existing account, never a duplicate. */
+    /**
+     * Idempotent: an existing externalKey resolves to the existing account, never a duplicate.
+     *
+     * <p>The externalKey here is {@code organization.id} — ours. V27 records the one deployment where
+     * that is NOT the right key: a platform whose Kill Bill accounts were already created under the
+     * Keycloak organization id keeps them, because re-keying live billing accounts at a third party
+     * is risk with no return, and the outbound translation belongs in this gateway. That translation
+     * needs a published organization port for {@code external_organization} in the outbound
+     * direction ({@code organization.id → external org id}); today only the inbound direction is
+     * published, so this mints and matches on our own id. On a platform with no pre-existing Kill
+     * Bill accounts the two are the same decision.
+     */
     UUID ensureAccount(UUID orgId, String name) {
         Optional<UUID> existing = findAccountByExternalKey(orgId);
         if (existing.isPresent()) {

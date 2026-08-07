@@ -32,7 +32,7 @@ class OrgDevBootstrap implements ApplicationRunner {
     public void run(ApplicationArguments args) {
         try {
             organizations.ensureBootstrap(properties.alias(), properties.name(), properties.ownerEmail(),
-                    properties.ownerFirstName(), properties.ownerLastName());
+                    properties.ownerGivenName(), properties.ownerFamilyName());
             log.info("Dev bootstrap: organization '{}' ready with owner {}",
                     properties.alias(), properties.ownerEmail());
         } catch (RuntimeException ex) {

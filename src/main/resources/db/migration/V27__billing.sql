@@ -1,20 +1,27 @@
 -- Billing linkage: which Kill Bill account carries an organization's money. Kill Bill is the
 -- BILLING system of record (accounts, subscriptions, invoices, payments live THERE, keyed back to
--- us by externalKey = org id); this row is the local projection that makes "is this org billed,
--- and where" answerable without a remote round trip — the app_user/Keycloak pattern. The
+-- us by an externalKey); this row is the local projection that makes "is this org billed, and
+-- where" answerable without a remote round trip — the external_organization pattern (V11), where a
+-- foreign system's key space lives in an adapter row instead of inside the module that uses it. The
 -- subscription module stays the ENTITLEMENT authority: Kill Bill events reconcile INTO it, so a
 -- paid plan always arrives through the same assign path a manual comp does.
+--
+-- THE externalKey OVER THERE IS NOT org_id, and the difference is deliberate rather than drift. Kill
+-- Bill's accounts already exist keyed by the Keycloak organization id, and re-keying live billing
+-- accounts at a third party to match an internal rename is risk with no return — money systems do
+-- not get churned for tidiness. The gateway resolves that id through external_organization on the
+-- way out; org_id below is organization.id, ours, and the two are joined by a row, not by luck.
 
 create table billing_account
 (
     id            uuid        not null primary key,
-    org_id        uuid        not null,             -- soft ref (no FK — module boundary)
-    kb_account_id uuid        not null,             -- Kill Bill accountId; externalKey over there = org_id
+    org_id        uuid        not null,             -- organization.id — soft ref (no FK, module boundary)
+    kb_account_id uuid        not null,             -- Kill Bill accountId (their key space, not ours)
     version       bigint      not null,
     created_at    timestamptz not null,
-    created_by    varchar(100),
+    created_by    uuid        ,
     updated_at    timestamptz,
-    updated_by    varchar(100),
+    updated_by    uuid        ,
     deleted_at    timestamptz
 );
 

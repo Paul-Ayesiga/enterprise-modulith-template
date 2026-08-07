@@ -4,15 +4,21 @@ import java.util.UUID;
 
 /**
  * A document to register over an already-stored object. {@code orgId} null = personal;
- * {@code ownerSubject} is the token subject of whoever the document belongs to;
+ * {@code ownerPersonId} is the {@code person.id} of whoever the document belongs to;
  * {@code source} says where it came from ({@code UPLOAD} for the REST surface, {@code EXCHANGE}
  * for platform-produced artifacts).
+ *
+ * <p>The owner is required and is never null: {@code document.owner_person_id} is NOT NULL (V23), and a
+ * document belongs to a human even when a job produced it. A machine caller therefore cannot register
+ * one — that refusal belongs at the door rather than three layers down as a constraint violation.
  */
-public record NewDocument(UUID orgId, String ownerSubject, String storageKey, String name,
+public record NewDocument(UUID orgId, UUID ownerPersonId, String storageKey, String name,
         String contentType, long sizeBytes, String source) {
 
     public NewDocument {
-        ownerSubject = require(ownerSubject, 64, "ownerSubject");
+        if (ownerPersonId == null) {
+            throw new IllegalArgumentException("NewDocument.ownerPersonId must not be null");
+        }
         storageKey = require(storageKey, 300, "storageKey");
         name = require(name, 255, "name");
         contentType = require(contentType, 100, "contentType");

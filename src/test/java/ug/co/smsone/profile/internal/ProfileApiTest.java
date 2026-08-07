@@ -25,14 +25,20 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import ug.co.smsone.files.FileStorageProvider;
-import ug.co.smsone.identity.UserDirectory;
+import ug.co.smsone.identity.PersonDirectory;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
+import ug.co.smsone.testsupport.EdgeSeed;
 
 /**
- * The self-service identity surface: profile round-trips with contacts (and validates them),
- * preferences upsert additively (null deletes), the avatar follows the files pattern with
- * old-object cleanup, linked accounts are the read-only IdP view, and a dual member sees both
- * organizations with their role in each — the list an org switcher renders.
+ * The self-service identity surface: the profile round-trips, preferences upsert additively (null
+ * deletes), the avatar follows the files pattern with old-object cleanup, linked accounts are the
+ * read-only IdP view, and a dual member sees both organizations with their role in each — the list an
+ * org switcher renders.
+ *
+ * <p><b>Contacts are no longer part of this surface</b>, and the assertions that covered them are gone
+ * rather than repaired. V28 moved them to {@code person_contact} in {@code identity}, where an address
+ * has a verification lifecycle and a proven one is globally unique — neither of which a whole-document
+ * PUT that replaces the list can express without silently discarding proof of ownership.
  */
 @AutoConfigureMockMvc
 class ProfileApiTest extends AbstractIntegrationTest {
@@ -47,12 +53,11 @@ class ProfileApiTest extends AbstractIntegrationTest {
     private FileStorageProvider storage;
 
     @MockitoBean
-    private UserDirectory userDirectory;
+    private PersonDirectory persons;
 
     @Test
     void profilePreferencesAndAvatarRoundTrip() throws Exception {
-        String subject = "profile-" + UUID.randomUUID();
-        var me = jwt().jwt(t -> t.subject(subject));
+        var me = tokenFor(seedPerson());
 
         // A never-saved profile still answers — empty, not 404.
         mockMvc.perform(get("/api/v1/me/profile").with(me))
@@ -62,19 +67,10 @@ class ProfileApiTest extends AbstractIntegrationTest {
         mockMvc.perform(put("/api/v1/me/profile").with(me)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"displayName":"Ada O.","phone":"+256700000001","timezone":"Africa/Kampala",
-                                 "locale":"en-UG","contacts":[
-                                   {"kind":"email","value":"ada@acme.test","label":"work","primary":true},
-                                   {"kind":"PHONE","value":"+256700000001","label":null,"primary":false}]}"""))
+                                {"displayName":"Ada O.","timezone":"Africa/Kampala","locale":"en-UG"}"""))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.attributes.displayName").value("Ada O."))
-                .andExpect(jsonPath("$.data.attributes.contacts.length()").value(2))
-                .andExpect(jsonPath("$.data.attributes.contacts[0].kind").value("EMAIL"));
-
-        mockMvc.perform(put("/api/v1/me/profile").with(me)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"contacts\":[{\"kind\":\"CARRIER-PIGEON\",\"value\":\"coop 4\"}]}"))
-                .andExpect(status().isUnprocessableContent());
+                .andExpect(jsonPath("$.data.attributes.timezone").value("Africa/Kampala"));
 
         // Preferences: additive, null deletes.
         mockMvc.perform(put("/api/v1/me/preferences").with(me)
@@ -117,11 +113,11 @@ class ProfileApiTest extends AbstractIntegrationTest {
 
     @Test
     void linkedAccountsAreTheReadOnlyIdpView() throws Exception {
-        String subject = "linked-" + UUID.randomUUID();
-        given(userDirectory.linkedAccounts(subject)).willReturn(List.of(
-                new UserDirectory.LinkedAccount("github", "ada-codes"),
-                new UserDirectory.LinkedAccount("google", "ada@gmail.test")));
-        mockMvc.perform(get("/api/v1/me/linked-accounts").with(jwt().jwt(t -> t.subject(subject))))
+        UUID personId = seedPerson();
+        given(persons.linkedAccounts(personId)).willReturn(List.of(
+                new PersonDirectory.LinkedAccount("github", "ada-codes"),
+                new PersonDirectory.LinkedAccount("google", "ada@gmail.test")));
+        mockMvc.perform(get("/api/v1/me/linked-accounts").with(tokenFor(personId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(2))
                 .andExpect(jsonPath("$.data[0].attributes.provider").value("github"));
@@ -129,11 +125,11 @@ class ProfileApiTest extends AbstractIntegrationTest {
 
     @Test
     void aDualMemberSeesBothOrganizationsWithTheirRoleInEach() throws Exception {
-        String subject = "dual-" + UUID.randomUUID();
-        UUID orgA = seedOrgWithMember(subject, "alpha-" + UUID.randomUUID().toString().substring(0, 8), "ADMIN");
-        seedOrgWithMember(subject, "beta-" + UUID.randomUUID().toString().substring(0, 8), "MEMBER");
+        UUID personId = seedPerson();
+        UUID orgA = seedOrgWithMember(personId, "alpha-" + UUID.randomUUID().toString().substring(0, 8), "ADMIN");
+        seedOrgWithMember(personId, "beta-" + UUID.randomUUID().toString().substring(0, 8), "MEMBER");
 
-        mockMvc.perform(get("/api/v1/me/organizations").with(jwt().jwt(t -> t.subject(subject))))
+        mockMvc.perform(get("/api/v1/me/organizations").with(tokenFor(personId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(2))
                 .andExpect(jsonPath("$.data[?(@.id=='" + orgA + "')].attributes.roleCode").value("ADMIN"));
@@ -141,31 +137,40 @@ class ProfileApiTest extends AbstractIntegrationTest {
 
     @Test
     void supportReadsAProfileTheOwnerWrote() throws Exception {
-        String subject = "seen-" + UUID.randomUUID();
-        mockMvc.perform(put("/api/v1/me/profile").with(jwt().jwt(t -> t.subject(subject)))
+        UUID personId = seedPerson();
+        mockMvc.perform(put("/api/v1/me/profile").with(tokenFor(personId))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"displayName\":\"Seen User\"}"))
                 .andExpect(status().isOk());
-        mockMvc.perform(get("/api/v1/admin/users/{subject}/profile", subject)
+        // The path segment is a person id now — the same route, a different id space.
+        mockMvc.perform(get("/api/v1/admin/users/{personId}/profile", personId)
                         .with(jwt().jwt(t -> t.subject("support-1"))
                                 .authorities(new SimpleGrantedAuthority("ROLE_platform-support"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.attributes.displayName").value("Seen User"));
-        mockMvc.perform(get("/api/v1/admin/users/{subject}/profile", subject)
+        mockMvc.perform(get("/api/v1/admin/users/{personId}/profile", personId)
                         .with(jwt().jwt(t -> t.subject("nobody"))))
                 .andExpect(status().isForbidden());
     }
 
-    private UUID seedOrgWithMember(String subject, String alias, String roleCode) {
-        UUID orgId = UUID.randomUUID();
-        jdbc.update("insert into organization (id, kc_org_id, alias, name, status, version, created_at) "
-                        + "values (?, ?, ?, ?, 'ACTIVE', 0, now())",
-                UUID.randomUUID(), orgId, alias, "Org " + alias);
+    /** A person the edge can resolve — every endpoint here refuses a caller who is not one. */
+    private UUID seedPerson() {
+        return EdgeSeed.person(jdbc, "kc-" + UUID.randomUUID());
+    }
+
+    private org.springframework.test.web.servlet.request.RequestPostProcessor tokenFor(UUID personId) {
+        String subject = jdbc.queryForObject(
+                "select external_subject from external_identity where person_id = ?", String.class, personId);
+        return jwt().jwt(t -> t.subject(subject));
+    }
+
+    private UUID seedOrgWithMember(UUID personId, String alias, String roleCode) {
+        UUID orgId = EdgeSeed.organization(jdbc, "kc-org-" + UUID.randomUUID(), alias);
         UUID roleId = UUID.randomUUID();
         jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
                 + "values (?, ?, ?, ?, false, 0, now())", roleId, orgId, roleCode, roleCode);
-        jdbc.update("insert into membership (id, org_id, user_subject, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, subject, roleId);
+        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
+                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
         return orgId;
     }
 }

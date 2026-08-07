@@ -19,12 +19,17 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import ug.co.smsone.shared.security.PlatformAdmins;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
+import ug.co.smsone.testsupport.EdgeSeed;
 
 /**
- * The REST-level compliance guarantees: consent is append-only; an erasure soft-deletes a
- * subject's data; a legal hold makes an erasure REFUSED. The purge-survival half (a held row
+ * The REST-level compliance guarantees: consent is append-only; an erasure soft-deletes a data
+ * subject's rows; a legal hold makes an erasure REFUSED. The purge-survival half (a held row
  * outlives the purge) lives in {@code scheduler.internal.LegalHoldPurgeTest}, where the
  * package-private purge job is reachable.
+ *
+ * <p>Every caller here is seeded as a {@code person} with an {@code external_identity} link, because
+ * that link is now what a token resolves through — a bare {@code jwt()} subject reaches no person, and
+ * these endpoints refuse a caller who is not one.
  */
 @AutoConfigureMockMvc
 class ComplianceTest extends AbstractIntegrationTest {
@@ -41,9 +46,8 @@ class ComplianceTest extends AbstractIntegrationTest {
 
     @Test
     void consentIsAppendOnlyAndErasureSoftDeletes() throws Exception {
-        String subject = "gdpr-" + UUID.randomUUID();
-        var me = jwt().jwt(t -> t.subject(subject));
-        seedUser(subject);
+        UUID personId = seedPerson();
+        var me = tokenFor(personId);
 
         mockMvc.perform(post("/api/v1/me/consents").with(me).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"purpose\":\"marketing\",\"granted\":true}"))
@@ -59,53 +63,62 @@ class ComplianceTest extends AbstractIntegrationTest {
         mockMvc.perform(post("/api/v1/me/erasure-request").with(me))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.attributes.status").value("EXECUTED"));
+        assertThat(livePeople(personId)).as("erasure soft-deleted the person").isZero();
+        // The link goes too, and that is the point rather than tidiness: uq_external_identity_subject_live
+        // is partial on deleted_at, so a live link left behind is an erased account that still signs in.
         assertThat(jdbc.queryForObject(
-                "select count(*) from app_user where subject = ? and deleted_at is not null",
-                Integer.class, subject)).as("erasure soft-deleted the user").isEqualTo(1);
+                "select count(*) from external_identity where person_id = ? and deleted_at is null",
+                Integer.class, personId)).as("an erased person cannot still authenticate").isZero();
     }
 
     @Test
     void aLegalHoldMakesErasureRefused() throws Exception {
-        String subject = "held-" + UUID.randomUUID();
-        seedUser(subject);
+        UUID personId = seedPerson();
         mockMvc.perform(post("/api/v1/admin/compliance/legal-holds/subject")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"subject\":\"" + subject + "\",\"reason\":\"litigation #99\"}")
+                        .content("{\"personId\":\"" + personId + "\",\"reason\":\"litigation #99\"}")
                         .with(admin()))
                 .andExpect(status().isCreated());
         mockMvc.perform(post("/api/v1/admin/compliance/erasure")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"subject\":\"" + subject + "\"}").with(admin()))
+                        .content("{\"personId\":\"" + personId + "\"}").with(admin()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.attributes.status").value("REFUSED"));
-        // Refused erasure means the user was NOT soft-deleted.
-        assertThat(jdbc.queryForObject(
-                "select count(*) from app_user where subject = ? and deleted_at is null",
-                Integer.class, subject)).isEqualTo(1);
+        // Refused erasure means the person was NOT soft-deleted.
+        assertThat(livePeople(personId)).isEqualTo(1);
     }
 
     @Test
     void erasingTheLastPlatformSuperAdminIsRefused() throws Exception {
-        String subject = "super-" + UUID.randomUUID();
-        seedUser(subject);
-        given(platformAdmins.isSoleSuperAdmin(subject)).willReturn(true);
+        UUID personId = seedPerson();
+        given(platformAdmins.isSoleSuperAdmin(personId)).willReturn(true);
 
-        mockMvc.perform(post("/api/v1/me/erasure-request").with(jwt().jwt(t -> t.subject(subject))))
+        mockMvc.perform(post("/api/v1/me/erasure-request").with(tokenFor(personId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.attributes.status").value("REFUSED"));
-        assertThat(jdbc.queryForObject(
-                "select count(*) from app_user where subject = ? and deleted_at is null",
-                Integer.class, subject)).as("the last super-admin must not be erased").isEqualTo(1);
+        assertThat(livePeople(personId)).as("the last super-admin must not be erased").isEqualTo(1);
     }
 
+    /** A platform operator: a realm role and no person of their own — nothing here reads one. */
     private static org.springframework.test.web.servlet.request.RequestPostProcessor admin() {
         return jwt().jwt(t -> t.subject("compliance-admin"))
                 .authorities(new SimpleGrantedAuthority("ROLE_platform-admin"));
     }
 
-    private void seedUser(String subject) {
-        jdbc.update("insert into app_user (id, subject, email, status, provisioned_at, version, created_at) "
-                + "values (?, ?, ?, 'ACTIVE', now(), 0, now())",
-                UUID.randomUUID(), subject, subject + "@smsone.co.ug");
+    private UUID seedPerson() {
+        UUID personId = UUID.randomUUID();
+        return EdgeSeed.personWithEmail(jdbc, EdgeSeed.subjectFor(personId), personId + "@smsone.co.ug");
+    }
+
+    private org.springframework.test.web.servlet.request.RequestPostProcessor tokenFor(UUID personId) {
+        String subject = jdbc.queryForObject(
+                "select external_subject from external_identity where person_id = ?", String.class, personId);
+        return jwt().jwt(t -> t.subject(subject));
+    }
+
+    private int livePeople(UUID personId) {
+        Integer count = jdbc.queryForObject(
+                "select count(*) from person where id = ? and deleted_at is null", Integer.class, personId);
+        return count == null ? 0 : count;
     }
 }

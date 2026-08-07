@@ -5,8 +5,8 @@ import java.io.InputStream;
 import java.net.URL;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -20,10 +20,13 @@ import ug.co.smsone.shared.error.ValidationException;
 import ug.co.smsone.shared.web.ApiSource;
 
 /**
- * The caller's own record: get-or-default (a user without a saved profile still HAS one — empty),
- * whole-document upsert (contacts ride along), additive preference puts, and the avatar's
- * bytes-behind-the-files-port lifecycle — new object first, row second, OLD object deleted last,
- * so a failure at any step leaves a working avatar, never a dangling key.
+ * A person's own display record: get-or-default (a person without a saved profile still HAS one —
+ * empty), whole-document upsert, additive preference puts, and the avatar's
+ * bytes-behind-the-files-port lifecycle — new object first, row second, OLD object deleted last, so
+ * a failure at any step leaves a working avatar, never a dangling key.
+ *
+ * <p>Every entry point takes a {@code person.id}. Nothing here has ever needed to know how that
+ * person signs in, and now nothing here can.
  */
 @Service
 class ProfileService {
@@ -32,12 +35,12 @@ class ProfileService {
     private static final Duration AVATAR_PRESIGN_TTL = Duration.ofMinutes(10);
     private static final long AVATAR_MAX_BYTES = 2L * 1024 * 1024;
 
-    private final UserProfileRepository profiles;
-    private final UserPreferenceRepository preferences;
+    private final PersonProfileRepository profiles;
+    private final PersonPreferenceRepository preferences;
     private final FileStorageProvider storage;
     private final Clock clock;
 
-    ProfileService(UserProfileRepository profiles, UserPreferenceRepository preferences,
+    ProfileService(PersonProfileRepository profiles, PersonPreferenceRepository preferences,
             FileStorageProvider storage, Clock clock) {
         this.profiles = profiles;
         this.preferences = preferences;
@@ -46,63 +49,68 @@ class ProfileService {
     }
 
     @Transactional(readOnly = true)
-    UserProfile view(String subject) {
-        return profiles.findBySubject(subject).orElseGet(() -> UserProfile.of(subject));
+    PersonProfile view(UUID personId) {
+        return profiles.findByPersonId(personId).orElseGet(() -> PersonProfile.of(personId));
     }
 
     @Transactional
-    UserProfile upsert(String subject, String displayName, String phone, String timezone,
-            String locale, List<UserProfile.Contact> contacts) {
-        for (UserProfile.Contact contact : contacts) {
-            if (!List.of("EMAIL", "PHONE", "OTHER").contains(contact.kind())) {
-                throw new ValidationException("contact kind must be EMAIL, PHONE or OTHER.",
-                        ApiSource.pointer("/data/attributes/contacts"));
-            }
-            if (contact.value() == null || contact.value().isBlank()) {
-                throw new ValidationException("contact value must not be blank.",
-                        ApiSource.pointer("/data/attributes/contacts"));
-            }
-        }
-        UserProfile profile = profiles.findBySubject(subject).orElseGet(() -> UserProfile.of(subject));
-        profile.update(trim(displayName, 150), trim(phone, 30), trim(timezone, 50),
-                trim(locale, 20), contacts);
+    PersonProfile upsert(UUID personId, String displayName, String timezone, String locale) {
+        PersonProfile profile = profiles.findByPersonId(personId)
+                .orElseGet(() -> PersonProfile.of(personId));
+        profile.update(trim(displayName, 150), trim(timezone, 50), trim(locale, 20));
         return profiles.save(profile);
     }
 
     @Transactional(readOnly = true)
-    Map<String, String> preferences(String subject) {
+    Map<String, String> preferences(UUID personId) {
         Map<String, String> map = new LinkedHashMap<>();
-        preferences.findBySubjectOrderByPrefKeyAsc(subject)
+        preferences.findByPersonIdOrderByPrefKeyAsc(personId)
                 .forEach(preference -> map.put(preference.getPrefKey(), preference.getPrefValue()));
         return map;
     }
 
-    /** Additive upsert: only the sent keys change; a null value deletes its key. */
+    /**
+     * Additive upsert: only the sent keys change; a null value deletes its key.
+     *
+     * <p>Validated in full, then loaded in ONE query. It used to issue a {@code findById} per submitted
+     * key, which made the query count of this endpoint the CLIENT's to choose — a body of fifty
+     * preferences was fifty selects before any write. The rows are keyed by a composite id, so
+     * {@code findAllById} over the whole set is the same index and one round trip.
+     */
     @Transactional
-    Map<String, String> putPreferences(String subject, Map<String, String> changes) {
+    Map<String, String> putPreferences(UUID personId, Map<String, String> changes) {
+        Map<PersonPreference.Key, String> requested = new LinkedHashMap<>();
         changes.forEach((key, value) -> {
             if (key == null || key.isBlank() || key.length() > 100) {
                 throw new ValidationException("preference keys must be 1–100 characters.",
                         ApiSource.pointer("/data/attributes/preferences"));
             }
-            UserPreference.Key id = new UserPreference.Key(subject, key.trim());
+            if (value != null && value.length() > 500) {
+                throw new ValidationException("preference values cap at 500 characters.",
+                        ApiSource.pointer("/data/attributes/preferences"));
+            }
+            requested.put(new PersonPreference.Key(personId, key.trim()), value);
+        });
+        Map<PersonPreference.Key, PersonPreference> existing = new LinkedHashMap<>();
+        preferences.findAllById(requested.keySet()).forEach(preference ->
+                existing.put(new PersonPreference.Key(personId, preference.getPrefKey()), preference));
+        Instant now = clock.instant();
+        requested.forEach((id, value) -> {
+            PersonPreference stored = existing.get(id);
             if (value == null) {
-                preferences.findById(id).ifPresent(preferences::delete);
-            } else {
-                if (value.length() > 500) {
-                    throw new ValidationException("preference values cap at 500 characters.",
-                            ApiSource.pointer("/data/attributes/preferences"));
+                if (stored != null) {
+                    preferences.delete(stored);
                 }
-                preferences.findById(id).ifPresentOrElse(
-                        existing -> existing.change(value, clock.instant()),
-                        () -> preferences.save(
-                                UserPreference.of(subject, key.trim(), value, clock.instant())));
+            } else if (stored != null) {
+                stored.change(value, now);
+            } else {
+                preferences.save(PersonPreference.of(personId, id.prefKey(), value, now));
             }
         });
-        return preferences(subject);
+        return preferences(personId);
     }
 
-    UserProfile changeAvatar(String subject, MultipartFile file) {
+    PersonProfile changeAvatar(UUID personId, MultipartFile file) {
         if (file == null || file.isEmpty()) {
             throw new ValidationException("Uploaded avatar is empty.", ApiSource.parameter("file"));
         }
@@ -113,22 +121,25 @@ class ProfileService {
         if (!contentType.startsWith("image/")) {
             throw new ValidationException("Avatars must be images (image/*).", ApiSource.parameter("file"));
         }
-        String key = "avatar/u/" + subject + "/" + UUID.randomUUID();
+        // avatar/p/<person_id>/… — V28's own spelling. The old key embedded the Keycloak sub, which
+        // made the object store a third place holding another system's identifier.
+        String key = "avatar/p/" + personId + "/" + UUID.randomUUID();
         try (InputStream in = file.getInputStream()) {
             storage.put(key, in, file.getSize(), contentType);
         } catch (IOException ex) {
             throw new ValidationException("Could not read the uploaded avatar.", ApiSource.parameter("file"));
         }
-        UserProfile profile = profiles.findBySubject(subject).orElseGet(() -> UserProfile.of(subject));
+        PersonProfile profile = profiles.findByPersonId(personId)
+                .orElseGet(() -> PersonProfile.of(personId));
         String previous = profile.getAvatarKey();
         profile.changeAvatar(key);
-        UserProfile saved = profiles.save(profile);
+        PersonProfile saved = profiles.save(profile);
         deleteQuietly(previous); // old bytes go LAST — any earlier failure leaves a working avatar
         return saved;
     }
 
-    URL avatarUrl(String subject) {
-        String key = profiles.findBySubject(subject).map(UserProfile::getAvatarKey).orElse(null);
+    URL avatarUrl(UUID personId) {
+        String key = profiles.findByPersonId(personId).map(PersonProfile::getAvatarKey).orElse(null);
         if (key == null || !storage.exists(key)) {
             throw new NotFoundException("No avatar is set.");
         }
@@ -136,8 +147,8 @@ class ProfileService {
     }
 
     @Transactional
-    void deleteAvatar(String subject) {
-        UserProfile profile = profiles.findBySubject(subject).orElse(null);
+    void deleteAvatar(UUID personId) {
+        PersonProfile profile = profiles.findByPersonId(personId).orElse(null);
         if (profile == null || profile.getAvatarKey() == null) {
             return; // idempotent: nothing set is the desired end state
         }

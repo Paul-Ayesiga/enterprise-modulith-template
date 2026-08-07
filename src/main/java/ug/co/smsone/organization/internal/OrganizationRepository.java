@@ -5,11 +5,11 @@ import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
+/**
+ * The tenant is addressed by its own id now, so {@code findByKcOrgId} / {@code findByKcOrgIdIn} are
+ * gone — {@code findById} / {@code findAllById} are the same lookups against the primary key.
+ */
 interface OrganizationRepository extends JpaRepository<Organization, UUID>, JpaSpecificationExecutor<Organization> {
-
-    Optional<Organization> findByKcOrgId(UUID kcOrgId);
-
-    java.util.List<Organization> findByKcOrgIdIn(java.util.Collection<UUID> kcOrgIds);
 
     Optional<Organization> findByAlias(String alias);
 

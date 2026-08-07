@@ -12,11 +12,12 @@ import org.springframework.data.repository.query.Param;
 
 interface MembershipRepository extends JpaRepository<Membership, UUID>, JpaSpecificationExecutor<Membership> {
 
-    Optional<Membership> findByOrgIdAndUserSubject(UUID orgId, String userSubject);
+    Optional<Membership> findByOrgIdAndPersonId(UUID orgId, UUID personId);
 
     long countByOrgId(UUID orgId);
 
-    List<Membership> findByUserSubjectAndStatus(String userSubject, MembershipStatus status);
+    /** Every org a person belongs to — backed by {@code idx_membership_person}. */
+    List<Membership> findByPersonIdAndStatus(UUID personId, MembershipStatus status);
 
     /**
      * Row-locks the active members holding a given role for the duration of the transaction. Two
@@ -31,5 +32,5 @@ interface MembershipRepository extends JpaRepository<Membership, UUID>, JpaSpeci
     /** Whether any membership references a role — blocks deleting a role that is still assigned. */
     boolean existsByRoleId(UUID roleId);
 
-    java.util.List<Membership> findByOrgIdAndRoleId(java.util.UUID orgId, java.util.UUID roleId);
+    List<Membership> findByOrgIdAndRoleId(UUID orgId, UUID roleId);
 }

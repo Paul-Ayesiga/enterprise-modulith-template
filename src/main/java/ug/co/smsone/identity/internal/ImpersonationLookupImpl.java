@@ -16,24 +16,29 @@ import ug.co.smsone.shared.security.ImpersonationLookup;
  * <p>Reads the row on every impersonated request, uncached on purpose: "ending a session denies the
  * very next request" is the guarantee the feature is sold on, and a cached session would keep the
  * reach open for the length of the TTL after an operator, or the admin cutting them off, ended it.
+ *
+ * <p>No translation happens here any more, in either direction. The edge holds person ids and the
+ * session row holds person ids, so this class reads a row and checks two accounts — the two subject
+ * round-trips it used to perform (actor in, target out) existed only to feed a principal that spoke
+ * Keycloak's vocabulary, and both are gone with it.
  */
 @Component
 class ImpersonationLookupImpl implements ImpersonationLookup {
 
     private final ImpersonationSessionRepository sessions;
-    private final UserRepository users;
+    private final PersonRepository persons;
     private final Clock clock;
 
-    ImpersonationLookupImpl(ImpersonationSessionRepository sessions, UserRepository users, Clock clock) {
+    ImpersonationLookupImpl(ImpersonationSessionRepository sessions, PersonRepository persons, Clock clock) {
         this.sessions = sessions;
-        this.users = users;
+        this.persons = persons;
         this.clock = clock;
     }
 
     @Override
     @Transactional(readOnly = true)
-    public Optional<ImpersonatedPrincipal> activeSession(String sessionId, String actorSubject) {
-        if (sessionId == null || actorSubject == null) {
+    public Optional<ImpersonatedPrincipal> activeSession(String sessionId, UUID actorPersonId) {
+        if (sessionId == null || actorPersonId == null) {
             return Optional.empty();
         }
         UUID id;
@@ -45,28 +50,36 @@ class ImpersonationLookupImpl implements ImpersonationLookup {
             return Optional.empty();
         }
         Instant now = clock.instant();
-        return sessions.findByIdAndActorSubject(id, actorSubject)
+        return sessions.findByIdAndActorPersonId(id, actorPersonId)
                 .filter(session -> session.isActive(now))
-                .filter(session -> stillHasAccess(session.getActorSubject()))
+                .filter(session -> stillHasAccess(session.getActorPersonId()))
                 .flatMap(this::principalIfTargetStillHasAccess);
     }
 
     /**
-     * The target's access check and its display e-mail come from ONE read — the previous shape read
-     * the same row twice per impersonated request. The rules are {@link #stillHasAccess}'s, verbatim:
-     * DISABLED and soft-deleted deny; absent-and-never-provisioned passes (with no e-mail to show).
+     * The target's access check happens on the person row, and nothing else is read.
+     *
+     * <p>A target with NO Keycloak link can now be worn. That used to be refused because the swapped
+     * principal carried a subject and there would have been none; it carries a person id now, which is
+     * what every downstream component keys on, so the guard was protecting a field that no longer
+     * exists. No label travels either — the session's frozen {@code target_display} is the impersonation
+     * API's business, and a decision that keyed on a name instead of an id is a bug waiting for two
+     * people to share one.
+     *
+     * <p>The access rules are unchanged: DISABLED and soft-deleted deny; absent-and-never-provisioned
+     * passes.
      */
     private Optional<ImpersonatedPrincipal> principalIfTargetStillHasAccess(ImpersonationSession session) {
-        User target = users.findBySubject(session.getTargetSubject()).orElse(null);
-        if (target == null) {
-            return users.existsDeletedBySubject(session.getTargetSubject())
-                    ? Optional.empty()
-                    : Optional.of(principal(session, null));
-        }
-        if (target.getStatus() == ProvisioningStatus.DISABLED) {
+        UUID targetPersonId = session.getTargetPersonId();
+        Person target = persons.findById(targetPersonId).orElse(null);
+        if (target == null && persons.existsDeletedById(targetPersonId)) {
             return Optional.empty();
         }
-        return Optional.of(principal(session, target.getEmail()));
+        if (target != null && target.getStatus() == ProvisioningStatus.DISABLED) {
+            return Optional.empty();
+        }
+        return Optional.of(new ImpersonatedPrincipal(session.getId(), session.getActorPersonId(),
+                targetPersonId, session.getOrgId(), session.getMode().writeCapable()));
     }
 
     /**
@@ -84,21 +97,15 @@ class ImpersonationLookupImpl implements ImpersonationLookup {
      * otherwise stop their ordinary requests while leaving their impersonated ones working. The reach
      * has to die with the operator's own account, not with the TTL.
      *
-     * <p>An absent-and-not-deleted row passes: it means "never provisioned", which the gate refuses on
+     * <p>An absent-and-not-deleted person passes: it means "never provisioned", which the gate refuses on
      * the operator's own requests anyway, so no such actor could have opened this session in the first
      * place — and refusing it here would instead break every deployment running with the gate off.
      */
-    private boolean stillHasAccess(String subject) {
-        User user = users.findBySubject(subject).orElse(null);
-        if (user == null) {
-            return !users.existsDeletedBySubject(subject);
+    private boolean stillHasAccess(UUID personId) {
+        Person person = persons.findById(personId).orElse(null);
+        if (person == null) {
+            return !persons.existsDeletedById(personId);
         }
-        return user.getStatus() != ProvisioningStatus.DISABLED;
-    }
-
-    /** The e-mail is best-effort display data; the access decision was made by the caller. */
-    private ImpersonatedPrincipal principal(ImpersonationSession session, String email) {
-        return new ImpersonatedPrincipal(session.getId(), session.getActorSubject(), session.getTargetSubject(),
-                email, session.getOrgId(), session.getMode().writeCapable());
+        return person.getStatus() != ProvisioningStatus.DISABLED;
     }
 }

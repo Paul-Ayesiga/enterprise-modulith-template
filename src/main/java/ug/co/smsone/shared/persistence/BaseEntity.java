@@ -18,6 +18,11 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 /**
  * Base for all persistent entities: UUID primary key, optimistic locking, and full auditing.
  * Identity is id-based: entities are equal iff they share a non-null id.
+ *
+ * <p>{@code createdBy}/{@code updatedBy} are {@code person.id}, and NULL when no person did the write —
+ * a job, a startup task, a machine key. They were {@code varchar(100)} holding a token subject or the
+ * literal {@code "system"}; the columns are {@code uuid} now, and {@link JpaAuditingConfig} explains why
+ * the sentinel did not survive the change.
  */
 @MappedSuperclass
 @EntityListeners(AuditingEntityListener.class)
@@ -37,15 +42,14 @@ public abstract class BaseEntity {
     private Instant createdAt;
 
     @CreatedBy
-    @Column(length = 100, updatable = false)
-    private String createdBy;
+    @Column(updatable = false)
+    private UUID createdBy;
 
     @LastModifiedDate
     private Instant updatedAt;
 
     @LastModifiedBy
-    @Column(length = 100)
-    private String updatedBy;
+    private UUID updatedBy;
 
     public UUID getId() {
         return id;
@@ -59,16 +63,8 @@ public abstract class BaseEntity {
         return createdAt;
     }
 
-    public String getCreatedBy() {
+    public UUID getCreatedBy() {
         return createdBy;
-    }
-
-    public Instant getUpdatedAt() {
-        return updatedAt;
-    }
-
-    public String getUpdatedBy() {
-        return updatedBy;
     }
 
     @Override

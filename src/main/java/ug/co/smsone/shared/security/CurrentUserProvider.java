@@ -1,57 +1,84 @@
 package ug.co.smsone.shared.security;
 
+import java.util.Collection;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.security.access.hierarchicalroles.RoleHierarchy;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.stereotype.Component;
 import ug.co.smsone.shared.error.UnauthorizedException;
 
-/** Resolves the {@link CurrentUser} from the security context (services, auditing, jobs). */
+/**
+ * The identity resolution layer, and the ONLY one. A validated credential arrives here and leaves as a
+ * {@link CurrentUser}: JWT → {@code external_identity} → person → organization → memberships. Below this
+ * class no module performs an identity-provider lookup, and adding a second provider is a row in
+ * {@code external_identity} rather than a change in this file.
+ *
+ * <p>The provider-shaped facts all die here. {@code iss}/{@code sub} become a {@code person.id} through
+ * {@link PersonLookup}; the {@code organization} claim becomes an {@code organization.id} through
+ * {@link OrgLookup}; the membership's role becomes a permission set through {@link OrgAuthorization}.
+ * Each port is resolved through an {@code ObjectProvider} and each absence default-DENIES — no person,
+ * no tenant, no permissions — because {@code shared} must not compile-depend on the modules that own
+ * those tables and an unanswerable question is not a yes.
+ *
+ * <p><b>Resolved once per request.</b> Those three lookups are database reads, and the callers here are
+ * many (the MDC filter, the rate limiter, the idempotency filter, the permission evaluator, controllers,
+ * the auditor on every flush), so the result is memoized on the thread against the exact
+ * {@code Authentication} instance it was resolved from. That identity check is the invalidation rule:
+ * {@code ImpersonationFilter} swaps in a different instance, so a session cannot be served the operator's
+ * resolution, and a pooled thread cannot serve the previous request's — no entry ever matches an
+ * {@code Authentication} it was not built from. {@link CurrentUserFilter} clears it on the way out and
+ * warms it on the way in; the warm-up is what keeps the JPA auditor from issuing a query in the middle of
+ * a flush.
+ */
 @Component
 public class CurrentUserProvider {
 
-    private static final Logger log = LoggerFactory.getLogger(CurrentUserProvider.class);
     private static final String ROLE_PREFIX = "ROLE_";
-    private static final String EMAIL_CLAIM = "email";
     private static final String ORGANIZATION_CLAIM = "organization";
 
-    private final RoleHierarchy roleHierarchy;
+    /**
+     * One entry, keyed by the identity of the {@code Authentication} it came from. Not a cache with a
+     * TTL and not a shared map: it is the memo for the request currently on this thread.
+     */
+    private static final ThreadLocal<Resolution> RESOLVED = new ThreadLocal<>();
 
-    public CurrentUserProvider(RoleHierarchy roleHierarchy) {
+    private final RoleHierarchy roleHierarchy;
+    private final ObjectProvider<PersonLookup> persons;
+    private final ObjectProvider<OrgLookup> organizations;
+    private final ObjectProvider<OrgAuthorization> orgAuthorization;
+
+    public CurrentUserProvider(RoleHierarchy roleHierarchy, ObjectProvider<PersonLookup> persons,
+            ObjectProvider<OrgLookup> organizations, ObjectProvider<OrgAuthorization> orgAuthorization) {
         this.roleHierarchy = roleHierarchy;
+        this.persons = persons;
+        this.organizations = organizations;
+        this.orgAuthorization = orgAuthorization;
     }
 
     public Optional<CurrentUser> currentUser() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        // Impersonation is checked first: while a session is active the swapped token is the ONLY
-        // authentication on the thread, and resolving it as "no principal" would silently de-attribute
-        // every audit row written during the session.
-        if (authentication instanceof ImpersonatedAuthenticationToken impersonated) {
-            return Optional.of(impersonating(impersonated.getPrincipal()));
+        if (authentication == null) {
+            return Optional.empty();
         }
-        if (authentication instanceof JwtAuthenticationToken jwtAuthentication) {
-            return Optional.of(fromToken(jwtAuthentication));
+        Resolution memo = RESOLVED.get();
+        if (memo != null && memo.authentication() == authentication) {
+            return Optional.of(memo.user());
         }
-        if (authentication instanceof ApiKeyAuthenticationToken apiKey) {
-            ApiKeyPrincipal principal = apiKey.getPrincipal();
-            // Roles ride the token's authorities (already tier-shaped); activeOrgId is the KEY'S
-            // org, which is what makes the evaluator's strict-id rule hold for machines too.
-            Set<String> roles = apiKey.getAuthorities().stream()
-                    .map(authority -> authority.getAuthority().substring(ROLE_PREFIX.length()))
-                    .collect(Collectors.toUnmodifiableSet());
-            return Optional.of(new CurrentUser(principal.subject(), principal.name(), null,
-                    roles, null, principal.orgId(), null));
+        CurrentUser user = resolve(authentication);
+        if (user == null) {
+            return Optional.empty(); // anonymous, or an authentication shape the edge does not mint
         }
-        return Optional.empty();
+        RESOLVED.set(new Resolution(authentication, user));
+        return Optional.of(user);
     }
 
     /**
@@ -65,90 +92,176 @@ public class CurrentUserProvider {
         return currentUser().orElseThrow(() -> new UnauthorizedException("Authentication required."));
     }
 
+    /**
+     * The person behind this request — the platform's only durable answer to "who". Empty when nobody
+     * is authenticated, when a machine key is calling (a robot is not a person), and when a validated
+     * token has no {@code external_identity} link yet.
+     *
+     * <p>Under impersonation this is the EFFECTIVE person — the target, not the operator — on purpose:
+     * {@code created_by} describes the identity the request ran as, and an impersonated write should
+     * land in the target's history exactly as their own would.
+     * {@link CurrentUser#accountablePersonId()} is the accessor for "which human is answerable", and
+     * {@code audit_log} is the one place that records it.
+     */
+    public Optional<UUID> currentPersonId() {
+        return currentUser().map(CurrentUser::personId);
+    }
+
+    /**
+     * A namespaced bucket key for per-caller partitioning — rate-limit buckets, idempotency scoping.
+     * {@code person:<uuid>} for a human, {@code key:<uuid>} for a machine credential.
+     *
+     * <p>It is a KEY, not an identity: never store it in a column, never compare it to a person id, never
+     * put it on the wire. The prefix exists because the two id spaces are unrelated — without it a person
+     * and an API key could collide in one namespace, and the whole reason a machine no longer pretends to
+     * have a subject is that such collisions were being papered over.
+     *
+     * <p>Machines need one too, and per KEY rather than per org: two keys in one tenant hold different
+     * permission subsets, so sharing an idempotency namespace would let the narrower key replay a stored
+     * response to a request it could never have made.
+     *
+     * <p>Empty when there is no authenticated caller, and — deliberately — for a token with no person yet:
+     * such a caller is about to be refused by the provisioning gate, and inventing a durable key for an
+     * identity that does not exist would outlive the request that invented it.
+     */
+    public Optional<String> currentPrincipalKey() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication instanceof ApiKeyAuthenticationToken apiKey) {
+            return Optional.of("key:" + apiKey.getPrincipal().keyId());
+        }
+        return currentPersonId().map(personId -> "person:" + personId);
+    }
+
+    /** Drops this thread's memo. Called by {@link CurrentUserFilter} once the request is done. */
+    static void clear() {
+        RESOLVED.remove();
+    }
+
+    private CurrentUser resolve(Authentication authentication) {
+        // Impersonation is checked first: while a session is active the swapped token is the ONLY
+        // authentication on the thread, and resolving it as "no principal" would silently de-attribute
+        // every audit row written during the session.
+        if (authentication instanceof ImpersonatedAuthenticationToken impersonated) {
+            return impersonating(impersonated.getPrincipal());
+        }
+        if (authentication instanceof JwtAuthenticationToken jwtAuthentication) {
+            return fromToken(jwtAuthentication);
+        }
+        if (authentication instanceof ApiKeyAuthenticationToken apiKey) {
+            return fromKey(apiKey);
+        }
+        return null;
+    }
+
+    /**
+     * The whole flow, in order: the token's own {@code iss}/{@code sub} → person, its {@code organization}
+     * claim → tenant, then that person's memberships in that tenant → permissions.
+     *
+     * <p>The issuer comes from the TOKEN, not from configuration. It is the string the resource server
+     * just validated, so it is byte-identical to what {@code external_identity.issuer} holds, and a
+     * deployment that later trusts two issuers keeps resolving both without a second key to keep in step.
+     */
     private CurrentUser fromToken(JwtAuthenticationToken jwtAuthentication) {
         Jwt jwt = jwtAuthentication.getToken();
-        // Expanded through the hierarchy so CurrentUser.hasRole() answers the same question
-        // @PreAuthorize("hasRole(…)") does — otherwise a superadmin would fail a hand-rolled
-        // hasRole(SUPPORT) check while passing the annotation, and the two would drift apart.
-        Set<String> roles = roleHierarchy.getReachableGrantedAuthorities(jwtAuthentication.getAuthorities()).stream()
-                .map(authority -> authority.getAuthority())
-                .filter(authority -> authority.startsWith(ROLE_PREFIX))
-                .map(authority -> authority.substring(ROLE_PREFIX.length()))
-                .collect(Collectors.toUnmodifiableSet());
-        ActiveOrg activeOrg = resolveActiveOrg(jwt);
-        return new CurrentUser(
-                jwt.getSubject(),
-                jwtAuthentication.getName(),
-                jwt.getClaimAsString(EMAIL_CLAIM),
-                roles,
-                activeOrg.alias(),
-                activeOrg.id(),
-                null);
+        String issuer = jwt.getIssuer() == null ? null : jwt.getIssuer().toString();
+        UUID personId = personId(issuer, jwt.getSubject());
+        UUID organizationId = organizationId(issuer, jwt);
+        return new CurrentUser(personId, organizationId, roles(jwtAuthentication.getAuthorities()),
+                permissions(personId, organizationId), AuthenticationMethod.OIDC, null);
+    }
+
+    /**
+     * The machine view: an organization, a minted permission subset, and NO person — the shape a robot
+     * actually has. Nothing is resolved from the database here; an API key already names its tenant and
+     * carries its own authority, which is why a key costs the edge no lookups at all.
+     *
+     * <p>A PLATFORM key has no org and no permissions, only its tier as a role — so every org-scoped
+     * check denies it, exactly as before. Roles run through the same hierarchy expansion humans get, so
+     * {@code hasRole('platform-support')} and {@code @PreAuthorize("hasRole('platform-support')")} cannot
+     * disagree for a machine the way they used to.
+     */
+    private CurrentUser fromKey(ApiKeyAuthenticationToken apiKey) {
+        ApiKeyPrincipal principal = apiKey.getPrincipal();
+        return new CurrentUser(null, principal.orgId(), roles(apiKey.getAuthorities()),
+                principal.permissions(), AuthenticationMethod.API_KEY, null);
     }
 
     /**
      * The impersonated view: identity is the target's, authority is nobody's.
      *
-     * <p>Roles are empty rather than the actor's — the platform tier that authorized the session does
-     * not travel into it, which is what keeps {@code /admin/**} unreachable from inside one. The org
-     * alias is null because the session records only an org <em>id</em>: the alias is a display and
-     * URL convenience, and {@link ApiPermissionEvaluator} matches on the id alone by design.
+     * <p>Roles are empty rather than the actor's — the platform tier that authorized the session does not
+     * travel into it, which is what keeps {@code /admin/**} unreachable from inside one. Org permissions
+     * ARE resolved, for the target, exactly as they would be for the target's own request: that is what
+     * makes tenant endpoints work inside a session, and it is resolved rather than remembered so a
+     * membership revoked mid-session stops the very next request.
      */
     private CurrentUser impersonating(ImpersonatedPrincipal principal) {
         return new CurrentUser(
-                principal.targetSubject(),
-                // username() is display-only, and a session carries no preferred_username; the target's
-                // email is the humane handle, their subject the honest fallback when it is unknown.
-                principal.targetEmail() == null ? principal.targetSubject() : principal.targetEmail(),
-                principal.targetEmail(),
-                Set.of(),
-                null,
+                principal.targetPersonId(),
                 principal.activeOrgId(),
-                new CurrentUser.Impersonation(principal.sessionId(), principal.actorSubject()));
+                Set.of(),
+                permissions(principal.targetPersonId(), principal.activeOrgId()),
+                AuthenticationMethod.IMPERSONATION,
+                new CurrentUser.Impersonation(principal.sessionId(), principal.actorPersonId()));
+    }
+
+    private UUID personId(String issuer, String subject) {
+        PersonLookup lookup = persons.getIfAvailable();
+        if (lookup == null || issuer == null || subject == null || subject.isBlank()) {
+            return null;
+        }
+        return lookup.personId(issuer, subject).orElse(null);
     }
 
     /**
-     * The caller's <em>stable</em> identity — the token subject — for anything durable: audit
-     * attribution, idempotency scoping, rate-limit buckets.
+     * Parse Keycloak's alias-keyed {@code organization} claim ({@code {"acme":{"id":"…"}}}) and resolve it
+     * through {@link OrgLookup}. Only a single-org token yields an active org: a token scoped to zero or
+     * to several tenants does not name one, and guessing which of several was meant is how a request ends
+     * up authorized against a tenant the caller never asked for.
      *
-     * <p>Never key on {@link CurrentUser#username()}. That is Keycloak's {@code preferred_username},
-     * which is mutable and, once freed, reassignable: a renamed account would lose its own records and
-     * whoever inherited the name would gain them. The subject is immutable for the life of the account.
-     *
-     * <p>Under impersonation this is the EFFECTIVE subject — the target, not the operator — on purpose:
-     * rate-limit buckets, idempotency keys and {@code created_by} all describe the identity the request
-     * ran as, and an impersonated write should land in the target's history exactly as their own would.
-     * {@link CurrentUser#accountableSubject()} is the accessor for "which human is answerable", and
-     * {@code audit_log} is the one place that records it.
-     *
-     * <p>Empty when the request has no authenticated principal.
+     * <p>The claim's id is passed through as the string it is. It is a provider identifier — this layer's
+     * job is to hand it to the table that maps it, not to have an opinion about its shape.
      */
-    public Optional<String> currentSubject() {
-        return currentUser().map(CurrentUser::subject);
+    private UUID organizationId(String issuer, Jwt jwt) {
+        OrgLookup lookup = organizations.getIfAvailable();
+        Map<String, Object> claim = jwt.getClaimAsMap(ORGANIZATION_CLAIM);
+        if (lookup == null || issuer == null || claim == null || claim.size() != 1) {
+            return null;
+        }
+        Map.Entry<String, Object> entry = claim.entrySet().iterator().next();
+        String externalOrgId = entry.getValue() instanceof Map<?, ?> value && value.get("id") instanceof String id
+                ? id
+                : null;
+        return lookup.organizationId(issuer, externalOrgId, entry.getKey()).orElse(null);
     }
 
     /**
-     * Parse the Keycloak {@code organization} claim (alias-keyed: {@code {"acme":{"id":"…"}}}). Only a
-     * single-org token yields an active org; a token scoped to zero or multiple orgs leaves it null.
+     * What this person may do inside this organization. Empty — never null, never "all" — when either
+     * half is missing or no policy is wired: the caller then holds no org authority, which is the same
+     * answer {@link ApiPermissionEvaluator} used to reach by default-denying on an absent port.
      */
-    private ActiveOrg resolveActiveOrg(Jwt jwt) {
-        Map<String, Object> organizations = jwt.getClaimAsMap(ORGANIZATION_CLAIM);
-        if (organizations == null || organizations.size() != 1) {
-            return ActiveOrg.NONE;
+    private Set<String> permissions(UUID personId, UUID organizationId) {
+        OrgAuthorization authz = orgAuthorization.getIfAvailable();
+        if (authz == null || personId == null || organizationId == null) {
+            return Set.of();
         }
-        Map.Entry<String, Object> entry = organizations.entrySet().iterator().next();
-        UUID id = null;
-        if (entry.getValue() instanceof Map<?, ?> value && value.get("id") instanceof String idString) {
-            try {
-                id = UUID.fromString(idString);
-            } catch (IllegalArgumentException ex) {
-                log.warn("Ignoring malformed organization id in token: {}", idString);
-            }
-        }
-        return new ActiveOrg(entry.getKey(), id);
+        Set<String> permissions = authz.permissions(personId, organizationId);
+        return permissions == null ? Set.of() : permissions;
     }
 
-    private record ActiveOrg(String alias, UUID id) {
-        static final ActiveOrg NONE = new ActiveOrg(null, null);
+    /**
+     * Platform roles, expanded through the hierarchy so {@link CurrentUser#hasRole(String)} answers the
+     * same question {@code @PreAuthorize("hasRole(…)")} does — otherwise a superadmin would fail a
+     * hand-rolled {@code hasRole(SUPPORT)} check while passing the annotation, and the two would drift.
+     */
+    private Set<String> roles(Collection<? extends GrantedAuthority> authorities) {
+        return roleHierarchy.getReachableGrantedAuthorities(authorities).stream()
+                .map(GrantedAuthority::getAuthority)
+                .filter(authority -> authority.startsWith(ROLE_PREFIX))
+                .map(authority -> authority.substring(ROLE_PREFIX.length()))
+                .collect(Collectors.toUnmodifiableSet());
+    }
+
+    private record Resolution(Authentication authentication, CurrentUser user) {
     }
 }

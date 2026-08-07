@@ -9,6 +9,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -32,7 +34,13 @@ import ug.co.smsone.testsupport.AbstractIntegrationTest;
 class IdentityReconciliationJobTest extends AbstractIntegrationTest {
 
     @Autowired
-    private UserRepository users;
+    private PersonRepository persons;
+
+    @Autowired
+    private ExternalIdentityRepository identities;
+
+    @Autowired
+    private PersonResolver resolver;
 
     @Autowired
     private JdbcTemplate jdbc;
@@ -46,41 +54,53 @@ class IdentityReconciliationJobTest extends AbstractIntegrationTest {
     @MockitoBean
     private KeycloakUserAdminGateway keycloak;
 
-    private String prefix;
+    /**
+     * Suffix → the person it seeded. The job now walks people and audits their {@code person.id}, so a
+     * test cannot name its fixture by a subject string any more — it has to remember the id.
+     */
+    private Map<String, UUID> seeded;
 
     @BeforeEach
     void freshFixture() {
-        prefix = "recon-" + UUID.randomUUID() + "-";
+        seeded = new HashMap<>();
     }
 
     /** Provisioned two hours ago, so it is past the one-hour grace period by default. */
-    private User seed(String suffix, ProvisioningStatus status) {
-        String subject = prefix + suffix;
-        User user = users.save(User.invited(subject, subject + "@smsone.co.ug",
-                Instant.now().minus(Duration.ofHours(2))));
+    private UUID seed(String suffix, ProvisioningStatus status) {
+        UUID personId = seedAged(suffix, Duration.ofHours(2));
         if (status != ProvisioningStatus.INVITED) {
-            jdbc.update("update app_user set status = ? where subject = ?", status.name(), subject);
+            jdbc.update("update person set status = ? where id = ?", status.name(), personId);
         }
-        // provisioned_at is not updatable through the entity; age it directly so the grace period applies.
-        jdbc.update("update app_user set provisioned_at = now() - interval '2 hours' where subject = ?", subject);
-        return user;
+        return personId;
+    }
+
+    /** A linked person whose {@code provisioned_at} is aged directly — the column is not updatable. */
+    private UUID seedAged(String suffix, Duration age) {
+        UUID personId = persons.save(Person.invited(PersonName.ofParts(null, null),
+                Instant.now().minus(age))).getId();
+        identities.save(ExternalIdentity.link(personId, IdentityProvider.KEYCLOAK, resolver.keycloakIssuer(),
+                "kc-" + personId, null, Instant.now()));
+        jdbc.update("update person set provisioned_at = now() - make_interval(secs => ?) where id = ?",
+                (double) age.toSeconds(), personId);
+        seeded.put(suffix, personId);
+        return personId;
     }
 
     private IdentityReconciliationJob jobWith(Action action, double maxOrphanRatio) {
-        return new IdentityReconciliationJob(users, keycloak,
+        return new IdentityReconciliationJob(persons, resolver, keycloak,
                 new IdentityReconciliationProperties(action, Duration.ofHours(1), maxOrphanRatio, 500),
                 auditLog, transactions, Clock.system(ZoneOffset.UTC));
     }
 
     private ProvisioningStatus statusOf(String suffix) {
         return ProvisioningStatus.valueOf(jdbc.queryForObject(
-                "select status from app_user where subject = ?", String.class, prefix + suffix));
+                "select status from person where id = ?", String.class, seeded.get(suffix)));
     }
 
     /** Straight from the table, so the real AuditLogImpl is what is being exercised. */
     private List<String> auditActionsFor(String suffix) {
         return jdbc.queryForList("select action from audit_log where target = ?",
-                String.class, prefix + suffix);
+                String.class, seeded.get(suffix).toString());
     }
 
     @Test
@@ -92,7 +112,7 @@ class IdentityReconciliationJobTest extends AbstractIntegrationTest {
 
         assertThat(result.orphaned()).isPositive();
         assertThat(statusOf("gone")).isEqualTo(ProvisioningStatus.DISABLED);
-        assertThat(auditActionsFor("gone")).contains("identity.user_disabled_by_reconciliation");
+        assertThat(auditActionsFor("gone")).contains("identity.person_disabled_by_reconciliation");
     }
 
     /**
@@ -107,7 +127,7 @@ class IdentityReconciliationJobTest extends AbstractIntegrationTest {
         seed("page-c", ProvisioningStatus.ACTIVE);
         given(keycloak.accountPresence(any())).willReturn(AccountPresence.PRESENT);
 
-        var result = new IdentityReconciliationJob(users, keycloak,
+        var result = new IdentityReconciliationJob(persons, resolver, keycloak,
                 new IdentityReconciliationProperties(Action.REPORT, Duration.ofHours(1), 1.0, 1),
                 auditLog, transactions, Clock.system(ZoneOffset.UTC)).run();
 
@@ -190,8 +210,7 @@ class IdentityReconciliationJobTest extends AbstractIntegrationTest {
     /** Young rows may still be mid-provisioning; the grace period keeps the job off them. */
     @Test
     void anAccountInsideTheGracePeriodIsNotExamined() {
-        String subject = prefix + "fresh";
-        users.save(User.invited(subject, subject + "@smsone.co.ug", Instant.now()));
+        seedAged("fresh", Duration.ZERO);
         given(keycloak.accountPresence(any())).willReturn(AccountPresence.ABSENT);
 
         jobWith(Action.DISABLE, 1.0).run();

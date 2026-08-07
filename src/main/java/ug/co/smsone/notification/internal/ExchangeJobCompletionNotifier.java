@@ -5,7 +5,6 @@ import java.util.Map;
 import org.springframework.modulith.events.ApplicationModuleListener;
 import org.springframework.stereotype.Component;
 import ug.co.smsone.exchange.JobCompleted;
-import ug.co.smsone.notification.NotificationChannel;
 import ug.co.smsone.notification.NotificationRequest;
 import ug.co.smsone.notification.Notifications;
 import ug.co.smsone.notification.Recipient;
@@ -42,7 +41,7 @@ class ExchangeJobCompletionNotifier {
                 + event.outcome() + ": " + event.processed() + " records processed, "
                 + event.failed() + " failed.";
         notifications.dispatch(new NotificationRequest(subject, body,
-                List.of(new Recipient(NotificationChannel.IN_APP, event.requester())),
+                List.of(Recipient.inApp(event.requesterPersonId())),
                 Map.of("orgId", event.orgId().toString())));
     }
 

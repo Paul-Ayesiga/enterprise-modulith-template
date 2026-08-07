@@ -18,22 +18,22 @@ interface ImpersonationSessionRepository
      * to. Whether the session is still live is decided by the caller from {@code endedAt}/{@code
      * expiresAt}, not by this query, so an expired hit is distinguishable from a wrong actor.
      */
-    Optional<ImpersonationSession> findByIdAndActorSubject(UUID id, String actorSubject);
+    Optional<ImpersonationSession> findByIdAndActorPersonId(UUID id, UUID actorPersonId);
 
     /**
      * The genuinely LIVE sessions this actor holds against this target — un-ended <em>and</em> un-expired.
      * Expiry belongs in the predicate: a lapsed session's reach stopped at {@code expires_at}, so
-     * superseding it would stamp {@code ended_at} at a moment strictly after it, name an {@code ended_by}
-     * who did not end it, and write a {@code _superseded} row claiming a re-issue cut short something
-     * that had already stopped. Lapsed rows are left exactly as they are — expiry is a read-time
-     * decision here, and nothing sweeps.
+     * superseding it would stamp {@code ended_at} at a moment strictly after it, name an {@code
+     * ended_by_person_id} who did not end it, and write a {@code _superseded} row claiming a re-issue cut
+     * short something that had already stopped. Lapsed rows are left exactly as they are — expiry is a
+     * read-time decision here, and nothing sweeps.
      *
      * <p>At most one row survives {@link #lockPair}, which serialises the read-then-insert this feeds.
      * The list return is what makes the method total anyway: rows that predate the lock, or a hand-fixed
      * row, must be superseded rather than blow up on an unexpected second result.
      */
-    List<ImpersonationSession> findByActorSubjectAndTargetSubjectAndEndedAtIsNullAndExpiresAtAfter(
-            String actorSubject, String targetSubject, Instant now);
+    List<ImpersonationSession> findByActorPersonIdAndTargetPersonIdAndEndedAtIsNullAndExpiresAtAfter(
+            UUID actorPersonId, UUID targetPersonId, Instant now);
 
     /**
      * Serialises opens for one (actor, target) pair for the rest of the caller's transaction, so the

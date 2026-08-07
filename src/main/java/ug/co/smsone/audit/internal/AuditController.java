@@ -34,12 +34,17 @@ class AuditController {
     }
 
     /**
-     * {@code actor} is the accountable human. {@code onBehalfOf} is non-null only for a row written
-     * inside an impersonation session, and then names the identity the actor was wearing —
-     * {@code impersonationId} points at the session that carries the stated reason.
+     * {@code actorPersonId} is the accountable human, and null when none is — a job, or a machine key.
+     * {@code onBehalfOfPersonId} is non-null only for a row written inside an impersonation session, and
+     * then names the identity the actor was wearing; {@code impersonationId} points at the session that
+     * carries the stated reason.
+     *
+     * <p>Both id fields are rendered as strings because every id on this wire is, and {@code target}
+     * stays free text: it is polymorphic (V13), so a row's target may be a person id, a role code or a
+     * setting key depending on {@code action}.
      */
-    record AuditAttributes(String action, String actor, String onBehalfOf, String impersonationId,
-            String orgId, String target, String fromState, String toState,
+    record AuditAttributes(String action, String actorPersonId, String onBehalfOfPersonId,
+            String impersonationId, String orgId, String target, String fromState, String toState,
             Instant occurredAt, Instant recordedAt) {
     }
 
@@ -48,7 +53,8 @@ class AuditController {
             description = """
                     Newest first, narrowed by any combination of `org`, `action` and an ISO-8601 \
                     `from`/`to` instant window. For a row written inside an impersonation session \
-                    `actor` is the accountable operator and `onBehalfOf` is the identity they wore.""")
+                    `actorPersonId` is the accountable operator and `onBehalfOfPersonId` is the \
+                    identity they wore.""")
     @PreAuthorize("hasRole('platform-support')")
     WindowedResult<ResourceObject> platform(
             @RequestParam(required = false) UUID org,
@@ -63,8 +69,8 @@ class AuditController {
     @Operation(summary = "Search one organization's audit trail",
             description = """
                     Newest first, narrowed by `action` and an ISO-8601 `from`/`to` instant window. \
-                    For a row written inside an impersonation session `actor` is the accountable \
-                    operator and `onBehalfOf` is the identity they wore.""")
+                    For a row written inside an impersonation session `actorPersonId` is the \
+                    accountable operator and `onBehalfOfPersonId` is the identity they wore.""")
     @PreAuthorize("hasPermission(#orgId, 'organization', 'audit:read')")
     WindowedResult<ResourceObject> forOrg(
             @PathVariable UUID orgId,
@@ -98,14 +104,18 @@ class AuditController {
         return new ResourceObject(entry.getId().toString(), RESOURCE_TYPE,
                 new AuditAttributes(
                         entry.getAction(),
-                        entry.getActor(),
-                        entry.getOnBehalfOf(),
-                        entry.getImpersonationId() == null ? null : entry.getImpersonationId().toString(),
-                        entry.getOrgId() == null ? null : entry.getOrgId().toString(),
+                        asString(entry.getActorPersonId()),
+                        asString(entry.getOnBehalfOfPersonId()),
+                        asString(entry.getImpersonationId()),
+                        asString(entry.getOrgId()),
                         entry.getTarget(),
                         entry.getFromState(),
                         entry.getToState(),
                         entry.getOccurredAt(),
                         entry.getCreatedAt()));
+    }
+
+    private static String asString(UUID id) {
+        return id == null ? null : id.toString();
     }
 }

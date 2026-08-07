@@ -156,12 +156,12 @@ class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
     public int pauseLapsedPastDue(Duration grace) {
         List<OrgSubscription> lapsed = subscriptions.findByStatusAndUpdatedAtBefore(
                 OrgSubscription.Status.PAST_DUE, clock.instant().minus(grace));
+        Map<UUID, String> planCodes = planCodesOf(lapsed);
         for (OrgSubscription subscription : lapsed) {
             subscription.pause();
             subscriptions.save(subscription);
-            Plan plan = plans.findById(subscription.getPlanId()).orElse(null);
             events.publishEvent(new SubscriptionChanged(subscription.getOrgId(),
-                    plan == null ? null : plan.getCode(),
+                    planCodes.get(subscription.getPlanId()),
                     OrgSubscription.Status.PAUSED.name(), clock.instant()));
             auditLog.record("subscription.past_due_lapsed", subscription.getOrgId(),
                     subscription.getOrgId().toString(), "status=PAST_DUE", "status=PAUSED");
@@ -179,18 +179,37 @@ class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
     public int expireTrials() {
         List<OrgSubscription> lapsed = subscriptions
                 .findByStatusAndTrialEndsAtBefore(OrgSubscription.Status.TRIALING, clock.instant());
+        Map<UUID, String> planCodes = planCodesOf(lapsed);
         for (OrgSubscription subscription : lapsed) {
             subscription.pause();
             subscriptions.save(subscription);
-            Plan plan = plans.findById(subscription.getPlanId()).orElse(null);
             events.publishEvent(new SubscriptionChanged(subscription.getOrgId(),
-                    plan == null ? null : plan.getCode(),
+                    planCodes.get(subscription.getPlanId()),
                     OrgSubscription.Status.PAUSED.name(), clock.instant()));
             auditLog.record("subscription.trial_expired", subscription.getOrgId(),
                     subscription.getOrgId().toString(), "status=TRIALING", "status=PAUSED");
             meters.counter("smsone.subscription.trial_expired").increment();
         }
         return lapsed.size();
+    }
+
+    /**
+     * The plan CODE behind each lapsed row, in one query. A {@code findById} inside the sweep loop was
+     * only ever de-duplicated by the shared persistence context; this states the intent instead of
+     * relying on it, and an unknown plan id is simply absent from the map — the same null the event
+     * carried before.
+     */
+    private Map<UUID, String> planCodesOf(List<OrgSubscription> lapsed) {
+        Set<UUID> planIds = lapsed.stream()
+                .map(OrgSubscription::getPlanId)
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toSet());
+        if (planIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<UUID, String> codes = new java.util.HashMap<>();
+        plans.findAllById(planIds).forEach(plan -> codes.put(plan.getId(), plan.getCode()));
+        return codes;
     }
 
     java.util.List<Plan> catalog() {

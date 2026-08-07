@@ -36,7 +36,7 @@ class ExchangeScheduleController {
     }
 
     record ScheduleAttributes(String handler, String format, String cron, boolean enabled,
-            Instant nextRunAt, String requester, String lastJobId) {
+            Instant nextRunAt, String requesterPersonId, String lastJobId) {
     }
 
     record CreateRequest(String handler, String format, String cron) {
@@ -77,7 +77,7 @@ class ExchangeScheduleController {
         return new ResourceObject(schedule.getId().toString(), RESOURCE_TYPE,
                 new ScheduleAttributes(schedule.getHandler(), schedule.getFormat(),
                         schedule.getCron(), schedule.isEnabled(), schedule.getNextRunAt(),
-                        schedule.getRequester(),
+                        schedule.getRequesterPersonId().toString(),
                         schedule.getLastJobId() == null ? null : schedule.getLastJobId().toString()));
     }
 }

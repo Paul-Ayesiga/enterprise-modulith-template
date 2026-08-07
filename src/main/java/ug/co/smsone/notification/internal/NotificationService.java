@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.springframework.stereotype.Service;
-import ug.co.smsone.identity.UserDirectory;
+import ug.co.smsone.identity.PersonDirectory;
 import ug.co.smsone.notification.NotificationRequest;
 import ug.co.smsone.notification.Notifications;
 import ug.co.smsone.notification.Recipient;
@@ -20,13 +20,13 @@ class NotificationService implements Notifications {
 
     private final NotificationDeliveryQueue queue;
     private final NotificationProperties properties;
-    private final UserDirectory userDirectory;
+    private final PersonDirectory personDirectory;
 
     NotificationService(NotificationDeliveryQueue queue, NotificationProperties properties,
-            UserDirectory userDirectory) {
+            PersonDirectory personDirectory) {
         this.queue = queue;
         this.properties = properties;
-        this.userDirectory = userDirectory;
+        this.personDirectory = personDirectory;
     }
 
     @Override
@@ -49,11 +49,11 @@ class NotificationService implements Notifications {
         List<Recipient> recipients = new ArrayList<>();
         for (NotificationProperties.Admin admin : properties.admins()) {
             recipients.add(Recipient.email(admin.email()));
-            // In-app targets are addressed by the immutable Keycloak subject, never by a
-            // mutable/recyclable name — resolved from the admin's email at enqueue time. An
-            // unprovisioned admin can't log in to read in-app anyway; e-mail still goes out.
-            userDirectory.findSubjectByEmail(admin.email())
-                    .ifPresent(adminSubject -> recipients.add(Recipient.inApp(adminSubject)));
+            // In-app targets are addressed by person.id, never by a mutable/recyclable name —
+            // resolved from the admin's email at enqueue time. An admin with no person yet can't log
+            // in to read in-app anyway; e-mail still goes out.
+            personDirectory.findPersonIdByEmail(admin.email())
+                    .ifPresent(personId -> recipients.add(Recipient.inApp(personId)));
         }
         if (recipients.isEmpty()) {
             return;

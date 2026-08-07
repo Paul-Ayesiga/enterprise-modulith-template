@@ -19,8 +19,8 @@ class Document extends SoftDeletableEntity {
     @Column(name = "org_id", updatable = false)
     private UUID orgId;
 
-    @Column(name = "owner_subject", nullable = false, updatable = false, length = 64)
-    private String ownerSubject;
+    @Column(name = "owner_person_id", nullable = false, updatable = false)
+    private UUID ownerPersonId;
 
     @Column(name = "storage_key", nullable = false, updatable = false, length = 300)
     private String storageKey;
@@ -47,7 +47,7 @@ class Document extends SoftDeletableEntity {
     static Document register(NewDocument meta) {
         Document document = new Document();
         document.orgId = meta.orgId();
-        document.ownerSubject = meta.ownerSubject();
+        document.ownerPersonId = meta.ownerPersonId();
         document.storageKey = meta.storageKey();
         document.name = meta.name();
         document.contentType = meta.contentType();
@@ -60,8 +60,8 @@ class Document extends SoftDeletableEntity {
         return orgId;
     }
 
-    String getOwnerSubject() {
-        return ownerSubject;
+    UUID getOwnerPersonId() {
+        return ownerPersonId;
     }
 
     String getStorageKey() {

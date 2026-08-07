@@ -46,7 +46,7 @@ class OrgDocumentController {
     }
 
     record DocumentAttributes(String name, String contentType, long sizeBytes, String source,
-            String orgId, String ownerSubject) {
+            String orgId, String ownerPersonId) {
     }
 
     @PostMapping
@@ -59,7 +59,7 @@ class OrgDocumentController {
     @ResponseStatus(HttpStatus.CREATED)
     ResourceObject upload(@PathVariable UUID orgId, @RequestParam("file") MultipartFile file,
             CurrentUser user) {
-        NewDocument meta = store(file, "o/" + orgId, orgId, user.subject());
+        NewDocument meta = store(file, "o/" + orgId, orgId, user.personId());
         return toResource(documents.requireInOrg(orgId, documents.register(meta)));
     }
 
@@ -94,7 +94,7 @@ class OrgDocumentController {
      * put would orphan an unreachable object on every over-long filename, and turn a 422's worth
      * of input into a 500.
      */
-    NewDocument store(MultipartFile file, String namespace, UUID orgId, String ownerSubject) {
+    NewDocument store(MultipartFile file, String namespace, UUID orgId, UUID ownerPersonId) {
         if (file.isEmpty()) {
             throw new ValidationException("Uploaded file is empty.", ApiSource.parameter("file"));
         }
@@ -107,7 +107,7 @@ class OrgDocumentController {
         }
         String key = "doc/" + namespace + "/" + UUID.randomUUID() + "/" + safe;
         String contentType = file.getContentType() == null ? "application/octet-stream" : file.getContentType();
-        NewDocument meta = new NewDocument(orgId, ownerSubject, key, safe, contentType,
+        NewDocument meta = new NewDocument(orgId, ownerPersonId, key, safe, contentType,
                 file.getSize(), "UPLOAD");
         try (java.io.InputStream in = file.getInputStream()) {
             storage.put(key, in, file.getSize(), contentType);
@@ -122,7 +122,7 @@ class OrgDocumentController {
                 new DocumentAttributes(document.getName(), document.getContentType(),
                         document.getSizeBytes(), document.getSource(),
                         document.getOrgId() == null ? null : document.getOrgId().toString(),
-                        document.getOwnerSubject()));
+                        document.getOwnerPersonId().toString()));
     }
 
     static URI toUri(URL url) {

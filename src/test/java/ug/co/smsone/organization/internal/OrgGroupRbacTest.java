@@ -40,58 +40,59 @@ class OrgGroupRbacTest extends AbstractIntegrationTest {
 
     @Test
     void aGroupUnionsItsRoleIntoEveryMembersPermissions() throws Exception {
-        UUID orgId = UUID.randomUUID();
-        seedOrg(orgId);
+        UUID orgId = seedOrg();
+        UUID manager = UUID.randomUUID();
+        UUID worker = UUID.randomUUID();
         // The manager holds member:read + member:role:assign + audit:read (so it can grant AUDITOR).
         UUID managerRole = seedRole(orgId, "MANAGER", "ORG_READ", "MEMBER_READ", "MEMBER_ROLE_ASSIGN", "AUDIT_READ");
         seedRole(orgId, "AUDITOR", "AUDIT_READ");
         seedRole(orgId, "PLAIN", "ORG_READ");
-        seedMembership(orgId, "manager-1", managerRole);
-        seedMembership(orgId, "worker-1", roleId(orgId, "PLAIN"));
+        seedMembership(orgId, manager, managerRole);
+        seedMembership(orgId, worker, roleId(orgId, "PLAIN"));
 
-        // worker-1 starts with only org:read, no audit:read.
-        assertThat(authorization.permissions("worker-1", orgId)).containsExactly("org:read");
+        // The worker starts with only org:read, no audit:read.
+        assertThat(authorization.permissions(worker, orgId)).containsExactly("org:read");
 
         MvcResult created = mockMvc.perform(post("/api/v1/orgs/{orgId}/groups", orgId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"Auditors\",\"roleCode\":\"AUDITOR\"}")
-                        .with(member(orgId, "manager-1")))
+                        .with(member(orgId, manager)))
                 .andExpect(status().isCreated())
                 .andReturn();
         String groupId = JsonPath.read(created.getResponse().getContentAsString(), "$.data.id");
 
         mockMvc.perform(post("/api/v1/orgs/{orgId}/groups/{id}/members", orgId, groupId)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"subject\":\"worker-1\"}")
-                        .with(member(orgId, "manager-1")))
+                        .content("{\"personId\":\"" + worker + "\"}")
+                        .with(member(orgId, manager)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.attributes.members[0]").value("worker-1"));
+                .andExpect(jsonPath("$.data.attributes.members[0]").value(worker.toString()));
 
-        // The union is live (cache cleared on add): worker-1 now holds audit:read via the group.
-        assertThat(authorization.permissions("worker-1", orgId))
+        // The union is live (cache cleared on add): the worker now holds audit:read via the group.
+        assertThat(authorization.permissions(worker, orgId))
                 .containsExactlyInAnyOrder("org:read", "audit:read");
 
-        mockMvc.perform(delete("/api/v1/orgs/{orgId}/groups/{id}/members/{subject}", orgId, groupId, "worker-1")
-                        .with(member(orgId, "manager-1")))
+        mockMvc.perform(delete("/api/v1/orgs/{orgId}/groups/{id}/members/{personId}", orgId, groupId, worker)
+                        .with(member(orgId, manager)))
                 .andExpect(status().isOk());
-        assertThat(authorization.permissions("worker-1", orgId))
+        assertThat(authorization.permissions(worker, orgId))
                 .as("removal drops the conferred permission").containsExactly("org:read");
     }
 
     @Test
     void creatingAGroupYouCannotStaffIsRefusedAndNonMembersCannotBeGrouped() throws Exception {
-        UUID orgId = UUID.randomUUID();
-        seedOrg(orgId);
+        UUID orgId = seedOrg();
+        UUID manager = UUID.randomUUID();
         // This manager can assign roles but does NOT hold member:remove.
         UUID managerRole = seedRole(orgId, "MGR", "ORG_READ", "MEMBER_READ", "MEMBER_ROLE_ASSIGN");
         seedRole(orgId, "SWEEPER", "MEMBER_REMOVE");
-        seedMembership(orgId, "mgr-2", managerRole);
+        seedMembership(orgId, manager, managerRole);
 
         // Group conferring SWEEPER (member:remove) — a permission the creator lacks: escalation 403.
         mockMvc.perform(post("/api/v1/orgs/{orgId}/groups", orgId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"Sweepers\",\"roleCode\":\"SWEEPER\"}")
-                        .with(member(orgId, "mgr-2")))
+                        .with(member(orgId, manager)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errors[0].detail", org.hamcrest.Matchers.containsString("member:remove")));
 
@@ -99,27 +100,29 @@ class OrgGroupRbacTest extends AbstractIntegrationTest {
         MvcResult created = mockMvc.perform(post("/api/v1/orgs/{orgId}/groups", orgId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"Readers\",\"roleCode\":\"MGR\"}")
-                        .with(member(orgId, "mgr-2")))
+                        .with(member(orgId, manager)))
                 .andExpect(status().isCreated())
                 .andReturn();
         String groupId = JsonPath.read(created.getResponse().getContentAsString(), "$.data.id");
         mockMvc.perform(post("/api/v1/orgs/{orgId}/groups/{id}/members", orgId, groupId)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"subject\":\"stranger\"}")
-                        .with(member(orgId, "mgr-2")))
+                        .content("{\"personId\":\"" + UUID.randomUUID() + "\"}")
+                        .with(member(orgId, manager)))
                 .andExpect(status().isNotFound());
     }
 
-    private org.springframework.test.web.servlet.request.RequestPostProcessor member(UUID orgId, String subject) {
-        return jwt().jwt(token -> token.subject(subject)
+    private org.springframework.test.web.servlet.request.RequestPostProcessor member(UUID orgId, UUID personId) {
+        return jwt().jwt(token -> token.subject(personId.toString())
                 .claim("organization", Map.of("acme", Map.of("id", orgId.toString()))));
     }
 
-    private void seedOrg(UUID orgId) {
-        jdbc.update("insert into organization (id, kc_org_id, alias, name, status, version, created_at) "
-                        + "values (?, ?, ?, ?, 'ACTIVE', 0, now()) "
-                        + "on conflict (kc_org_id) where deleted_at is null do nothing",
-                UUID.randomUUID(), orgId, "org-" + orgId.toString().substring(0, 13), "Org " + orgId);
+    /** organization.id is the tenant key and the row mints it — there is no provider id to seed. */
+    private UUID seedOrg() {
+        UUID orgId = UUID.randomUUID();
+        jdbc.update("insert into organization (id, alias, name, status, version, created_at) "
+                        + "values (?, ?, ?, 'ACTIVE', 0, now())",
+                orgId, "org-" + orgId.toString().substring(0, 13), "Org " + orgId);
+        return orgId;
     }
 
     private UUID seedRole(UUID orgId, String code, String... permissions) {
@@ -136,8 +139,8 @@ class OrgGroupRbacTest extends AbstractIntegrationTest {
         return jdbc.queryForObject("select id from org_role where org_id = ? and code = ?", UUID.class, orgId, code);
     }
 
-    private void seedMembership(UUID orgId, String subject, UUID roleId) {
-        jdbc.update("insert into membership (id, org_id, user_subject, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, subject, roleId);
+    private void seedMembership(UUID orgId, UUID personId, UUID roleId) {
+        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
+                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
     }
 }

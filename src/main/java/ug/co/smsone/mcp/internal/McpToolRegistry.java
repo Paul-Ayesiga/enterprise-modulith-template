@@ -50,10 +50,11 @@ class McpToolRegistry {
 
     /** The wire shape: annotations carry the safety class, {@code _meta} the version and area. */
     static McpSchema.Tool toMcpTool(ToolDefinition tool) {
-        return McpSchema.Tool.builder(tool.name())
+        // builder(name, inputSchema) — the one-arg overload is deprecated because a tool without a
+        // schema is not a usable tool; taking both up front is the SDK making that non-optional.
+        return McpSchema.Tool.builder(tool.name(), tool.inputSchema())
                 .title(tool.title())
                 .description(tool.description())
-                .inputSchema(tool.inputSchema())
                 .annotations(McpSchema.ToolAnnotations.builder()
                         .title(tool.title())
                         .readOnlyHint(tool.kind() == ToolDefinition.Kind.READ)

@@ -56,11 +56,14 @@ class GeoStampsImpl implements GeoStamps {
                     ApiSource.pointer("/data/attributes/subjectType"));
         }
         validate(fix, policy);
-        String capturedBy = currentUser.currentSubject().orElse(null);
-        GeoStampEntity saved = stamps.save(GeoStampEntity.create(orgId, type, id, fix, capturedBy));
+        // Null for an unauthenticated capture and null for a machine one — currentPersonId() is
+        // empty for an API key, which is exactly what V47 means the column to say about a robot.
+        UUID capturedByPersonId = currentUser.currentPersonId().orElse(null);
+        GeoStampEntity saved = stamps.save(GeoStampEntity.create(orgId, type, id, fix, capturedByPersonId));
         auditLog.record("geo.stamp_recorded", orgId, type + ":" + id, null,
                 "lat=" + fix.latitude() + " lng=" + fix.longitude() + " src=" + fix.source());
-        events.publishEvent(new GeoStampRecorded(orgId, saved.getId(), type, id, capturedBy, clock.instant()));
+        events.publishEvent(new GeoStampRecorded(orgId, saved.getId(), type, id, capturedByPersonId,
+                clock.instant()));
         return saved.toStamp();
     }
 

@@ -11,7 +11,7 @@ import ug.co.smsone.shared.persistence.SoftDeletableEntity;
 
 /**
  * A recurring EXPORT (imports cannot recur — there is no source to re-read): fire the handler on a
- * cron, as the requester who created the schedule. User-managed configuration, so it is a
+ * cron, as the person who created the schedule. User-managed configuration, so it is a
  * soft-deletable aggregate like {@code webhook_subscription}.
  */
 @Entity
@@ -23,8 +23,8 @@ class ExchangeSchedule extends SoftDeletableEntity {
     @Column(name = "org_id", nullable = false, updatable = false)
     private UUID orgId;
 
-    @Column(nullable = false, updatable = false, length = 64)
-    private String requester;
+    @Column(name = "requester_person_id", nullable = false, updatable = false)
+    private UUID requesterPersonId;
 
     @Column(nullable = false, updatable = false, length = 60)
     private String handler;
@@ -48,11 +48,11 @@ class ExchangeSchedule extends SoftDeletableEntity {
         // JPA
     }
 
-    static ExchangeSchedule create(UUID orgId, String requester, String handler, String format,
+    static ExchangeSchedule create(UUID orgId, UUID requesterPersonId, String handler, String format,
             String cron, Instant firstRunAt) {
         ExchangeSchedule schedule = new ExchangeSchedule();
         schedule.orgId = orgId;
-        schedule.requester = requester;
+        schedule.requesterPersonId = requesterPersonId;
         schedule.handler = handler;
         schedule.format = format;
         schedule.cron = cron;
@@ -75,8 +75,8 @@ class ExchangeSchedule extends SoftDeletableEntity {
         return orgId;
     }
 
-    String getRequester() {
-        return requester;
+    UUID getRequesterPersonId() {
+        return requesterPersonId;
     }
 
     String getHandler() {

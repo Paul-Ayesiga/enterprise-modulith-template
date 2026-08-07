@@ -14,14 +14,14 @@ import ug.co.smsone.exchange.ExchangeHandler;
 import ug.co.smsone.exchange.ImportOutcome;
 import ug.co.smsone.exchange.InvalidRecordException;
 import ug.co.smsone.exchange.RecordWriter;
-import ug.co.smsone.identity.UserDirectory;
+import ug.co.smsone.identity.PersonDirectory;
 import ug.co.smsone.organization.Permission;
 import ug.co.smsone.shared.error.ApiException;
 
 /**
  * The reference {@code ExchangeHandler}: bulk member onboarding and roster export, driving the
  * SAME {@link MemberService} the REST surface uses — one rulebook, two entry points. Each import
- * record is a full invite (provision → Keycloak link → membership row) whose escalation guard runs
+ * record is a full invite (provision → provider link → membership row) whose escalation guard runs
  * against the REQUESTER, so a role revoked after submit stops granting mid-file. Idempotent the
  * way invite is: a re-imported member is returned unchanged, never duplicated or re-roled.
  */
@@ -36,13 +36,13 @@ class MembersExchangeHandler implements ExchangeHandler {
 
     private final MemberService members;
     private final MembershipRepository memberships;
-    private final UserDirectory userDirectory;
+    private final PersonDirectory people;
 
     MembersExchangeHandler(MemberService members, MembershipRepository memberships,
-            UserDirectory userDirectory) {
+            PersonDirectory people) {
         this.members = members;
         this.memberships = memberships;
-        this.userDirectory = userDirectory;
+        this.people = people;
     }
 
     @Override
@@ -60,9 +60,14 @@ class MembersExchangeHandler implements ExchangeHandler {
         return Permission.MEMBER_READ.code();
     }
 
+    /**
+     * {@code givenName} / {@code familyName}, not first/last. It is a wire contract and it changed on
+     * purpose: "first name" names a position in one rendering of a name, and the position is wrong for
+     * much of the world — a column header is exactly where that mistake gets copied into someone's file.
+     */
     @Override
     public List<String> header() {
-        return List.of("email", "firstName", "lastName", "roleCode");
+        return List.of("email", "givenName", "familyName", "roleCode");
     }
 
     @Override
@@ -79,16 +84,16 @@ class MembersExchangeHandler implements ExchangeHandler {
             throw new InvalidRecordException("roleCode is required.");
         }
         try {
-            members.inviteAs(context.requester(), context.orgId(), email,
-                    record.getOrDefault("firstName", "").trim(),
-                    record.getOrDefault("lastName", "").trim(), roleCode);
+            members.inviteAs(context.requesterPersonId(), context.orgId(), email,
+                    record.getOrDefault("givenName", "").trim(),
+                    record.getOrDefault("familyName", "").trim(), roleCode);
             return ImportOutcome.APPLIED;
         } catch (ApiException ex) {
             // Everything the API surface would answer 4xx (unknown role, escalation, conflicts) is
             // a DATA problem here, and the message is already tenant-curated by construction.
             throw new InvalidRecordException(ex.getMessage());
         } catch (org.springframework.web.client.HttpClientErrorException ex) {
-            // Keycloak 4xx'd THIS record (its email validation is stricter than ours): a data
+            // The provider 4xx'd THIS record (its email validation is stricter than ours): a data
             // problem too — classifying it as infrastructure would fail the whole job over one row.
             // Curated message only; the provider's response body never reaches the tenant report.
             throw new InvalidRecordException(
@@ -108,15 +113,16 @@ class MembersExchangeHandler implements ExchangeHandler {
             if (window.isEmpty()) {
                 return;
             }
-            Map<String, String> emails = userDirectory.emailsBySubjects(
-                    window.getContent().stream().map(Membership::getUserSubject).toList());
+            Map<UUID, String> emails = people.emailsByPersonIds(
+                    window.getContent().stream().map(Membership::getPersonId).toList());
             for (Membership membership : window) {
                 Map<String, String> record = new LinkedHashMap<>();
-                record.put("email", emails.getOrDefault(membership.getUserSubject(), ""));
-                // Names live only in Keycloak (the local projection stores none) — exported blank.
-                // The header still carries the columns so an exported file re-imports as-is.
-                record.put("firstName", "");
-                record.put("lastName", "");
+                record.put("email", emails.getOrDefault(membership.getPersonId(), ""));
+                // Names live on `person`, in the identity module, and no port exposes them — this
+                // module has never had a reason to read one. The header still carries the columns so
+                // an exported file re-imports as-is.
+                record.put("givenName", "");
+                record.put("familyName", "");
                 record.put("roleCode", roleCodes.getOrDefault(membership.getRoleId(), ""));
                 out.write(record);
             }

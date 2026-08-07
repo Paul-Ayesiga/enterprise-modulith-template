@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.jayway.jsonpath.JsonPath;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.assertj.core.api.Assertions;
 import org.hamcrest.Matchers;
@@ -23,10 +24,17 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import ug.co.smsone.shared.security.OrgAuthorization;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
+import ug.co.smsone.testsupport.EdgeSeed;
 
 /**
  * The webhook subscription REST surface: create returns the secret once, reads mask it, event/URL
  * validation, and org-scoped {@code webhook:manage} authorization ({@code OrgAuthorization} mocked).
+ *
+ * <p>The mock stubs {@link OrgAuthorization#permissions}, not {@code hasPermission}: the edge resolves a
+ * caller's whole permission set once per request and {@code ApiPermissionEvaluator} reads it off
+ * {@code CurrentUser}, so a {@code hasPermission} stub is never consulted on the request path at all.
+ * The caller is a seeded person and the tenant a seeded provider link, because those are what the token
+ * and its {@code organization} claim now resolve through.
  */
 @AutoConfigureMockMvc
 class WebhookApiTest extends AbstractIntegrationTest {
@@ -40,16 +48,32 @@ class WebhookApiTest extends AbstractIntegrationTest {
     @MockitoBean
     private OrgAuthorization orgAuthorization;
 
-    private RequestPostProcessor manager(UUID orgId, String subject) {
-        given(orgAuthorization.hasPermission(subject, orgId, "webhook:manage")).willReturn(true);
-        return jwt().jwt(builder -> builder.subject(subject)
-                .claim("organization", Map.of("acme", Map.of("id", orgId.toString()))));
+    /** A tenant the edge can resolve: an organization plus the provider link its claim names. */
+    private UUID seedOrg() {
+        return EdgeSeed.organization(jdbc, "kc-org-" + UUID.randomUUID(), "acme-" + UUID.randomUUID());
+    }
+
+    /** A person holding {@code webhook:manage} in {@code orgId}, and the token that resolves to them. */
+    private RequestPostProcessor manager(UUID orgId) {
+        String subject = "mgr-" + UUID.randomUUID();
+        UUID personId = EdgeSeed.person(jdbc, subject);
+        given(orgAuthorization.permissions(personId, orgId)).willReturn(Set.of("webhook:manage"));
+        return jwt().jwt(builder -> builder.subject(subject).claim("organization", orgClaim(orgId)));
+    }
+
+    /** The alias-keyed {@code organization} claim Keycloak mints, rebuilt from the seeded link. */
+    private Map<String, Object> orgClaim(UUID orgId) {
+        Map<String, Object> link = jdbc.queryForMap(
+                "select external_org_id, external_alias from external_organization where organization_id = ?",
+                orgId);
+        return Map.of(String.valueOf(link.get("external_alias")),
+                Map.of("id", String.valueOf(link.get("external_org_id"))));
     }
 
     @Test
     void createReturnsTheSecretOnceThenReadsMaskIt() throws Exception {
-        UUID orgId = UUID.randomUUID();
-        RequestPostProcessor manager = manager(orgId, "mgr-" + UUID.randomUUID());
+        UUID orgId = seedOrg();
+        RequestPostProcessor manager = manager(orgId);
 
         String body = mockMvc.perform(post("/api/v1/orgs/{orgId}/webhooks", orgId).with(manager)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -76,8 +100,8 @@ class WebhookApiTest extends AbstractIntegrationTest {
 
     @Test
     void unknownEventTypeIs422() throws Exception {
-        UUID orgId = UUID.randomUUID();
-        mockMvc.perform(post("/api/v1/orgs/{orgId}/webhooks", orgId).with(manager(orgId, "mgr"))
+        UUID orgId = seedOrg();
+        mockMvc.perform(post("/api/v1/orgs/{orgId}/webhooks", orgId).with(manager(orgId))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"url\":\"https://hooks.example.com/x\",\"events\":[\"org.does_not_exist\"]}"))
                 .andExpect(status().isUnprocessableContent())
@@ -86,8 +110,8 @@ class WebhookApiTest extends AbstractIntegrationTest {
 
     @Test
     void nonHttpUrlIsRejected() throws Exception {
-        UUID orgId = UUID.randomUUID();
-        mockMvc.perform(post("/api/v1/orgs/{orgId}/webhooks", orgId).with(manager(orgId, "mgr"))
+        UUID orgId = seedOrg();
+        mockMvc.perform(post("/api/v1/orgs/{orgId}/webhooks", orgId).with(manager(orgId))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"url\":\"ftp://internal/x\",\"events\":[\"org.member.added\"]}"))
                 .andExpect(status().isUnprocessableContent())
@@ -96,8 +120,8 @@ class WebhookApiTest extends AbstractIntegrationTest {
 
     @Test
     void deleteRemovesTheSubscription() throws Exception {
-        UUID orgId = UUID.randomUUID();
-        RequestPostProcessor manager = manager(orgId, "mgr");
+        UUID orgId = seedOrg();
+        RequestPostProcessor manager = manager(orgId);
         String body = mockMvc.perform(post("/api/v1/orgs/{orgId}/webhooks", orgId).with(manager)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"url\":\"https://hooks.example.com/y\",\"events\":[\"org.status_changed\"]}"))
@@ -118,8 +142,8 @@ class WebhookApiTest extends AbstractIntegrationTest {
      */
     @Test
     void theDeliveryLogOutlivesTheSubscriptionButStaysTenantScoped() throws Exception {
-        UUID orgId = UUID.randomUUID();
-        RequestPostProcessor manager = manager(orgId, "mgr-" + UUID.randomUUID());
+        UUID orgId = seedOrg();
+        RequestPostProcessor manager = manager(orgId);
         String body = mockMvc.perform(post("/api/v1/orgs/{orgId}/webhooks", orgId).with(manager)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"url\":\"https://hooks.example.com/z\",\"events\":[\"org.status_changed\"]}"))
@@ -133,17 +157,17 @@ class WebhookApiTest extends AbstractIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data").isArray());
 
-        UUID otherOrg = UUID.randomUUID();
+        UUID otherOrg = seedOrg();
         mockMvc.perform(get("/api/v1/orgs/{orgId}/webhooks/{id}/deliveries", otherOrg, id)
-                        .with(manager(otherOrg, "mgr-" + UUID.randomUUID())))
+                        .with(manager(otherOrg)))
                 .andExpect(status().isNotFound());
     }
 
     /** The permission lookup itself: scoped to the right org, and still refused without {@code webhook:manage}. */
     @Test
     void withoutThePermissionAccessIsDenied() throws Exception {
-        UUID orgId = UUID.randomUUID();
-        // OrgAuthorization is stubbed only inside manager(), so this subject resolves to false — which is
+        UUID orgId = seedOrg();
+        // OrgAuthorization is stubbed only inside manager(), so this person resolves to nothing — which is
         // the branch the name promises, and the one the no-active-org case never reaches.
         mockMvc.perform(get("/api/v1/orgs/{orgId}/webhooks", orgId)
                         .with(jwt().jwt(builder -> builder.subject("outsider-" + UUID.randomUUID())
@@ -153,7 +177,7 @@ class WebhookApiTest extends AbstractIntegrationTest {
 
     @Test
     void aTokenWithNoActiveOrgIsDenied() throws Exception {
-        UUID orgId = UUID.randomUUID();
+        UUID orgId = seedOrg();
         // No active-org scope on the token -> the evaluator denies before consulting OrgAuthorization.
         mockMvc.perform(get("/api/v1/orgs/{orgId}/webhooks", orgId).with(jwt()))
                 .andExpect(status().isForbidden());
@@ -166,8 +190,8 @@ class WebhookApiTest extends AbstractIntegrationTest {
      */
     @Test
     void aFailedDeliveryRedeliversOnceThenConflicts() throws Exception {
-        UUID orgId = UUID.randomUUID();
-        RequestPostProcessor manager = manager(orgId, "mgr-" + UUID.randomUUID());
+        UUID orgId = seedOrg();
+        RequestPostProcessor manager = manager(orgId);
         String body = mockMvc.perform(post("/api/v1/orgs/{orgId}/webhooks", orgId).with(manager)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"url\":\"https://hooks.example.com/dead\",\"events\":[\"org.member.added\"]}"))
@@ -200,8 +224,8 @@ class WebhookApiTest extends AbstractIntegrationTest {
 
     @Test
     void redeliverIsDeniedWithoutWebhookManageAndTheRowStaysFailed() throws Exception {
-        UUID orgId = UUID.randomUUID();
-        RequestPostProcessor manager = manager(orgId, "mgr-" + UUID.randomUUID());
+        UUID orgId = seedOrg();
+        RequestPostProcessor manager = manager(orgId);
         String body = mockMvc.perform(post("/api/v1/orgs/{orgId}/webhooks", orgId).with(manager)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"url\":\"https://hooks.example.com/locked\",\"events\":[\"org.member.added\"]}"))

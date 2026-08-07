@@ -18,7 +18,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
-import ug.co.smsone.identity.UserProvisioned;
+import ug.co.smsone.identity.PersonProvisioned;
 import ug.co.smsone.search.SearchDoc;
 import ug.co.smsone.search.SearchIndex;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
@@ -121,8 +121,8 @@ class SearchApiTest extends AbstractIntegrationTest {
 
     @Test
     void anEventRedeliveryDoesNotDuplicateTheDocument() {
-        String subject = "dup-" + UUID.randomUUID();
-        UserProvisioned event = new UserProvisioned(subject, subject + "@smsone.co.ug", Instant.now());
+        UUID personId = UUID.randomUUID();
+        PersonProvisioned event = new PersonProvisioned(personId, personId + "@smsone.co.ug", Instant.now());
         // @ApplicationModuleListener is async even when invoked directly (the proxy dispatches) —
         // fire the delivery and its redelivery, then await the settled outcome.
         listeners.on(event);
@@ -131,11 +131,11 @@ class SearchApiTest extends AbstractIntegrationTest {
         org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
             Integer docs = jdbc.queryForObject(
                     "select count(*) from search_document where entity_type = 'user' and entity_id = ?",
-                    Integer.class, subject);
+                    Integer.class, personId.toString());
             assertThat(docs).as("one document, however many deliveries").isEqualTo(1);
             Integer inboxRows = jdbc.queryForObject(
                     "select count(*) from event_inbox where listener_id = 'search' and message_id = ?",
-                    Integer.class, "user:" + subject + "@" + event.occurredAt());
+                    Integer.class, "user:" + personId + "@" + event.occurredAt());
             assertThat(inboxRows).as("the inbox recorded the message exactly once").isEqualTo(1);
         });
     }

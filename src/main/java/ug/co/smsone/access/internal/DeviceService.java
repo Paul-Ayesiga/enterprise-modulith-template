@@ -23,7 +23,7 @@ class DeviceService {
     }
 
     @Transactional
-    UserDevice register(String subject, String name, String kind, String fingerprint, String pushToken) {
+    UserDevice register(UUID personId, String name, String kind, String fingerprint, String pushToken) {
         String normalizedKind = kind == null ? "" : kind.trim().toUpperCase();
         if (!KINDS.contains(normalizedKind)) {
             throw new ValidationException("kind must be BROWSER, MOBILE or CLI.",
@@ -37,41 +37,41 @@ class DeviceService {
             throw new ValidationException("name is required (max 100 characters).",
                     ApiSource.pointer("/data/attributes/name"));
         }
-        return devices.findBySubjectAndFingerprint(subject, fingerprint.trim())
+        return devices.findByPersonIdAndFingerprint(personId, fingerprint.trim())
                 .map(existing -> {
                     existing.update(name.trim(), pushToken);
                     return devices.save(existing);
                 })
                 .orElseGet(() -> devices.save(
-                        UserDevice.register(subject, name.trim(), normalizedKind, fingerprint.trim(), pushToken)));
+                        UserDevice.register(personId, name.trim(), normalizedKind, fingerprint.trim(), pushToken)));
     }
 
     @Transactional(readOnly = true)
-    Window<UserDevice> list(String subject, CursorPageRequest page) {
-        return devices.pageBySubject(subject, page);
+    Window<UserDevice> list(UUID personId, CursorPageRequest page) {
+        return devices.pageByPersonId(personId, page);
     }
 
     @Transactional
-    void revoke(String subject, UUID id) {
-        UserDevice device = devices.findByIdAndSubject(id, subject)
+    void revoke(UUID personId, UUID id) {
+        UserDevice device = devices.findByIdAndPersonId(id, personId)
                 .orElseThrow(() -> new NotFoundException("Device not found."));
         devices.delete(device);
     }
 
     @Transactional(readOnly = true)
-    Window<UserDevice> listForUser(String subject, CursorPageRequest page) {
-        return devices.pageBySubject(subject, page);
+    Window<UserDevice> listForPerson(UUID personId, CursorPageRequest page) {
+        return devices.pageByPersonId(personId, page);
     }
 
-    boolean isTrusted(String subject, String fingerprint) {
-        return devices.isTrusted(subject, fingerprint);
+    boolean isTrusted(UUID personId, String fingerprint) {
+        return devices.isTrusted(personId, fingerprint);
     }
 
     /** Own transaction: the enforcement filter (not transactional) calls this off the request path. */
     @Transactional
-    public void stampLastSeen(String subject, String fingerprint, java.time.Instant now,
+    public void stampLastSeen(UUID personId, String fingerprint, java.time.Instant now,
             java.time.Instant throttleBefore) {
-        devices.touchThrottled(subject, fingerprint, now, throttleBefore);
+        devices.touchThrottled(personId, fingerprint, now, throttleBefore);
     }
 }
 

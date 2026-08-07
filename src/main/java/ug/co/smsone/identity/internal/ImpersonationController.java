@@ -3,6 +3,7 @@ package ug.co.smsone.identity.internal;
 import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -70,16 +71,27 @@ class ImpersonationController {
         }
     }
 
-    /** {@code active} is computed on read, which is the only place expiry is ever decided. */
-    record ImpersonationAttributes(String actorSubject, String targetSubject, String orgId, String reason,
-            String mode, Instant startedAt, Instant expiresAt, Instant endedAt, String endedBy, boolean active) {
+    /**
+     * {@code active} is computed on read, which is the only place expiry is ever decided.
+     *
+     * <p>{@code targetDisplay} is the label frozen when the session opened, not a live lookup: this
+     * listing is read most often about accounts that are gone, and a person id that resolves to nothing
+     * is exactly what the column exists to spare an auditor.
+     */
+    record ImpersonationAttributes(String actorPersonId, String targetPersonId, String targetDisplay,
+            String orgId, String reason, String mode, Instant startedAt, Instant expiresAt, Instant endedAt,
+            String endedByPersonId, boolean active) {
     }
 
     /**
      * {@code mode} defaults to {@code READ_ONLY} and {@code ttl} (ISO-8601, e.g. {@code PT10M}) to the
      * configured default; both are server-bounded, so what the client sends is a request, not a grant.
+     *
+     * <p>{@code targetPersonId} names a person, not a Keycloak subject: the operator picked them out of
+     * {@code GET /api/v1/admin/users}, which is a list of people, and a provider's id has no meaning to
+     * anything on this side of the edge.
      */
-    record OpenImpersonationRequest(@NotBlank String targetSubject, UUID orgId, @NotBlank String reason,
+    record OpenImpersonationRequest(@NotNull UUID targetPersonId, UUID orgId, @NotBlank String reason,
             String mode, String ttl) {
     }
 
@@ -95,25 +107,25 @@ class ImpersonationController {
     @ResponseStatus(HttpStatus.CREATED)
     ResourceObject open(@Valid @RequestBody OpenImpersonationRequest request) {
         requireEnabled();
-        ImpersonationSession session = service.open(request.targetSubject(), request.orgId(), request.reason(),
+        ImpersonationSession session = service.open(request.targetPersonId(), request.orgId(), request.reason(),
                 parseMode(request.mode()), parseTtl(request.ttl()));
         return toResource(session, clock.instant());
     }
 
     /**
-     * The caller's own sessions by default. {@code ?actor=<subject>} names another operator's and needs
+     * The caller's own sessions by default. {@code ?actor=<personId>} names another operator's and needs
      * {@code platform-admin}, checked in the service — it is the only way a platform admin can find the
      * session id the DELETE below already lets them end.
      */
     @GetMapping
     @Operation(summary = "List an operator's impersonation sessions",
             description = """
-                    The caller's own sessions, live and historical, newest first. `actor=<subject>` \
+                    The caller's own sessions, live and historical, newest first. `actor=<personId>` \
                     names another operator's instead and requires platform-admin. `active` is computed \
                     when the row is read, so a lapsed session reports inactive with no sweep job \
                     involved.""")
     @PreAuthorize("hasRole('platform-support')")
-    WindowedResult<ResourceObject> list(@RequestParam(required = false) String actor, CursorPageRequest page) {
+    WindowedResult<ResourceObject> list(@RequestParam(required = false) UUID actor, CursorPageRequest page) {
         requireEnabled();
         Instant now = clock.instant();
         return WindowedResult.of(service.list(actor, page), page, session -> toResource(session, now));
@@ -159,15 +171,16 @@ class ImpersonationController {
     private static ResourceObject toResource(ImpersonationSession session, Instant now) {
         return new ResourceObject(session.getId().toString(), RESOURCE_TYPE,
                 new ImpersonationAttributes(
-                        session.getActorSubject(),
-                        session.getTargetSubject(),
+                        session.getActorPersonId().toString(),
+                        session.getTargetPersonId().toString(),
+                        session.getTargetDisplay(),
                         session.getOrgId() == null ? null : session.getOrgId().toString(),
                         session.getReason(),
                         session.getMode().name(),
                         session.getStartedAt(),
                         session.getExpiresAt(),
                         session.getEndedAt(),
-                        session.getEndedBy(),
+                        session.getEndedByPersonId() == null ? null : session.getEndedByPersonId().toString(),
                         session.isActive(now)));
     }
 }

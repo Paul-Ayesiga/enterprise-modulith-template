@@ -4,6 +4,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.Serial;
 import java.util.List;
 import java.util.Map;
 
@@ -40,6 +41,10 @@ interface FormatCodec {
 
     /** A whole-file shape problem — the job fails with a curated message; nothing is retried. */
     class StructureViolation extends RuntimeException {
+
+        @Serial
+        private static final long serialVersionUID = 1L;
+
         StructureViolation(String message) {
             super(message);
         }

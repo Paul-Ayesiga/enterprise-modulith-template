@@ -1,5 +1,6 @@
 package ug.co.smsone.shared.error;
 
+import java.io.Serial;
 import ug.co.smsone.shared.web.ApiSource;
 
 /**
@@ -7,6 +8,9 @@ import ug.co.smsone.shared.web.ApiSource;
  * (or i18n key) — never an internal exception message.
  */
 public abstract class ApiException extends RuntimeException {
+
+    @Serial
+    private static final long serialVersionUID = 1L;
 
     private final ErrorCode errorCode;
     private final String detail;

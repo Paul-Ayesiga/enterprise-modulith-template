@@ -35,7 +35,7 @@ class GeoQueryService {
     private static GeoStamp coarsen(GeoStamp s) {
         return new GeoStamp(s.id(), s.orgId(), s.subjectType(), s.subjectId(),
                 round(s.latitude()), round(s.longitude()), null, null,
-                s.source(), s.capturedBy(), s.capturedAt(), s.consentRef(), s.place());
+                s.source(), s.capturedByPersonId(), s.capturedAt(), s.consentRef(), s.place());
     }
 
     private static double round(double value) {

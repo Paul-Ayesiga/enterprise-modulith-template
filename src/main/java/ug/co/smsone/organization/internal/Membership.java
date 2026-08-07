@@ -13,7 +13,7 @@ import ug.co.smsone.organization.MembershipCreated;
 import ug.co.smsone.organization.MembershipRoleChanged;
 import ug.co.smsone.shared.persistence.SoftDeletableEntity;
 
-/** A user's membership in an organization with a single role. Keyed by (orgId, userSubject). */
+/** A person's membership in an organization with a single role. Keyed by (orgId, personId). */
 @Entity
 @Table(name = "membership")
 @SQLDelete(sql = "update membership set deleted_at = now(), version = version + 1 where id = ? and version = ?")
@@ -21,10 +21,14 @@ import ug.co.smsone.shared.persistence.SoftDeletableEntity;
 class Membership extends SoftDeletableEntity {
 
     @Column(name = "org_id", nullable = false, updatable = false)
-    private UUID orgId;
+    private UUID orgId; // organization.id — a real FK in the schema; same module (V11)
 
-    @Column(name = "user_subject", nullable = false, updatable = false, length = 64)
-    private String userSubject; // Keycloak sub
+    /**
+     * {@code person.id} — a SOFT ref with no foreign key: identity is another module (AGENTS §1). It is
+     * our uuid now rather than a Keycloak sub, and that changes nothing about the rule.
+     */
+    @Column(name = "person_id", nullable = false, updatable = false)
+    private UUID personId;
 
     @Column(name = "role_id", nullable = false)
     private UUID roleId;
@@ -37,27 +41,27 @@ class Membership extends SoftDeletableEntity {
         // JPA
     }
 
-    static Membership create(UUID orgId, String userSubject, UUID roleId, String roleCode) {
+    static Membership create(UUID orgId, UUID personId, UUID roleId, String roleCode) {
         Membership membership = new Membership();
         membership.orgId = orgId;
-        membership.userSubject = userSubject;
+        membership.personId = personId;
         membership.roleId = roleId;
         membership.status = MembershipStatus.ACTIVE;
-        membership.registerEvent(new MembershipCreated(orgId, userSubject, roleCode, Instant.now()));
+        membership.registerEvent(new MembershipCreated(orgId, personId, roleCode, Instant.now()));
         return membership;
     }
 
     void assignRole(UUID newRoleId) {
         this.roleId = newRoleId;
-        registerEvent(new MembershipRoleChanged(orgId, userSubject, Instant.now()));
+        registerEvent(new MembershipRoleChanged(orgId, personId, Instant.now()));
     }
 
     UUID getOrgId() {
         return orgId;
     }
 
-    String getUserSubject() {
-        return userSubject;
+    UUID getPersonId() {
+        return personId;
     }
 
     UUID getRoleId() {

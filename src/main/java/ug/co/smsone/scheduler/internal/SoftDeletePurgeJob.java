@@ -46,10 +46,18 @@ class SoftDeletePurgeJob {
      * than forgotten: both FKs are {@code on delete cascade}, so Postgres removes them with their parent
      * row. Adding explicit steps would be dead code.
      *
-     * <p>The remaining tables are unordered on purpose. {@code organization}, {@code app_user},
-     * {@code membership} and {@code webhook_subscription} are linked by Keycloak identifiers
-     * ({@code org_id}, {@code user_subject}) held as plain columns, never as foreign keys — cross-module
-     * references in this codebase are by id, so the database imposes no order on them.
+     * <p>{@code external_identity}, {@code person_contact} and {@code external_organization} DO have real
+     * FKs to their parents (V10/V11, intra-module and therefore permitted) and all three cascade — yet
+     * they are listed, ahead of those parents, and both facts matter. Listed, because each can be
+     * soft-deleted on its OWN while the parent lives (unlinking a provider, removing an address), and a
+     * cascade that never fires purges nothing. Ahead, because children-before-parents is the rule this
+     * order states; following it costs nothing here, while leaning on the cascade would make the order a
+     * special case per table.
+     *
+     * <p>The remaining tables are unordered on purpose. {@code organization}, {@code person},
+     * {@code membership} and {@code webhook_subscription} reference each other by {@code organization.id}
+     * and {@code person.id} held as plain columns, never as foreign keys — a cross-module reference in
+     * this codebase is a soft ref, so the database imposes no order on them.
      *
      * <p>Package-private so the integration test can check this list against every
      * {@code SoftDeletableEntity} in the metamodel: a table added to the mapping but not to this list
@@ -59,8 +67,11 @@ class SoftDeletePurgeJob {
             "org_group",
             "membership",
             "org_role",
+            "external_organization",
             "organization",
-            "app_user",
+            "external_identity",
+            "person_contact",
+            "person",
             "webhook_subscription",
             "setting",
             "feature_flag",
@@ -69,7 +80,7 @@ class SoftDeletePurgeJob {
             "exchange_schedule",
             "org_subscription",
             "billing_account",
-            "user_profile",
+            "person_profile",
             "api_key",
             "user_device",
             "org_security_policy",
@@ -100,20 +111,40 @@ class SoftDeletePurgeJob {
             "org_role", " and not exists (select 1 from membership m where m.role_id = org_role.id)");
 
     /**
-     * LEGAL HOLDS block erasure. A row whose owner (a subject or an org) is under an active hold is
+     * LEGAL HOLDS block erasure. A row whose owner (a person or an org) is under an active hold is
      * NOT hard-deleted, however old its {@code deleted_at} — the hold outranks retention. Keyed by
      * the table's owner column; a global table (setting/feature_flag/translation) has no owner and
      * no hold applies. Table and column are constants from this class — never input. The scheduler
      * reads {@code legal_hold} by raw SQL, the same cross-module reach the purge already has over
      * every module's tables (the sanctioned purge exception, AGENTS §7).
+     *
+     * <p><b>Both sides of every comparison below moved</b>, and V34 flags this as the mismatch that does
+     * not throw: it matches nothing, and a nightly job quietly resumes hard-deleting data a court said
+     * to keep. The hold columns are {@code legal_hold.person_id} and {@code legal_hold.org_id}, both
+     * uuid; the owner columns are {@code person.id} / {@code person_id} and {@code organization.id} /
+     * {@code org_id}. The old code compared a Keycloak subject against a {@code subject} column and an
+     * {@code org_id} against {@code organization.kc_org_id} — a column that no longer exists at all.
      */
-    private enum Owner { SUBJECT, ORG }
+    private enum Owner {
+        /**
+         * The owner is a person. Names the {@code legal_hold.person_id} column — not
+         * {@code legal_hold.scope}, whose stored vocabulary still spells this {@code SUBJECT} (V34)
+         * because rows already say so. Two different things, one of which is data.
+         */
+        PERSON,
+        ORG
+    }
 
     private static final Map<String, Map.Entry<Owner, String>> HELD_OWNER = Map.ofEntries(
-            Map.entry("app_user", Map.entry(Owner.SUBJECT, "subject")),
-            Map.entry("user_profile", Map.entry(Owner.SUBJECT, "subject")),
-            Map.entry("user_device", Map.entry(Owner.SUBJECT, "subject")),
-            Map.entry("organization", Map.entry(Owner.ORG, "kc_org_id")),
+            // person is held by its OWN key; everything else soft-references it.
+            Map.entry("person", Map.entry(Owner.PERSON, "id")),
+            Map.entry("external_identity", Map.entry(Owner.PERSON, "person_id")),
+            Map.entry("person_contact", Map.entry(Owner.PERSON, "person_id")),
+            Map.entry("person_profile", Map.entry(Owner.PERSON, "person_id")),
+            Map.entry("user_device", Map.entry(Owner.PERSON, "person_id")),
+            // Same shape one level up: the tenant row is held by its own key, its rows by org_id.
+            Map.entry("organization", Map.entry(Owner.ORG, "id")),
+            Map.entry("external_organization", Map.entry(Owner.ORG, "organization_id")),
             Map.entry("membership", Map.entry(Owner.ORG, "org_id")),
             Map.entry("org_role", Map.entry(Owner.ORG, "org_id")),
             Map.entry("org_group", Map.entry(Owner.ORG, "org_id")),
@@ -147,7 +178,7 @@ class SoftDeletePurgeJob {
             return "";
         }
         String column = owner.getValue();
-        String holdColumn = owner.getKey() == Owner.SUBJECT ? "subject" : "org_id";
+        String holdColumn = owner.getKey() == Owner.PERSON ? "person_id" : "org_id";
         return " and not exists (select 1 from legal_hold h where h.released_at is null and h."
                 + holdColumn + " = " + table + "." + column + ")";
     }
@@ -197,27 +228,52 @@ class SoftDeletePurgeJob {
     }
 
     /**
-     * Erasure must reach the search projection too: users and organizations are indexed by event
-     * with no delete event to un-index them, so a hard-purged user's email would otherwise remain
+     * Erasure must reach the search projection too: people and organizations are indexed by event
+     * with no delete event to un-index them, so a hard-purged person's email would otherwise remain
      * admin-searchable forever — the exact residue the purge exists to remove. A reconciliation
      * sweep (row's source no longer exists AT ALL, soft-deleted included) rather than id plumbing
      * through the batches; documents un-index themselves on delete and are not swept here.
+     *
+     * <p>{@code search_document.entity_id} is a varchar holding whatever key {@code entity_type} names
+     * (V22), so both joins cast: {@code person.id} on {@code user} rows, {@code organization.id} on
+     * {@code organization} rows. The {@code user} discriminator is unchanged — it is the API's word for
+     * a human, and only the KEY behind it moved — which is precisely why this sweep had to move with it:
+     * a join against a column that no longer exists fails loudly, but one against the wrong key would
+     * have matched nothing and silently un-indexed nothing, forever.
+     *
+     * <p><b>Two statements, and the cast is on the varchar side. Both halves are load-bearing.</b> The
+     * single {@code OR}-joined statement this replaced could not be planned as an anti-join at all — an
+     * {@code OR} across two {@code NOT EXISTS} arms forecloses the transformation, so Postgres emitted a
+     * correlated SubPlan per candidate row — and {@code p.id::text = sd.entity_id} cast the INDEXED
+     * side, which makes {@code person_pkey} unusable. Below {@code work_mem} the person arm stopped
+     * hashing entirely and degraded to a full {@code Seq Scan on person} per row: measured at 200k
+     * people it did not finish in ten minutes, against 212 ms for the form below as a Hash Anti Join.
+     * That is a work_mem cliff, which is why it looked fine on a small database — the shape only
+     * collapses once {@code person} grows. Casting {@code sd.entity_id} to uuid is safe because the
+     * producer writes {@code UUID.toString()} for both discriminators ({@code SearchEventListeners}).
      */
     private void sweepSearchResidue() {
+        int removed = sweepResidueOf("user", "person") + sweepResidueOf("organization", "organization");
+        ug.co.smsone.shared.metrics.PurgeMetrics.purged(meters, "soft-delete-purge", "search_document", removed);
+        if (removed > 0) {
+            log.info("Soft-delete purge un-indexed {} search rows whose source rows are gone", removed);
+        }
+    }
+
+    /**
+     * One discriminator's residue. {@code entityType} and {@code sourceTable} are constants from the
+     * caller — never input — the same rule {@link #purgeTable} follows for its interpolated table name.
+     */
+    private int sweepResidueOf(String entityType, String sourceTable) {
         try {
-            int removed = jdbc.update("""
+            return jdbc.update("""
                     delete from search_document sd
-                    where (sd.entity_type = 'user'
-                           and not exists (select 1 from app_user u where u.subject = sd.entity_id))
-                       or (sd.entity_type = 'organization'
-                           and not exists (select 1 from organization o where o.kc_org_id::text = sd.entity_id))
-                    """);
-            ug.co.smsone.shared.metrics.PurgeMetrics.purged(meters, "soft-delete-purge", "search_document", removed);
-            if (removed > 0) {
-                log.info("Soft-delete purge un-indexed {} search rows whose source rows are gone", removed);
-            }
+                    where sd.entity_type = ?
+                      and not exists (select 1 from %s src where src.id = sd.entity_id::uuid)
+                    """.formatted(sourceTable), entityType);
         } catch (RuntimeException ex) {
-            log.error("Search-residue sweep failed (continuing — next run retries)", ex);
+            log.error("Search-residue sweep for '{}' failed (continuing — next run retries)", entityType, ex);
+            return 0;
         }
     }
 

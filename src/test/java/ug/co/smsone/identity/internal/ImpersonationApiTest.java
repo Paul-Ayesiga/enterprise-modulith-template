@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.times;
-import static ug.co.smsone.identity.internal.ImpersonationFixtures.actor;
 import static ug.co.smsone.identity.internal.ImpersonationFixtures.admin;
 import static ug.co.smsone.identity.internal.ImpersonationFixtures.superadmin;
 import static ug.co.smsone.identity.internal.ImpersonationFixtures.support;
@@ -41,6 +40,7 @@ import org.springframework.test.web.servlet.ResultActions;
 import ug.co.smsone.identity.ProvisioningStatus;
 import ug.co.smsone.shared.security.PlatformRole;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
+import ug.co.smsone.testsupport.EdgeSeed;
 
 /**
  * The operator surface — {@code /api/v1/admin/impersonations} — over HTTP: who may open a session,
@@ -65,7 +65,13 @@ class ImpersonationApiTest extends AbstractIntegrationTest {
     private MockMvc mockMvc;
 
     @Autowired
-    private UserRepository users;
+    private PersonRepository persons;
+
+    @Autowired
+    private ExternalIdentityRepository identities;
+
+    @Autowired
+    private PersonResolver resolver;
 
     @Autowired
     private ImpersonationSessionRepository sessions;
@@ -78,14 +84,14 @@ class ImpersonationApiTest extends AbstractIntegrationTest {
 
     @Test
     void aSessionOpensReadOnlyForTheServerDefaultLifetime() throws Exception {
-        String actor = actor();
-        String target = provisionedUser(ProvisioningStatus.ACTIVE);
+        UUID actor = person();
+        UUID target = person();
 
         UUID id = idOf(open(support(actor), body(target, "ticket 4711 refund missing"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.type").value("impersonation-session"))
-                .andExpect(jsonPath("$.data.attributes.actorSubject").value(actor))
-                .andExpect(jsonPath("$.data.attributes.targetSubject").value(target))
+                .andExpect(jsonPath("$.data.attributes.actorPersonId").value(actor.toString()))
+                .andExpect(jsonPath("$.data.attributes.targetPersonId").value(target.toString()))
                 .andExpect(jsonPath("$.data.attributes.mode").value("READ_ONLY")) // absent mode is the safe one
                 .andExpect(jsonPath("$.data.attributes.active").value(true))
                 .andExpect(jsonPath("$.data.attributes.endedAt").doesNotExist()));
@@ -102,18 +108,18 @@ class ImpersonationApiTest extends AbstractIntegrationTest {
      */
     @Test
     void theServerBoundsTheSessionLifetimeAndRefusesAnOverCapRequest() throws Exception {
-        String actor = actor();
-        String target = provisionedUser(ProvisioningStatus.ACTIVE);
+        UUID actor = person();
+        UUID target = person();
 
         UUID shorter = idOf(open(support(actor),
-                "{\"targetSubject\":\"" + target + "\",\"reason\":\"reading their invoice list\","
+                "{\"targetPersonId\":\"" + target + "\",\"reason\":\"reading their invoice list\","
                         + "\"ttl\":\"PT5M\"}")
                 .andExpect(status().isCreated()));
         assertThat(lifetimeOf(sessions.findById(shorter).orElseThrow())).isEqualTo(Duration.ofMinutes(5));
 
-        String overCap = actor();
+        UUID overCap = person();
         open(support(overCap),
-                "{\"targetSubject\":\"" + target + "\",\"reason\":\"reading their invoice list\","
+                "{\"targetPersonId\":\"" + target + "\",\"reason\":\"reading their invoice list\","
                         + "\"ttl\":\"PT2H\"}")
                 .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.errors[0].code").value("VALIDATION_FAILED"))
@@ -124,8 +130,8 @@ class ImpersonationApiTest extends AbstractIntegrationTest {
     /** The reason is the whole justification a later review sees; "help" is not one. */
     @Test
     void aReasonMustBeGivenAndMustSayEnoughToReview() throws Exception {
-        String actor = actor();
-        String target = provisionedUser(ProvisioningStatus.ACTIVE);
+        UUID actor = person();
+        UUID target = person();
 
         open(support(actor), body(target, ""))
                 .andExpect(status().isUnprocessableContent())
@@ -146,11 +152,11 @@ class ImpersonationApiTest extends AbstractIntegrationTest {
      */
     @Test
     void nobodyMayImpersonateThemselves() throws Exception {
-        String actor = provisionedUser(ProvisioningStatus.ACTIVE);
+        UUID actor = person();
 
         open(superadmin(actor), body(actor, "just looking at my own account"))
                 .andExpect(status().isUnprocessableContent())
-                .andExpect(jsonPath("$.errors[0].source.pointer").value("/data/attributes/targetSubject"));
+                .andExpect(jsonPath("$.errors[0].source.pointer").value("/data/attributes/targetPersonId"));
 
         assertThat(sessionsOpenedBy(actor)).isZero();
     }
@@ -163,15 +169,15 @@ class ImpersonationApiTest extends AbstractIntegrationTest {
      */
     @Test
     void aDeletedTargetIsAConflictAndAnUnknownOneIsNotFound() throws Exception {
-        String actor = actor();
-        String deleted = provisionedUser(ProvisioningStatus.ACTIVE);
-        users.delete(users.findBySubject(deleted).orElseThrow());
+        UUID actor = person();
+        UUID deleted = person();
+        persons.delete(persons.findById(deleted).orElseThrow());
 
         open(support(actor), body(deleted, "checking the deleted account"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errors[0].code").value("CONFLICT"));
 
-        open(support(actor), body("kc-" + UUID.randomUUID(), "checking an unknown account"))
+        open(support(actor), body(UUID.randomUUID(), "checking an unknown account"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.errors[0].code").value("RESOURCE_NOT_FOUND"));
 
@@ -181,8 +187,8 @@ class ImpersonationApiTest extends AbstractIntegrationTest {
     /** An account with no access of its own must not become reachable through someone else's session. */
     @Test
     void aDisabledTargetCannotBeImpersonated() throws Exception {
-        String actor = actor();
-        String target = provisionedUser(ProvisioningStatus.DISABLED);
+        UUID actor = person();
+        UUID target = person(ProvisioningStatus.DISABLED);
 
         open(support(actor), body(target, "investigating the disabled account"))
                 .andExpect(status().isConflict())
@@ -198,19 +204,20 @@ class ImpersonationApiTest extends AbstractIntegrationTest {
      */
     @Test
     void onlyASuperadminMayImpersonateAnAccountHoldingAPlatformRole() throws Exception {
-        String target = provisionedUser(ProvisioningStatus.ACTIVE);
-        given(keycloak.realmRoles(target)).willReturn(Set.of(PlatformRole.SUPPORT));
+        UUID target = person();
+        given(keycloak.realmRoles(ImpersonationFixtures.subjectOf(target)))
+                .willReturn(Set.of(PlatformRole.SUPPORT));
 
-        String supportActor = actor();
+        UUID supportActor = person();
         open(support(supportActor), body(target, "peer support account looks stuck"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errors[0].code").value("FORBIDDEN"));
 
-        String adminActor = actor();
+        UUID adminActor = person();
         open(admin(adminActor), body(target, "peer support account looks stuck"))
                 .andExpect(status().isForbidden());
 
-        String superActor = actor();
+        UUID superActor = person();
         open(superadmin(superActor), body(target, "peer support account looks stuck"))
                 .andExpect(status().isCreated());
 
@@ -218,7 +225,7 @@ class ImpersonationApiTest extends AbstractIntegrationTest {
         assertThat(sessionsOpenedBy(adminActor)).isZero();
         // Twice, not three times: a superadmin's answer cannot change the outcome, so the remote call
         // is skipped entirely rather than made and ignored.
-        then(keycloak).should(times(2)).realmRoles(target);
+        then(keycloak).should(times(2)).realmRoles(ImpersonationFixtures.subjectOf(target));
     }
 
     /**
@@ -228,15 +235,15 @@ class ImpersonationApiTest extends AbstractIntegrationTest {
      */
     @Test
     void aWriteCapableSessionRequiresPlatformAdmin() throws Exception {
-        String target = provisionedUser(ProvisioningStatus.ACTIVE);
+        UUID target = person();
 
-        String supportActor = actor();
+        UUID supportActor = person();
         open(support(supportActor), writeBody(target, "fixing the stuck subscription for them"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errors[0].code").value("FORBIDDEN"));
         assertThat(sessionsOpenedBy(supportActor)).isZero();
 
-        String adminActor = actor();
+        UUID adminActor = person();
         open(admin(adminActor), writeBody(target, "fixing the stuck subscription for them"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.attributes.mode").value("WRITE"));
@@ -250,8 +257,8 @@ class ImpersonationApiTest extends AbstractIntegrationTest {
      */
     @Test
     void reIssuingAgainstTheSameTargetSupersedesTheOldSessionAndAuditsBoth() throws Exception {
-        String actor = actor();
-        String target = provisionedUser(ProvisioningStatus.ACTIVE);
+        UUID actor = person();
+        UUID target = person();
 
         UUID first = idOf(open(support(actor), body(target, "ticket 4711 first look"))
                 .andExpect(status().isCreated()));
@@ -260,7 +267,7 @@ class ImpersonationApiTest extends AbstractIntegrationTest {
 
         ImpersonationSession superseded = sessions.findById(first).orElseThrow();
         assertThat(superseded.getEndedAt()).isNotNull();
-        assertThat(superseded.getEndedBy()).isEqualTo(actor);
+        assertThat(superseded.getEndedByPersonId()).isEqualTo(actor);
         assertThat(superseded.isActive(Instant.now())).isFalse();
         assertThat(sessions.findById(second).orElseThrow().isActive(Instant.now())).isTrue();
         assertThat(sessionsOpenedBy(actor)).isEqualTo(2); // superseded, not overwritten — the row stays
@@ -270,7 +277,7 @@ class ImpersonationApiTest extends AbstractIntegrationTest {
         assertThat(supersedeRows).hasSize(1);
         assertThat((String) supersedeRows.getFirst().get("to_state"))
                 .contains(first.toString()).contains(second.toString());
-        assertThat(supersedeRows.getFirst().get("actor")).isEqualTo(actor);
+        assertThat(supersedeRows.getFirst().get("actor_person_id")).isEqualTo(actor);
     }
 
     /**
@@ -281,8 +288,8 @@ class ImpersonationApiTest extends AbstractIntegrationTest {
      */
     @Test
     void twoOpensInFlightForOnePairStillLeaveExactlyOneLiveSession() throws Exception {
-        String actor = actor();
-        String target = provisionedUser(ProvisioningStatus.ACTIVE);
+        UUID actor = person();
+        UUID target = person();
         CyclicBarrier start = new CyclicBarrier(2);
 
         try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
@@ -308,8 +315,8 @@ class ImpersonationApiTest extends AbstractIntegrationTest {
      */
     @Test
     void reIssuingAfterASessionLapsedLeavesTheLapsedRowUntouched() throws Exception {
-        String actor = actor();
-        String target = provisionedUser(ProvisioningStatus.ACTIVE);
+        UUID actor = person();
+        UUID target = person();
         UUID lapsed = idOf(open(support(actor), body(target, "ticket 4711 first look"))
                 .andExpect(status().isCreated()));
         jdbc.update("update impersonation_session set expires_at = ? where id = ?",
@@ -319,7 +326,7 @@ class ImpersonationApiTest extends AbstractIntegrationTest {
 
         ImpersonationSession untouched = sessions.findById(lapsed).orElseThrow();
         assertThat(untouched.getEndedAt()).isNull();
-        assertThat(untouched.getEndedBy()).isNull();
+        assertThat(untouched.getEndedByPersonId()).isNull();
         assertThat(auditRows("platform.impersonation_superseded", target)).isEmpty();
     }
 
@@ -332,11 +339,11 @@ class ImpersonationApiTest extends AbstractIntegrationTest {
      */
     @Test
     void theLifecycleTrailIsPlatformScopedRatherThanFiledUnderTheRequestedOrg() throws Exception {
-        String actor = actor();
-        String target = provisionedUser(ProvisioningStatus.ACTIVE);
+        UUID actor = person();
+        UUID target = person();
         UUID unrelatedOrg = UUID.randomUUID();
 
-        open(support(actor), "{\"targetSubject\":\"" + target + "\",\"orgId\":\"" + unrelatedOrg
+        open(support(actor), "{\"targetPersonId\":\"" + target + "\",\"orgId\":\"" + unrelatedOrg
                 + "\",\"reason\":\"ticket 4711 refund missing\"}").andExpect(status().isCreated());
 
         Map<String, Object> row = auditRows("platform.impersonation_started", target).getFirst();
@@ -351,15 +358,15 @@ class ImpersonationApiTest extends AbstractIntegrationTest {
      */
     @Test
     void aPlatformAdminCanReviewAnotherOperatorsSessionsAndAPeerCannot() throws Exception {
-        String operator = actor();
-        UUID theirs = idOf(open(support(operator), body(provisionedUser(ProvisioningStatus.ACTIVE), "their ticket"))
+        UUID operator = person();
+        UUID theirs = idOf(open(support(operator), body(person(), "their ticket"))
                 .andExpect(status().isCreated()));
 
-        mockMvc.perform(get(PATH).param("actor", operator).with(support(actor())))
+        mockMvc.perform(get(PATH).param("actor", operator.toString()).with(support(person())))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errors[0].code").value("FORBIDDEN"));
 
-        mockMvc.perform(get(PATH).param("actor", operator).with(admin(actor())))
+        mockMvc.perform(get(PATH).param("actor", operator.toString()).with(admin(person())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[?(@.id=='" + theirs + "')]").exists());
     }
@@ -374,38 +381,38 @@ class ImpersonationApiTest extends AbstractIntegrationTest {
      */
     @Test
     void onlyTheOperatorWhoOpenedASessionOrAPlatformAdminMayEndIt() throws Exception {
-        String actor = actor();
-        String target = provisionedUser(ProvisioningStatus.ACTIVE);
+        UUID actor = person();
+        UUID target = person();
         UUID id = idOf(open(support(actor), body(target, "ticket 4711 refund missing"))
                 .andExpect(status().isCreated()));
 
-        mockMvc.perform(delete(PATH + "/{id}", id).with(support(actor())))
+        mockMvc.perform(delete(PATH + "/{id}", id).with(support(person())))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.errors[0].code").value("RESOURCE_NOT_FOUND"));
         assertThat(sessions.findById(id).orElseThrow().getEndedAt()).isNull();
 
-        String platformAdmin = actor();
+        UUID platformAdmin = person();
         mockMvc.perform(delete(PATH + "/{id}", id).with(admin(platformAdmin)))
                 .andExpect(status().isNoContent());
-        assertThat(sessions.findById(id).orElseThrow().getEndedBy()).isEqualTo(platformAdmin);
+        assertThat(sessions.findById(id).orElseThrow().getEndedByPersonId()).isEqualTo(platformAdmin);
 
         // Ending twice keeps the FIRST ending: endedAt/endedBy answer "when did the reach stop and who
         // stopped it", and a second audit row would claim it stopped twice.
         mockMvc.perform(delete(PATH + "/{id}", id).with(support(actor)))
                 .andExpect(status().isNoContent());
-        assertThat(sessions.findById(id).orElseThrow().getEndedBy()).isEqualTo(platformAdmin);
+        assertThat(sessions.findById(id).orElseThrow().getEndedByPersonId()).isEqualTo(platformAdmin);
         assertThat(auditRows("platform.impersonation_ended", target)).hasSize(1);
     }
 
     /** The listing is the operator's own record, not a window onto everyone else's oversight. */
     @Test
     void theListingShowsOnlyTheCallersOwnSessionsAndPaginatesByCursor() throws Exception {
-        String actor = actor();
-        UUID mine = idOf(open(support(actor), body(provisionedUser(ProvisioningStatus.ACTIVE), "first ticket"))
+        UUID actor = person();
+        UUID mine = idOf(open(support(actor), body(person(), "first ticket"))
                 .andExpect(status().isCreated()));
-        UUID alsoMine = idOf(open(support(actor), body(provisionedUser(ProvisioningStatus.ACTIVE), "second ticket"))
+        UUID alsoMine = idOf(open(support(actor), body(person(), "second ticket"))
                 .andExpect(status().isCreated()));
-        UUID theirs = idOf(open(support(actor()), body(provisionedUser(ProvisioningStatus.ACTIVE), "their ticket"))
+        UUID theirs = idOf(open(support(person()), body(person(), "their ticket"))
                 .andExpect(status().isCreated()));
 
         mockMvc.perform(get(PATH).with(support(actor)))
@@ -424,9 +431,10 @@ class ImpersonationApiTest extends AbstractIntegrationTest {
     /** Opening a session is an operator capability: a plain authenticated user cannot reach it. */
     @Test
     void aTenantUserCannotOpenASession() throws Exception {
-        String target = provisionedUser(ProvisioningStatus.ACTIVE);
+        UUID target = person();
 
-        mockMvc.perform(post(PATH).with(jwt().jwt(token -> token.subject("tenant-" + UUID.randomUUID())))
+        mockMvc.perform(post(PATH).with(jwt().jwt(token -> token.subject("tenant-" + UUID.randomUUID())
+                                .claim("iss", EdgeSeed.ISSUER)))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body(target, "I would like to be them")))
                 .andExpect(status().isForbidden());
@@ -438,12 +446,13 @@ class ImpersonationApiTest extends AbstractIntegrationTest {
         return mockMvc.perform(post(PATH).with(caller).contentType(MediaType.APPLICATION_JSON).content(body));
     }
 
-    private static String body(String targetSubject, String reason) {
-        return "{\"targetSubject\":\"" + targetSubject + "\",\"reason\":\"" + reason + "\"}";
+    private static String body(UUID targetPersonId, String reason) {
+        return "{\"targetPersonId\":\"" + targetPersonId + "\",\"reason\":\"" + reason + "\"}";
     }
 
-    private static String writeBody(String targetSubject, String reason) {
-        return "{\"targetSubject\":\"" + targetSubject + "\",\"reason\":\"" + reason + "\",\"mode\":\"WRITE\"}";
+    private static String writeBody(UUID targetPersonId, String reason) {
+        return "{\"targetPersonId\":\"" + targetPersonId + "\",\"reason\":\"" + reason
+                + "\",\"mode\":\"WRITE\"}";
     }
 
     private static UUID idOf(ResultActions result) throws Exception {
@@ -454,32 +463,39 @@ class ImpersonationApiTest extends AbstractIntegrationTest {
         return Duration.between(session.getStartedAt(), session.getExpiresAt());
     }
 
-    private String provisionedUser(ProvisioningStatus status) {
-        return ImpersonationFixtures.provisionedUser(users, status);
+    /** An ACTIVE person with a Keycloak link — the only kind of caller that can hold a session. */
+    private UUID person() {
+        return person(ProvisioningStatus.ACTIVE);
     }
 
-    private int sessionsOpenedBy(String actorSubject) {
+    private UUID person(ProvisioningStatus status) {
+        return ImpersonationFixtures.provisionedPerson(persons, identities, resolver.keycloakIssuer(), status);
+    }
+
+    private int sessionsOpenedBy(UUID actorPersonId) {
         Integer count = jdbc.queryForObject(
-                "select count(*) from impersonation_session where actor_subject = ?", Integer.class, actorSubject);
+                "select count(*) from impersonation_session where actor_person_id = ?",
+                Integer.class, actorPersonId);
         return count == null ? 0 : count;
     }
 
-    private List<Map<String, Object>> auditRows(String action, String target) {
-        return jdbc.queryForList(
-                "select actor, on_behalf_of, impersonation_id, org_id, from_state, to_state from audit_log "
-                        + "where action = ? and target = ?", action, target);
+    private List<Map<String, Object>> auditRows(String action, UUID target) {
+        return jdbc.queryForList("""
+                select actor_person_id, on_behalf_of_person_id, impersonation_id, org_id, from_state, to_state
+                from audit_log where action = ? and target = ?
+                """, action, target.toString());
     }
 
-    private int liveSessionsAgainst(String actorSubject, String targetSubject) {
+    private int liveSessionsAgainst(UUID actorPersonId, UUID targetPersonId) {
         Integer count = jdbc.queryForObject("""
                 select count(*) from impersonation_session
-                where actor_subject = ? and target_subject = ? and ended_at is null and expires_at > now()
-                """, Integer.class, actorSubject, targetSubject);
+                where actor_person_id = ? and target_person_id = ? and ended_at is null and expires_at > now()
+                """, Integer.class, actorPersonId, targetPersonId);
         return count == null ? 0 : count;
     }
 
     /** Both threads released together, so the two opens overlap the way two clicks or a retry would. */
-    private int openAfter(CyclicBarrier start, String actor, String target, String reason) throws Exception {
+    private int openAfter(CyclicBarrier start, UUID actor, UUID target, String reason) throws Exception {
         start.await(30, TimeUnit.SECONDS);
         return open(support(actor), body(target, reason)).andReturn().getResponse().getStatus();
     }

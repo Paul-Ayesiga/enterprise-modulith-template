@@ -16,7 +16,6 @@ import ug.co.smsone.shared.error.NotFoundException;
 import ug.co.smsone.shared.error.ValidationException;
 import ug.co.smsone.shared.security.CurrentUser;
 import ug.co.smsone.shared.security.CurrentUserProvider;
-import ug.co.smsone.shared.security.OrgAuthorization;
 import ug.co.smsone.shared.web.ApiSource;
 import ug.co.smsone.shared.web.CursorPageRequest;
 
@@ -30,14 +29,11 @@ import ug.co.smsone.shared.web.CursorPageRequest;
 class ApiKeyService {
 
     private final ApiKeyRepository keys;
-    private final OrgAuthorization orgAuthorization;
     private final CurrentUserProvider currentUser;
     private final AuditLog auditLog;
 
-    ApiKeyService(ApiKeyRepository keys, OrgAuthorization orgAuthorization,
-            CurrentUserProvider currentUser, AuditLog auditLog) {
+    ApiKeyService(ApiKeyRepository keys, CurrentUserProvider currentUser, AuditLog auditLog) {
         this.keys = keys;
-        this.orgAuthorization = orgAuthorization;
         this.currentUser = currentUser;
         this.auditLog = auditLog;
     }
@@ -55,9 +51,14 @@ class ApiKeyService {
                         ApiSource.pointer("/data/attributes/permissions"));
             }
         }
+        // The cap comes from the caller's own resolved set, which is the membership-derived one for a
+        // person and the minted subset for a machine — so a key minted BY a key cannot out-rank it
+        // either. hasPermission checks the tenant with the code, so a token scoped elsewhere caps at
+        // nothing rather than lending org A's authority to a key in org B.
         CurrentUser caller = currentUser.requireCurrentUser();
-        Set<String> held = orgAuthorization.permissions(caller.subject(), orgId);
-        List<String> escalated = requested.stream().filter(code -> !held.contains(code)).sorted().toList();
+        List<String> escalated = requested.stream()
+                .filter(code -> !caller.hasPermission(orgId, code))
+                .sorted().toList();
         if (!escalated.isEmpty()) {
             throw new ForbiddenException("A key cannot carry permissions you do not hold: "
                     + String.join(", ", escalated));

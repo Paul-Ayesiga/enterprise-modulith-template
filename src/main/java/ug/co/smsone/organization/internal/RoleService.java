@@ -86,7 +86,7 @@ class RoleService {
         escalationGuard.requireCallerHolds(orgId, granted);
         try {
             // Flush now so a concurrent same-code create surfaces here as the documented 409
-            // (uq_org_role_org_code), not as a 500 at commit.
+            // (uq_org_role_org_code_live), not as a 500 at commit.
             Role saved = roles.saveAndFlush(Role.create(orgId, code, name, false, description, granted));
             auditLog.record("organization.role_created", orgId, code, null, codes(granted));
             return saved;

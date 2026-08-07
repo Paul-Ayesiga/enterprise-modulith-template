@@ -93,6 +93,14 @@ public final class SafeOutboundUrl {
         return false;
     }
 
+    /**
+     * {@code fourth} is deliberately unread: the widest rule below is 192.0.0.0/24, which stops at the
+     * third octet. It stays in the signature so every call site passes a full dotted quad — that is what
+     * makes the four contiguous byte indices at each caller ({@code raw[2..5]}, {@code raw[4..7]},
+     * {@code raw[12..15]}) checkable at a glance. Truncating to three would hide an off-by-one in the
+     * embedded-IPv4 offsets, and an off-by-one there is an SSRF hole, not a style nit. A future /32 rule
+     * needs the octet and no call-site change.
+     */
     private static boolean isForbiddenIpv4(int first, int second, int third, int fourth) {
         return first == 0                                             // 0.0.0.0/8 "this network"
                 || first == 10                                        // 10.0.0.0/8 private

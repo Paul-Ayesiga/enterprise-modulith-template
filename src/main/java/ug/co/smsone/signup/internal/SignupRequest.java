@@ -24,11 +24,13 @@ class SignupRequest {
     @Column(name = "org_name", nullable = false, length = 80)
     private String orgName;
 
-    @Column(name = "first_name", length = 60)
-    private String firstName;
+    // given/family, not first/last: the row this becomes is a person (V10) and the two must not
+    // disagree about what a name is. Both nullable — a signup supplying only an email is valid.
+    @Column(name = "given_name", length = 60)
+    private String givenName;
 
-    @Column(name = "last_name", length = 60)
-    private String lastName;
+    @Column(name = "family_name", length = 60)
+    private String familyName;
 
     @Column(name = "token_hash", nullable = false, length = 64)
     private String tokenHash;
@@ -48,18 +50,24 @@ class SignupRequest {
     @Column(name = "org_id")
     private UUID orgId;
 
+    // person.id of the human this request produced — soft ref, no FK (identity is another module).
+    // Set at COMPLETION with orgId and never at request time: minting an identity from an address
+    // nobody has verified is the thing this handshake exists to prevent.
+    @Column(name = "owner_person_id")
+    private UUID ownerPersonId;
+
     protected SignupRequest() {
         // JPA
     }
 
-    static SignupRequest pending(String email, String orgName, String firstName, String lastName,
+    static SignupRequest pending(String email, String orgName, String givenName, String familyName,
             String tokenHash, Instant expiresAt, Instant now) {
         SignupRequest request = new SignupRequest();
         request.id = UUID.randomUUID();
         request.email = email;
         request.orgName = orgName;
-        request.firstName = firstName;
-        request.lastName = lastName;
+        request.givenName = givenName;
+        request.familyName = familyName;
         request.tokenHash = tokenHash;
         request.status = PENDING;
         request.expiresAt = expiresAt;
@@ -67,9 +75,10 @@ class SignupRequest {
         return request;
     }
 
-    void completed(UUID orgId, Instant now) {
+    void completed(UUID orgId, UUID ownerPersonId, Instant now) {
         this.status = COMPLETED;
         this.orgId = orgId;
+        this.ownerPersonId = ownerPersonId;
         this.completedAt = now;
     }
 
@@ -89,12 +98,12 @@ class SignupRequest {
         return orgName;
     }
 
-    String getFirstName() {
-        return firstName;
+    String getGivenName() {
+        return givenName;
     }
 
-    String getLastName() {
-        return lastName;
+    String getFamilyName() {
+        return familyName;
     }
 
     String getStatus() {
@@ -103,5 +112,9 @@ class SignupRequest {
 
     UUID getOrgId() {
         return orgId;
+    }
+
+    UUID getOwnerPersonId() {
+        return ownerPersonId;
     }
 }

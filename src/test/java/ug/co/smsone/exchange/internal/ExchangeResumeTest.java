@@ -21,6 +21,9 @@ import ug.co.smsone.testsupport.AbstractIntegrationTest;
  */
 @Import(ExchangeTestSupport.class)
 class ExchangeResumeTest extends AbstractIntegrationTest {
+    /** exchange_job.requester_person_id is a uuid soft ref — any person id seeds a requester. */
+    private static final UUID REQUESTER = UUID.randomUUID();
+
 
     @Autowired
     private ExchangeWorker worker;
@@ -126,7 +129,7 @@ class ExchangeResumeTest extends AbstractIntegrationTest {
         }
         String key = "exch/o/" + orgId + "/test/source.csv";
         storage.objects.put(key, csv.toString().getBytes(StandardCharsets.UTF_8));
-        return store.submit(orgId, "requester-1", ExchangeJob.IMPORT,
+        return store.submit(orgId, REQUESTER, ExchangeJob.IMPORT,
                 ExchangeTestSupport.CountingExchangeHandler.ID, 1, "CSV", key);
     }
 }

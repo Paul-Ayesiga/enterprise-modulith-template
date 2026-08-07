@@ -21,6 +21,9 @@ import ug.co.smsone.shared.web.WindowedResult;
  * The platform support queue: the cross-tenant view, assignment, replies (public or internal
  * notes), and status transitions. platform-support throughout; escalation is automatic
  * (SlaEscalationJob), so there is no manual escalate endpoint.
+ *
+ * <p>Assignment and authorship are {@code person.id}s — the operator is a person who is a member of
+ * no tenant, which is precisely why one identity table had to cover both sides of the desk.
  */
 @RestController
 @RequestMapping("/api/v1/admin/tickets")
@@ -35,7 +38,8 @@ class AdminTicketController {
     record ReplyRequest(String body, boolean internal) {
     }
 
-    record AssignRequest(String assignee) {
+    /** The operator to put on the ticket, by {@code person.id} — a platform operator, not a member. */
+    record AssignRequest(UUID assigneePersonId) {
     }
 
     record StatusRequest(String status) {
@@ -73,14 +77,16 @@ class AdminTicketController {
     @org.springframework.web.bind.annotation.ResponseStatus(org.springframework.http.HttpStatus.CREATED)
     ResourceObject reply(@PathVariable UUID id, @RequestBody ReplyRequest request, CurrentUser user) {
         return TicketResources.toResource(
-                support.platformReply(id, user.subject(), request.body(), request.internal()));
+                support.platformReply(id, user.personId(), request.body(), request.internal()));
     }
 
     @PostMapping("/{id}/assignment")
-    @Operation(summary = "Assign the ticket")
+    @Operation(summary = "Assign the ticket",
+            description = "Body `assigneePersonId` is the operator's person id (the id "
+                    + "`/api/v1/admin/users` lists), not a name or a login.")
     @PreAuthorize("hasRole('platform-support')")
     ResourceObject assign(@PathVariable UUID id, @RequestBody AssignRequest request) {
-        return TicketResources.toResource(support.assign(id, request.assignee()));
+        return TicketResources.toResource(support.assign(id, request.assigneePersonId()));
     }
 
     @PutMapping("/{id}/status")

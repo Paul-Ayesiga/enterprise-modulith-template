@@ -8,11 +8,17 @@ import java.util.UUID;
 import ug.co.smsone.shared.persistence.BaseEntity;
 
 /**
- * One append-only audit record: <em>who</em> ({@code actor}) did <em>what</em> ({@code action}) to
- * <em>which thing</em> ({@code target}) <em>where</em> ({@code orgId}) <em>when</em> ({@code occurredAt}),
- * and the before/after ({@code fromState}/{@code toState}).
+ * One append-only audit record: <em>who</em> ({@code actorPersonId}) did <em>what</em> ({@code action})
+ * to <em>which thing</em> ({@code target}) <em>where</em> ({@code orgId}) <em>when</em>
+ * ({@code occurredAt}), and the before/after ({@code fromState}/{@code toState}).
  *
  * <p>Under impersonation the <em>who</em> splits in two — see {@link Attribution}.
+ *
+ * <p><b>The who is a {@code person.id}; the what-it-was-done-to is text.</b> That asymmetry is the
+ * schema's (V13) and it is deliberate: an actor is always one species of thing, so it gets a typed
+ * column, while {@code target} is polymorphic and read through {@code action} — a person id here, a
+ * ticket uuid there, a setting key elsewhere — so typing it would force every writer to choose between
+ * two columns on a contract encoded in a string.
  */
 @Entity
 @Table(name = "audit_log")
@@ -20,33 +26,37 @@ class AuditEntry extends BaseEntity {
 
     private static final int TARGET_MAX = 320;
     private static final int STATE_MAX = 1000;
-    private static final int SUBJECT_MAX = 64;
 
     /**
-     * The <em>who</em> of a row: the human answerable ({@code actor}), and — only inside an
-     * impersonation session — the identity they were wearing ({@code onBehalfOf}) plus the session that
-     * carries the stated reason ({@code impersonationId}).
+     * The <em>who</em> of a row: the person answerable ({@code actorPersonId}), and — only inside an
+     * impersonation session — the identity they were wearing ({@code onBehalfOfPersonId}) plus the
+     * session that carries the stated reason ({@code impersonationId}).
      *
-     * <p>Grouped rather than passed as two adjacent {@code String} parameters: swapping those compiles
-     * cleanly and silently inverts the one fact this table exists to state.
+     * <p>Grouped rather than passed as two adjacent {@code UUID} parameters: swapping those compiles
+     * cleanly and silently inverts the one fact this table exists to state. Three same-typed ids
+     * side by side is a stronger argument for the record than the two strings ever were.
      */
-    record Attribution(String actor, String onBehalfOf, UUID impersonationId) {
+    record Attribution(UUID actorPersonId, UUID onBehalfOfPersonId, UUID impersonationId) {
 
-        /** No principal on the thread — a system-triggered change (jobs, startup reconciliation). */
-        static final Attribution SYSTEM = new Attribution(null, null, null);
+        /**
+         * Nobody accountable: a system-triggered change (jobs, startup reconciliation), a machine key,
+         * or an edge decision made in another process. V13 says that is information rather than a
+         * missing value, and telling those three apart needs a typed actor triple, not a widened column.
+         */
+        static final Attribution NOBODY = new Attribution(null, null, null);
     }
 
     @Column(name = "org_id")
-    private UUID orgId; // null for platform-level (non-org) events
+    private UUID orgId; // organization.id; null for platform-level (non-org) events
 
     @Column(nullable = false, length = 80)
     private String action;
 
-    @Column(length = SUBJECT_MAX)
-    private String actor; // accountable principal's subject; null for system-triggered changes
+    @Column(name = "actor_person_id")
+    private UUID actorPersonId; // the accountable human; null = system or machine
 
-    @Column(name = "on_behalf_of", length = SUBJECT_MAX)
-    private String onBehalfOf; // the impersonated subject; null unless `actor` acted through a session
+    @Column(name = "on_behalf_of_person_id")
+    private UUID onBehalfOfPersonId; // the worn identity; null unless the actor acted through a session
 
     @Column(name = "impersonation_id")
     private UUID impersonationId; // soft ref to impersonation_session — no FK across a module boundary
@@ -72,8 +82,8 @@ class AuditEntry extends BaseEntity {
         AuditEntry entry = new AuditEntry();
         entry.orgId = orgId;
         entry.action = action;
-        entry.actor = truncate(attribution.actor(), SUBJECT_MAX);
-        entry.onBehalfOf = truncate(attribution.onBehalfOf(), SUBJECT_MAX);
+        entry.actorPersonId = attribution.actorPersonId();
+        entry.onBehalfOfPersonId = attribution.onBehalfOfPersonId();
         entry.impersonationId = attribution.impersonationId();
         entry.target = truncate(target, TARGET_MAX);
         entry.fromState = truncate(fromState, STATE_MAX);
@@ -97,12 +107,12 @@ class AuditEntry extends BaseEntity {
         return action;
     }
 
-    String getActor() {
-        return actor;
+    UUID getActorPersonId() {
+        return actorPersonId;
     }
 
-    String getOnBehalfOf() {
-        return onBehalfOf;
+    UUID getOnBehalfOfPersonId() {
+        return onBehalfOfPersonId;
     }
 
     UUID getImpersonationId() {

@@ -14,8 +14,8 @@ import ug.co.smsone.shared.web.ResourceObject;
 /**
  * Every organization the CALLER belongs to — the list a dual member's client renders to offer an
  * organization switch. The switch itself is a TOKEN act (re-request scoped to the chosen org via
- * the Keycloak {@code organization} claim); the server never trusts a client-asserted active org,
- * which is exactly why this endpoint only lists.
+ * the identity provider's {@code organization} claim); the server never trusts a client-asserted
+ * active org, which is exactly why this endpoint only lists.
  */
 @RestController
 @RequestMapping("/api/v1/me")
@@ -39,16 +39,21 @@ class OrgMembershipsController {
     @Operation(summary = "List the organizations you belong to",
             description = """
                     One row per ACTIVE membership, with your role there. Switching = requesting a \
-                    token scoped to the chosen organization (the Keycloak `organization` claim); \
-                    the current token's active org keeps governing until you do.""")
+                    token scoped to the chosen organization (the identity provider's `organization` \
+                    claim); the current token's active org keeps governing until you do.""")
     List<ResourceObject> myOrganizations(CurrentUser user) {
-        List<Membership> mine = memberships.findByUserSubjectAndStatus(user.subject(), MembershipStatus.ACTIVE);
+        // A machine key has no memberships to list — it is not a person and belongs to exactly one
+        // tenant already. An unprovisioned human has none either; both answer an empty list.
+        if (user.personId() == null) {
+            return List.of();
+        }
+        List<Membership> mine = memberships.findByPersonIdAndStatus(user.personId(), MembershipStatus.ACTIVE);
         if (mine.isEmpty()) {
             return List.of();
         }
-        Map<UUID, Organization> orgs = organizations.findByKcOrgIdIn(
+        Map<UUID, Organization> orgs = organizations.findAllById(
                         mine.stream().map(Membership::getOrgId).collect(Collectors.toSet())).stream()
-                .collect(Collectors.toMap(Organization::getKcOrgId, org -> org));
+                .collect(Collectors.toMap(Organization::getId, org -> org));
         return mine.stream()
                 .map(membership -> {
                     Organization org = orgs.get(membership.getOrgId());
@@ -57,7 +62,7 @@ class OrgMembershipsController {
                     }
                     String roleCode = members.roleCodes(membership.getOrgId())
                             .get(membership.getRoleId());
-                    return new ResourceObject(org.getKcOrgId().toString(), "my-organization",
+                    return new ResourceObject(org.getId().toString(), "my-organization",
                             new MyOrgAttributes(org.getAlias(), org.getName(),
                                     org.getStatus().name(), roleCode));
                 })

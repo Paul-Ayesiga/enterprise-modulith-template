@@ -14,7 +14,15 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
-/** Keycloak Admin REST calls for the user lifecycle (find/create user, issue temporary credentials). */
+/**
+ * Keycloak Admin REST calls for the account lifecycle (find/create user, issue temporary credentials).
+ *
+ * <p><b>This class is the one place Keycloak's vocabulary is allowed to exist.</b> Its API speaks
+ * {@code firstName}/{@code lastName} and user ids because Keycloak does, and the translation to
+ * {@code givenName}/{@code familyName} and {@code person.id} happens at this boundary — the same
+ * discipline that keeps issuers and subjects inside {@link PersonResolver}. A caller of this class is
+ * expected to be an adapter; a caller of a caller must never see either word.
+ */
 @Component
 class KeycloakUserAdminGateway {
 
@@ -28,31 +36,8 @@ class KeycloakUserAdminGateway {
         this.properties = properties;
     }
 
+    /** {@code id} is Keycloak's user id — the JWT {@code sub}. It is an EXTERNAL subject, never a person. */
     record KeycloakUser(String id, String email) {
-    }
-
-    /** The subject's federated identities (subject IS the Keycloak user id). Read-only by design. */
-    List<Map<String, Object>> federatedIdentities(String subject) {
-        try {
-            List<?> identities = keycloakAdminRestClient.get()
-                    .uri("/users/{id}/federated-identity", subject)
-                    .retrieve()
-                    .body(List.class);
-            if (identities == null) {
-                return List.of();
-            }
-            List<Map<String, Object>> result = new java.util.ArrayList<>();
-            for (Object identity : identities) {
-                if (identity instanceof Map<?, ?> map) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> typed = (Map<String, Object>) map;
-                    result.add(typed);
-                }
-            }
-            return result;
-        } catch (org.springframework.web.client.HttpClientErrorException.NotFound notFound) {
-            return List.of(); // unknown Keycloak user: no links, not an error surface
-        }
     }
 
     Optional<KeycloakUser> findByEmail(String email) {
@@ -66,14 +51,24 @@ class KeycloakUserAdminGateway {
         return Optional.of(new KeycloakUser(String.valueOf(user.get("id")), String.valueOf(user.get("email"))));
     }
 
-    KeycloakUser createUser(String email, String firstName, String lastName) {
+    /**
+     * Creates the Keycloak account for an address.
+     *
+     * <p>The parameters are {@code givenName}/{@code familyName} and the body writes {@code firstName}/
+     * {@code lastName}: THIS LINE is the whole reason the pair is still spelled that way anywhere in the
+     * codebase. Keycloak's user representation has those two field names and no others, so the mapping
+     * has to happen somewhere; doing it here means it happens once, in the class whose job is to speak
+     * Keycloak, rather than leaking a positional naming convention into a domain that has people with
+     * one name, three names, and family names that come first.
+     */
+    KeycloakUser createUser(String email, String givenName, String familyName) {
         Map<String, Object> body = Map.<String, Object>of(
                 "username", email,
                 "email", email,
                 "emailVerified", false,
                 "enabled", true,
-                "firstName", nullToEmpty(firstName),
-                "lastName", nullToEmpty(lastName));
+                "firstName", nullToEmpty(givenName),
+                "lastName", nullToEmpty(familyName));
         ResponseEntity<Void> response;
         try {
             response = keycloakAdminRestClient.post()

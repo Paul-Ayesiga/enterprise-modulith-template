@@ -9,6 +9,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -18,6 +20,7 @@ import org.springframework.web.client.RestClient;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.utility.MountableFile;
+import ug.co.smsone.identity.ProviderOrgMembership;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
 /**
@@ -29,8 +32,14 @@ import ug.co.smsone.testsupport.AbstractIntegrationTest;
  * account actually holds the realm-management roles the org Admin API requires.
  *
  * <p>Scope is the org wire; the member is created via the raw Admin API (same create-user contract),
- * not through {@code UserProvisioning}, which additionally sends an execute-actions-email that would
+ * not through {@code PersonProvisioning}, which additionally sends an execute-actions-email that would
  * need realm SMTP.
+ *
+ * <p>The member half now drives {@link ProviderOrgMembership} rather than the gateway directly: those
+ * two calls moved into {@code identity}, because they take a Keycloak USER id and only the module that
+ * owns {@code external_identity} may hold one. The wire contract under test is unchanged — which is
+ * exactly why the test moved with the calls instead of being deleted — but the port takes a
+ * {@code person.id}, so the Keycloak user created here is linked to a real person first.
  */
 class KeycloakOrgAdminIntegrationTest extends AbstractIntegrationTest {
 
@@ -67,32 +76,46 @@ class KeycloakOrgAdminIntegrationTest extends AbstractIntegrationTest {
     @Qualifier("keycloakAdminRestClient")
     private RestClient keycloakAdmin;
 
+    @Autowired
+    private ProviderOrgMembership providerOrgMembership;
+
+    @Autowired
+    private JdbcTemplate jdbc;
+
+    /** The same property {@code PersonResolver} reads — external_identity.issuer must match it exactly. */
+    @Value("${spring.security.oauth2.resourceserver.jwt.issuer-uri}")
+    private String issuer;
+
     @Test
     void createAddFindRemovePinTheKeycloakOrganizationsWireContract() {
         String alias = "acme-it-" + UUID.randomUUID().toString().substring(0, 8);
 
         // create-org: the new id comes back in the Location header, and the domains body is accepted.
-        UUID orgId = orgGateway.createOrganization(alias, "Acme IT");
+        // It stays a String: it is UUID-shaped only because Keycloak mints UUIDs, and parsing it here
+        // would put that assumption back into the type system (V11 — external_org_id is varchar).
+        String orgId = orgGateway.createOrganization(alias, "Acme IT");
         assertThat(orgId).isNotNull();
 
         // search-by-alias round-trips to the same id (Keycloak's search matches name/domain, not alias,
         // so the gateway substring-searches and filters by alias — this pins that behaviour).
         assertThat(orgGateway.findOrganizationIdByAlias(alias)).contains(orgId);
 
-        // A real Keycloak user to add.
+        // A real Keycloak user to add, and the person this platform knows them as — the port takes the
+        // person, and resolves the subject itself.
         String subject = createKeycloakUser(alias + "@smsone.co.ug");
+        UUID personId = linkedPerson(subject);
 
-        // add-member: the server accepts the user id as a bare JSON string — the contract that was only
+        // attach: the server accepts the user id as a bare JSON string — the contract that was only
         // research-verified before.
-        orgGateway.addMember(orgId, subject);
+        providerOrgMembership.attach(personId, orgId);
         assertThat(memberIds(orgId)).contains(subject);
 
-        // Re-add is an idempotent no-op 2xx.
-        orgGateway.addMember(orgId, subject);
+        // Re-attach is an idempotent no-op: Keycloak 409s a re-add, and the port absorbs it.
+        providerOrgMembership.attach(personId, orgId);
         assertThat(memberIds(orgId)).containsOnlyOnce(subject);
 
-        // remove-member unlinks the membership; the user account itself remains.
-        orgGateway.removeMember(orgId, subject);
+        // detach unlinks the membership; the user account itself remains.
+        providerOrgMembership.detach(personId, orgId);
         assertThat(memberIds(orgId)).doesNotContain(subject);
         assertThat(keycloakUserExists(subject)).isTrue();
     }
@@ -114,7 +137,22 @@ class KeycloakOrgAdminIntegrationTest extends AbstractIntegrationTest {
                 .exchange((request, res) -> res.getStatusCode().is2xxSuccessful());
     }
 
-    private List<String> memberIds(UUID orgId) {
+    /** A person carrying this Keycloak subject — what {@code ProviderOrgMembership} translates back. */
+    private UUID linkedPerson(String subject) {
+        UUID personId = UUID.randomUUID();
+        jdbc.update("""
+                insert into person (id, status, provisioned_at, version, created_at)
+                values (?, 'ACTIVE', now(), 0, now())
+                """, personId);
+        jdbc.update("""
+                insert into external_identity (id, person_id, provider, issuer, external_subject,
+                                               linked_at, version, created_at)
+                values (?, ?, 'KEYCLOAK', ?, ?, now(), 0, now())
+                """, UUID.randomUUID(), personId, issuer, subject);
+        return personId;
+    }
+
+    private List<String> memberIds(String orgId) {
         List<Map<String, Object>> members = keycloakAdmin.get()
                 .uri("/organizations/{id}/members", orgId)
                 .retrieve()

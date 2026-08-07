@@ -37,7 +37,7 @@ class OrgGroupController {
         this.groups = groups;
     }
 
-    record GroupAttributes(String name, String roleCode, List<String> members, Instant createdAt) {
+    record GroupAttributes(String name, String roleCode, List<UUID> members, Instant createdAt) {
     }
 
     record CreateRequest(String name, String roleCode) {
@@ -46,7 +46,7 @@ class OrgGroupController {
     record RoleRequest(String roleCode) {
     }
 
-    record MemberRequest(String subject) {
+    record MemberRequest(UUID personId) {
     }
 
     @PostMapping
@@ -82,17 +82,17 @@ class OrgGroupController {
 
     @PostMapping("/{id}/members")
     @Operation(summary = "Add a member to the group",
-            description = "The subject must already be an organization member.")
+            description = "The person must already be an organization member.")
     @PreAuthorize("hasPermission(#orgId, 'organization', 'member:role:assign')")
     ResourceObject addMember(@PathVariable UUID orgId, @PathVariable UUID id, @RequestBody MemberRequest request) {
-        return toResource(groups.addMember(orgId, id, request.subject()));
+        return toResource(groups.addMember(orgId, id, request.personId()));
     }
 
-    @DeleteMapping("/{id}/members/{subject}")
+    @DeleteMapping("/{id}/members/{personId}")
     @Operation(summary = "Remove a member from the group")
     @PreAuthorize("hasPermission(#orgId, 'organization', 'member:role:assign')")
-    ResourceObject removeMember(@PathVariable UUID orgId, @PathVariable UUID id, @PathVariable String subject) {
-        return toResource(groups.removeMember(orgId, id, subject));
+    ResourceObject removeMember(@PathVariable UUID orgId, @PathVariable UUID id, @PathVariable UUID personId) {
+        return toResource(groups.removeMember(orgId, id, personId));
     }
 
     @DeleteMapping("/{id}")

@@ -6,6 +6,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.Set;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -97,14 +98,22 @@ class ImpersonationFilter extends OncePerRequestFilter {
             deny(request, response, "Impersonation is disabled on this deployment.");
             return;
         }
-        // The actor is the token subject, never a header value: the session is pinned to the operator it
-        // was issued to, so an id copied out of a log line is worthless to whoever copied it.
+        // The actor is whoever the token resolved to, never a header value: the session is pinned to the
+        // operator it was issued to, so an id copied out of a log line is worthless to whoever copied it.
         CurrentUser actor = currentUserProvider.currentUser().orElse(null);
         if (actor == null) {
             chain.doFilter(request, response); // unauthenticated — the security chain owns that answer
             return;
         }
-        String actorSubject = actor.subject();
+        UUID actorPersonId = actor.personId();
+        if (actorPersonId == null) {
+            // A machine key, or a token whose person does not exist yet. Impersonation is an oversight
+            // tool one HUMAN answers for; with no person there is nobody to hold accountable, and
+            // audit_log.actor would record the absence as a null. Said plainly because a platform key
+            // CAN hold the support tier, so the tier check below would otherwise have passed it.
+            deny(request, response, "Impersonation requires a signed-in operator.");
+            return;
+        }
         // Re-checked per request, not trusted from open time: a session lives up to its whole TTL, and
         // revoking the tier that authorized it has to stop the reach it granted rather than wait the
         // clock out. Support is the floor for holding any session at all; the write-capable case asks
@@ -123,11 +132,11 @@ class ImpersonationFilter extends OncePerRequestFilter {
             }
             // A malformed, unknown, ended or expired id all arrive here as an empty Optional — the port
             // deliberately does not distinguish them, and neither does the answer the caller gets.
-            principal = lookup.activeSession(sessionId.trim(), actorSubject).orElse(null);
+            principal = lookup.activeSession(sessionId.trim(), actorPersonId).orElse(null);
         } catch (RuntimeException ex) {
             // A filter exception would bypass GlobalExceptionHandler and produce a non-envelope 500;
             // render the envelope ourselves (never leak the exception to the client).
-            log.error("Impersonation lookup failed for actor {}: {}", actorSubject, ex.toString(), ex);
+            log.error("Impersonation lookup failed for actor {}: {}", actorPersonId, ex.toString(), ex);
             errorWriter.write(request, response, ErrorCode.INTERNAL_ERROR,
                     "The request could not be processed.", null);
             return;

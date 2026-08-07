@@ -48,6 +48,7 @@ class ExchangeScheduleService {
     ExchangeSchedule create(CurrentUser user, UUID orgId, String handlerId, String format, String cron) {
         ExchangeHandler handler = exchange.requireHandler(handlerId);
         String normalizedFormat = exchange.requireFormat(format);
+        UUID requester = exchange.requireRequester(user);
         exchange.requirePermission(user, orgId, handler.exportPermission());
         entitlements.requireFeature(orgId, ug.co.smsone.subscription.EntitlementKeys.EXCHANGE_ENABLED);
         entitlements.requireWithinLimit(orgId,
@@ -60,7 +61,7 @@ class ExchangeScheduleService {
         }
         String trimmed = cron.trim();
         ExchangeSchedule schedule = schedules.save(ExchangeSchedule.create(
-                orgId, user.subject(), handler.id(), normalizedFormat, trimmed, next(trimmed, clock.instant())));
+                orgId, requester, handler.id(), normalizedFormat, trimmed, next(trimmed, clock.instant())));
         auditLog.record("exchange.schedule_created", orgId, schedule.getId().toString(), null,
                 "handler=" + handler.id() + " cron=" + trimmed);
         return schedule;
@@ -77,7 +78,7 @@ class ExchangeScheduleService {
     void delete(CurrentUser user, UUID orgId, UUID id) {
         ExchangeSchedule schedule = schedules.findByIdAndOrgId(id, orgId)
                 .orElseThrow(() -> new NotFoundException("Exchange schedule not found."));
-        if (!user.subject().equals(schedule.getRequester())) {
+        if (!schedule.getRequesterPersonId().equals(user.personId())) {
             ExchangeHandler handler = exchange.requireHandler(schedule.getHandler());
             exchange.requirePermission(user, orgId, handler.exportPermission());
         }

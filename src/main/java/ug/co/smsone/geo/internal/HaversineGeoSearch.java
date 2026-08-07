@@ -70,7 +70,7 @@ class HaversineGeoSearch implements GeoSearch {
         params.add(page.size() + 1); // fetch one extra to know whether a next page exists
 
         String sql = "select id, org_id, subject_type, subject_id, latitude, longitude, accuracy_m, "
-                + "altitude_m, source, captured_by, captured_at, consent_ref, country_code, admin1, "
+                + "altitude_m, source, captured_by_person_id, captured_at, consent_ref, country_code, admin1, "
                 + "locality, formatted_address from geo_stamp where " + where
                 + " order by captured_at desc, id desc limit ?";
         List<GeoStamp> rows = jdbc.query(sql, HaversineGeoSearch::mapRow, params.toArray());
@@ -83,7 +83,7 @@ class HaversineGeoSearch implements GeoSearch {
             Map<String, Object> keys = new LinkedHashMap<>();
             keys.put("t", last.capturedAt().toString());
             keys.put("id", last.id());
-            nextCursor = Cursors.encode((KeysetScrollPosition) ScrollPosition.forward(keys));
+            nextCursor = Cursors.encode(ScrollPosition.forward(keys));
         }
         return new Page(List.copyOf(pageRows), hasMore, nextCursor);
     }
@@ -101,7 +101,7 @@ class HaversineGeoSearch implements GeoSearch {
                 accuracy == null ? null : accuracy.doubleValue(),
                 altitude == null ? null : altitude.doubleValue(),
                 GeoSource.valueOf(rs.getString("source")),
-                rs.getString("captured_by"),
+                rs.getObject("captured_by_person_id", UUID.class),
                 rs.getTimestamp("captured_at").toInstant(),
                 rs.getString("consent_ref"),
                 new PlaceLabel(rs.getString("country_code"), rs.getString("admin1"),

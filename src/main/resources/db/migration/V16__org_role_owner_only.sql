@@ -9,9 +9,13 @@
 --
 -- One-way by design: RoleSeeder no longer defines ADMIN/MEMBER, so nothing re-creates or re-reconciles
 -- them. A rollback would need the old seeder back, not just an inverse UPDATE.
+-- updated_by is NULL, not a 'flyway:V16' marker: the column is uuid holding person.id, and a schema
+-- migration is not a person. That is the same rule AuditLogImpl applies to audit_log.actor — a null
+-- actor IS the statement "no human did this". Which migration touched the row is answerable from
+-- flyway_schema_history and updated_at, which is where that fact belongs.
 update org_role
 set system_role = false,
     updated_at  = now(),
-    updated_by  = 'flyway:V16'
+    updated_by  = null
 where system_role = true
   and code in ('ADMIN', 'MEMBER');

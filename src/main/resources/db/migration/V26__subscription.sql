@@ -15,9 +15,9 @@ create table plan
     rank       int          not null,   -- upgrade ordering, FREE lowest
     version    bigint       not null,
     created_at timestamptz  not null,
-    created_by varchar(100),
+    created_by uuid        ,
     updated_at timestamptz,
-    updated_by varchar(100),
+    updated_by uuid        ,
     constraint uq_plan_code unique (code)
 );
 
@@ -32,15 +32,15 @@ create table plan_entitlement
 create table org_subscription
 (
     id                 uuid        not null primary key,
-    org_id             uuid        not null,             -- soft ref (no FK — module boundary)
+    org_id             uuid        not null,             -- organization.id — soft ref (no FK, module boundary)
     plan_id            uuid        not null references plan (id),
     status             varchar(20) not null,             -- ACTIVE | TRIALING | PAST_DUE | CANCELLED
     current_period_end timestamptz,                      -- null = evergreen (no billing integration yet)
     version            bigint      not null,
     created_at         timestamptz not null,
-    created_by         varchar(100),
+    created_by         uuid        ,
     updated_at         timestamptz,
-    updated_by         varchar(100),
+    updated_by         uuid        ,
     deleted_at         timestamptz
 );
 

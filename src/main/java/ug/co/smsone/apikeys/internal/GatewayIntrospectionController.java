@@ -34,7 +34,13 @@ class GatewayIntrospectionController {
     record IntrospectionRequest(String apiKey) {
     }
 
-    record IntrospectionResponse(boolean active, String subject, String tenant, Set<String> scopes) {
+    /**
+     * {@code keyId} is the CREDENTIAL's identity, not a principal's: the gateway is being told which
+     * key presented itself, and a machine resolves to no person (V29 — manufacturing a synthetic one
+     * is exactly what the platform stopped doing). It replaced a {@code subject} field that carried
+     * {@code "key:" + keyId}, which was that same fact in a person-shaped hole.
+     */
+    record IntrospectionResponse(boolean active, String keyId, String tenant, Set<String> scopes) {
     }
 
     @PostMapping("/introspect")
@@ -46,7 +52,7 @@ class GatewayIntrospectionController {
             return inactive();
         }
         return authenticator.authenticate(request.apiKey())
-                .map(principal -> new IntrospectionResponse(true, principal.subject(),
+                .map(principal -> new IntrospectionResponse(true, principal.keyId().toString(),
                         principal.orgId() == null ? null : principal.orgId().toString(),
                         principal.permissions()))
                 .orElseGet(GatewayIntrospectionController::inactive);

@@ -34,9 +34,9 @@ class SupportDeskImpl implements SupportDesk {
     }
 
     @Override
-    public TicketView open(UUID orgId, String openerSubject, String subject, String category,
+    public TicketView open(UUID orgId, UUID openerPersonId, String subject, String category,
             String priority) {
-        return toView(support.open(orgId, openerSubject, subject, category, priority));
+        return toView(support.open(orgId, openerPersonId, subject, category, priority));
     }
 
     @Override
@@ -49,18 +49,18 @@ class SupportDeskImpl implements SupportDesk {
     }
 
     @Override
-    public MessageView reply(UUID orgId, UUID ticketId, String authorSubject, String body) {
-        return toView(support.tenantReply(orgId, ticketId, authorSubject, body));
+    public MessageView reply(UUID orgId, UUID ticketId, UUID authorPersonId, String body) {
+        return toView(support.tenantReply(orgId, ticketId, authorPersonId, body));
     }
 
     private static TicketView toView(Ticket ticket) {
         return new TicketView(ticket.getId(), ticket.getSubject(), ticket.getCategory(),
-                ticket.getPriority(), ticket.getStatus(), ticket.getOpenerSubject(),
+                ticket.getPriority(), ticket.getStatus(), ticket.getOpenerPersonId(),
                 ticket.getCreatedAt());
     }
 
     private static MessageView toView(TicketMessage message) {
-        return new MessageView(message.getId(), message.getAuthorSubject(), message.getBody(),
+        return new MessageView(message.getId(), message.getAuthorPersonId(), message.getBody(),
                 message.getCreatedAt());
     }
 }

@@ -36,7 +36,7 @@ class Role extends SoftDeletableEntity {
     static final String OWNER_CODE = "OWNER";
 
     @Column(name = "org_id", nullable = false, updatable = false)
-    private UUID orgId; // Keycloak org id (tenant key)
+    private UUID orgId; // organization.id — the tenant key, and a real FK in the schema (same module)
 
     @Column(nullable = false, updatable = false, length = 64)
     private String code;

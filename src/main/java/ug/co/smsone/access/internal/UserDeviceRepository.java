@@ -14,25 +14,25 @@ import ug.co.smsone.shared.web.CursorPageRequest;
 
 interface UserDeviceRepository extends JpaRepository<UserDevice, UUID>, JpaSpecificationExecutor<UserDevice> {
 
-    Optional<UserDevice> findBySubjectAndFingerprint(String subject, String fingerprint);
+    Optional<UserDevice> findByPersonIdAndFingerprint(UUID personId, String fingerprint);
 
-    Optional<UserDevice> findByIdAndSubject(UUID id, String subject);
+    Optional<UserDevice> findByIdAndPersonId(UUID id, UUID personId);
 
     /** Throttled last-seen stamp on a separate connection — the request path must not version-bump. */
     @Modifying
-    @Query(value = "update user_device set last_seen_at = :now where subject = :subject "
+    @Query(value = "update user_device set last_seen_at = :now where person_id = :personId "
             + "and fingerprint = :fingerprint and (last_seen_at is null or last_seen_at < :throttleBefore)",
             nativeQuery = true)
-    void touchThrottled(@Param("subject") String subject, @Param("fingerprint") String fingerprint,
+    void touchThrottled(@Param("personId") UUID personId, @Param("fingerprint") String fingerprint,
             @Param("now") Instant now, @Param("throttleBefore") Instant throttleBefore);
 
-    @Query(value = "select exists(select 1 from user_device where subject = :subject "
+    @Query(value = "select exists(select 1 from user_device where person_id = :personId "
             + "and fingerprint = :fingerprint and trusted = true and deleted_at is null)", nativeQuery = true)
-    boolean isTrusted(@Param("subject") String subject, @Param("fingerprint") String fingerprint);
+    boolean isTrusted(@Param("personId") UUID personId, @Param("fingerprint") String fingerprint);
 
-    default Window<UserDevice> pageBySubject(String subject, CursorPageRequest page) {
+    default Window<UserDevice> pageByPersonId(UUID personId, CursorPageRequest page) {
         Sort sort = Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
-        return findBy((root, query, cb) -> cb.equal(root.get("subject"), subject),
+        return findBy((root, query, cb) -> cb.equal(root.get("personId"), personId),
                 q -> q.limit(page.size()).sortBy(sort).scroll(page.scrollPosition(sort)));
     }
 }

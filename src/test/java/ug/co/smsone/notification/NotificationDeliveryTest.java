@@ -49,7 +49,7 @@ class NotificationDeliveryTest {
     private static final int MAILPIT_SMTP = 1025;
     private static final int MAILPIT_HTTP = 8025;
     private static final String ADMIN_EMAIL = "ops@smsone.co.ug";
-    private static final String ADMIN_SUBJECT = "kc-sub-admin-0001"; // app_user row seeded per test
+    private static final UUID ADMIN_PERSON_ID = UUID.fromString("00000000-0000-4000-8000-0000000ad301");
 
     @ServiceConnection
     static final PostgreSQLContainer POSTGRES = AbstractIntegrationTest.POSTGRES;
@@ -93,7 +93,7 @@ class NotificationDeliveryTest {
 
     @Test
     void flagToggleEnqueuesThenWorkerDeliversEmailAndInApp(Scenario scenario) throws Exception {
-        seedProvisionedAdmin(); // in-app targeting resolves the admin's SUBJECT from this app_user row
+        seedProvisionedAdmin(); // in-app targeting resolves the admin's PERSON from these rows
 
         scenario.publish(new FeatureFlagChanged("new-billing", true, Instant.now()))
                 // listener enqueues synchronously (email + in-app); wait for the two queued rows
@@ -102,24 +102,34 @@ class NotificationDeliveryTest {
 
         // Deliver, tolerating the async send pipeline: processBatch waits on a latch with a timeout, so
         // under load drainFully() can return with a send still in flight. Re-drain until the in-app row
-        // (keyed by the immutable Keycloak subject, never the mutable username) has actually landed.
+        // (keyed by person.id, the platform's only durable answer to "who") has actually landed.
         await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
             drainFully();
-            assertThat(inAppFor(ADMIN_SUBJECT, "new-billing")).isGreaterThanOrEqualTo(1);
+            assertThat(inAppFor(ADMIN_PERSON_ID, "new-billing")).isGreaterThanOrEqualTo(1);
         });
         await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
                 assertThat(mailpitMessages()).contains(ADMIN_EMAIL).contains("new-billing").contains("enabled"));
     }
 
+    /**
+     * A person and the address to reach them at — two rows now, because V10 split the identity from the
+     * contact. The e-mail lives in person_contact, which is what NotificationService resolves through.
+     */
     private void seedProvisionedAdmin() {
-        // The `where` is not optional: V17 replaced app_user's plain unique constraint on `subject` with
-        // the partial index uq_app_user_subject_live, and Postgres only infers a partial index as the
-        // ON CONFLICT arbiter when the statement repeats its predicate verbatim.
         jdbc.update("""
-                insert into app_user (id, subject, email, status, provisioned_at, version, created_at)
-                values (?, ?, ?, 'ACTIVE', now(), 0, now())
-                on conflict (subject) where deleted_at is null do nothing
-                """, UUID.randomUUID(), ADMIN_SUBJECT, ADMIN_EMAIL);
+                insert into person (id, status, provisioned_at, version, created_at)
+                values (?, 'ACTIVE', now(), 0, now())
+                on conflict (id) do nothing
+                """, ADMIN_PERSON_ID);
+        // The `where` is not optional: uq_person_contact_verified_live is PARTIAL, and Postgres only
+        // infers a partial index as the ON CONFLICT arbiter when the statement repeats its predicate.
+        jdbc.update("""
+                insert into person_contact (id, person_id, kind, contact_value, is_primary, verified_at,
+                                            version, created_at)
+                values (?, ?, 'EMAIL', ?, true, now(), 0, now())
+                on conflict (kind, lower(contact_value)) where verified_at is not null and deleted_at is null
+                do nothing
+                """, UUID.randomUUID(), ADMIN_PERSON_ID, ADMIN_EMAIL);
     }
 
     @Test
@@ -137,7 +147,7 @@ class NotificationDeliveryTest {
         String hookUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/hook";
         try {
             notifications.dispatch(new NotificationRequest("Deploy complete", "Release v1.2.3 is live.",
-                    List.of(Recipient.webhook(hookUrl), Recipient.inApp("recipient-1"),
+                    List.of(Recipient.webhook(hookUrl), Recipient.inApp(ADMIN_PERSON_ID),
                             Recipient.email("recipient-1@smsone.co.ug")),
                     Map.of()));
             drainFully();
@@ -145,7 +155,7 @@ class NotificationDeliveryTest {
             synchronized (webhookBody) {
                 assertThat(webhookBody.toString()).contains("Deploy complete").contains("v1.2.3");
             }
-            assertThat(inAppFor("recipient-1", "Deploy complete")).isGreaterThanOrEqualTo(1);
+            assertThat(inAppFor(ADMIN_PERSON_ID, "Deploy complete")).isGreaterThanOrEqualTo(1);
             await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
                     assertThat(mailpitMessages()).contains("recipient-1@smsone.co.ug").contains("Deploy complete"));
         } finally {
@@ -261,9 +271,9 @@ class NotificationDeliveryTest {
         return count("select count(*) from notification_delivery where subject like ?", "%" + subjectFragment + "%");
     }
 
-    private long inAppFor(String recipient, String subjectFragment) {
-        return count("select count(*) from in_app_notification where recipient = ? and subject like ?",
-                recipient, "%" + subjectFragment + "%");
+    private long inAppFor(UUID personId, String subjectFragment) {
+        return count("select count(*) from in_app_notification where person_id = ? and subject like ?",
+                personId, "%" + subjectFragment + "%");
     }
 
     private long count(String sql, Object... args) {

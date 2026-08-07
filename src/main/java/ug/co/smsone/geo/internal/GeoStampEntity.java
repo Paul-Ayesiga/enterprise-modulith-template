@@ -52,8 +52,11 @@ class GeoStampEntity extends SoftDeletableEntity {
     @Column(nullable = false, length = 16, updatable = false)
     private GeoSource source;
 
-    @Column(name = "captured_by", length = 64, updatable = false)
-    private String capturedBy;
+    // person.id — soft ref, no FK. Null twice over on purpose (V47): an unauthenticated capture, and
+    // a MACHINE capture — an API key is not any person, and "a robot stamped this" is honestly
+    // recorded as no person id rather than as a manufactured one.
+    @Column(name = "captured_by_person_id", updatable = false)
+    private UUID capturedByPersonId;
 
     @Column(name = "captured_at", nullable = false, updatable = false)
     private Instant capturedAt;
@@ -84,7 +87,8 @@ class GeoStampEntity extends SoftDeletableEntity {
         // JPA
     }
 
-    static GeoStampEntity create(UUID orgId, String subjectType, String subjectId, GeoFix fix, String capturedBy) {
+    static GeoStampEntity create(UUID orgId, String subjectType, String subjectId, GeoFix fix,
+            UUID capturedByPersonId) {
         GeoStampEntity entity = new GeoStampEntity();
         entity.orgId = orgId;
         entity.subjectType = subjectType;
@@ -96,7 +100,7 @@ class GeoStampEntity extends SoftDeletableEntity {
         entity.source = fix.source();
         entity.capturedAt = fix.capturedAt();
         entity.consentRef = fix.consentRef();
-        entity.capturedBy = capturedBy;
+        entity.capturedByPersonId = capturedByPersonId;
         return entity;
     }
 
@@ -105,7 +109,7 @@ class GeoStampEntity extends SoftDeletableEntity {
                 latitude.doubleValue(), longitude.doubleValue(),
                 accuracyM == null ? null : accuracyM.doubleValue(),
                 altitudeM == null ? null : altitudeM.doubleValue(),
-                source, capturedBy, capturedAt, consentRef,
+                source, capturedByPersonId, capturedAt, consentRef,
                 new PlaceLabel(countryCode, admin1, locality, formattedAddress));
     }
 
@@ -115,13 +119,5 @@ class GeoStampEntity extends SoftDeletableEntity {
 
     String getSubjectType() {
         return subjectType;
-    }
-
-    String getSubjectId() {
-        return subjectId;
-    }
-
-    String getCapturedBy() {
-        return capturedBy;
     }
 }

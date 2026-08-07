@@ -21,8 +21,8 @@ import ug.co.smsone.shared.web.ResourceObject;
 import ug.co.smsone.shared.web.WindowedResult;
 
 /**
- * A user's personal documents (no org). The cross-user reach mirrors the files tiering by blast
- * radius: {@code platform-support} may read another user's document, destroying one takes
+ * A person's personal documents (no org). The cross-person reach mirrors the files tiering by blast
+ * radius: {@code platform-support} may read another person's document, destroying one takes
  * {@code platform-admin}.
  */
 @RestController
@@ -41,14 +41,15 @@ class PersonalDocumentController {
     @Operation(summary = "Upload a personal document")
     @ResponseStatus(HttpStatus.CREATED)
     ResourceObject upload(@RequestParam("file") MultipartFile file, CurrentUser user) {
-        var meta = shared.store(file, "u/" + user.subject(), null, user.subject());
+        UUID owner = requirePerson(user);
+        var meta = shared.store(file, "u/" + owner, null, owner);
         return OrgDocumentController.toResource(documents.requirePersonal(documents.register(meta)));
     }
 
     @GetMapping
     @Operation(summary = "List your personal documents")
     WindowedResult<ResourceObject> list(CurrentUser user, CursorPageRequest page) {
-        return WindowedResult.of(documents.listPersonal(user.subject(), page), page,
+        return WindowedResult.of(documents.listPersonal(requirePerson(user), page), page,
                 OrgDocumentController::toResource);
     }
 
@@ -72,8 +73,21 @@ class PersonalDocumentController {
         documents.delete(document);
     }
 
+    /**
+     * The owner of a personal document. Refused rather than defaulted for a machine: an API key is
+     * not a person, so it has no personal namespace to write into and no personal list to read —
+     * and a null owner would violate {@code document.owner_person_id NOT NULL} (V23) at flush,
+     * turning a 403's worth of input into a 500.
+     */
+    private static UUID requirePerson(CurrentUser user) {
+        if (user.personId() == null) {
+            throw new ForbiddenException("Personal documents belong to a person; this caller is not one.");
+        }
+        return user.personId();
+    }
+
     private static void requireOwnerOr(Document document, CurrentUser user, String platformTier) {
-        if (document.getOwnerSubject().equals(user.subject()) || user.hasRole(platformTier)) {
+        if (document.getOwnerPersonId().equals(user.personId()) || user.hasRole(platformTier)) {
             return;
         }
         if (user.hasRole(PlatformRole.SUPPORT)) {

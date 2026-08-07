@@ -12,9 +12,9 @@ interface OrgGroupRepository extends JpaRepository<OrgGroup, UUID>, JpaSpecifica
 
     Optional<OrgGroup> findByIdAndOrgId(UUID id, UUID orgId);
 
-    /** The groups a subject belongs to in one org — the resolver's union source. */
-    @Query("select g from OrgGroup g join g.members m where g.orgId = :orgId and m = :subject")
-    List<OrgGroup> findByOrgIdAndMember(@Param("orgId") UUID orgId, @Param("subject") String subject);
+    /** The groups a person belongs to in one org — the resolver's union source. */
+    @Query("select g from OrgGroup g join g.members m where g.orgId = :orgId and m = :personId")
+    List<OrgGroup> findByOrgIdAndMember(@Param("orgId") UUID orgId, @Param("personId") UUID personId);
 
     boolean existsByRoleId(UUID roleId);
 }

@@ -35,9 +35,10 @@ class McpRequestContextExtractor implements McpTransportContextExtractor<HttpSer
     public McpTransportContext extract(HttpServletRequest request) {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         CurrentUser caller = currentUser.currentUser().orElse(null);
-        UUID orgId = caller == null ? null : caller.activeOrgId();
-        String subject = caller == null ? null : caller.subject();
-        ToolContext context = new ToolContext(authentication, orgId, subject,
+        UUID orgId = caller == null ? null : caller.organizationId();
+        UUID personId = caller == null ? null : caller.personId();
+        ToolContext context = new ToolContext(authentication, orgId, personId,
+                currentUser.currentPrincipalKey().orElse(null),
                 MDC.get(RequestIdFilter.MDC_KEY), forwardedClientIp.clientIp(request));
         return McpTransportContext.create(Map.of(ToolContext.KEY, context));
     }

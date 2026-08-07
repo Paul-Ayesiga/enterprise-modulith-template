@@ -8,6 +8,7 @@ import org.springframework.data.domain.Window;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ug.co.smsone.shared.audit.AuditLog;
+import ug.co.smsone.shared.error.ForbiddenException;
 import ug.co.smsone.shared.error.NotFoundException;
 import ug.co.smsone.shared.error.ValidationException;
 import ug.co.smsone.shared.web.ApiSource;
@@ -18,6 +19,10 @@ import ug.co.smsone.shared.web.CursorPageRequest;
  * the queue — assign, public reply (which stamps the first-response clock and notifies the opener),
  * internal note (never shown to the tenant), status transitions. SLA due dates are stamped at open
  * from the org's per-priority SLA override when one is set, else the seeded per-priority policy.
+ *
+ * <p>Openers, authors and assignees are {@code person.id}s. This service is the single place both
+ * protocol surfaces (REST and the {@code SupportDesk} port) funnel through, so it is where the
+ * "a ticket needs a person" rule is stated once — see {@link #requirePerson}.
  */
 @Service
 class SupportService {
@@ -47,7 +52,8 @@ class SupportService {
     }
 
     @Transactional
-    Ticket open(UUID orgId, String opener, String subject, String category, String priority) {
+    Ticket open(UUID orgId, UUID openerPersonId, String subject, String category, String priority) {
+        UUID opener = requirePerson(openerPersonId, "the person who opened it");
         String normalizedPriority = priority == null ? "P3" : priority.trim().toUpperCase();
         if (!PRIORITIES.contains(normalizedPriority)) {
             throw new ValidationException("priority must be P1, P2, P3 or P4.",
@@ -144,19 +150,21 @@ class SupportService {
 
     /** The tenant's own reply. Moves a WAITING ticket back to IN_PROGRESS. */
     @Transactional
-    TicketMessage tenantReply(UUID orgId, UUID id, String opener, String body) {
+    TicketMessage tenantReply(UUID orgId, UUID id, UUID authorPersonId, String body) {
+        UUID author = requirePerson(authorPersonId, "the person who wrote each message");
         Ticket ticket = requireInOrg(orgId, id);
         requireBody(body);
         if ("WAITING_ON_CUSTOMER".equals(ticket.getStatus())) {
             ticket.changeStatus("IN_PROGRESS");
             tickets.save(ticket);
         }
-        return messages.save(TicketMessage.of(ticket.getId(), opener, body.trim(), false, clock.instant()));
+        return messages.save(TicketMessage.of(ticket.getId(), author, body.trim(), false, clock.instant()));
     }
 
     /** A platform reply — public (stamps first response, notifies the opener) or an internal note. */
     @Transactional
-    TicketMessage platformReply(UUID id, String author, String body, boolean internal) {
+    TicketMessage platformReply(UUID id, UUID authorPersonId, String body, boolean internal) {
+        UUID author = requirePerson(authorPersonId, "the person who wrote each message");
         Ticket ticket = requireAnyOrg(id);
         requireBody(body);
         if (!internal) {
@@ -168,11 +176,16 @@ class SupportService {
     }
 
     @Transactional
-    Ticket assign(UUID id, String assignee) {
+    Ticket assign(UUID id, UUID assigneePersonId) {
+        if (assigneePersonId == null) {
+            throw new ValidationException("assigneePersonId is required (the operator's person id).",
+                    ApiSource.pointer("/data/attributes/assigneePersonId"));
+        }
         Ticket ticket = requireAnyOrg(id);
-        ticket.assign(assignee);
+        ticket.assign(assigneePersonId);
         Ticket saved = tickets.save(ticket);
-        auditLog.record("support.ticket_assigned", ticket.getOrgId(), id.toString(), null, "assignee=" + assignee);
+        auditLog.record("support.ticket_assigned", ticket.getOrgId(), id.toString(), null,
+                "assignee=" + assigneePersonId);
         return saved;
     }
 
@@ -190,6 +203,22 @@ class SupportService {
         auditLog.record("support.ticket_status_changed", ticket.getOrgId(), id.toString(),
                 "status=" + before, "status=" + normalized);
         return saved;
+    }
+
+    /**
+     * A machine key resolves to no person — that is normal everywhere else, where the absence simply
+     * means {@code created_by} is NULL (V10). Support is the one surface where it cannot be waved
+     * through: {@code opener_person_id} and {@code author_person_id} are NOT NULL because a ticket
+     * with no human behind it has no one to reply TO, and the desk's whole job is the conversation.
+     * So an API key is refused here, in words that name the credential, rather than being allowed to
+     * reach the database and surface a not-null violation as a 500.
+     */
+    private static UUID requirePerson(UUID personId, String what) {
+        if (personId == null) {
+            throw new ForbiddenException("A support ticket records " + what
+                    + "; an API key has no person to record. Open it as a signed-in member.");
+        }
+        return personId;
     }
 
     private static void requireBody(String body) {

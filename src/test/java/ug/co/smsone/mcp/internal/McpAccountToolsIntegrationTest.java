@@ -61,7 +61,7 @@ class McpAccountToolsIntegrationTest extends AbstractIntegrationTest {
         McpTestSupport.seedOrg(jdbc, orgId, "page-" + orgId.toString().substring(0, 8), "Paged");
         UUID roleId = McpTestSupport.seedRole(jdbc, orgId, "MEMBER", "org:read");
         for (int i = 0; i < 3; i++) {
-            McpTestSupport.seedMembership(jdbc, orgId, "subject-" + i, roleId);
+            McpTestSupport.seedMembership(jdbc, orgId, UUID.randomUUID(), roleId);
         }
         McpTestSupport.SeededKey key = McpTestSupport.seedOrgKey(jdbc, orgId, "members", "member:read");
 

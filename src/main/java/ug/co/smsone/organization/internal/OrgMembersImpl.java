@@ -32,22 +32,22 @@ class OrgMembersImpl implements OrgMembers {
     }
 
     @Override
-    public MemberView invite(UUID orgId, String email, String firstName, String lastName, String roleCode) {
-        return toView(members.invite(orgId, email, firstName, lastName, roleCode), members.roleCodes(orgId));
+    public MemberView invite(UUID orgId, String email, String givenName, String familyName, String roleCode) {
+        return toView(members.invite(orgId, email, givenName, familyName, roleCode), members.roleCodes(orgId));
     }
 
     @Override
-    public MemberView assignRole(UUID orgId, String subject, String roleCode) {
-        return toView(members.assignRole(orgId, subject, roleCode), members.roleCodes(orgId));
+    public MemberView assignRole(UUID orgId, UUID personId, String roleCode) {
+        return toView(members.assignRole(orgId, personId, roleCode), members.roleCodes(orgId));
     }
 
     @Override
-    public void remove(UUID orgId, String subject) {
-        members.remove(orgId, subject);
+    public void remove(UUID orgId, UUID personId) {
+        members.remove(orgId, personId);
     }
 
     private static MemberView toView(Membership membership, Map<UUID, String> roleCodes) {
-        return new MemberView(membership.getUserSubject(),
+        return new MemberView(membership.getPersonId(),
                 roleCodes.getOrDefault(membership.getRoleId(), membership.getRoleId().toString()),
                 membership.getStatus().name(), membership.getCreatedAt());
     }

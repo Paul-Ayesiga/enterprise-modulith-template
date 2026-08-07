@@ -41,10 +41,10 @@ class SystemRoleCatalogReconciler implements ApplicationRunner {
         while (all.hasNext()) {
             Organization organization = all.next();
             try {
-                roleSeeder.seedSystemRoles(organization.getKcOrgId());
+                roleSeeder.seedSystemRoles(organization.getId());
             } catch (RuntimeException ex) {
                 log.error("System-role catalog reconciliation failed for org {} ({}): {}",
-                        organization.getKcOrgId(), organization.getAlias(), ex.toString());
+                        organization.getId(), organization.getAlias(), ex.toString());
             }
         }
     }

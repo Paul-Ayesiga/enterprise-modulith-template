@@ -35,8 +35,9 @@ record NotificationProperties(
     }
 
     /**
-     * An administrator, identified by email. The in-app target (the immutable Keycloak subject) is
-     * resolved from this email at dispatch time — config never carries mutable usernames.
+     * An administrator, identified by email. The in-app target ({@code person.id}) is resolved from
+     * this email at dispatch time — config never carries mutable usernames, and it never carries an
+     * identifier minted by an identity provider either.
      */
     public record Admin(String email) {
     }

@@ -29,6 +29,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.test.web.servlet.MockMvc;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
+import ug.co.smsone.testsupport.EdgeSeed;
 
 /**
  * The filter's own contract, driven directly rather than over MockMvc — because the one thing that
@@ -60,14 +61,16 @@ class ImpersonationFilterTest extends AbstractIntegrationTest {
     @Autowired
     private JdbcTemplate jdbc;
 
-    private String operator;
-    private String target;
+    private UUID operator;
+    private UUID target;
     private Authentication operatorToken;
 
     @BeforeEach
     void seed() {
-        operator = "op-" + UUID.randomUUID();
-        target = provisionedUser();
+        // Both sides are real people now: the session row holds person ids, and the filter refuses a
+        // caller with no person id before it looks at their platform tier.
+        operator = provisionedPerson();
+        target = provisionedPerson();
         operatorToken = tokenFor(operator);
         // The filter reads the actor from the context, exactly as it would after the security chain ran.
         SecurityContextHolder.getContext().setAuthentication(operatorToken);
@@ -87,10 +90,10 @@ class ImpersonationFilterTest extends AbstractIntegrationTest {
 
         assertThat(response.getStatus()).isEqualTo(200);
         assertThat(seen.get()).isInstanceOf(ImpersonatedAuthenticationToken.class);
-        assertThat(seen.get().getName()).isEqualTo(target); // the EFFECTIVE identity downstream
+        assertThat(seen.get().getName()).isEqualTo(target.toString()); // the EFFECTIVE identity downstream
         assertThat(seen.get().getAuthorities())
                 .as("no authority travels into a session — that emptiness is the mechanism").isEmpty();
-        assertThat(((ImpersonatedPrincipal) seen.get().getPrincipal()).actorSubject()).isEqualTo(operator);
+        assertThat(((ImpersonatedPrincipal) seen.get().getPrincipal()).actorPersonId()).isEqualTo(operator);
 
         assertThat(SecurityContextHolder.getContext().getAuthentication())
                 .as("the operator's own context must be back before the thread is reused")
@@ -203,10 +206,11 @@ class ImpersonationFilterTest extends AbstractIntegrationTest {
      * (re)installed afterwards — never before.
      */
     private UUID openSession(String mode) throws Exception {
-        String body = "{\"targetSubject\":\"" + target + "\",\"reason\":\"ticket 4711 refund missing\","
+        String body = "{\"targetPersonId\":\"" + target + "\",\"reason\":\"ticket 4711 refund missing\","
                 + "\"mode\":\"" + mode + "\"}";
         String response = mockMvc.perform(post("/api/v1/admin/impersonations")
-                        .with(jwt().jwt(token -> token.subject(operator))
+                        .with(jwt().jwt(token -> token.subject(subjectOf(operator))
+                                        .claim("iss", EdgeSeed.ISSUER))
                                 .authorities(new SimpleGrantedAuthority("ROLE_" + PlatformRole.SUPERADMIN)))
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isCreated())
@@ -216,20 +220,39 @@ class ImpersonationFilterTest extends AbstractIntegrationTest {
         return UUID.fromString(JsonPath.read(response, "$.data.id"));
     }
 
-    private static Authentication tokenFor(String subject) {
-        Jwt jwt = Jwt.withTokenValue("t").header("alg", "none").subject(subject)
+    /**
+     * The {@code iss} is not decoration: {@code external_identity} is keyed on (issuer, subject), so a
+     * token without it resolves to no person and the filter would refuse before doing anything the test
+     * is about.
+     */
+    private static Authentication tokenFor(UUID personId) {
+        Jwt jwt = Jwt.withTokenValue("t").header("alg", "none").subject(subjectOf(personId))
+                .claim("iss", EdgeSeed.ISSUER)
                 .issuedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(300)).build();
         return new JwtAuthenticationToken(jwt,
                 List.of(new SimpleGrantedAuthority("ROLE_" + PlatformRole.SUPERADMIN)));
     }
 
-    /** {@code app_user} lives in another module's internals; the row it needs is one insert. */
-    private String provisionedUser() {
-        String subject = "kc-" + UUID.randomUUID();
+    private static String subjectOf(UUID personId) {
+        return "kc-" + personId;
+    }
+
+    /**
+     * {@code person} and {@code external_identity} live in another module's internals, so this seeds
+     * them as SQL rather than importing identity — the same trade this class already made, and the
+     * reason it does not share {@code identity.internal.ImpersonationFixtures}.
+     */
+    private UUID provisionedPerson() {
+        UUID personId = UUID.randomUUID();
         jdbc.update("""
-                insert into app_user (id, subject, email, status, provisioned_at, version, created_at)
-                values (?, ?, ?, 'ACTIVE', now(), 0, now())
-                """, UUID.randomUUID(), subject, subject + "@smsone.co.ug");
-        return subject;
+                insert into person (id, status, provisioned_at, version, created_at)
+                values (?, 'ACTIVE', now(), 0, now())
+                """, personId);
+        jdbc.update("""
+                insert into external_identity (id, person_id, provider, issuer, external_subject,
+                                               linked_at, version, created_at)
+                values (?, ?, 'KEYCLOAK', ?, ?, now(), 0, now())
+                """, UUID.randomUUID(), personId, EdgeSeed.ISSUER, subjectOf(personId));
+        return personId;
     }
 }

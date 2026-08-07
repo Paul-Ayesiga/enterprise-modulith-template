@@ -75,10 +75,10 @@ class DocumentService implements Documents {
     }
 
     @Transactional(readOnly = true)
-    Window<Document> listPersonal(String ownerSubject, CursorPageRequest page) {
+    Window<Document> listPersonal(UUID ownerPersonId, CursorPageRequest page) {
         return documents.findBy((root, query, cb) -> cb.and(
                         cb.isNull(root.get("orgId")),
-                        cb.equal(root.get("ownerSubject"), ownerSubject)),
+                        cb.equal(root.get("ownerPersonId"), ownerPersonId)),
                 q -> q.limit(page.size()).sortBy(LIST_SORT).scroll(page.scrollPosition(LIST_SORT)));
     }
 

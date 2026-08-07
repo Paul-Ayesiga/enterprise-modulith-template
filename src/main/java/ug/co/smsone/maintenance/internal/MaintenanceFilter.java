@@ -60,7 +60,7 @@ public class MaintenanceFilter extends OncePerRequestFilter {
             return;
         }
         CurrentUser caller = currentUser.currentUser().orElse(null);
-        UUID orgId = caller == null ? null : caller.activeOrgId();
+        UUID orgId = caller == null ? null : caller.organizationId();
         List<MaintenanceWindow> active = windows.activeFor(clock.instant(), orgId);
         MaintenanceWindow restricting = active.stream()
                 .filter(MaintenanceWindow::restricts).findFirst().orElse(null);

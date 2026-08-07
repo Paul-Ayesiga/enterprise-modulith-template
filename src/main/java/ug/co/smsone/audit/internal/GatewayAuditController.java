@@ -15,9 +15,15 @@ import ug.co.smsone.shared.security.GatewaySecretVerifier;
  * The API gateway's edge-audit seam — a MACHINE endpoint ({@code @Hidden}: it belongs in no tag),
  * permit-listed in {@code SecurityConfig} and authenticated here by the shared gateway secret
  * (constant-time compare). The gateway posts an edge decision it made (today: an access denial) and the
- * platform records it against its audit trail with the edge principal as the actor
- * ({@link AuditLog#recordExternal}) — the one place an audit actor arrives from another process. The
- * gateway's delivery is best-effort; recording here is durable, in a transaction.
+ * platform records it against its audit trail ({@link AuditLog#recordExternal}) — the one place an audit
+ * actor arrives from another process. The gateway's delivery is best-effort; recording here is durable,
+ * in a transaction.
+ *
+ * <p>{@code subject} on the request body keeps its name because the gateway posts that field, and it
+ * still means exactly what it always did: the edge principal the gateway resolved — a token subject, a
+ * key id, or a service name. What CHANGED is where it lands. {@code audit_log.actor_person_id} holds a
+ * {@code person.id} (V13) and none of those three shapes is one, so the row is attributed to nobody and
+ * the principal is recorded as text; {@link AuditLog#recordExternal}'s impl states the reasoning.
  */
 @Hidden
 @RestController

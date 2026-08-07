@@ -18,11 +18,17 @@ import ug.co.smsone.settings.internal.Setting;
 import ug.co.smsone.settings.internal.SettingService;
 import ug.co.smsone.shared.audit.AuditLog;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
+import ug.co.smsone.testsupport.EdgeSeed;
 
 /**
- * Audit capture through a real service: a change records who (the acting principal), what, and the
- * from→to state — atomically with the change. Also proves the actor is null for system-triggered
- * changes (no security context).
+ * Audit capture through a real service: a change records WHO — as a {@code person.id}, the platform's
+ * only durable answer — plus what and the from→to state, atomically with the change. Also proves
+ * {@code actor_person_id} is NULL for a system-triggered change, which is V13's spelling for "a
+ * non-person actor" rather than a missing value.
+ *
+ * <p>The caller is seeded as a {@code person} with an {@code external_identity} link and the token
+ * carries the matching {@code iss}: that pair is what the edge resolves, and a token without it is
+ * indistinguishable from a system job as far as attribution goes.
  */
 class AuditRecordingTest extends AbstractIntegrationTest {
 
@@ -46,20 +52,27 @@ class AuditRecordingTest extends AbstractIntegrationTest {
         SecurityContextHolder.clearContext();
     }
 
-    private void authenticateAs(String subject) {
+    /** Seeds a person, links it, and installs a token that resolves to it. Returns their person id. */
+    private UUID authenticateAsAPerson() {
+        String subject = "audit-" + UUID.randomUUID();
+        UUID personId = EdgeSeed.person(jdbc, subject);
         Jwt jwt = Jwt.withTokenValue("t").header("alg", "none").subject(subject)
+                // The iss must be the configured issuer: external_identity is keyed on it, and a token
+                // from an unknown issuer deliberately resolves to no person at all.
+                .claim("iss", EdgeSeed.ISSUER)
                 .issuedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(300)).build();
         SecurityContextHolder.getContext().setAuthentication(new JwtAuthenticationToken(jwt));
+        return personId;
     }
 
     @Test
     void settingChangeRecordsWhoWhatAndFromToState() {
         String key = "billing.mode-" + UUID.randomUUID();
-        authenticateAs("admin-alice");
+        UUID actor = authenticateAsAPerson();
 
         settings.put(key, "monthly", "Billing cadence");
         Map<String, Object> first = row(key, "monthly");
-        assertThat(first.get("actor")).isEqualTo("admin-alice");
+        assertThat(first.get("actor_person_id")).isEqualTo(actor);
         assertThat(first.get("from_state")).isNull();
         assertThat(first.get("to_state")).isEqualTo("monthly");
         assertThat(first.get("action")).isEqualTo("settings.changed");
@@ -68,7 +81,7 @@ class AuditRecordingTest extends AbstractIntegrationTest {
         Map<String, Object> second = row(key, "annual");
         assertThat(second.get("from_state")).isEqualTo("monthly"); // the prior value
         assertThat(second.get("to_state")).isEqualTo("annual");
-        assertThat(second.get("actor")).isEqualTo("admin-alice");
+        assertThat(second.get("actor_person_id")).isEqualTo(actor);
     }
 
     @Test
@@ -79,7 +92,8 @@ class AuditRecordingTest extends AbstractIntegrationTest {
         auditLog.record("test.system", null, target, "off", "on");
 
         assertThat(jdbc.queryForObject(
-                "select actor from audit_log where action = 'test.system' and target = ?", String.class, target))
+                "select actor_person_id from audit_log where action = 'test.system' and target = ?",
+                UUID.class, target))
                 .isNull();
     }
 
@@ -93,7 +107,7 @@ class AuditRecordingTest extends AbstractIntegrationTest {
     @Test
     void theTrailSurvivesTheSoftDeleteOfWhatItDescribes() {
         String key = "retention.window-" + UUID.randomUUID();
-        authenticateAs("admin-alice");
+        UUID actor = authenticateAsAPerson();
         settings.put(key, "30d", null);
         settings.put(key, "90d", null);
 
@@ -105,8 +119,8 @@ class AuditRecordingTest extends AbstractIntegrationTest {
                 .extracting(AuditEntry::getToState)
                 .containsExactlyInAnyOrder("30d", "90d");
         assertThat(auditEntries.findAll(recordsFor(key)))
-                .extracting(AuditEntry::getActor)
-                .containsOnly("admin-alice");
+                .extracting(AuditEntry::getActorPersonId)
+                .containsOnly(actor);
         assertThat(jdbc.queryForObject(
                 "select count(*) from audit_log where target = ?", Integer.class, key)).isEqualTo(2);
     }

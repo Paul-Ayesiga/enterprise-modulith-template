@@ -92,15 +92,15 @@ class ExchangeScheduleFiringJob {
             schedules.save(schedule);
             return;
         }
-        if (!authorization.hasPermission(schedule.getRequester(), schedule.getOrgId(),
+        if (!authorization.hasPermission(schedule.getRequesterPersonId(), schedule.getOrgId(),
                 handler.exportPermission())) {
             log.warn("Exchange schedule {} requester {} no longer holds {} — disabling",
-                    schedule.getId(), schedule.getRequester(), handler.exportPermission());
+                    schedule.getId(), schedule.getRequesterPersonId(), handler.exportPermission());
             schedule.disable();
             schedules.save(schedule);
             return;
         }
-        UUID jobId = store.submit(schedule.getOrgId(), schedule.getRequester(), ExchangeJob.EXPORT,
+        UUID jobId = store.submit(schedule.getOrgId(), schedule.getRequesterPersonId(), ExchangeJob.EXPORT,
                 handler.id(), handler.templateVersion(), schedule.getFormat(), null);
         schedule.fired(jobId, ExchangeScheduleService.next(schedule.getCron(), clock.instant()));
         schedules.save(schedule);

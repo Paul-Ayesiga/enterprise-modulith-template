@@ -118,7 +118,7 @@ class ImportRunner {
             long processed = job.processed();
             long failed = job.failed();
             long skippedTotal = 0;
-            ExchangeContext context = new ExchangeContext(job.orgId(), job.requester());
+            ExchangeContext context = new ExchangeContext(job.orgId(), job.requesterPersonId());
             boolean endOfInput = false;
             long lastBeat = System.nanoTime();
             long beatEvery = config.staleLock().toNanos() / 3;
@@ -220,7 +220,7 @@ class ImportRunner {
             }
             String key = ArtifactStore.artifactKey(job.orgId(), job.id(), "errors.csv");
             return artifacts.store(temp, key, "text/csv", "import-errors-" + job.id() + ".csv",
-                    job.orgId(), job.requester());
+                    job.orgId(), job.requesterPersonId());
         } finally {
             Files.deleteIfExists(temp);
         }

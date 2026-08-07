@@ -12,15 +12,19 @@ import java.util.Optional;
  * over a soft-deletable table must filter {@code deleted_at is null} itself, or it silently disagrees
  * with the admin API reading the same table — and the report is the one used for headcounts and
  * licence reconciliation. The soft-deletable tables are {@code setting}, {@code feature_flag},
- * {@code app_user}, {@code organization}, {@code org_role}, {@code membership},
+ * {@code person}, {@code external_identity}, {@code person_contact}, {@code organization},
+ * {@code external_organization}, {@code org_role}, {@code membership},
  * {@code webhook_subscription}, {@code translation}, {@code document}, {@code exchange_schedule},
- * {@code org_subscription}, {@code billing_account}, {@code user_profile}, {@code api_key}, {@code org_group}, {@code user_device}, {@code org_security_policy}, {@code integration}, {@code maintenance_window} and {@code ticket}; {@code notification_delivery} is not one of them.
+ * {@code org_subscription}, {@code billing_account}, {@code person_profile}, {@code api_key}, {@code org_group}, {@code user_device}, {@code org_security_policy}, {@code integration}, {@code maintenance_window} and {@code ticket}; {@code notification_delivery} is not one of them.
  */
 enum AnalyticsReport {
 
-    USERS_BY_STATUS("users-by-status",
-            "Provisioned users grouped by lifecycle status",
-            "select status from app_user where deleted_at is null",
+    // person, not app_user: the identity is the person row now, and the status column moved with it.
+    // A headcount over the old table does not fail loudly — the whole report just stops existing — so
+    // the source table is the one thing here worth checking against a migration.
+    PEOPLE_BY_STATUS("users-by-status",
+            "Provisioned people grouped by lifecycle status",
+            "select status from person where deleted_at is null",
             "mart_users_by_status",
             "select status, count(*) as total from mart_users_by_status group by status order by total desc"),
 

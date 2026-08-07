@@ -1,7 +1,6 @@
 package ug.co.smsone.identity.internal;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static ug.co.smsone.identity.internal.ImpersonationFixtures.actor;
 import static ug.co.smsone.identity.internal.ImpersonationFixtures.admin;
 import static ug.co.smsone.identity.internal.ImpersonationFixtures.support;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
@@ -30,6 +29,7 @@ import org.springframework.test.web.servlet.ResultActions;
 import ug.co.smsone.identity.ProvisioningStatus;
 import ug.co.smsone.organization.Permission;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
+import ug.co.smsone.testsupport.EdgeSeed;
 
 /**
  * What an open session actually reaches. {@link ImpersonationApiTest} pins who may open one; this
@@ -62,7 +62,13 @@ class ImpersonationReachTest extends AbstractIntegrationTest {
     private MockMvc mockMvc;
 
     @Autowired
-    private UserRepository users;
+    private PersonRepository persons;
+
+    @Autowired
+    private ExternalIdentityRepository identities;
+
+    @Autowired
+    private PersonResolver resolver;
 
     @Autowired
     private ImpersonationSessionRepository sessions;
@@ -74,19 +80,19 @@ class ImpersonationReachTest extends AbstractIntegrationTest {
     private KeycloakUserAdminGateway keycloak; // the tier guard's one remote call
 
     private UUID orgId;
-    private String member;
+    private UUID member;
 
     @BeforeEach
     void seedTenant() {
-        orgId = UUID.randomUUID();
-        member = provisionedUser();
+        orgId = EdgeSeed.organization(jdbc, "kc-org-" + UUID.randomUUID(), "acme-" + UUID.randomUUID());
+        member = provisionedPerson();
         seedOrgMembership(orgId, member, Permission.ORG_READ, Permission.MEMBER_READ,
                 Permission.ROLE_READ, Permission.ROLE_CREATE, Permission.WEBHOOK_MANAGE);
     }
 
     @Test
     void supportReachesTenantDataThroughASessionAndTheAdminSurfaceOnlyOutsideOne() throws Exception {
-        String operator = actor();
+        UUID operator = provisionedPerson();
         UUID session = openSession(support(operator), readOnly(member, orgId));
 
         // Platform authority is not an org permission — the axes never intersect, so the operator's own
@@ -110,7 +116,7 @@ class ImpersonationReachTest extends AbstractIntegrationTest {
         // Including the endpoint that mints sessions: no session can open another.
         mockMvc.perform(post(SESSIONS).with(support(operator)).header(HEADER, session)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(readOnly(provisionedUser(), orgId)))
+                        .content(readOnly(provisionedPerson(), orgId)))
                 .andExpect(status().isForbidden());
     }
 
@@ -121,7 +127,7 @@ class ImpersonationReachTest extends AbstractIntegrationTest {
      */
     @Test
     void aReadOnlySessionRefusesAnUnsafeMethodAndNamesTheHeaderThatCausedIt() throws Exception {
-        String operator = actor();
+        UUID operator = provisionedPerson();
         UUID readOnly = openSession(support(operator), readOnly(member, orgId));
         String code = roleCode();
 
@@ -136,7 +142,7 @@ class ImpersonationReachTest extends AbstractIntegrationTest {
         mockMvc.perform(head(MEMBERS, orgId).with(support(operator)).header(HEADER, readOnly))
                 .andExpect(status().isOk());
 
-        String writer = actor();
+        UUID writer = provisionedPerson();
         UUID writable = openSession(admin(writer), write(member, orgId));
         mockMvc.perform(post(ROLES, orgId).with(admin(writer)).header(HEADER, writable)
                         .contentType(MediaType.APPLICATION_JSON).content(createRole(code)))
@@ -147,11 +153,11 @@ class ImpersonationReachTest extends AbstractIntegrationTest {
     /**
      * The attribution inverts, and only here. Everything else the request writes describes the account
      * as it now looks and so records the target ({@code created_by}, the membership rows, the
-     * rate-limit bucket); {@code audit_log.actor} records who made it look that way.
+     * rate-limit bucket); {@code audit_log.actor_person_id} records who made it look that way.
      */
     @Test
     void anAuditRowFromInsideASessionNamesTheOperatorAndTheIdentityTheyWore() throws Exception {
-        String operator = actor();
+        UUID operator = provisionedPerson();
         UUID session = openSession(admin(operator), write(member, orgId));
         String code = roleCode();
 
@@ -160,39 +166,39 @@ class ImpersonationReachTest extends AbstractIntegrationTest {
                 .andExpect(status().isCreated());
 
         Map<String, Object> row = auditRow("organization.role_created", code);
-        assertThat(row.get("actor")).isEqualTo(operator);          // the human answerable
-        assertThat(row.get("on_behalf_of")).isEqualTo(member);     // the identity they wore
-        assertThat(row.get("actor")).isNotEqualTo(row.get("on_behalf_of"));
+        assertThat(row.get("actor_person_id")).isEqualTo(operator);        // the human answerable
+        assertThat(row.get("on_behalf_of_person_id")).isEqualTo(member);    // the identity they wore
+        assertThat(row.get("actor_person_id")).isNotEqualTo(row.get("on_behalf_of_person_id"));
         assertThat(row.get("impersonation_id")).isEqualTo(session); // correlates to the stated reason
 
         // The other half of the invariant, and the half nothing else pins: the row the request created
         // records the TARGET. A well-meaning change that made created_by name the accountable operator
         // would leave every audit assertion above passing.
         assertThat(jdbc.queryForObject("select created_by from org_role where org_id = ? and code = ?",
-                String.class, orgId, code))
+                UUID.class, orgId, code))
                 .as("only audit_log inverts attribution")
                 .isEqualTo(member);
 
         // The same operator's own request, made outside the session, keeps the plain shape: one actor,
         // no second identity. A non-null on_behalf_of is therefore exactly "done inside someone else's
         // account", with no further interpretation needed.
-        Map<String, Object> opened = auditRow("platform.impersonation_started", member);
-        assertThat(opened.get("actor")).isEqualTo(operator);
-        assertThat(opened.get("on_behalf_of")).isNull();
+        Map<String, Object> opened = auditRow("platform.impersonation_started", member.toString());
+        assertThat(opened.get("actor_person_id")).isEqualTo(operator);
+        assertThat(opened.get("on_behalf_of_person_id")).isNull();
         assertThat(opened.get("impersonation_id")).isNull();
 
         mockMvc.perform(get("/api/v1/audit").param("action", "organization.role_created")
-                        .param("org", orgId.toString()).with(support(actor())))
+                        .param("org", orgId.toString()).with(support(provisionedPerson())))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].attributes.actor").value(operator))
-                .andExpect(jsonPath("$.data[0].attributes.onBehalfOf").value(member))
+                .andExpect(jsonPath("$.data[0].attributes.actorPersonId").value(operator.toString()))
+                .andExpect(jsonPath("$.data[0].attributes.onBehalfOfPersonId").value(member.toString()))
                 .andExpect(jsonPath("$.data[0].attributes.impersonationId").value(session.toString()));
     }
 
     /** The guarantee the feature is sold on: no cached session keeps the reach open past its end. */
     @Test
     void endingASessionDeniesTheVeryNextRequest() throws Exception {
-        String operator = actor();
+        UUID operator = provisionedPerson();
         UUID session = openSession(support(operator), readOnly(member, orgId));
 
         mockMvc.perform(get(MEMBERS, orgId).with(support(operator)).header(HEADER, session))
@@ -213,7 +219,7 @@ class ImpersonationReachTest extends AbstractIntegrationTest {
      */
     @Test
     void anExpiredSessionDeniesWithoutAnySweepJobHavingRun() throws Exception {
-        String operator = actor();
+        UUID operator = provisionedPerson();
         UUID session = openSession(support(operator), readOnly(member, orgId));
 
         mockMvc.perform(get(MEMBERS, orgId).with(support(operator)).header(HEADER, session))
@@ -235,10 +241,10 @@ class ImpersonationReachTest extends AbstractIntegrationTest {
      */
     @Test
     void aSessionIdPresentedByADifferentActorIsRejected() throws Exception {
-        String owner = actor();
+        UUID owner = provisionedPerson();
         UUID session = openSession(support(owner), readOnly(member, orgId));
 
-        mockMvc.perform(get(MEMBERS, orgId).with(admin(actor())).header(HEADER, session))
+        mockMvc.perform(get(MEMBERS, orgId).with(admin(provisionedPerson())).header(HEADER, session))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errors[0].code").value("FORBIDDEN"));
 
@@ -254,15 +260,17 @@ class ImpersonationReachTest extends AbstractIntegrationTest {
      */
     @Test
     void anOperatorWhoLosesTheirPlatformTierLosesTheSessionTheyHold() throws Exception {
-        String operator = actor();
+        UUID operator = provisionedPerson();
         UUID session = openSession(support(operator), readOnly(member, orgId));
 
         mockMvc.perform(get(MEMBERS, orgId).with(support(operator)).header(HEADER, session))
                 .andExpect(status().isOk());
 
-        // Same subject, same session id, a token that no longer carries any platform role.
+        // Same person, same session id, a token that no longer carries any platform role.
         mockMvc.perform(get(MEMBERS, orgId)
-                        .with(jwt().jwt(token -> token.subject(operator))).header(HEADER, session))
+                        .with(jwt().jwt(token -> token.subject(ImpersonationFixtures.subjectOf(operator))
+                                .claim("iss", EdgeSeed.ISSUER)))
+                        .header(HEADER, session))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errors[0].source.header").value(HEADER));
     }
@@ -270,7 +278,7 @@ class ImpersonationReachTest extends AbstractIntegrationTest {
     /** WRITE was authorized against platform-admin, so losing that tier must cost the writes first. */
     @Test
     void demotingAWriteOperatorRefusesTheWriteCapableSession() throws Exception {
-        String operator = actor();
+        UUID operator = provisionedPerson();
         UUID session = openSession(admin(operator), write(member, orgId));
 
         mockMvc.perform(get(MEMBERS, orgId).with(support(operator)).header(HEADER, session))
@@ -288,15 +296,15 @@ class ImpersonationReachTest extends AbstractIntegrationTest {
      */
     @Test
     void disablingTheOperatorsOwnAccountDeniesTheVeryNextImpersonatedRequest() throws Exception {
-        String operator = provisionedUser();
+        UUID operator = provisionedPerson();
         UUID session = openSession(support(operator), readOnly(member, orgId));
 
         mockMvc.perform(get(MEMBERS, orgId).with(support(operator)).header(HEADER, session))
                 .andExpect(status().isOk());
 
-        User account = users.findBySubject(operator).orElseThrow();
-        account.disable();
-        users.save(account);
+        Person account = persons.findById(operator).orElseThrow();
+        account.disable(Instant.now());
+        persons.save(account);
 
         mockMvc.perform(get(MEMBERS, orgId).with(support(operator)).header(HEADER, session))
                 .andExpect(status().isForbidden())
@@ -311,13 +319,13 @@ class ImpersonationReachTest extends AbstractIntegrationTest {
      */
     @Test
     void deletingTheTargetMidSessionDeniesTheVeryNextImpersonatedRequest() throws Exception {
-        String operator = actor();
+        UUID operator = provisionedPerson();
         UUID session = openSession(support(operator), readOnly(member, orgId));
 
         mockMvc.perform(get(MEMBERS, orgId).with(support(operator)).header(HEADER, session))
                 .andExpect(status().isOk());
 
-        users.delete(users.findBySubject(member).orElseThrow()); // soft delete — the row survives, the access does not
+        persons.delete(persons.findById(member).orElseThrow()); // soft delete — the row survives, the access does not
 
         mockMvc.perform(get(MEMBERS, orgId).with(support(operator)).header(HEADER, session))
                 .andExpect(status().isForbidden())
@@ -332,7 +340,7 @@ class ImpersonationReachTest extends AbstractIntegrationTest {
      */
     @Test
     void aWebhookCreatedInsideASessionNamesTheOperatorAndTheSession() throws Exception {
-        String operator = actor();
+        UUID operator = provisionedPerson();
         UUID session = openSession(admin(operator), write(member, orgId));
 
         String created = mockMvc.perform(post(WEBHOOKS, orgId).with(admin(operator)).header(HEADER, session)
@@ -341,16 +349,17 @@ class ImpersonationReachTest extends AbstractIntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
 
-        Map<String, Object> row = auditRow("webhooks.subscription_created", JsonPath.read(created, "$.data.id"));
-        assertThat(row.get("actor")).isEqualTo(operator);
-        assertThat(row.get("on_behalf_of")).isEqualTo(member);
+        Map<String, Object> row = auditRow("webhooks.subscription_created",
+                JsonPath.read(created, "$.data.id"));
+        assertThat(row.get("actor_person_id")).isEqualTo(operator);
+        assertThat(row.get("on_behalf_of_person_id")).isEqualTo(member);
         assertThat(row.get("impersonation_id")).isEqualTo(session);
     }
 
     /** A header the caller controls must never be able to produce a 500. */
     @Test
     void aMalformedSessionIdIsAForbiddenEnvelopeNotAServerError() throws Exception {
-        mockMvc.perform(get(MEMBERS, orgId).with(support(actor())).header(HEADER, "not-a-uuid"))
+        mockMvc.perform(get(MEMBERS, orgId).with(support(provisionedPerson())).header(HEADER, "not-a-uuid"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errors[0].code").value("FORBIDDEN"))
                 .andExpect(jsonPath("$.errors[0].source.header").value(HEADER))
@@ -365,7 +374,7 @@ class ImpersonationReachTest extends AbstractIntegrationTest {
      */
     @Test
     void theRequestAfterAnImpersonatedOneSeesItsOwnIdentity() throws Exception {
-        String operator = actor();
+        UUID operator = provisionedPerson();
         UUID session = openSession(support(operator), readOnly(member, orgId));
 
         mockMvc.perform(get(MEMBERS, orgId).with(support(operator)).header(HEADER, session))
@@ -386,13 +395,13 @@ class ImpersonationReachTest extends AbstractIntegrationTest {
         return UUID.fromString(JsonPath.read(result.andReturn().getResponse().getContentAsString(), "$.data.id"));
     }
 
-    private static String readOnly(String targetSubject, UUID orgId) {
-        return "{\"targetSubject\":\"" + targetSubject + "\",\"orgId\":\"" + orgId
+    private static String readOnly(UUID targetPersonId, UUID orgId) {
+        return "{\"targetPersonId\":\"" + targetPersonId + "\",\"orgId\":\"" + orgId
                 + "\",\"reason\":\"ticket 4711 refund not showing\"}";
     }
 
-    private static String write(String targetSubject, UUID orgId) {
-        return "{\"targetSubject\":\"" + targetSubject + "\",\"orgId\":\"" + orgId
+    private static String write(UUID targetPersonId, UUID orgId) {
+        return "{\"targetPersonId\":\"" + targetPersonId + "\",\"orgId\":\"" + orgId
                 + "\",\"reason\":\"ticket 4711 fixing it for them\",\"mode\":\"WRITE\"}";
     }
 
@@ -404,41 +413,43 @@ class ImpersonationReachTest extends AbstractIntegrationTest {
         return "REVIEWER_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8).toUpperCase();
     }
 
-    private String provisionedUser() {
-        return ImpersonationFixtures.provisionedUser(users, ProvisioningStatus.ACTIVE);
+    private UUID provisionedPerson() {
+        return ImpersonationFixtures.provisionedPerson(persons, identities, resolver.keycloakIssuer(),
+                ProvisioningStatus.ACTIVE);
     }
 
-    /** An ACTIVE org, one custom role carrying exactly these permissions, and the subject in it. */
-    private void seedOrgMembership(UUID kcOrgId, String subject, Permission... permissions) {
-        jdbc.update("""
-                insert into organization (id, kc_org_id, alias, name, status, version, created_at)
-                values (?, ?, ?, 'Acme', 'ACTIVE', 0, now())
-                """, UUID.randomUUID(), kcOrgId, "acme-" + kcOrgId);
+    /**
+     * One custom role carrying exactly these permissions, and the person in it. The organization row
+     * itself is seeded by {@link EdgeSeed#organization} — it also mints the provider link the token's
+     * {@code organization} claim resolves through, without which the tenant is unreachable.
+     */
+    private void seedOrgMembership(UUID orgId, UUID personId, Permission... permissions) {
         UUID roleId = UUID.randomUUID();
         jdbc.update("""
                 insert into org_role (id, org_id, code, name, system_role, version, created_at)
                 values (?, ?, 'MEMBER', 'Member', false, 0, now())
-                """, roleId, kcOrgId);
+                """, roleId, orgId);
         for (Permission permission : permissions) {
             // @Enumerated(STRING) stores the enum NAME; the wire code (org:read) is a different string.
             jdbc.update("insert into role_permission (role_id, permission) values (?, ?)",
                     roleId, permission.name());
         }
         jdbc.update("""
-                insert into membership (id, org_id, user_subject, role_id, status, version, created_at)
+                insert into membership (id, org_id, person_id, role_id, status, version, created_at)
                 values (?, ?, ?, ?, 'ACTIVE', 0, now())
-                """, UUID.randomUUID(), kcOrgId, subject, roleId);
+                """, UUID.randomUUID(), orgId, personId, roleId);
     }
 
-    private boolean roleExists(UUID kcOrgId, String code) {
+    private boolean roleExists(UUID orgId, String code) {
         Integer count = jdbc.queryForObject("select count(*) from org_role where org_id = ? and code = ?",
-                Integer.class, kcOrgId, code);
+                Integer.class, orgId, code);
         return count != null && count > 0;
     }
 
     private Map<String, Object> auditRow(String action, String target) {
-        return jdbc.queryForMap(
-                "select actor, on_behalf_of, impersonation_id from audit_log where action = ? and target = ?",
-                action, target);
+        return jdbc.queryForMap("""
+                select actor_person_id, on_behalf_of_person_id, impersonation_id
+                from audit_log where action = ? and target = ?
+                """, action, target);
     }
 }

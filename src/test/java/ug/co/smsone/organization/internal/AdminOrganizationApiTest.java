@@ -33,7 +33,8 @@ class AdminOrganizationApiTest extends AbstractIntegrationTest {
     @Test
     void supportReadsTheFleetAndAdminDeletesOnlyFromSuspended() throws Exception {
         UUID orgId = UUID.randomUUID();
-        seedOrgWithMember(orgId, "fleet-member");
+        UUID member = UUID.randomUUID();
+        seedOrgWithMember(orgId, member);
 
         mockMvc.perform(get("/api/v1/admin/orgs").param("page[size]", "5").with(support()))
                 .andExpect(status().isOk())
@@ -43,13 +44,13 @@ class AdminOrganizationApiTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.data.attributes.status").value("ACTIVE"));
         mockMvc.perform(get("/api/v1/admin/orgs/{id}/members", orgId).with(support()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].attributes.subject").value("fleet-member"))
+                .andExpect(jsonPath("$.data[0].attributes.personId").value(member.toString()))
                 .andExpect(jsonPath("$.data[0].attributes.roleCode").value("FLEET"));
 
         // Live tenants refuse deletion; the status filter narrows the fleet view.
         mockMvc.perform(delete("/api/v1/admin/orgs/{id}", orgId).with(admin()))
                 .andExpect(status().isConflict());
-        jdbc.update("update organization set status = 'SUSPENDED' where kc_org_id = ?", orgId);
+        jdbc.update("update organization set status = 'SUSPENDED' where id = ?", orgId);
         mockMvc.perform(get("/api/v1/admin/orgs").param("status", "suspended").with(support()))
                 .andExpect(status().isOk());
 
@@ -58,7 +59,7 @@ class AdminOrganizationApiTest extends AbstractIntegrationTest {
         mockMvc.perform(get("/api/v1/admin/orgs/{id}", orgId).with(support()))
                 .andExpect(status().isNotFound());
         assertThat(jdbc.queryForObject(
-                "select count(*) from organization where kc_org_id = ? and deleted_at is not null",
+                "select count(*) from organization where id = ? and deleted_at is not null",
                 Integer.class, orgId)).as("soft, restorable until the purge").isEqualTo(1);
         assertThat(jdbc.queryForObject(
                 "select count(*) from audit_log where action = 'organization.deleted' and org_id = ?",
@@ -84,16 +85,16 @@ class AdminOrganizationApiTest extends AbstractIntegrationTest {
                 .authorities(new SimpleGrantedAuthority("ROLE_platform-admin"));
     }
 
-    private void seedOrgWithMember(UUID orgId, String subject) {
-        jdbc.update("insert into organization (id, kc_org_id, alias, name, status, version, created_at) "
-                        + "values (?, ?, ?, ?, 'ACTIVE', 0, now()) "
-                        + "on conflict (kc_org_id) where deleted_at is null do nothing",
-                UUID.randomUUID(), orgId, "org-" + orgId.toString().substring(0, 13), "Org " + orgId);
+    /** organization.id IS the tenant key now — the test supplies it, nothing mints a provider id. */
+    private void seedOrgWithMember(UUID orgId, UUID personId) {
+        jdbc.update("insert into organization (id, alias, name, status, version, created_at) "
+                        + "values (?, ?, ?, 'ACTIVE', 0, now())",
+                orgId, "org-" + orgId.toString().substring(0, 13), "Org " + orgId);
         UUID roleId = UUID.randomUUID();
         jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
                 + "values (?, ?, 'FLEET', 'Fleet', false, 0, now())", roleId, orgId);
         jdbc.update("insert into role_permission (role_id, permission) values (?, 'ORG_READ')", roleId);
-        jdbc.update("insert into membership (id, org_id, user_subject, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, subject, roleId);
+        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
+                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
     }
 }

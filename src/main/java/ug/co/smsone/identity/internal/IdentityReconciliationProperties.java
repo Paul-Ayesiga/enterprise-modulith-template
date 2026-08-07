@@ -4,7 +4,7 @@ import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * Policy for reconciling {@code app_user} against Keycloak. The {@code enabled} flag itself is read by
+ * Policy for reconciling {@code person} against Keycloak. The {@code enabled} flag itself is read by
  * {@code @ConditionalOnProperty} on {@link IdentityReconciliationJob}.
  *
  * <p>This is the only scheduled job in the system that can REVOKE access, and it decides from a remote
@@ -18,10 +18,11 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * the threshold it disables nothing and logs an error, because being wrong loudly beats being wrong
  * completely.
  *
- * <p>{@code gracePeriod} keeps the job away from accounts young enough to still be mid-provisioning.
- * Provisioning creates the Keycloak account before the local row, so the ordering is already safe, but
- * an interrupted retry can leave a row whose account was never finished — and disabling that races the
- * operator who is fixing it.
+ * <p>{@code gracePeriod} keeps the job away from people young enough to still be mid-provisioning. That
+ * matters more since the ordering inverted: the {@code person} row is now written FIRST and the
+ * Keycloak link LAST, so a partly-finished provision is a person with no link — which this job skips
+ * rather than orphans, but only because the skip is explicit. The grace period is the second line, and
+ * it keeps the job from racing the operator who is retrying the invite.
  */
 @ConfigurationProperties(prefix = "app.identity.reconciliation")
 record IdentityReconciliationProperties(Action action, Duration gracePeriod,

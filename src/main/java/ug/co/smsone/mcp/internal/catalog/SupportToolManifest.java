@@ -5,9 +5,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.mcp.internal.ToolContext;
 import ug.co.smsone.mcp.internal.ToolDefinition;
 import ug.co.smsone.mcp.internal.ToolDefinition.Kind;
 import ug.co.smsone.mcp.internal.ToolManifest;
+import ug.co.smsone.shared.error.ForbiddenException;
 import ug.co.smsone.shared.error.ValidationException;
 import ug.co.smsone.shared.web.ApiSource;
 import ug.co.smsone.support.SupportDesk;
@@ -45,11 +47,12 @@ class SupportToolManifest implements ToolManifest {
                         (context, args) -> desk.get(context.orgId(), id(args))),
 
                 new ToolDefinition("ticket_create", "Open support ticket",
-                        "Open a support ticket for this organization. The opener recorded is this "
-                                + "credential's subject.",
+                        "Open a support ticket for this organization. The opener recorded is the "
+                                + "PERSON behind this call — an API key has none and is refused, "
+                                + "because a ticket exists to be answered.",
                         1, "support", Kind.WRITE, "ticket:write",
                         ToolArgs.schema(openProperties(), "subject"),
-                        (context, args) -> desk.open(context.orgId(), context.subject(),
+                        (context, args) -> desk.open(context.orgId(), requirePerson(context),
                                 ToolArgs.requireString(args, "subject"),
                                 ToolArgs.optionalString(args, "category"),
                                 ToolArgs.optionalString(args, "priority"))),
@@ -69,8 +72,21 @@ class SupportToolManifest implements ToolManifest {
                                         "ticket_id", ToolArgs.string("The ticket id."),
                                         "body", ToolArgs.string("The reply text.")),
                                 "ticket_id", "body"),
-                        (context, args) -> desk.reply(context.orgId(), id(args), context.subject(),
+                        (context, args) -> desk.reply(context.orgId(), id(args), requirePerson(context),
                                 ToolArgs.requireString(args, "body"))));
+    }
+
+    /**
+     * The person opening or replying. {@code opener_person_id} and {@code author_person_id} are NOT
+     * NULL (V36) and {@link SupportDesk} states the rule: an agent acting for nobody leaves the desk
+     * nobody to answer. Refused here so an API-key agent gets a named 403 instead of the port's.
+     */
+    private static UUID requirePerson(ToolContext context) {
+        if (context.personId() == null) {
+            throw new ForbiddenException("Opening or replying to a ticket needs the person behind the call; "
+                    + "an API key acts for nobody, and a ticket exists to be answered.");
+        }
+        return context.personId();
     }
 
     private static UUID id(Map<String, Object> args) {

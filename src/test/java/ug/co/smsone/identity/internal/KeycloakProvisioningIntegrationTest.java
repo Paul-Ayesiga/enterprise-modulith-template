@@ -19,9 +19,9 @@ import org.testcontainers.containers.Network;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.utility.MountableFile;
 import ug.co.smsone.identity.ProvisionRequest;
-import ug.co.smsone.identity.ProvisionedUser;
+import ug.co.smsone.identity.ProvisionedPerson;
 import ug.co.smsone.identity.ProvisioningStatus;
-import ug.co.smsone.identity.UserProvisioning;
+import ug.co.smsone.identity.PersonProvisioning;
 import ug.co.smsone.shared.security.PlatformRole;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
@@ -77,34 +77,37 @@ class KeycloakProvisioningIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Autowired
-    private UserProvisioning provisioning;
+    private PersonProvisioning provisioning;
 
     @Autowired
-    private UserRepository users;
+    private PersonRepository persons;
+
+    @Autowired
+    private PersonResolver resolver;
 
     @Autowired
     private KeycloakUserAdminGateway keycloak;
 
     @Test
-    void provisioningANewUserInvitesThemAndTheEmailReachesTheMailbox() {
+    void provisioningANewPersonInvitesThemAndTheEmailReachesTheMailbox() {
         String email = "invitee-" + UUID.randomUUID() + "@smsone.co.ug";
 
-        ProvisionedUser user = provisioning.provision(new ProvisionRequest(email, "In", "Vitee"));
+        ProvisionedPerson person = provisioning.provision(new ProvisionRequest(email, "In", "Vitee"));
 
-        assertThat(user.alreadyExisted()).isFalse();
-        assertThat(users.findBySubject(user.subject())).get()
-                .extracting(User::getStatus).isEqualTo(ProvisioningStatus.INVITED);
+        assertThat(person.alreadyExisted()).isFalse();
+        assertThat(persons.findById(person.personId())).get()
+                .extracting(Person::getStatus).isEqualTo(ProvisioningStatus.INVITED);
         // The invite is an action e-mail (set-password link), not a stored credential.
-        assertThat(keycloak.hasCredentials(user.subject())).isFalse();
+        assertThat(keycloak.hasCredentials(subjectOf(person))).isFalse();
 
         // The real execute-actions-email send lands in Mailpit (Keycloak -> mailpit:1025 over the network).
         await().atMost(Duration.ofSeconds(20)).untilAsserted(() ->
                 assertThat(mailpitMessages()).contains(email));
 
-        // Re-provisioning finds the account (no second local row, no re-create).
-        ProvisionedUser again = provisioning.provision(new ProvisionRequest(email, "In", "Vitee"));
+        // Re-provisioning finds the LINK (no second person, no re-create) — the link is the marker now.
+        ProvisionedPerson again = provisioning.provision(new ProvisionRequest(email, "In", "Vitee"));
         assertThat(again.alreadyExisted()).isTrue();
-        assertThat(again.subject()).isEqualTo(user.subject());
+        assertThat(again.personId()).isEqualTo(person.personId());
     }
 
     /**
@@ -116,9 +119,9 @@ class KeycloakProvisioningIntegrationTest extends AbstractIntegrationTest {
     void provisioningGrantsTheBaselineRealmRoleAndNoPlatformAuthority() {
         String email = "baseline-" + UUID.randomUUID() + "@smsone.co.ug";
 
-        ProvisionedUser user = provisioning.provision(new ProvisionRequest(email, "Base", "Line"));
+        ProvisionedPerson person = provisioning.provision(new ProvisionRequest(email, "Base", "Line"));
 
-        assertThat(keycloak.realmRoles(user.subject()))
+        assertThat(keycloak.realmRoles(subjectOf(person)))
                 .contains("USER")
                 .noneMatch(PlatformRole::isPlatformRole);
     }
@@ -134,15 +137,24 @@ class KeycloakProvisioningIntegrationTest extends AbstractIntegrationTest {
     @Test
     void realmRolesReportsRolesHeldThroughACompositeNotJustDirectMappings() {
         String email = "composite-" + UUID.randomUUID() + "@smsone.co.ug";
-        ProvisionedUser user = provisioning.provision(new ProvisionRequest(email, "Comp", "Osite"));
+        ProvisionedPerson person = provisioning.provision(new ProvisionRequest(email, "Comp", "Osite"));
         String opsLead = "ops-lead-" + UUID.randomUUID();
 
         createComposite(opsLead, PlatformRole.ADMIN);
-        keycloak.assignRealmRole(user.subject(), opsLead); // the ONLY direct mapping is the wrapper role
+        keycloak.assignRealmRole(subjectOf(person), opsLead); // the ONLY direct mapping is the wrapper role
 
-        assertThat(keycloak.realmRoles(user.subject()))
+        assertThat(keycloak.realmRoles(subjectOf(person)))
                 .contains(opsLead)
                 .anyMatch(PlatformRole::isPlatformRole);
+    }
+
+    /**
+     * The Keycloak subject behind a person. It is no longer part of the port's answer — that returns a
+     * {@code person.id} — so a test that needs to talk to Keycloak about them resolves it back through
+     * the one class allowed to, which is also the assertion that the link was written at all.
+     */
+    private String subjectOf(ProvisionedPerson person) {
+        return resolver.keycloakSubjectOf(person.personId()).orElseThrow();
     }
 
     /**

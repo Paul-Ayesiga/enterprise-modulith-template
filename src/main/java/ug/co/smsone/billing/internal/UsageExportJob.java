@@ -2,7 +2,10 @@ package ug.co.smsone.billing.internal;
 
 import java.sql.Date;
 import java.time.LocalDate;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.slf4j.Logger;
@@ -51,15 +54,17 @@ class UsageExportJob {
                 order by day
                 """, (rs, i) -> new UsageRow(rs.getObject("org_id", UUID.class),
                 rs.getDate("day").toLocalDate(), rs.getLong("requests")));
+        // Resolved once per ORG, not once per (org, day). The ledger is keyed org x day, so an org
+        // with a thirty-day backlog used to make thirty identical billing_account reads and — the
+        // expensive half — thirty identical Kill Bill round trips for one answer. computeIfAbsent
+        // stores only successful resolutions: a remote failure propagates to the per-row catch below
+        // and the next row of the same org retries it, exactly as before.
+        Map<UUID, Optional<UUID>> billableSubscriptions = new HashMap<>();
         int shipped = 0;
         for (UsageRow row : rows) {
             try {
-                UUID subscriptionId = accounts.findByOrgId(row.orgId())
-                        .map(account -> killBill.subscriptions(account.getKbAccountId()))
-                        .flatMap(subs -> subs.stream()
-                                .filter(sub -> "ACTIVE".equalsIgnoreCase(sub.state()))
-                                .findFirst())
-                        .map(sub -> UUID.fromString(sub.subscriptionId()))
+                UUID subscriptionId = billableSubscriptions
+                        .computeIfAbsent(row.orgId(), this::activeSubscriptionOf)
                         .orElse(null);
                 if (subscriptionId == null) {
                     continue; // no billable subscription — leave the row for when there is one
@@ -77,5 +82,15 @@ class UsageExportJob {
         if (shipped > 0) {
             log.info("Exported {} usage day(s) to Kill Bill as unit '{}'", shipped, unitType);
         }
+    }
+
+    /** The org's one billable subscription, or empty when it has no billing account or none ACTIVE. */
+    private Optional<UUID> activeSubscriptionOf(UUID orgId) {
+        return accounts.findByOrgId(orgId)
+                .map(account -> killBill.subscriptions(account.getKbAccountId()))
+                .flatMap(subs -> subs.stream()
+                        .filter(sub -> "ACTIVE".equalsIgnoreCase(sub.state()))
+                        .findFirst())
+                .map(sub -> UUID.fromString(sub.subscriptionId()));
     }
 }

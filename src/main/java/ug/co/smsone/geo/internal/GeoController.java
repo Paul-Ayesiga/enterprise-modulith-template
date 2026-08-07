@@ -54,7 +54,7 @@ class GeoController {
     }
 
     record StampAttributes(String subjectType, String subjectId, double latitude, double longitude,
-            Double accuracyM, Double altitudeM, String source, String capturedBy, Instant capturedAt,
+            Double accuracyM, Double altitudeM, String source, String capturedByPersonId, Instant capturedAt,
             String consentRef, String countryCode, String admin1, String locality, String formattedAddress) {
     }
 
@@ -123,7 +123,8 @@ class GeoController {
         PlaceLabel place = stamp.place();
         return new ResourceObject(stamp.id().toString(), RESOURCE_TYPE, new StampAttributes(
                 stamp.subjectType(), stamp.subjectId(), stamp.latitude(), stamp.longitude(),
-                stamp.accuracyM(), stamp.altitudeM(), stamp.source().name(), stamp.capturedBy(),
+                stamp.accuracyM(), stamp.altitudeM(), stamp.source().name(),
+                stamp.capturedByPersonId() == null ? null : stamp.capturedByPersonId().toString(),
                 stamp.capturedAt(), stamp.consentRef(),
                 place == null ? null : place.countryCode(), place == null ? null : place.admin1(),
                 place == null ? null : place.locality(), place == null ? null : place.formattedAddress()));

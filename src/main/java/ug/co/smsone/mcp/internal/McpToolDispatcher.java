@@ -6,7 +6,6 @@ import io.micrometer.core.instrument.Timer;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.server.McpStatelessServerFeatures;
 import io.modelcontextprotocol.spec.McpSchema;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -171,7 +170,7 @@ class McpToolDispatcher {
                 .increment();
         if (!"ok".equals(outcome)) {
             log.info("MCP tool {} refused ({}) for {} (requestId={})",
-                    tool.name(), outcome, context == null ? "?" : context.subject(),
+                    tool.name(), outcome, context == null ? "?" : context.principalKey(),
                     context == null ? "?" : context.requestId());
         }
         return result;

@@ -59,7 +59,13 @@ class OrgExportService {
 
     private static Map<String, String> buildTables() {
         Map<String, String> tables = new LinkedHashMap<>();
-        tables.put("organization", "kc_org_id");
+        // The tenant row itself, keyed by its own id — organization.id IS the tenant key (V11), and the
+        // org column every table below carries holds that same value.
+        tables.put("organization", "id");
+        // The identifiers other systems know this tenant by. They used to ride along inside the
+        // organization row as kc_org_id; that column became a table (V11), so the bundle follows it
+        // rather than quietly shipping one identifier fewer than it did before.
+        tables.put("external_organization", "organization_id");
         // Child tables without an org column (org_group_member, integration_setting) are reachable
         // through their exported parents; settings VALUES are secret-bearing and stay out regardless.
         for (String table : List.of("membership", "org_role", "org_group",

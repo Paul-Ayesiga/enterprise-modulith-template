@@ -45,7 +45,7 @@ class ExchangeJobCompletedFlowTest extends AbstractIntegrationTest {
     @Test
     void aTerminalJobNotifiesItsRequesterInApp() {
         UUID orgId = UUID.randomUUID();
-        String requester = "completion-" + UUID.randomUUID();
+        UUID requester = UUID.randomUUID();
         String key = "exch/o/" + orgId + "/test/source.csv";
         storage.objects.put(key, "key,value\nk1,v1\nk2,v2\n".getBytes(StandardCharsets.UTF_8));
         UUID jobId = store.submit(orgId, requester, ExchangeJob.IMPORT,

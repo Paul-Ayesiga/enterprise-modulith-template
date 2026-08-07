@@ -7,13 +7,13 @@
 create table org_retention_override
 (
     id             uuid        not null primary key,
-    org_id         uuid        not null,          -- soft ref (no cross-module FK)
+    org_id         uuid        not null,          -- organization.id; soft ref (no cross-module FK)
     scope          varchar(40) not null,          -- RetentionScope: WEBHOOK_DELIVERY | EXCHANGE_JOB
     retention_days int         not null,
     version        bigint      not null,
     created_at     timestamptz not null,
-    created_by     varchar(100),
+    created_by     uuid        ,
     updated_at     timestamptz,
-    updated_by     varchar(100),
+    updated_by     uuid        ,
     constraint uq_org_retention_override unique (org_id, scope)
 );

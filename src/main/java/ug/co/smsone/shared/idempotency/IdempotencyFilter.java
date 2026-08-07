@@ -90,7 +90,7 @@ public class IdempotencyFilter extends OncePerRequestFilter {
                 // So an anonymous request is not rejected, it is simply not idempotent: the header is
                 // ignored and the request runs normally. Rejecting would itself add a non-202 outcome
                 // to an endpoint whose contract is that every caller gets the same answer.
-                && currentUserProvider.currentSubject().isPresent());
+                && currentUserProvider.currentPrincipalKey().isPresent());
     }
 
     @Override
@@ -188,18 +188,22 @@ public class IdempotencyFilter extends OncePerRequestFilter {
     }
 
     /**
-     * The key's owner. Must be the immutable SUBJECT, never the display name: usernames are mutable and
-     * reassignable in Keycloak, so keying on one would let a recycled username inherit — and replay —
-     * the previous holder's stored responses, which is a cross-account disclosure, not just bad
-     * bookkeeping.
+     * The key's owner — an immutable, namespaced principal key ({@code person:<uuid>} or
+     * {@code key:<uuid>}), never a display name: usernames are mutable and reassignable at the identity
+     * provider, so keying on one would let a recycled username inherit — and replay — the previous
+     * holder's stored responses, which is a cross-account disclosure, not just bad bookkeeping.
      *
-     * <p>The {@code anonymous} fallback is now unreachable and kept only as a defensive default:
-     * {@code shouldNotFilter} skips any request without a subject. It did NOT used to — running after
-     * the security chain stops unauthenticated callers only on routes the security chain rejects, and
-     * {@code permitAll} routes sail straight through. See the reasoning there.
+     * <p>A machine caller now gets scoping too, and per KEY rather than per tenant. It previously got
+     * none: two API keys in one org would have shared a namespace, which lets the narrower key replay a
+     * stored response to a request its own permissions could never have produced.
+     *
+     * <p>The {@code anonymous} fallback is unreachable and kept only as a defensive default:
+     * {@code shouldNotFilter} skips any request without a principal key. It did NOT used to — running
+     * after the security chain stops unauthenticated callers only on routes the security chain rejects,
+     * and {@code permitAll} routes sail straight through. See the reasoning there.
      */
     private String currentPrincipal() {
-        return currentUserProvider.currentSubject().orElse("anonymous");
+        return currentUserProvider.currentPrincipalKey().orElse("anonymous");
     }
 
     private static String sha256(String prefix, byte[] body) {

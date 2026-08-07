@@ -36,6 +36,13 @@ spring:
     hibernate:
       ddl-auto: validate
     open-in-view: false
+    properties:
+      hibernate:
+        # Turns the EAGER @ElementCollection secondary selects from 1-per-row into 1-per-50-rows.
+        # Role.permissions, OrgGroup.members, Plan.entitlements and Integration.settings are all EAGER
+        # deliberately (open-in-view is false, so LAZY would throw outside the service boundary), which
+        # made a 100-row page of roles cost 101 queries. Batching is the remedy that keeps the EAGER.
+        default_batch_fetch_size: 50
   data:
     redis:
       host: ${VALKEY_HOST:localhost}
@@ -140,14 +147,15 @@ app:
     max-ttl: ${IMPERSONATION_MAX_TTL:PT30M}
   organization:
     dev-bootstrap:
-      # Off by default. When on, seeds a Keycloak org + local projection with an OWNER at startup so
-      # org RBAC is exercisable out of the box (docker/dev). Idempotent; needs Keycloak reachable.
+      # Off by default. When on, seeds a tenant + its Keycloak organization with an OWNER at startup
+      # so org RBAC is exercisable out of the box (docker/dev). Idempotent; needs Keycloak reachable.
       enabled: ${ORG_DEV_BOOTSTRAP_ENABLED:false}
       alias: ${ORG_DEV_BOOTSTRAP_ALIAS:acme}
       name: ${ORG_DEV_BOOTSTRAP_NAME:Acme}
       owner-email: ${ORG_DEV_BOOTSTRAP_OWNER_EMAIL:ayesigapo@gmail.com}
-      owner-first-name: ${ORG_DEV_BOOTSTRAP_OWNER_FIRST:Paul}
-      owner-last-name: ${ORG_DEV_BOOTSTRAP_OWNER_LAST:Ayesiga}
+      # given/family, not first/last — name ORDER is cultural. Both optional: a mononym is a name.
+      owner-given-name: ${ORG_DEV_BOOTSTRAP_OWNER_GIVEN:Paul}
+      owner-family-name: ${ORG_DEV_BOOTSTRAP_OWNER_FAMILY:Ayesiga}
   http:
     # How many of OUR proxies stand in front, each appending one X-Forwarded-For entry: 0 = hit
     # directly (trust only the socket peer — the safe dev default), 1 = behind the gateway,

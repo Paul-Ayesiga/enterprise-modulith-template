@@ -10,8 +10,8 @@ import java.util.UUID;
 import ug.co.smsone.shared.persistence.BaseEntity;
 
 /**
- * One authorized episode of an operator ({@code actorSubject}) acting as another user
- * ({@code targetSubject}), with the reason they gave, the mode they were granted, and the deadline the
+ * One authorized episode of an operator ({@code actorPersonId}) acting as another person
+ * ({@code targetPersonId}), with the reason they gave, the mode they were granted, and the deadline the
  * server set.
  *
  * <p><b>Extends {@link BaseEntity} — deliberately not {@code SoftDeletableEntity}, and not an
@@ -22,6 +22,11 @@ import ug.co.smsone.shared.persistence.BaseEntity;
  * because nothing outside this module reacts to a session; the durable trail is the {@code audit_log}
  * row written beside it, not a domain event.
  *
+ * <p>Both person ids are SOFT refs with <b>no foreign key</b>, even though {@code person} lives in this
+ * same module and the constraint would be legal. That is the deliberate exception: these columns must
+ * survive the account being deleted, which is precisely when the trail matters most, and an FK would
+ * hand the deletion path a vote on whether the oversight record may continue to exist.
+ *
  * <p>A session is live only while it is un-ended AND before {@code expiresAt} — {@link #isActive}
  * decides that on read, which is why expiry needs no sweep job.
  */
@@ -29,11 +34,22 @@ import ug.co.smsone.shared.persistence.BaseEntity;
 @Table(name = "impersonation_session")
 class ImpersonationSession extends BaseEntity {
 
-    @Column(name = "actor_subject", nullable = false, updatable = false, length = 64)
-    private String actorSubject;
+    @Column(name = "actor_person_id", nullable = false, updatable = false)
+    private UUID actorPersonId;
 
-    @Column(name = "target_subject", nullable = false, updatable = false, length = 64)
-    private String targetSubject;
+    @Column(name = "target_person_id", nullable = false, updatable = false)
+    private UUID targetPersonId;
+
+    /**
+     * A frozen label for the target — their e-mail, or their formatted name, whichever we had. The only
+     * denormalised copy in the schema, and it earns that: the value of this trail is realised AFTER the
+     * account is gone, and "who was 6f3a…?" is not a question an auditor should answer by excavation.
+     * Copied when the session opens and never refreshed. It is a label, not a lookup; the ids above are
+     * the truth. Nullable, because a person with no address and no name must still be supportable and
+     * refusing to open an oversight session over a missing label would be the wrong failure.
+     */
+    @Column(name = "target_display", updatable = false, length = 320)
+    private String targetDisplay;
 
     @Column(name = "org_id", updatable = false)
     private UUID orgId; // null for a session not scoped to one tenant
@@ -54,18 +70,19 @@ class ImpersonationSession extends BaseEntity {
     @Column(name = "ended_at")
     private Instant endedAt;
 
-    @Column(name = "ended_by", length = 64)
-    private String endedBy;
+    @Column(name = "ended_by_person_id")
+    private UUID endedByPersonId;
 
     protected ImpersonationSession() {
         // JPA
     }
 
-    static ImpersonationSession open(String actorSubject, String targetSubject, UUID orgId, String reason,
-            ImpersonationMode mode, Instant startedAt, Instant expiresAt) {
+    static ImpersonationSession open(UUID actorPersonId, UUID targetPersonId, String targetDisplay, UUID orgId,
+            String reason, ImpersonationMode mode, Instant startedAt, Instant expiresAt) {
         ImpersonationSession session = new ImpersonationSession();
-        session.actorSubject = actorSubject;
-        session.targetSubject = targetSubject;
+        session.actorPersonId = actorPersonId;
+        session.targetPersonId = targetPersonId;
+        session.targetDisplay = targetDisplay;
         session.orgId = orgId;
         session.reason = reason;
         session.mode = mode;
@@ -76,18 +93,18 @@ class ImpersonationSession extends BaseEntity {
 
     /**
      * Closes the session. Idempotent and one-way: a second call keeps the FIRST ending, because
-     * {@code endedAt}/{@code endedBy} answer "when did the reach stop, and who stopped it" and a
+     * {@code endedAt}/{@code endedByPersonId} answer "when did the reach stop, and who stopped it" and a
      * re-write would move that answer. The caller uses the return value to decide whether anything
      * actually happened worth auditing.
      *
      * @return true when this call is what ended it
      */
-    boolean end(String bySubject, Instant when) {
+    boolean end(UUID byPersonId, Instant when) {
         if (endedAt != null) {
             return false;
         }
         this.endedAt = when;
-        this.endedBy = bySubject;
+        this.endedByPersonId = byPersonId;
         return true;
     }
 
@@ -96,12 +113,16 @@ class ImpersonationSession extends BaseEntity {
         return endedAt == null && expiresAt.isAfter(now);
     }
 
-    String getActorSubject() {
-        return actorSubject;
+    UUID getActorPersonId() {
+        return actorPersonId;
     }
 
-    String getTargetSubject() {
-        return targetSubject;
+    UUID getTargetPersonId() {
+        return targetPersonId;
+    }
+
+    String getTargetDisplay() {
+        return targetDisplay;
     }
 
     UUID getOrgId() {
@@ -128,7 +149,7 @@ class ImpersonationSession extends BaseEntity {
         return endedAt;
     }
 
-    String getEndedBy() {
-        return endedBy;
+    UUID getEndedByPersonId() {
+        return endedByPersonId;
     }
 }
