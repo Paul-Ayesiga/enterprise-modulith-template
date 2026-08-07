@@ -1,6 +1,7 @@
 package ug.co.smsone.access.internal;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -10,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.jayway.jsonpath.JsonPath;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
@@ -30,6 +32,12 @@ import ug.co.smsone.testsupport.EdgeSeed;
  * device, and a single-factor session under require-MFA each get a policy-named 403, while a
  * compliant call passes. Trust is the org's grant, and a policy denial names its rule so it never
  * reads as RBAC.
+ *
+ * <p>The last two tests are the gate for V53's cut of
+ * {@code user_device_trust_device_id_fkey ON DELETE CASCADE}: revoking a device must leave no live
+ * grant behind, in any organization. They go here rather than in a class of their own because every
+ * ingredient — registration, revocation, the org's grant, and the filter that reads it — is already
+ * set up in this file, and the guarantee is only meaningful end to end.
  */
 @AutoConfigureMockMvc
 class AccessPolicyTest extends AbstractIntegrationTest {
@@ -230,6 +238,114 @@ class AccessPolicyTest extends AbstractIntegrationTest {
                 Integer.class, device, orgA))
                 .as("org A's own grant is untouched — this is isolation, not revocation")
                 .isEqualTo(1);
+    }
+
+    /**
+     * <b>The gate for V53.</b> Until V53, {@code user_device_trust.device_id -> user_device(id)} was
+     * {@code ON DELETE CASCADE} and {@code isTrusted} joined {@code user_device} for
+     * {@code deleted_at is null} — between them, a revoked device could not go on satisfying
+     * {@code require_trusted_device}. Both are gone: the FK crossed the tenant boundary (the device is
+     * PLATFORM-tier, the grant is TENANT-tier, ADR 0010 §2) and the join went with it, so the
+     * enforcement query can no longer see that the device is dead. What replaces them is the
+     * {@code DeviceRevoked} event, and this is the test that proves it did.
+     *
+     * <p><b>The re-registration half is the part that makes this worse than "trusted a bit too long".</b>
+     * {@code uq_user_device_person_fingerprint_live} is PARTIAL on {@code deleted_at is null}, so
+     * registering the revoked fingerprint again mints a BRAND NEW device row with a new id — asserted
+     * below, because the whole argument rests on it. The denormalized lookup keys on
+     * {@code (org_id, person_id, fingerprint)}, so a surviving grant from the dead row would vouch for
+     * a device this organization has never seen. That is not a slower version of the old bug, it is a
+     * new one, and it is why the grant has to be DELETED rather than merely out-argued by a predicate.
+     */
+    @Test
+    void revokingADeviceLeavesNoGrantAndTheSameFingerprintReRegisteredIsNotTrusted() throws Exception {
+        UUID orgId = seedOrg();
+        Member member = seedMember(orgId, "revoker", "ORG_READ", "ORG_UPDATE", "SUBSCRIPTION_READ");
+        UUID device = registerDevice(member, "revoked-fp");
+        bless(orgId, member, device);
+        setPolicy(orgId, member, "{\"requireTrustedDevice\":true}");
+
+        // The blessed device passes — the baseline this test is about to take away.
+        mockMvc.perform(get("/api/v1/orgs/{orgId}/subscription", orgId)
+                        .header("X-Device-Id", "revoked-fp").with(member.token()))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(delete("/api/v1/me/devices/{id}", device).with(member.token()))
+                .andExpect(status().isNoContent());
+
+        // Revocation is a SOFT delete, so the device row is still there — the grant must not be.
+        // Awaited because the deletion rides an @ApplicationModuleListener: async after commit, and
+        // outbox-retried on failure. The window is the documented cost of cutting the cascade.
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
+                assertThat(grants(device)).as("no live grant may outlive the device it was made over").isZero());
+
+        UUID reRegistered = registerDevice(member, "revoked-fp");
+        assertThat(reRegistered)
+                .as("the partial unique index is live-only, so the same fingerprint mints a NEW row")
+                .isNotEqualTo(device);
+
+        mockMvc.perform(get("/api/v1/orgs/{orgId}/subscription", orgId)
+                        .header("X-Device-Id", "revoked-fp").with(member.token()))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errors[0].detail",
+                        org.hamcrest.Matchers.containsString("trusted-device")));
+    }
+
+    /**
+     * Revocation reaches EVERY organization that blessed the device, not the one the revoking request
+     * happens to be scoped to. That is why {@code DeviceRevoked} carries no {@code orgId} while ten of
+     * this codebase's other events lead with one: a device belongs to a human, and the person revoking
+     * it is not acting for any tenant. Cutting only the caller's own org would leave the grant that
+     * matters most — the one made by an org the person is no longer paying attention to.
+     */
+    @Test
+    void revocationClearsTheGrantOfEveryOrgThatBlessedTheDevice() throws Exception {
+        UUID orgA = seedOrg();
+        Member inA = seedMember(orgA, "dual-revoke", "ORG_READ", "ORG_UPDATE");
+        UUID orgB = seedOrg();
+        joinOrg(orgB, inA.personId(), "ORG_READ", "ORG_UPDATE");
+        Member inB = new Member(inA.personId(), inA.subject(), member(orgB, inA.subject()));
+
+        UUID device = registerDevice(inA, "dual-revoke-fp");
+        bless(orgA, inA, device);
+        bless(orgB, inB, device);
+        assertThat(grants(device)).as("both organizations blessed the same device").isEqualTo(2);
+
+        mockMvc.perform(delete("/api/v1/me/devices/{id}", device).with(inA.token()))
+                .andExpect(status().isNoContent());
+
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
+                assertThat(grants(device)).as("both grants, not just the revoking org's").isZero());
+    }
+
+    /** How many organizations currently trust this device, counted straight out of the table. */
+    private int grants(UUID deviceId) {
+        Integer count = jdbc.queryForObject(
+                "select count(*) from user_device_trust where device_id = ?", Integer.class, deviceId);
+        return count == null ? 0 : count;
+    }
+
+    /** This org grants trust over one of its members' devices. */
+    private void bless(UUID orgId, Member member, UUID deviceId) throws Exception {
+        mockMvc.perform(post("/api/v1/orgs/{orgId}/security-policy/trusted-devices", orgId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"personId\":\"" + member.personId() + "\",\"deviceId\":\"" + deviceId
+                                + "\",\"trusted\":true}")
+                        .with(member.token()))
+                .andExpect(status().isOk());
+    }
+
+    /** Adds an EXISTING person to another org — the multi-org shape {@link #seedMember} cannot make. */
+    private void joinOrg(UUID orgId, UUID personId, String... permissions) {
+        UUID roleId = UUID.randomUUID();
+        jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
+                + "values (?, ?, ?, 'PolRole', false, 0, now())", roleId, orgId,
+                "POL_" + roleId.toString().substring(0, 8).toUpperCase());
+        for (String permission : permissions) {
+            jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleId, permission);
+        }
+        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
+                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
     }
 
     /** Registers a device for this member and returns its id. */

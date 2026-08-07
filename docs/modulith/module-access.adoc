@@ -10,4 +10,6 @@
 * `u.c.s.s.web.ForwardedClientIp` (in Shared Kernel)
 * `u.c.s.s.security.OrgMembership` (in Shared Kernel)
 * `u.c.s.s.audit.AuditLog` (in Shared Kernel)
+|Events listened to
+|* `u.c.s.a.DeviceRevoked` (async) 
 |===

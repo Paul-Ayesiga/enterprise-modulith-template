@@ -27,6 +27,11 @@ import ug.co.smsone.shared.persistence.SoftDeleteProperties;
  * starves every table after it — and a foreign-key violation on {@code org_role} IS permanent, because
  * the offending row does not go away on its own. Erasure would quietly stop platform-wide while the
  * only symptom is one stack trace at 04:00. Loud AND complete, not loud instead of complete.
+ *
+ * <p>Two other things run in the same pass and are not retention at all: {@link #sweepSearchResidue}
+ * un-indexes rows whose source is gone, and {@link #CASCADES} deletes children a cut foreign key no
+ * longer removes. Both are reconcilers — they compare two tables and fix the disagreement — and both
+ * exist because a projection or a soft ref with no delete path leaves residue forever.
  */
 @Component
 class SoftDeletePurgeJob {
@@ -46,6 +51,13 @@ class SoftDeletePurgeJob {
      * than forgotten: both FKs are {@code on delete cascade}, so Postgres removes them with their parent
      * row. Adding explicit steps would be dead code.
      *
+     * <p>{@code user_device_trust} (V51) was a third such table until V53, and is not one now: its
+     * cascade crossed the tenant boundary and was cut, so Postgres no longer removes it with anything.
+     * It is NOT in this list either — it has no {@code deleted_at} to age out, so there is nothing here
+     * to purge it BY. It lives in {@link #CASCADES}, which hangs off {@code user_device} and reconciles
+     * on the parent's liveness rather than on the child's age. That distinction is why the list below
+     * can stay exactly what its test says it is: every soft-deletable entity, and only those.
+     *
      * <p>{@code external_identity}, {@code person_contact} and {@code external_organization} DO have real
      * FKs to their parents (V10/V11, intra-module and therefore permitted) and all three cascade — yet
      * they are listed, ahead of those parents, and both facts matter. Listed, because each can be
@@ -58,6 +70,13 @@ class SoftDeletePurgeJob {
      * {@code membership} and {@code webhook_subscription} reference each other by {@code organization.id}
      * and {@code person.id} held as plain columns, never as foreign keys — a cross-module reference in
      * this codebase is a soft ref, so the database imposes no order on them.
+     *
+     * <p>V53 moved {@code membership}, {@code org_role} and {@code org_group} into that group: their
+     * {@code org_id} keys to {@code organization} were real, and cutting them means purging an
+     * organization no longer FAILS while its rows are still there — it succeeds and leaves them
+     * orphaned. Their position ahead of {@code organization} is kept anyway, because children-before-
+     * parents is what this order states and an orphan is worth avoiding even when nothing enforces it.
+     * The real answer arrives with the tenant schema, which is dropped whole (ADR 0010 §5).
      *
      * <p>Package-private so the integration test can check this list against every
      * {@code SoftDeletableEntity} in the metamodel: a table added to the mapping but not to this list
@@ -88,6 +107,45 @@ class SoftDeletePurgeJob {
             "maintenance_window",
             "ticket",
             "geo_stamp");
+
+    /** One reconciliation statement plus the table it empties — the child's name is what gets reported. */
+    private record Cascade(String childTable, String sql) {
+    }
+
+    /**
+     * Child rows a foreign key used to remove and no longer does, because the FK crossed the TENANT
+     * boundary and ADR 0010 §6 cut it. Keyed by the {@link #PURGE_ORDER} table whose rows they hang
+     * off, so a cascade can never be declared for a table this job does not actually visit —
+     * {@code SoftDeletePurgeJobIntegrationTest.everyCascadeHangsOffATablePurgeOrderVisits} asserts it.
+     *
+     * <p><b>This is a RECONCILER, not a delete-my-children step, and the difference is the whole
+     * point.</b> The anti-join asks whether the parent is LIVE, not whether it still exists. That makes
+     * it reach a case no cascade ever could: a device that was soft-deleted — revoked — but whose
+     * hard delete is thirty days away. {@code user_device_trust} has no {@code deleted_at} of its own
+     * and, since V53, no join to the device's, so a grant whose device was revoked by a path that
+     * published no {@code DeviceRevoked} event would otherwise keep satisfying
+     * {@code require_trusted_device} until retention caught up. There is such a path today:
+     * {@code ComplianceService}'s erasure soft-deletes {@code user_device} rows by raw SQL. This is what
+     * closes it, and it closes the next one too — ADR 0010 §8 Q2's rule is that no projection ships
+     * without its reconciler.
+     *
+     * <p>Order-independent by construction: it keys on liveness, so running it before or after the
+     * parent's own batches gives the same answer. It runs after, so a single pass sees the final state.
+     *
+     * <p>Table names here are constants in this class, never input — the same rule the interpolated
+     * {@link #DELETE_BATCH} follows, and the reason these statements are literals rather than built.
+     */
+    private static final Map<String, Cascade> CASCADES = Map.of(
+            "user_device", new Cascade("user_device_trust", """
+                    delete from user_device_trust t
+                    where not exists (
+                        select 1 from user_device d where d.id = t.device_id and d.deleted_at is null)
+                    """));
+
+    /** Package-private for the test that checks every cascade hangs off a table {@link #PURGE_ORDER} visits. */
+    static java.util.Set<String> cascadeParents() {
+        return CASCADES.keySet();
+    }
 
     /**
      * Bounded batch: the inner select is what the {@code idx_<table>_deleted} partial indexes (V17) were
@@ -205,6 +263,7 @@ class SoftDeletePurgeJob {
                 if (rows > 0) {
                     purged.put(table, rows);
                 }
+                total += sweepCascade(table, purged);
             } catch (RuntimeException ex) {
                 // Isolated per table: the tables are independent, so one poisoned FK must not cost
                 // every table after it its retention. Kept and rethrown below so the run still fails.
@@ -275,6 +334,34 @@ class SoftDeletePurgeJob {
             log.error("Search-residue sweep for '{}' failed (continuing — next run retries)", entityType, ex);
             return 0;
         }
+    }
+
+    /**
+     * The {@link Cascade} declared for this table, if any. Reported under the CHILD table's name so the
+     * run's log line says which rows actually went — "user_device: 12" and "user_device_trust: 40" are
+     * two different facts, and collapsing them would hide a reconciler that is quietly removing grants
+     * an event listener should have removed hours earlier.
+     *
+     * <p>Unbatched, unlike {@link #purgeTable}: the anti-join is bounded by the CHILD table (grants
+     * outstanding, thousands) rather than by a retention backlog, and a batched delete would need an
+     * ordering column this table does not have. If a cascade child ever grows large enough to hold row
+     * locks against live traffic, batch it on the child's own key — do not reach for a {@code limit}
+     * with no {@code order by}, which makes successive batches non-deterministic.
+     *
+     * <p>Not caught here: a failure propagates to the caller's per-table handler, which logs it, keeps
+     * going, and still fails the run. Same contract as the table's own batches.
+     */
+    private int sweepCascade(String table, Map<String, Integer> purged) {
+        Cascade cascade = CASCADES.get(table);
+        if (cascade == null) {
+            return 0;
+        }
+        int rows = jdbc.update(cascade.sql());
+        ug.co.smsone.shared.metrics.PurgeMetrics.purged(meters, "soft-delete-purge", cascade.childTable(), rows);
+        if (rows > 0) {
+            purged.put(cascade.childTable(), rows);
+        }
+        return rows;
     }
 
     private int purgeTable(String table, Instant cutoff) {

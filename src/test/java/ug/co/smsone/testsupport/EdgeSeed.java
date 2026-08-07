@@ -1,12 +1,16 @@
 package ug.co.smsone.testsupport;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
  * Seeds the rows the EDGE resolves a request through: a {@code person} plus the
  * {@code external_identity} link that turns a token's subject into one, and the
- * {@code external_organization} link that turns its {@code organization} claim into a tenant.
+ * {@code external_organization} link that turns its {@code organization} claim into a tenant —
+ * and, since {@link #multiOrgPerson}, the {@code membership} rows that put one human in several
+ * of those tenants at once.
  *
  * <p>It exists because the resolution moved. A test used to authenticate by handing {@code jwt()} any
  * subject string, and everything downstream keyed on that string; now {@code CurrentUserProvider} turns
@@ -97,12 +101,100 @@ public final class EdgeSeed {
         jdbc.update("""
                 insert into organization (id, alias, name, status, version, created_at)
                 values (?, ?, ?, 'ACTIVE', 0, now())
-                """, organizationId, "local-" + organizationId.toString().substring(0, 8), "Org " + alias);
+                """, organizationId, localAlias(organizationId), "Org " + alias);
         jdbc.update("""
                 insert into external_organization (id, organization_id, provider, issuer, external_org_id,
                                                    external_alias, linked_at, version, created_at)
                 values (?, ?, 'KEYCLOAK', ?, ?, ?, now(), 0, now())
                 """, UUID.randomUUID(), organizationId, ISSUER, externalOrgId, alias);
         return organizationId;
+    }
+
+    /**
+     * The organization's OWN slug, minted from its id. One place because two callers write and read it
+     * — {@link #organization} inserts it and {@link OrgSeat} hands it to assertions — and because the
+     * value must stay visibly different from the {@code external_alias} seeded beside it: an assertion
+     * that passes with either one would not notice the day a lookup starts matching a token's alias
+     * against {@code organization.alias}, which is the tenant crossing V11's header warns about.
+     */
+    private static String localAlias(UUID organizationId) {
+        return "local-" + organizationId.toString().substring(0, 8);
+    }
+
+    /**
+     * An ACTIVE membership for an existing person in an existing organization, under a role minted
+     * here carrying {@code roleCode}. Returns the {@code org_role.id}.
+     *
+     * <p>It returns the ROLE id rather than the membership id because that is the key callers actually
+     * need: {@code org_role} is per-organization by construction, so two organizations never share a
+     * role row even when they use the same code, and every batched role lookup on this path
+     * ({@code RoleRepository.codeMapByIds}) is keyed by id for exactly that reason.
+     *
+     * <p>Raw SQL for the reason the class javadoc gives, one module further along: {@code org_role} and
+     * {@code membership} belong to {@code organization.internal}. The columns are V11's.
+     */
+    public static UUID member(JdbcTemplate jdbc, UUID organizationId, UUID personId, String roleCode) {
+        UUID roleId = UUID.randomUUID();
+        jdbc.update("""
+                insert into org_role (id, org_id, code, name, system_role, version, created_at)
+                values (?, ?, ?, ?, false, 0, now())
+                """, roleId, organizationId, roleCode, roleCode);
+        jdbc.update("""
+                insert into membership (id, org_id, person_id, role_id, status, version, created_at)
+                values (?, ?, ?, ?, 'ACTIVE', 0, now())
+                """, UUID.randomUUID(), organizationId, personId, roleId);
+        return roleId;
+    }
+
+    /** One organization a person belongs to, and the role they hold THERE and nowhere else. */
+    public record OrgSeat(UUID organizationId, String alias, String roleCode, UUID roleId) {
+    }
+
+    /**
+     * A person seated in SEVERAL organizations — one seat per {@code roleCodes} entry, in that order —
+     * together with the token subject that resolves to them.
+     *
+     * <p><b>Why this fixture exists.</b> {@code uq_membership_org_person_live} is
+     * {@code UNIQUE(org_id, person_id) WHERE deleted_at IS NULL} — per organization, deliberately — so
+     * one human in three organizations is legal and always has been. It was also, until this method,
+     * hypothetical: the seeded database holds 193,940 people and every one of them belongs to exactly
+     * one org, so every code path that fans out over "the organizations the CALLER belongs to" had a
+     * green suite proving the one-row case. A person-first read that silently returns the first row, or
+     * pays a query per organization, or renders org A's row with org B's role, passes that suite.
+     *
+     * <p>It is also the case the tenancy split is hardest on (ADR 0010 §2.2): {@code person} is the one
+     * identity that cannot live in any tenant's schema precisely because it can belong to many, and
+     * what travels on extraction is a projection per organization, not the human. Anything asserted
+     * here is asserted about the RESULT — never about how many queries produced it — because the
+     * batching that produces it today (ADR 0010 §5 item 4) stops being possible once the role rows sit
+     * in separate schemas, and a test written against the query count would then fail for the one
+     * reason that is not a regression.
+     *
+     * <p>Pass DISTINCT role codes unless the test is specifically about repeated ones: identical codes
+     * make "the right role in each org" unfalsifiable.
+     */
+    public record MultiOrgPerson(UUID personId, String subject, List<OrgSeat> seats) {
+    }
+
+    /** @see MultiOrgPerson */
+    public static MultiOrgPerson multiOrgPerson(JdbcTemplate jdbc, String... roleCodes) {
+        if (roleCodes.length < 2) {
+            // A one-seat "multi-org" person is the fixture quietly becoming the thing it was written to
+            // replace, and every assertion above it would still pass.
+            throw new IllegalArgumentException("a multi-org person needs at least two role codes, got "
+                    + roleCodes.length);
+        }
+        String subject = "kc-multi-" + UUID.randomUUID();
+        UUID personId = person(jdbc, subject);
+        List<OrgSeat> seats = new ArrayList<>(roleCodes.length);
+        for (String roleCode : roleCodes) {
+            // A fresh organization per seat, each with its own provider link: sharing one would make the
+            // fixture depend on which org a token happens to name, and the point here is the person.
+            UUID organizationId = organization(jdbc, "kc-org-" + UUID.randomUUID(),
+                    "ext-" + UUID.randomUUID());
+            seats.add(new OrgSeat(organizationId, localAlias(organizationId), roleCode,
+                    member(jdbc, organizationId, personId, roleCode)));
+        }
+        return new MultiOrgPerson(personId, subject, List.copyOf(seats));
     }
 }

@@ -49,9 +49,21 @@ class SoftDeletePurgeJobIntegrationTest extends AbstractIntegrationTest {
     private final List<Seeded> seeded = new ArrayList<>();
 
     /**
-     * The tenant the probe rows hang off, and a REAL {@code organization} row rather than a loose uuid:
-     * {@code org_role.org_id} and {@code membership.org_id} are true foreign keys to it. Seeded live, so
-     * the purge never treats it as a candidate; tracked first, so the reverse unwind drops it last.
+     * Trust grants are keyed on {@code (device_id, org_id)} and have no {@code id}, so {@link #track}
+     * cannot hold them — and since V53 cut {@code user_device_trust_device_id_fkey} nothing removes
+     * them with their device either, which is precisely what this class now tests.
+     */
+    private final List<UUID> seededTrustDevices = new ArrayList<>();
+
+    /**
+     * The tenant the probe rows hang off, and still a REAL {@code organization} row rather than a loose
+     * uuid — though no longer because it has to be. {@code org_role.org_id} and {@code membership.org_id}
+     * were foreign keys to it until V53 cut them for crossing the tenancy boundary (ADR 0010 §6), so
+     * these probes would now insert happily against any uuid. It stays real deliberately: this class
+     * exercises {@code heldGuard}, whose {@code legal_hold} anti-joins compare against exactly this
+     * column, and a probe hanging off nothing would pass those guards for a reason the test never
+     * intended. Seeded live, so the purge never treats it as a candidate; tracked first, so the reverse
+     * unwind drops it last.
      */
     private UUID orgId;
 
@@ -77,6 +89,9 @@ class SoftDeletePurgeJobIntegrationTest extends AbstractIntegrationTest {
 
     @AfterEach
     void removeSurvivors() {
+        for (UUID deviceId : seededTrustDevices) {
+            jdbc.update("delete from user_device_trust where device_id = ?", deviceId);
+        }
         for (int i = seeded.size() - 1; i >= 0; i--) {
             Seeded row = seeded.get(i);
             jdbc.update("delete from " + row.table() + " where id = ?", row.id());
@@ -156,10 +171,62 @@ class SoftDeletePurgeJobIntegrationTest extends AbstractIntegrationTest {
     }
 
     /**
+     * A revoked device must leave no live trust grant — the guarantee
+     * {@code user_device_trust_device_id_fkey}'s {@code ON DELETE CASCADE} used to make, and that V53
+     * had to cut because the FK crossed the tenant boundary (ADR 0010 §6). Its replacement is three
+     * mechanisms; this test covers the third, the RECONCILER, and it is deliberately driven the way the
+     * mechanism it backstops cannot see.
+     *
+     * <p><b>The device here is soft-deleted by raw SQL and publishes no event</b>, because that is a
+     * real path: {@code ComplianceService}'s erasure updates {@code user_device.deleted_at} directly.
+     * The event listener never hears about it, so if the reconciler were missing, the grant would go on
+     * satisfying {@code require_trusted_device} — and since V53 the enforcement query no longer joins
+     * {@code user_device}, there is nothing left to notice that the device is dead.
+     *
+     * <p>And it keys on LIVENESS, not on existence: the revoked device is still well inside the P30D
+     * retention window, so its own row is untouched by this run. A cascade that only fired on the hard
+     * delete would leave the grant standing for thirty more days. The live device's grant in the same
+     * run is the control — a sweep that took both would be a worse bug than the one it fixes.
+     */
+    @Test
+    void aRevokedDeviceLosesItsTrustGrantsWhileItsOwnRowIsStillInsideRetention() {
+        UUID revoked = insertDevice(FRESH);   // revoked seconds ago: nothing here purges the row itself
+        UUID live = insertDevice(null);
+        grantTrust(revoked);
+        grantTrust(live);
+
+        runPurge();
+
+        assertThat(exists("user_device", revoked)).as("still inside retention — the row is the trail").isTrue();
+        assertThat(trustGrants(revoked)).as("the grant a revoked device must not keep").isZero();
+        assertThat(trustGrants(live)).as("the control: a live device keeps the trust its org granted").isEqualTo(1);
+    }
+
+    /**
+     * {@link SoftDeletePurgeJob#CASCADES} is a second hand-written list, and it fails the same way the
+     * first one does — silently. A cascade declared against a table the loop never visits simply never
+     * runs, and the rows it was meant to reconcile stay forever with nothing to say so. Pinning its keys
+     * to {@link SoftDeletePurgeJob#PURGE_ORDER} is what makes "declared" and "executed" the same word.
+     */
+    @Test
+    void everyCascadeHangsOffATablePurgeOrderVisits() {
+        assertThat(SoftDeletePurgeJob.cascadeParents())
+                .isNotEmpty()
+                .isSubsetOf(SoftDeletePurgeJob.PURGE_ORDER);
+    }
+
+    /**
      * The purge order is a hand-written list, so the failure mode is omission: mapping an eighth
      * {@code SoftDeletableEntity} without adding its table here leaks deleted rows forever, and does it
      * silently — nothing errors, the rows simply never expire. Deriving the expected set from the
      * metamodel turns that into a build failure on the commit that introduces it.
+     *
+     * <p>It stays an EXACT match, both directions, and V53 is the reason to say so out loud: the
+     * obvious way to make the job clear {@code user_device_trust} would have been to append it here,
+     * and that would have broken this assertion for a true reason — the table is not soft-deletable, it
+     * has no {@code deleted_at}, and {@code DELETE_BATCH} would have nothing to age it out by. It hangs
+     * off {@code user_device} in {@code CASCADES} instead, which is why this list can go on meaning
+     * exactly "every soft-deletable entity, and only those".
      */
     @Test
     void purgeOrderCoversEverySoftDeletableEntity() {
@@ -287,6 +354,35 @@ class SoftDeletePurgeJobIntegrationTest extends AbstractIntegrationTest {
                 values (?, ?, false, 0, now(), ?)
                 """, id, "purge.probe." + suffix(id), timestamp(deletedAt));
         return track("feature_flag", id);
+    }
+
+    /** A person's device. {@code person_id} is a soft ref (V31), so no person row is needed behind it. */
+    private UUID insertDevice(Instant deletedAt) {
+        UUID id = UUID.randomUUID();
+        jdbc.update("""
+                insert into user_device (id, person_id, name, kind, fingerprint, version, created_at, deleted_at)
+                values (?, ?, 'Purge probe', 'BROWSER', ?, 0, now(), ?)
+                """, id, UUID.randomUUID(), "purge-fp-" + suffix(id), timestamp(deletedAt));
+        return track("user_device", id);
+    }
+
+    /**
+     * The tenant's grant over that device. {@code person_id} and {@code fingerprint} are the V53
+     * denormalization, copied from the device row — read back rather than passed in, so the probe row
+     * carries the same values the application would have written.
+     */
+    private void grantTrust(UUID deviceId) {
+        jdbc.update("""
+                insert into user_device_trust (device_id, org_id, granted_at, person_id, fingerprint)
+                select ?, ?, now(), d.person_id, d.fingerprint from user_device d where d.id = ?
+                """, deviceId, orgId, deviceId);
+        seededTrustDevices.add(deviceId);
+    }
+
+    private int trustGrants(UUID deviceId) {
+        Integer count = jdbc.queryForObject(
+                "select count(*) from user_device_trust where device_id = ?", Integer.class, deviceId);
+        return count == null ? 0 : count;
     }
 
     private UUID track(String table, UUID id) {

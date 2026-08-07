@@ -29,6 +29,7 @@ These fail the build or the review. They are not preferences.
 | A soft-deletable entity declares its **own** `@SQLDelete` (with `and version = ?` **and** `version = version + 1`) and `@SQLRestriction` | `ArchitectureTests.softDeletableEntitiesDeclareTheirOwnHibernateAnnotations` | ArchUnit failure |
 | `SoftDeletePurgeJob.PURGE_ORDER` covers every soft-deletable entity, children before parents | `SoftDeletePurgeJobIntegrationTest.purgeOrderCoversEverySoftDeletableEntity` | test failure |
 | No cross-module foreign keys — cross-module links are soft refs (`membership.person_id uuid`, `created_by`/`updated_by` uuid) | migration review | review rejection |
+| No cross-**tier** foreign keys — no FK connects a PLATFORM-tier table to a TENANT-tier table, **even when both are in the same module** (a table's tier is its **`Tier:`** line in `docs/DATA_MODEL.md`; ADR 0010 §2) | `TenantSchemaSelfContainmentTest` — the cross-tier FK assertion (it reads the tiers out of `docs/DATA_MODEL.md` and fails on any FK whose two ends disagree) | test failure naming the constraint |
 | No JIT provisioning: a valid JWT is **not** access | `identity.internal.ProvisioningGateFilter` | review rejection |
 | Platform roles and org permissions are **disjoint** axes; no role bypasses a permission check | `ApiPermissionEvaluator` (no role branch), `PlatformRoleHierarchyTest`, `OrgRbacApiTest` | review rejection |
 | Impersonation is the only bridge between the axes, and it carries **no** authority — the swapped principal's authority collection is empty | `ImpersonatedAuthenticationToken`, `ImpersonationReachTest.supportReachesTenantDataThroughASessionAndTheAdminSurfaceOnlyOutsideOne` | test failure |
@@ -40,6 +41,29 @@ These fail the build or the review. They are not preferences.
 | `audit_log` is append-only; it is never soft-deletable and never mutated. `impersonation_session` is the same rule one step sharper: end-only, never deleted | `AuditEntry extends BaseEntity`, `V17__soft_delete.sql` header; `ImpersonationSession extends BaseEntity`, `V18__impersonation_session.sql` header | review rejection |
 | No stack trace, framework message, or internal detail reaches the wire | `GlobalExceptionHandler`, `server.error.include-*: never` | contract test failure |
 | No Lombok. Records + constructor injection | ADR 0001 | review rejection |
+
+**Why the FK rule is two clauses and not one.** They are two different partitions of the same tables,
+and neither one contains the other — so a rule stated on either axis alone is structurally blind to
+the other's crossings. That is not theoretical: the schema has 17 foreign keys, and all **five** that
+ADR 0010 has to cut *pass* the module clause — they never leave their module.
+`org_subscription.plan_id → plan` is entirely inside `subscription/`;
+`user_device_trust.device_id → user_device` entirely inside `access/`. The module clause was not
+failing to catch them — it was never looking.
+The tier clause is the axis that sees them, and it needs the tier written down as data (the `Tier:`
+lines in `docs/DATA_MODEL.md`) because — unlike the module — you cannot read a table's tier off the
+package it lives in, or even off whether it has an `org_id` column: `ticket_message`,
+`org_group_member` and `exchange_job_error` hold tenant data and have no `org_id` of their own.
+Ownership decides, and ownership is a judgement someone has to record.
+
+**Do not merge them into "no foreign keys".** The FKs worth keeping are exactly the ones that satisfy
+both clauses — `role_permission.role_id → org_role ON DELETE CASCADE` is intra-module *and*
+intra-tenant, and that cascade is load-bearing. And the two failures are repaired differently: a
+module crossing blocks the eventual physical split of the jar (ADR 0001) and a soft ref plus a port
+is the whole fix; a tier crossing blocks `pg_dump -n <schema>` from producing a restorable tenant, and
+the fix is a soft ref **plus whatever the constraint was quietly doing for you** — cutting the
+device-trust cascade cost a denormalization, an event-driven cleanup and a
+`SoftDeletePurgeJob.PURGE_ORDER` case, and forgetting any of the three leaves revoked devices trusted
+forever. Delete either clause and you re-admit a class of FK the surviving one never inspected.
 
 Build commands:
 
@@ -300,14 +324,21 @@ step by step; copy that reasoning, not just the shape.
 
 ### 4.5 Migrations
 
-- `src/main/resources/db/migration/V<n>__<snake_name>.sql`. **V51 is taken (per-org device trust);
-  the next free number is V52.** Never edit an applied migration; never renumber.
+- `src/main/resources/db/migration/V<n>__<snake_name>.sql`. **V52 is taken (index corrections) and
+  V53 is claimed by ADR 0010 Phase 0 — the cross-tier FK cut, the `user_device_trust` denormalization
+  and the missing `org_id` indexes — so the next free number is V54.** Never edit an applied
+  migration; never renumber. One global counter, and it is this line: claim a number by writing the
+  file *and* moving this line in the same change-set. Two people deriving "next free" from `ls` in the
+  same hour is how one number gets written twice.
 - `ddl-auto: validate`. The schema is the migration's job, always.
 - Head the file with a comment explaining the *decision*, not the statements — `V17__soft_delete.sql`
   and `V11__organization_rbac.sql` are the reference voice.
 - Drop constraints **unqualified** (no `if exists`) when this project created them: a drifted name
   must fail loudly at deploy time rather than silently leave the old constraint in place.
-- No FK across module boundaries. Within a module, FKs are fine (`role_permission.role_id`).
+- No FK across module boundaries, and none across the tenant boundary either — §1's two FK clauses.
+  Within a module *and* within one tier, FKs are fine (`role_permission.role_id`); an intra-module FK
+  whose two tables sit in different tiers (`org_subscription.plan_id → plan`) is the case the module
+  rule alone does not see, so check both tables' `Tier:` line in `docs/DATA_MODEL.md` before adding one.
 - New index? Say in a comment which query it serves. Partial indexes where the predicate is
   selective — `where deleted_at is not null` for retention scans (live rows are the majority and
   would be dead weight on every write).
@@ -705,7 +736,10 @@ Run top to bottom on every change.
 - [ ] Every unique constraint on a soft-deletable table is a partial index `where deleted_at is null`.
 - [ ] New soft-deletable table is added to `SoftDeletePurgeJob.PURGE_ORDER`, children before parents.
 - [ ] Native SQL touching a soft-deletable table filters `deleted_at` itself — `@SQLRestriction` does not apply.
-- [ ] Migration is the next free `V<n>__`, never edits an applied one, no cross-module FK, headed by a why-comment.
+- [ ] Migration is the next free `V<n>__` (and §4.5's counter line moved with it), never edits an
+      applied one, no cross-module FK **and no cross-tier FK** (§1), headed by a why-comment.
+- [ ] New table carries a `Tier:` line in `docs/DATA_MODEL.md` — platform or tenant, decided by who
+      OWNS the rows, not by whether the table happens to have an `org_id` column.
 - [ ] `@Transactional` is on a service method reached **through the proxy** (no self-invocation).
 - [ ] Remote/Keycloak calls are outside the local transaction, and each step is idempotent.
 

@@ -93,7 +93,10 @@ class SecurityPolicyService {
             // Re-granting is idempotent: the primary key is (device_id, org_id), so a second grant
             // would otherwise be a constraint violation rather than the no-op a caller expects.
             if (!deviceTrust.existsByIdDeviceIdAndIdOrgId(device.getId(), orgId)) {
-                deviceTrust.save(UserDeviceTrust.of(device.getId(), orgId,
+                // The whole device, not its id: the grant carries a copy of person_id and fingerprint
+                // (V53) so the enforcement check never has to join back, and the copy may only ever be
+                // taken from the row it describes.
+                deviceTrust.save(UserDeviceTrust.of(device, orgId,
                         currentUserProvider.currentPersonId().orElse(null),
                         clock.instant()));
             }

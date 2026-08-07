@@ -123,16 +123,40 @@ class ProfileApiTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.data[0].attributes.provider").value("github"));
     }
 
+    /**
+     * The multi-org caller the whole design leans on and the seed never contained — see
+     * {@link EdgeSeed#multiOrgPerson}, which explains why 193,940 seeded people proved nothing here.
+     *
+     * <p>Every assertion is about the RESULT, deliberately, and none about how the result was produced.
+     * {@code OrgMembershipsController} batches the role lookup by role id so this caller — the one
+     * whose rows span organizations by definition — does not pay a query per organization, and ADR 0010
+     * §5 item 4 records that the batch stops being possible once role rows live in per-tenant schemas.
+     * When that day comes the endpoint may legitimately go to 1+N queries; what it may never do is come
+     * back with a missing organization, a null role, or org A wearing org B's role — and those are the
+     * three things asserted below.
+     */
     @Test
     void aDualMemberSeesBothOrganizationsWithTheirRoleInEach() throws Exception {
-        UUID personId = seedPerson();
-        UUID orgA = seedOrgWithMember(personId, "alpha-" + UUID.randomUUID().toString().substring(0, 8), "ADMIN");
-        seedOrgWithMember(personId, "beta-" + UUID.randomUUID().toString().substring(0, 8), "MEMBER");
+        // DISTINCT role codes: two orgs both answering "ADMIN" cannot tell a correct per-org mapping
+        // from an implementation that renders the first role code it found for every row.
+        var dual = EdgeSeed.multiOrgPerson(jdbc, "ADMIN", "SUPPORT");
 
-        mockMvc.perform(get("/api/v1/me/organizations").with(tokenFor(personId)))
+        var response = mockMvc.perform(get("/api/v1/me/organizations").with(tokenFor(dual.subject())))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()").value(2))
-                .andExpect(jsonPath("$.data[?(@.id=='" + orgA + "')].attributes.roleCode").value("ADMIN"));
+                // Exactly two, not "at least": this runs against the container every other test class
+                // seeds its organizations into, so a listing that ever stopped scoping to the caller
+                // would come back with hundreds.
+                .andExpect(jsonPath("$.data.length()").value(2));
+        for (EdgeSeed.OrgSeat seat : dual.seats()) {
+            // Selected by id rather than by index — findByPersonIdAndStatus has no ORDER BY, so which
+            // organization lands first is Postgres's choice and not a contract.
+            String row = "$.data[?(@.id=='" + seat.organizationId() + "')]";
+            response.andExpect(jsonPath(row + ".type").value("my-organization"))
+                    .andExpect(jsonPath(row + ".attributes.roleCode").value(seat.roleCode()))
+                    // The org's OWN slug, not the external_alias the token's claim resolves through.
+                    .andExpect(jsonPath(row + ".attributes.alias").value(seat.alias()))
+                    .andExpect(jsonPath(row + ".attributes.status").value("ACTIVE"));
+        }
     }
 
     @Test
@@ -164,18 +188,12 @@ class ProfileApiTest extends AbstractIntegrationTest {
      * — every {@code /me} endpoint then answers 403 and {@code /me/organizations} an empty list.
      */
     private org.springframework.test.web.servlet.request.RequestPostProcessor tokenFor(UUID personId) {
-        String subject = jdbc.queryForObject(
-                "select external_subject from external_identity where person_id = ?", String.class, personId);
-        return jwt().jwt(t -> t.subject(subject).claim("iss", EdgeSeed.ISSUER));
+        return tokenFor(jdbc.queryForObject(
+                "select external_subject from external_identity where person_id = ?", String.class, personId));
     }
 
-    private UUID seedOrgWithMember(UUID personId, String alias, String roleCode) {
-        UUID orgId = EdgeSeed.organization(jdbc, "kc-org-" + UUID.randomUUID(), alias);
-        UUID roleId = UUID.randomUUID();
-        jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
-                + "values (?, ?, ?, ?, false, 0, now())", roleId, orgId, roleCode, roleCode);
-        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
-        return orgId;
+    /** The same, for a caller who already holds the subject — one fewer round trip and one fewer join. */
+    private org.springframework.test.web.servlet.request.RequestPostProcessor tokenFor(String subject) {
+        return jwt().jwt(t -> t.subject(subject).claim("iss", EdgeSeed.ISSUER));
     }
 }

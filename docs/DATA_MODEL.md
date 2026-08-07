@@ -3,7 +3,7 @@
 Every table in the schema, its columns and its relationships. Generated from
 `src/main/resources/db/migration`, which is the source of truth.
 
-**54 tables**, grouped by owning module, alphabetical within each group. (`flyway_schema_history` is
+**55 tables**, grouped by owning module, alphabetical within each group. (`flyway_schema_history` is
 created by Flyway itself, is not declared in any migration, and is not counted here.)
 
 ## Column conventions
@@ -18,8 +18,34 @@ These columns mean the same thing everywhere they appear and are not re-explaine
   superseded or trimmed by retention.
 - **Unique among live rows** — a partial unique index over `deleted_at is null`, so a soft-deleted
   row releases its key for re-use.
-- **Soft ref, no FK** — the value points at a row in another module's table and the database does not
-  enforce it. Cross-module foreign keys are forbidden; intra-module ones are real.
+- **Soft ref, no FK** — the value points at a row the database does not make it point at. Two rules
+  produce these: no foreign key crosses a **module** boundary, and since V53 none crosses a **tenancy
+  tier** boundary either (below). A foreign key is real only when both ends are in the same module
+  *and* the same tier.
+
+## Tenancy tier
+
+Every table carries a **Tier**, from ADR 0010 §2: which schema owns it once the platform's global data
+and each tenant's own data live apart. It is an ownership decision, not a statement about today's
+`search_path` — nothing is routed yet, and everything is still in one schema.
+
+- **platform** — one copy for the whole installation. It is never per-tenant, and a tenant lifted onto
+  its own database gets a projection or a snapshot of it, never the rows themselves.
+- **tenant** — the tenant's own data. A tenant that cannot answer a question from these tables alone is
+  not extractable, which is the property the tier exists to protect.
+- **platform + tenant** — the same DDL in both schemas, one table with two homes. The tier line says
+  what decides which home a given row belongs to; for five of the seven it is `org_id` nullability.
+
+Ownership decides the tier, not column presence: `ticket_message`, `org_group_member` and
+`role_permission` have no `org_id` of their own and are still the tenant's, reached through a parent
+that has one. A clause follows the tier only where ownership is not what the column list suggests —
+and on every `platform + tenant` table, where it states the deciding rule.
+
+**No foreign key may connect two tiers.** A tier boundary is a future schema boundary and then a future
+database boundary, and a foreign key cannot span either. `TenancyTierBoundaryTest` enforces both halves
+of this: every table in `information_schema` has a tier recorded here, and no FK in `pg_constraint`
+joins two tables of different tiers. A table added in a later migration fails the build until it has a
+tier — which is the whole point, because a boundary rots by accretion, not by decision.
 
 ---
 
@@ -27,6 +53,8 @@ These columns mean the same thing everywhere they appear and are not re-explaine
 
 ### org_security_policy
 One organization's access-tightening rules; every field only ever narrows what the platform default allows.
+
+**Tier:** tenant
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -46,7 +74,10 @@ One organization's access-tightening rules; every field only ever narrows what t
 Relationships: `org_id` → `organization.id` (soft ref, no FK); `created_by` / `updated_by` → `person.id` (soft ref, no FK).
 
 ### user_device
-One device a person signs in from, and whether it is trusted.
+One device a person signs in from. Since V51 trust is not a property of the device: it is a grant one
+organization makes over it, in `user_device_trust`.
+
+**Tier:** platform
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -56,7 +87,6 @@ One device a person signs in from, and whether it is trusted.
 | kind | varchar(10) | no | BROWSER, MOBILE or CLI |
 | fingerprint | varchar(100) | no | Opaque client-supplied device identifier; unique per person among live rows |
 | push_token | varchar(300) | yes | Address for a future push-notification channel |
-| trusted | boolean | no | Whether this device satisfies an org's trusted-device requirement |
 | last_seen_at | timestamptz | yes | Last request seen from this device |
 | version | bigint | no | Optimistic-locking counter |
 | created_at | timestamptz | no | When the device was registered |
@@ -67,12 +97,32 @@ One device a person signs in from, and whether it is trusted.
 
 Relationships: `person_id` → `person.id` (soft ref, no FK); `created_by` / `updated_by` → `person.id` (soft ref, no FK).
 
+### user_device_trust
+One organization's standing decision to trust one device. The absence of a row is the absence of trust, so revoking is a real delete and an org that never granted it never trusted it.
+
+**Tier:** tenant
+
+| Column | Type | Null | Description |
+|---|---|---|---|
+| device_id | uuid | no | The device trusted; half the primary key |
+| org_id | uuid | no | The tenant granting the trust; half the primary key. A grant never reaches beyond the org that made it — before V51 it did, and that was a cross-tenant bypass |
+| granted_at | timestamptz | no | When the grant was made |
+| granted_by_person_id | uuid | yes | Who granted it; NULL = a system grant |
+| person_id | uuid | no | Copy of `user_device.person_id`, so the enforcement lookup touches this table alone. Never updated — a grant whose device changed hands is deleted, not corrected |
+| fingerprint | varchar(100) | no | Copy of `user_device.fingerprint` — the device identifier the request presents. Never updated, for the same reason |
+
+Relationships: `device_id` → `user_device.id`, `org_id` → `organization.id`, `granted_by_person_id` → `person.id` — all soft refs, no FK. Primary key (`device_id`, `org_id`).
+
+The copied columns replace a join, and the join was a security control: V53 cut the FK because `user_device` is platform-tier and this table is the tenant's, and the `d.deleted_at is null` the join carried is what stopped a revoked device's surviving grant from satisfying the policy. Nothing in this table can see that column any more, so **the existence of a row must itself mean the device is live** — maintained by an event-driven delete on revocation plus the `SoftDeletePurgeJob` reconciler behind it. A stale row here does not merely go stale: re-registering a revoked fingerprint mints a new device row, so the grant would vouch for a device the org has never seen.
+
 ---
 
 # apikeys
 
 ### api_key
 One machine credential: the public prefix, the hash of the secret, and the permissions it may exercise.
+
+**Tier:** platform — `findByPrefix` resolves a key against a global uniqueness index before any tenant is known: the key *is* how the tenant is discovered, and a platform key has no org at all.
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -102,6 +152,8 @@ Relationships: `org_id` → `organization.id` (soft ref, no FK); `owner_person_i
 ### audit_log
 One recorded state change: what happened, who is accountable, and the before/after values. Append-only.
 
+**Tier:** platform + tenant — routed on `org_id`: a non-NULL row is the tenant's compliance record and travels with it; a NULL row (impersonation lifecycle, platform key mint/revoke, flag changes) is the platform's and stays, because a support investigation cannot fan out.
+
 | Column | Type | Null | Description |
 |---|---|---|---|
 | id | uuid | no | Primary key |
@@ -129,6 +181,8 @@ Relationships: `org_id` → `organization.id`, `actor_person_id` / `on_behalf_of
 ### api_usage_daily
 One organization's request count for one day, and whether it has been billed.
 
+**Tier:** platform — the export job's cross-tenant `order by day` is load-bearing fairness: orgs a deadline-cut run never reached hold the oldest days and sort first tomorrow, which per-tenant tables cannot express.
+
 | Column | Type | Null | Description |
 |---|---|---|---|
 | org_id | uuid | no | The tenant the requests are attributed to; half the primary key |
@@ -140,6 +194,8 @@ Relationships: `org_id` → `organization.id` (soft ref, no FK). Primary key (`o
 
 ### billing_account
 The link between one organization and the account carrying its money in the external billing system.
+
+**Tier:** tenant
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -162,6 +218,8 @@ Relationships: `org_id` → `organization.id` (soft ref, no FK); `created_by` / 
 ### consent_record
 One consent decision a person made about one purpose, at one moment. Append-only — a withdrawal is a new row.
 
+**Tier:** platform
+
 | Column | Type | Null | Description |
 |---|---|---|---|
 | id | uuid | no | Primary key |
@@ -175,6 +233,8 @@ Relationships: `person_id` → `person.id` (soft ref, no FK).
 
 ### erasure_request
 One request to erase a person's data, and its outcome.
+
+**Tier:** platform
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -190,6 +250,8 @@ Relationships: `person_id` and `requested_by_person_id` → `person.id` (soft re
 
 ### legal_hold
 A standing instruction that one person's or one organization's data must not be hard-deleted. Released, never deleted.
+
+**Tier:** platform — there must be exactly ONE set of holds. A per-tenant copy the purge job cannot see is a hold that silently stops holding, which is the failure this table exists to prevent.
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -211,6 +273,8 @@ Relationships: `person_id`, `placed_by_person_id`, `released_by_person_id` → `
 
 ### document
 The business record of one stored file — who owns it, what it is called, and where its bytes live.
+
+**Tier:** platform + tenant — routed on `org_id`: non-NULL is the org's document and travels with it; NULL means a *personal* document, which belongs to a human and must not.
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -237,6 +301,8 @@ Relationships: `org_id` → `organization.id`; `owner_person_id`, `created_by`, 
 
 ### exchange_job
 One import or export run: what was asked for, how far it got, and where its files are.
+
+**Tier:** platform + tenant — routed on `org_id`, except V25 set the column NOT NULL ("a null here today is a bug, not a feature"), so every row is tenant-tier until a real platform-job design earns the relaxation back.
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -266,6 +332,8 @@ Relationships: `org_id` → `organization.id`; `requester_person_id` → `person
 ### exchange_job_error
 One source row that failed, and why. Durable so a crash loses no error.
 
+**Tier:** platform + tenant — no `org_id` of its own; it follows its parent job through the FK, so it lands wherever that job lands.
+
 | Column | Type | Null | Description |
 |---|---|---|---|
 | job_id | uuid | no | The job that produced the error; half the primary key |
@@ -276,6 +344,8 @@ Relationships: `job_id` → `exchange_job.id` (real FK, cascade delete). Primary
 
 ### exchange_schedule
 A recurring export: a handler, a cron expression, and the person it runs as.
+
+**Tier:** tenant
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -304,6 +374,8 @@ Relationships: `org_id` → `organization.id`; `requester_person_id`, `created_b
 ### geo_capture_policy
 The per-organization, per-record-type switch deciding whether a location may, must, or must not be captured.
 
+**Tier:** tenant
+
 | Column | Type | Null | Description |
 |---|---|---|---|
 | id | uuid | no | Primary key |
@@ -325,6 +397,8 @@ Relationships: `org_id` → `organization.id` (soft ref, no FK); `created_by` / 
 
 ### geo_stamp
 A position attached to some other record at a moment in time.
+
+**Tier:** tenant
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -362,6 +436,8 @@ Relationships: `org_id` → `organization.id`; `captured_by_person_id`, `created
 ### external_identity
 One login a person holds at one external provider — the only place in the schema storing an identifier minted elsewhere.
 
+**Tier:** platform
+
 | Column | Type | Null | Description |
 |---|---|---|---|
 | id | uuid | no | Primary key |
@@ -383,6 +459,8 @@ Relationships: `person_id` → `person.id` (**real FK**, cascade delete — same
 
 ### impersonation_session
 The standing record of one operator acting inside someone else's account. Ends, never deletes.
+
+**Tier:** platform — an opaque session id is resolved at `@Order(-2)`, before any tenant is known; the org it names is the scope, not the owner.
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -407,6 +485,8 @@ Relationships: `actor_person_id`, `target_person_id`, `ended_by_person_id`, `cre
 
 ### person
 The canonical identity of a human on this platform — whether they are allowed in, and what they are called.
+
+**Tier:** platform
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -434,6 +514,8 @@ Relationships: referenced by `external_identity.person_id` and `person_contact.p
 ### person_contact
 One address the platform can reach a person at, and whether that address has been proven.
 
+**Tier:** platform
+
 | Column | Type | Null | Description |
 |---|---|---|---|
 | id | uuid | no | Primary key |
@@ -459,6 +541,8 @@ Relationships: `person_id` → `person.id` (**real FK**, cascade delete — same
 ### integration
 Which external provider serves a given capability for a given organization.
 
+**Tier:** platform + tenant — routed on `org_id`: non-NULL is the org's own provider choice; NULL is the platform default used when an org has no override.
+
 | Column | Type | Null | Description |
 |---|---|---|---|
 | id | uuid | no | Primary key |
@@ -478,6 +562,8 @@ Relationships: `org_id` → `organization.id` (soft ref, no FK); `created_by` / 
 ### integration_setting
 One configuration value for one integration.
 
+**Tier:** platform + tenant — no `org_id` of its own; it follows its parent integration through the FK.
+
 | Column | Type | Null | Description |
 |---|---|---|---|
 | integration_id | uuid | no | The integration configured; half the primary key |
@@ -493,6 +579,8 @@ Relationships: `integration_id` → `integration.id` (**real FK**, cascade delet
 
 ### translation
 One translated message for one locale.
+
+**Tier:** platform
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -515,6 +603,8 @@ Relationships: `created_by` / `updated_by` → `person.id` (soft ref, no FK).
 
 ### maintenance_window
 A scheduled period during which the platform announces, or enforces, reduced availability.
+
+**Tier:** platform + tenant — routed on `org_id`: NULL is a platform-wide window every request reads; non-NULL is the tenant's own. Both are read on the same request, so the platform half is the one to cache.
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -540,6 +630,8 @@ Relationships: `org_id` → `organization.id` (soft ref, no FK); `created_by` / 
 ### in_app_notification
 One message addressed to a person inside this platform's own UI.
 
+**Tier:** platform
+
 | Column | Type | Null | Description |
 |---|---|---|---|
 | id | uuid | no | Primary key |
@@ -557,6 +649,8 @@ Relationships: `person_id`, `created_by`, `updated_by` → `person.id` (soft ref
 
 ### notification_delivery
 One outbound message on the delivery queue: where it goes, and how far the attempt has got.
+
+**Tier:** platform — pure transport claimed by a cluster-wide sweep on a 1 s poll; per-tenant queues make an empty discovery pass cost more than the poll interval.
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -584,6 +678,8 @@ Relationships: `org_id` → `organization.id` (soft ref, no FK); `recipient` →
 ### external_organization
 One identifier an external system knows an organization by.
 
+**Tier:** platform
+
 | Column | Type | Null | Description |
 |---|---|---|---|
 | id | uuid | no | Primary key |
@@ -605,6 +701,8 @@ Relationships: `organization_id` → `organization.id` (**real FK**, cascade del
 ### membership
 One person's place in one organization, under one role.
 
+**Tier:** tenant
+
 | Column | Type | Null | Description |
 |---|---|---|---|
 | id | uuid | no | Primary key |
@@ -619,10 +717,12 @@ One person's place in one organization, under one role.
 | updated_by | uuid | yes | Who last changed it |
 | deleted_at | timestamptz | yes | Soft delete; a person may hold one live plus many removed rows per org, which is the joining history |
 
-Relationships: `org_id` → `organization.id` and `role_id` → `org_role.id` (**real FKs** — same module); `person_id`, `created_by`, `updated_by` → `person.id` (soft ref, no FK — identity is another module). Unique among live rows: (`org_id`, `person_id`).
+Relationships: `role_id` → `org_role.id` (**real FK** — same module, same tier); `org_id` → `organization.id` (soft ref, no FK — V53 cut it, because `organization` is platform-tier and this row is the tenant's); `person_id`, `created_by`, `updated_by` → `person.id` (soft ref, no FK — identity is another module). Unique among live rows: (`org_id`, `person_id`).
 
 ### org_group
 A named group inside an organization that confers its role on every member, in addition to each member's own role.
+
+**Tier:** tenant
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -637,10 +737,12 @@ A named group inside an organization that confers its role on every member, in a
 | updated_by | uuid | yes | Who last changed it |
 | deleted_at | timestamptz | yes | Soft delete |
 
-Relationships: `org_id` → `organization.id` and `role_id` → `org_role.id` (**real FKs** — same module); `created_by` / `updated_by` → `person.id` (soft ref, no FK). Referenced by `org_group_member.group_id` (real FK, cascade).
+Relationships: `role_id` → `org_role.id` (**real FK** — same module, same tier); `org_id` → `organization.id` (soft ref, no FK — cut by V53, same reason as `membership`); `created_by` / `updated_by` → `person.id` (soft ref, no FK). Referenced by `org_group_member.group_id` (real FK, cascade).
 
 ### org_group_member
 One person's place in one group.
+
+**Tier:** tenant — no `org_id` of its own; it follows its group.
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -651,6 +753,8 @@ Relationships: `group_id` → `org_group.id` (**real FK**, cascade delete); `per
 
 ### org_role
 A named bundle of permissions inside one organization.
+
+**Tier:** tenant
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -667,10 +771,12 @@ A named bundle of permissions inside one organization.
 | updated_by | uuid | yes | Who last changed it |
 | deleted_at | timestamptz | yes | Soft delete; frees the code for re-use in that org |
 
-Relationships: `org_id` → `organization.id` (**real FK** — same module); `created_by` / `updated_by` → `person.id` (soft ref, no FK). Referenced by `role_permission.role_id` (real FK, cascade), `membership.role_id` and `org_group.role_id` (real FKs).
+Relationships: `org_id` → `organization.id` (soft ref, no FK — cut by V53, same reason as `membership`); `created_by` / `updated_by` → `person.id` (soft ref, no FK). Referenced by `role_permission.role_id` (real FK, cascade), `membership.role_id` and `org_group.role_id` (real FKs) — all three tenant-tier, so they travel with the role.
 
 ### organization
 A tenant. Its `id` is the tenant key every other module stores.
+
+**Tier:** platform — the routing registry: the token's org claim resolves here *before* the tenant is known, so it is deliberately not mirrored into tenant schemas where a copy could drift from the authority.
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -685,10 +791,12 @@ A tenant. Its `id` is the tenant key every other module stores.
 | updated_by | uuid | yes | Who last changed it |
 | deleted_at | timestamptz | yes | Soft delete; the alias stays occupied until the row is purged |
 
-Relationships: referenced by `external_organization.organization_id` (real FK, cascade), `org_role.org_id`, `membership.org_id` and `org_group.org_id` (real FKs). Every `org_id` outside this module is a soft ref with no FK.
+Relationships: referenced by `external_organization.organization_id` (**real FK**, cascade — the only one left, and the only referrer that is platform-tier too). Every other `org_id` in the schema is a soft ref with no FK: V53 cut the last three real ones (`membership`, `org_role`, `org_group`), because a tenant-tier row cannot hold a foreign key into a platform-tier table it may one day not share a database with.
 
 ### role_permission
 One permission granted by one role.
+
+**Tier:** tenant — no `org_id` of its own, but it cascades from `org_role`, every row of which has one. It is a tenant's own grants, not platform reference data.
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -703,6 +811,8 @@ Relationships: `role_id` → `org_role.id` (**real FK**, cascade delete). Primar
 
 ### payment
 One payment collection attempted through an external gateway.
+
+**Tier:** tenant
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -736,6 +846,8 @@ Relationships: `org_id` → `organization.id` (soft ref, no FK). Carries no pers
 ### person_preference
 One small key/value setting belonging to one person.
 
+**Tier:** platform
+
 | Column | Type | Null | Description |
 |---|---|---|---|
 | person_id | uuid | no | The person the preference belongs to; half the primary key |
@@ -747,6 +859,8 @@ Relationships: `person_id` → `person.id` (soft ref, no FK — profile is a sep
 
 ### person_profile
 A person's presentation settings: what they look like and are shown as in the UI.
+
+**Tier:** platform
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -772,6 +886,8 @@ Relationships: `person_id`, `created_by`, `updated_by` → `person.id` (soft ref
 ### org_retention_override
 One organization's own retention period for one class of log, replacing the platform default.
 
+**Tier:** tenant
+
 | Column | Type | Null | Description |
 |---|---|---|---|
 | id | uuid | no | Primary key |
@@ -793,6 +909,8 @@ Relationships: `org_id` → `organization.id` (soft ref, no FK); `created_by` / 
 ### search_document
 One searchable projection of a record owned by some other module.
 
+**Tier:** platform — derived data: an extraction rebuilds the index rather than copying it. Person rows are indexed with no org at all, and the uniqueness key has no org column.
+
 | Column | Type | Null | Description |
 |---|---|---|---|
 | id | uuid | no | Primary key |
@@ -813,6 +931,8 @@ Relationships: `org_id` → `organization.id` (soft ref, no FK); (`entity_type`,
 ### feature_flag
 One named switch, plus its percentage rollout.
 
+**Tier:** platform
+
 | Column | Type | Null | Description |
 |---|---|---|---|
 | id | uuid | no | Primary key |
@@ -832,6 +952,8 @@ Relationships: `created_by` / `updated_by` → `person.id` (soft ref, no FK). Re
 ### feature_flag_org_override
 A hard per-organization answer for one flag, beating both the global switch and the percentage rollout.
 
+**Tier:** tenant
+
 | Column | Type | Null | Description |
 |---|---|---|---|
 | id | uuid | no | Primary key |
@@ -844,6 +966,8 @@ Relationships: `flag_key` → `feature_flag.flag_key` and `org_id` → `organiza
 
 ### setting
 One system-wide configuration value.
+
+**Tier:** platform
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -867,6 +991,8 @@ Relationships: `created_by` / `updated_by` → `person.id` (soft ref, no FK).
 ### event_inbox
 The mark that one listener has already handled one message, so a redelivery is skipped.
 
+**Tier:** platform
+
 | Column | Type | Null | Description |
 |---|---|---|---|
 | listener_id | varchar(200) | no | The listener that handled it; half the primary key |
@@ -877,6 +1003,8 @@ Relationships: none. Primary key (`listener_id`, `message_id`).
 
 ### event_publication
 One domain event queued for one listener, and whether that listener has completed it.
+
+**Tier:** platform
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -895,6 +1023,8 @@ Relationships: none. Owned by the Spring Modulith event registry.
 ### idempotency_key
 One claimed HTTP idempotency key and the response it replays, scoped to the caller that used it.
 
+**Tier:** platform
+
 | Column | Type | Null | Description |
 |---|---|---|---|
 | principal | varchar(200) | no | The caller the key is scoped to, so one caller's key never replays to another; half the primary key. Holds `person.id`, or a sentinel for unauthenticated calls — the one identity-bearing column deliberately not typed as a person id |
@@ -909,6 +1039,8 @@ Relationships: `principal` may hold a `person.id` (soft ref, no FK). Primary key
 
 ### shedlock
 The lock one scheduled task holds, so only one instance runs it.
+
+**Tier:** platform
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -925,6 +1057,8 @@ Relationships: none. Owned by the ShedLock library.
 
 ### signup_request
 One self-service signup awaiting, or having completed, an email-verification handshake.
+
+**Tier:** platform — the row exists before its tenant does; `org_id` is set only at completion.
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -950,6 +1084,8 @@ Relationships: `org_id` → `organization.id`; `owner_person_id` → `person.id`
 ### org_subscription
 Which plan one organization is on, and the commercial state of that arrangement.
 
+**Tier:** tenant
+
 | Column | Type | Null | Description |
 |---|---|---|---|
 | id | uuid | no | Primary key |
@@ -965,10 +1101,12 @@ Which plan one organization is on, and the commercial state of that arrangement.
 | updated_by | uuid | yes | Who last changed it |
 | deleted_at | timestamptz | yes | Soft delete; frees the tenant's slot |
 
-Relationships: `plan_id` → `plan.id` (**real FK** — same module); `org_id` → `organization.id` and `created_by` / `updated_by` → `person.id` (soft refs, no FK). Unique among live rows: (`org_id`).
+Relationships: `plan_id` → `plan.id` (soft ref, no FK — V53 cut it: `plan` is the platform's price list and this row is the tenant's, so the two are destined for different databases even though both tables sit in this module); `org_id` → `organization.id` and `created_by` / `updated_by` → `person.id` (soft refs, no FK). Unique among live rows: (`org_id`).
 
 ### plan
 One commercial tier organizations can be placed on. Seeded reference data.
+
+**Tier:** platform
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -982,10 +1120,12 @@ One commercial tier organizations can be placed on. Seeded reference data.
 | updated_at | timestamptz | yes | When it last changed |
 | updated_by | uuid | yes | Who last changed it |
 
-Relationships: referenced by `plan_entitlement.plan_id` (real FK, cascade) and `org_subscription.plan_id` (real FK). Not soft-deletable — a plan is vocabulary, not a user aggregate.
+Relationships: referenced by `plan_entitlement.plan_id` (**real FK**, cascade — also platform-tier, so it stays). `org_subscription.plan_id` is a soft ref since V53. Not soft-deletable — a plan is vocabulary, not a user aggregate.
 
 ### plan_entitlement
 One thing a plan grants: a feature switched on, or a numeric cap.
+
+**Tier:** platform
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -1001,6 +1141,8 @@ Relationships: `plan_id` → `plan.id` (**real FK**, cascade delete). Primary ke
 
 ### org_sla_override
 One organization's own SLA targets for one priority, replacing the seeded default.
+
+**Tier:** tenant
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -1020,6 +1162,8 @@ Relationships: `org_id` → `organization.id` (soft ref, no FK); `created_by` / 
 ### sla_policy
 The platform-default response and resolution targets for one ticket priority. Seeded reference data.
 
+**Tier:** platform
+
 | Column | Type | Null | Description |
 |---|---|---|---|
 | id | uuid | no | Primary key |
@@ -1036,6 +1180,8 @@ Relationships: `created_by` / `updated_by` → `person.id` (soft ref, no FK).
 
 ### ticket
 One support request a tenant opened, and its progress against its SLA.
+
+**Tier:** tenant
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -1063,6 +1209,8 @@ Relationships: `org_id` → `organization.id`; `opener_person_id`, `assignee_per
 ### ticket_message
 One message on a ticket, from the tenant or from the platform.
 
+**Tier:** tenant — no `org_id` of its own; its tenancy is inherited through the ticket.
+
 | Column | Type | Null | Description |
 |---|---|---|---|
 | id | uuid | no | Primary key |
@@ -1080,6 +1228,8 @@ Relationships: `ticket_id` → `ticket.id` (**real FK**, cascade delete — same
 
 ### webhook_delivery
 One attempt to deliver one event to one subscription.
+
+**Tier:** tenant
 
 | Column | Type | Null | Description |
 |---|---|---|---|
@@ -1102,6 +1252,8 @@ Relationships: `subscription_id` → `webhook_subscription.id` (**real FK**, cas
 
 ### webhook_subscription
 One tenant-configured endpoint wanting a set of events.
+
+**Tier:** tenant
 
 | Column | Type | Null | Description |
 |---|---|---|---|

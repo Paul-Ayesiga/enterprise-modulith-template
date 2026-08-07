@@ -1,10 +1,13 @@
 package ug.co.smsone.access.internal;
 
+import java.time.Clock;
 import java.util.List;
 import java.util.UUID;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Window;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import ug.co.smsone.access.DeviceRevoked;
 import ug.co.smsone.shared.error.NotFoundException;
 import ug.co.smsone.shared.error.ValidationException;
 import ug.co.smsone.shared.web.ApiSource;
@@ -18,10 +21,15 @@ class DeviceService {
 
     private final UserDeviceRepository devices;
     private final UserDeviceTrustRepository deviceTrust;
+    private final ApplicationEventPublisher events;
+    private final Clock clock;
 
-    DeviceService(UserDeviceRepository devices, UserDeviceTrustRepository deviceTrust) {
+    DeviceService(UserDeviceRepository devices, UserDeviceTrustRepository deviceTrust,
+            ApplicationEventPublisher events, Clock clock) {
         this.devices = devices;
         this.deviceTrust = deviceTrust;
+        this.events = events;
+        this.clock = clock;
     }
 
     @Transactional
@@ -53,11 +61,25 @@ class DeviceService {
         return devices.pageByPersonId(personId, page);
     }
 
+    /**
+     * Revocation is a SOFT delete — the row stays as the trail (V31) — so nothing about the device row
+     * itself tells a later reader that its trust grants are dead. Until V53 the foreign key did:
+     * {@code user_device_trust.device_id → user_device ON DELETE CASCADE}. That FK crossed the tenant
+     * boundary (ADR 0010 §2: the device is PLATFORM, the grant is TENANT) and had to go, so the event
+     * below is what carries the news. {@code DeviceTrustRevocationListener} consumes it.
+     *
+     * <p>Published inside the transaction and delivered after it commits — Modulith writes the
+     * publication to {@code event_publication} in this same transaction, so a crash between the soft
+     * delete and the grant deletion is retried rather than lost. A repository delete fires no
+     * {@code @DomainEvents}, hence the explicit publish (the same reason {@code MemberService} states).
+     */
     @Transactional
     void revoke(UUID personId, UUID id) {
         UserDevice device = devices.findByIdAndPersonId(id, personId)
                 .orElseThrow(() -> new NotFoundException("Device not found."));
         devices.delete(device);
+        events.publishEvent(new DeviceRevoked(personId, device.getId(), device.getFingerprint(),
+                clock.instant()));
     }
 
     @Transactional(readOnly = true)

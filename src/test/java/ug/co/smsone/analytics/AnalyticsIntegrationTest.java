@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import ug.co.smsone.settings.internal.SettingService;
@@ -77,6 +78,20 @@ class AnalyticsIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
+    /**
+     * These two scratch tables are created in the SHARED Testcontainers Postgres — one singleton across
+     * every cached Spring context (AbstractIntegrationTest) — so leaving them behind pollutes the schema
+     * every other test sees. They were dropped only BEFORE each create, which makes this class
+     * self-consistent and everyone else's problem: TenancyTierBoundaryTest enumerates
+     * information_schema and found `kpi_amounts` and `kpi_events` sitting in it with no tenancy tier,
+     * failing or passing purely on test ORDER. Clean up after, not just before.
+     */
+    @AfterEach
+    void dropScratchTables() {
+        jdbcTemplate.execute("drop table if exists kpi_amounts");
+        jdbcTemplate.execute("drop table if exists kpi_events");
+    }
 
     @Test
     void decimalsStayExactMoneyNeverDrifts() {
