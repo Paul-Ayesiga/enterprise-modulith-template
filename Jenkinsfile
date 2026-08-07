@@ -9,9 +9,14 @@
 //
 // RAM: this pod is sized to survive an 8 GB VM that is already running the platform, Argo and the Jenkins
 // controller — a build with the full test suite took the node NotReady and knocked every service offline.
-// Two things keep it inside its budget: TEST_TASKS defaults to the gateway suite only (no Keycloak/
-// Postgres/SeaweedFS in dind), and the build JVM's heap is capped so Gradle stops sizing itself off the
-// node. Both are reversible on a bigger host. The full story: docs/runbooks/ci-jenkins.md.
+// THREE things keep it inside its budget, and they were learned in this order, each one moving the
+// ceiling to whatever was next-heaviest:
+//   1. the build JVM's heap is capped, so Gradle stops sizing itself off the node;
+//   2. TEST_TASKS defaults to the gateway suite only (no Keycloak/Postgres/SeaweedFS inside dind);
+//   3. BUILD_IMAGES defaults to OFF — with tests narrowed, the Paketo lifecycle became the heaviest
+//      thing left, and build #41 aborted there and evicted Keycloak, this controller and eleven
+//      argocd-repo-server replicas.
+// All three are reversible on a bigger host. The full story: docs/runbooks/ci-jenkins.md.
 pipeline {
   agent {
     kubernetes {
@@ -95,6 +100,21 @@ spec:
     // Full context and the incident this came from: docs/runbooks/ci-jenkins.md.
     string(name: 'TEST_TASKS', defaultValue: ':gateway:app:test',
            description: 'Gradle test tasks to run. Default is narrowed for the local VM.')
+    // Off by default for the same reason TEST_TASKS is narrowed, one step further along. Narrowing the
+    // tests worked — build #41's Test stage passed in 1min 57s — and simply moved the ceiling to the
+    // next-heaviest thing, which is this: the Paketo lifecycle runs inside dind and builds TWO images,
+    // on an 8 GB node that already hosts the platform, Keycloak, Argo CD and the Jenkins controller.
+    // #41 aborted here after 2min 3s and took Keycloak, the Jenkins controller and ELEVEN
+    // argocd-repo-server replicas with it (they were evicted; the node recovered on its own in ~17
+    // minutes, with the platform pods themselves never going down).
+    //
+    // So the default proves the CODE on every push and stops there. Turn this on where there is RAM to
+    // spare, or build images elsewhere — Argo CD deploys whatever tag is committed either way, so the
+    // GitOps half of the pipeline is unaffected by leaving it off.
+    booleanParam(name: 'BUILD_IMAGES', defaultValue: false,
+                 description: 'Build and push the container images, then bump the GitOps tag. '
+                            + 'Leave OFF on the 8 GB k3s VM — it is what exhausts the node. '
+                            + 'See docs/runbooks/ci-jenkins.md.')
   }
   environment {
     IMAGE_BASE = 'ghcr.io/paul-ayesiga/enterprise-modulith-template'
@@ -143,7 +163,13 @@ spec:
     }
 
     stage('Build & push images') {
-      when { allOf { branch 'main'; environment name: 'SELF_TRIGGERED', value: 'false' } }
+      when {
+        allOf {
+          branch 'main'
+          environment name: 'SELF_TRIGGERED', value: 'false'
+          expression { params.BUILD_IMAGES }
+        }
+      }
       steps {
         withCredentials([usernamePassword(credentialsId: 'ghcr', usernameVariable: 'GHCR_USER', passwordVariable: 'GHCR_PAT')]) {
           sh '''
@@ -184,8 +210,18 @@ spec:
       }
     }
 
+    // Gated on BUILD_IMAGES too, and that is not tidiness: this stage writes the image TAG that Argo CD
+    // then deploys. Left ungated it would bump the tag to a commit whose images were never built, and
+    // Argo would faithfully roll the cluster onto an ImagePullBackOff. The two stages are one unit — a
+    // tag is only safe to publish once the thing it names exists.
     stage('GitOps bump') {
-      when { allOf { branch 'main'; environment name: 'SELF_TRIGGERED', value: 'false' } }
+      when {
+        allOf {
+          branch 'main'
+          environment name: 'SELF_TRIGGERED', value: 'false'
+          expression { params.BUILD_IMAGES }
+        }
+      }
       steps {
         // Runs in the `git` container: the default `build` container is a bare JDK image with no git.
         container('git') {
