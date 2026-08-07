@@ -41,6 +41,15 @@ import ug.co.smsone.shared.audit.AuditLog;
  * deletion. It ships in {@code REPORT} mode: a fork should watch what it would have done before letting
  * it act.
  *
+ * <p><b>This job and an administrator can disagree, and the tie is broken elsewhere.</b> An operator may
+ * restore somebody this pass disabled ({@code PersonAccessService.enable}); nothing here would stop the
+ * next pass disabling them again, and the result would be a nightly flip-flop with the operator surface
+ * claiming one thing every evening and the system doing another every morning. The loop is closed at the
+ * restore, which asks Keycloak whether the account is back before it grants anything — deliberately NOT
+ * by teaching this job to skip manually-restored rows. An exemption reading "but an admin said so" is
+ * exactly how an account deleted in the identity provider keeps its access here forever, and this job
+ * has to stay a pure reader of Keycloak's answer for the counts and the ratio breaker to mean anything.
+ *
  * <p>Lives in {@code identity} rather than {@code scheduler} with the purge jobs because it needs the
  * Keycloak gateway and this module's repositories, all {@code internal}. The scheduler module owns the
  * ShedLock infrastructure, not a monopoly on {@code @Scheduled}.
@@ -212,12 +221,19 @@ class IdentityReconciliationJob {
             if (current == null || current.getStatus() == ProvisioningStatus.DISABLED) {
                 return; // ended or already handled between the scan and now
             }
+            // The status as it ACTUALLY stands, not a hardcoded ACTIVE. The candidate scan above selects
+            // everything that is not DISABLED, so an INVITED person — provisioned, never turned up, then
+            // deleted in Keycloak — is an ordinary orphan here, and the row used to claim they had been
+            // active. That is the one field an operator reads to decide what a restore should put back.
+            ProvisioningStatus from = current.getStatus();
             current.disable(clock.instant());
             persons.save(current);
             // actor is null: nobody did this, a scheduled comparison did. Recording an operator here would
-            // put a name on a decision no human made.
+            // put a name on a decision no human made. The action name differs from the administrative
+            // `identity.person_disabled` for the same reason — together the two ARE the record of why
+            // access stopped, which is why no `disabled_reason` column exists.
             auditLog.record("identity.person_disabled_by_reconciliation", null, personId.toString(),
-                    "status=" + ProvisioningStatus.ACTIVE, "status=" + ProvisioningStatus.DISABLED);
+                    "status=" + from, "status=" + ProvisioningStatus.DISABLED);
         });
     }
 }

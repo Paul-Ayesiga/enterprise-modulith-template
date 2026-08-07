@@ -95,9 +95,51 @@ class Person extends SoftDeletableEntity {
         }
     }
 
+    /**
+     * Access stops. Two callers, and they mean different things — an administrator suspending a human
+     * ({@code PersonAccessService.disable}) and the nightly sweep reacting to a Keycloak account that no
+     * longer exists ({@code IdentityReconciliationJob}) — which is why each files its own {@code
+     * audit_log} action rather than sharing one. The row itself records only that access stopped and
+     * when; <em>why</em> is the trail's job, and a {@code disabled_reason} column would be a second,
+     * staler spelling of it (it would still say "gone from Keycloak" long after somebody restored the
+     * account there).
+     *
+     * <p>The status held BEFORE the disable is deliberately not recorded either. {@link #enable()}
+     * reconstructs it from {@code activatedAt} — the same fact, one indirection away, and one that
+     * cannot drift out of step with the lifecycle it describes.
+     */
     void disable(Instant when) {
         this.status = ProvisioningStatus.DISABLED;
         this.disabledAt = when;
+    }
+
+    /**
+     * Access resumes, at the point in the lifecycle it was taken away from: INVITED for someone who
+     * never turned up, ACTIVE for someone who did.
+     *
+     * <p><b>{@code activatedAt} is what remembers which, and that is the whole reason no "status before
+     * disable" column exists.</b> {@link #activate} stamps it at the single moment INVITED → ACTIVE
+     * happens and nothing ever clears it, so a null there means the invitation was never taken up.
+     * Restoring such a person to ACTIVE would mark an invitation as accepted by somebody who never
+     * arrived: it destroys the "never signed in" signal invite expiry keys on, and it is the very write
+     * {@code ProvisioningGateFilter} refuses to make on a target an operator is merely wearing. They go
+     * back to INVITED instead, and the gate flips them on their own first real request — which is what
+     * that flip has always meant.
+     *
+     * <p>Idempotent by arithmetic rather than by a guard, and that is worth noticing before "simplifying"
+     * it into a plain assignment to ACTIVE: an ACTIVE person has an {@code activatedAt} and an INVITED
+     * one has none, so re-running this on somebody who is not disabled computes the status they already
+     * hold. The service still short-circuits first, because the decision that must not be re-made is
+     * whether to write an {@code audit_log} row.
+     *
+     * <p>{@code disabledAt} is cleared because it answers "when did access stop" and access has not
+     * stopped. The dates of the episode survive in {@code audit_log}, which is append-only and is where
+     * a history belongs — a column left holding the last disable date on a live account is one the next
+     * query written against it will read as "this account is disabled".
+     */
+    void enable() {
+        this.status = activatedAt == null ? ProvisioningStatus.INVITED : ProvisioningStatus.ACTIVE;
+        this.disabledAt = null;
     }
 
     /**

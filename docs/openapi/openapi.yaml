@@ -22,12 +22,17 @@ security:
 - bearerAuth: []
 - keycloak: []
 tags:
-- name: Platform · Users & impersonation
-  description: "Identities across every tenant, and the impersonation sessions that\
-    \ are the only sanctioned way from an operator to tenant data. platform-support\
-    \ reads and may open a session; wearing an account that itself holds a platform\
-    \ role needs platform-superadmin. A session carries no authority of its own, so\
-    \ from inside one this whole group answers 403."
+- name: Platform · Users
+  description: "Identities across every tenant: read one or many, correct a name,\
+    \ and suspend or restore access. platform-support reads; changing another human's\
+    \ name or access needs platform-admin. Suspension takes effect on the target's\
+    \ very next request, and a person suspended before they ever signed in is restored\
+    \ to INVITED, not ACTIVE."
+- name: Platform · Impersonation
+  description: "The only sanctioned way from an operator to tenant data. platform-support\
+    \ may open a session; wearing an account that itself holds a platform role needs\
+    \ platform-superadmin. A session carries no authority of its own, so from inside\
+    \ one this whole group answers 403."
 - name: Platform · Organizations
   description: "Creating a tenant, suspending it, reactivating it. These are platform\
     \ actions ON an organization, not actions inside one, and that is why they are\
@@ -186,11 +191,17 @@ tags:
   description: "The caller's own record — profile, contacts, preferences, avatar,\
     \ linked identity providers. No axis owns it: every row answers about YOU, whichever\
     \ axis you arrived from. Support's read-only view of a user's profile is Platform\
-    \ · Users & impersonation."
+    \ · Users."
 - name: Shared · My devices
   description: "The caller's own devices — register (idempotent per X-Device-Id),\
     \ list, revoke. Marking one TRUSTED is not here: trust is an organization's grant\
     \ (its security policy), not a self-claim."
+- name: Shared · My contacts
+  description: "The addresses this platform can reach you at — add, remove, choose\
+    \ your primary, and prove one. An UNVERIFIED address is inert: nothing resolves\
+    \ you by it and nothing falls back to it, which is why it can never be made primary.\
+    \ Proof is your identity provider's own verified-email claim; this platform sends\
+    \ no challenge of its own."
 - name: Shared · My privacy
   description: "Your own compliance controls — consent history (append-only), a data\
     \ export of your record (portability), and requesting your own erasure (GDPR art.\
@@ -1226,6 +1237,50 @@ paths:
                 type: object
                 additionalProperties:
                   type: string
+  /api/v1/me/contacts/{id}/primary:
+    put:
+      tags:
+      - Shared · My contacts
+      summary: Choose your primary address of that kind
+      description: "The primary is the address this platform prefers for you — one\
+        \ per kind, and it must be verified. Choosing is idempotent, and a refusal\
+        \ never stands your current primary down."
+      operationId: makePrimary
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/feature-flags/{key}:
     get:
       tags:
@@ -3772,6 +3827,144 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
+  /api/v1/me/contacts:
+    get:
+      tags:
+      - Shared · My contacts
+      summary: List the addresses this platform can reach you at
+      description: "Best first within each kind: your primary address, then the ones\
+        \ you have proven, then the rest oldest-first. `verified: false` means exactly\
+        \ that — the platform will not resolve you by that address and will not fall\
+        \ back to it."
+      operationId: list_12
+      parameters:
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceObject"
+    post:
+      tags:
+      - Shared · My contacts
+      summary: Add a contact address
+      description: "Records an address you claim. It arrives UNVERIFIED, which means\
+        \ inert: nothing resolves you by it, no invite matches it, and it can never\
+        \ become your primary until it is proven. Adding an address somebody else\
+        \ has already claimed is deliberately allowed — an unproven claim costs them\
+        \ nothing, and refusing would turn this into a way to test which addresses\
+        \ have accounts. The collision is settled at verification, where only one\
+        \ account can win."
+      operationId: add
+      parameters:
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddContactRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+  /api/v1/me/contacts/{id}/verification:
+    post:
+      tags:
+      - Shared · My contacts
+      summary: Prove an address with your sign-in account
+      description: "Marks the address verified if — and only if — the token on this\
+        \ request carries it as a verified `email` claim, i.e. your identity provider\
+        \ already ran its own confirmation against that mailbox. This platform sends\
+        \ no message of its own, so the only address you can prove is the one your\
+        \ sign-in account uses: change it at the provider, confirm the mail it sends,\
+        \ sign in again, then call this. Answers 409 when the token proves nothing,\
+        \ proves a different address, or when another account has already proven this\
+        \ one. Verifying your first proven address of a kind also makes it primary,\
+        \ replacing the unproven placeholder an invite left."
+      operationId: verify
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/me/consents:
     get:
       tags:
@@ -4060,7 +4253,7 @@ paths:
       tags:
       - Shared · Reference data
       summary: List your personal documents
-      operationId: list_12
+      operationId: list_13
       parameters:
       - name: user
         in: query
@@ -4142,6 +4335,72 @@ paths:
       responses:
         "201":
           description: Created
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/users/{personId}/enable:
+    post:
+      tags:
+      - Platform · Users
+      summary: Restore a suspended user's access
+      description: "Returns the person to the status they held before suspension —\
+        \ `ACTIVE` for someone who had signed in, `INVITED` for someone who never\
+        \ did, so restoring never marks an invitation as accepted by a person who\
+        \ has not turned up. Idempotent, and files no audit row for an account that\
+        \ already has access. Refused with 409 when the person's identity-provider\
+        \ account no longer exists: restoring them would be undone by the nightly\
+        \ identity reconciliation and they still could not sign in."
+      operationId: enable
+      parameters:
+      - name: personId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/users/{personId}/disable:
+    post:
+      tags:
+      - Platform · Users
+      summary: Suspend a user's access
+      description: "Revokes access immediately: the very next API request this person\
+        \ makes is refused with `ACCOUNT_DISABLED`, and any impersonation session\
+        \ they hold or are worn through dies with it. Nothing else is changed — memberships,\
+        \ roles and name survive, and `POST .../enable` puts them back exactly where\
+        \ they were. Idempotent: suspending an already-suspended account returns it\
+        \ unchanged and files no audit row. Refused with 409 when the target is the\
+        \ caller themselves, or the last platform super-admin."
+      operationId: disable
+      parameters:
+      - name: personId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
           headers:
             X-Request-Id:
               description: "Public request id (accepted inbound, else minted as a\
@@ -4425,7 +4684,7 @@ paths:
       tags:
       - Platform · Maintenance
       summary: List platform-wide maintenance windows
-      operationId: list_13
+      operationId: list_14
       responses:
         "200":
           description: OK
@@ -4498,13 +4757,13 @@ paths:
   /api/v1/admin/impersonations:
     get:
       tags:
-      - Platform · Users & impersonation
+      - Platform · Impersonation
       summary: List an operator's impersonation sessions
       description: "The caller's own sessions, live and historical, newest first.\
         \ `actor=<personId>` names another operator's instead and requires platform-admin.\
         \ `active` is computed when the row is read, so a lapsed session reports inactive\
         \ with no sweep job involved."
-      operationId: list_14
+      operationId: list_15
       parameters:
       - name: actor
         in: query
@@ -4544,7 +4803,7 @@ paths:
                 $ref: "#/components/schemas/WindowedResultResourceObject"
     post:
       tags:
-      - Platform · Users & impersonation
+      - Platform · Impersonation
       summary: Open an impersonation session
       description: "Defaults to a READ_ONLY session, which admits only GET, HEAD and\
         \ OPTIONS; `mode=WRITE` is refused unless the caller holds platform-admin.\
@@ -4673,7 +4932,7 @@ paths:
       tags:
       - Platform · API keys
       summary: List platform API keys
-      operationId: list_15
+      operationId: list_16
       parameters:
       - name: "page[size]"
         in: query
@@ -4857,7 +5116,7 @@ paths:
   /api/v1/admin/users/{personId}/name:
     patch:
       tags:
-      - Platform · Users & impersonation
+      - Platform · Users
       summary: Correct a user's name
       description: "Partial update of another person's SCIM/OIDC name block — an operator\
         \ fixing a typo. Send only the components you are changing: an absent key\
@@ -4904,7 +5163,7 @@ paths:
       description: "The fixed vocabulary the subscription endpoints' `events` array\
         \ accepts. Payloads always carry `event`, `orgId` and `occurredAt`, signed\
         \ HMAC-SHA256 in `X-Webhook-Signature`."
-      operationId: list_16
+      operationId: list_17
       parameters:
       - name: X-Impersonate
         in: header
@@ -4936,7 +5195,7 @@ paths:
       tags:
       - Shared · Reference data
       summary: "List translations, optionally for one locale"
-      operationId: list_17
+      operationId: list_18
       parameters:
       - name: locale
         in: query
@@ -4988,7 +5247,7 @@ paths:
       tags:
       - Shared · Settings & flags
       summary: List platform settings
-      operationId: list_18
+      operationId: list_19
       parameters:
       - name: "page[size]"
         in: query
@@ -5039,7 +5298,7 @@ paths:
         \ held) its lock and until when — the evidence that a job fires once cluster-wide.\
         \ Read-only: there is no endpoint to trigger a job, they are time-driven by\
         \ design."
-      operationId: list_19
+      operationId: list_20
       parameters:
       - name: X-Impersonate
         in: header
@@ -5074,7 +5333,7 @@ paths:
       description: The fixed vocabulary for composing custom roles — the `code` values
         are what the role endpoints accept. The catalog is global and identical for
         every organization.
-      operationId: list_20
+      operationId: list_21
       parameters:
       - name: X-Impersonate
         in: header
@@ -5359,7 +5618,7 @@ paths:
       - Organization · Maintenance
       summary: List maintenance windows affecting the organization
       description: '`?active=true` narrows to windows in effect right now (for a banner).'
-      operationId: list_21
+      operationId: list_22
       parameters:
       - name: orgId
         in: path
@@ -5482,7 +5741,7 @@ paths:
       tags:
       - Organization · Exchange
       summary: List the organization's exchange jobs
-      operationId: list_22
+      operationId: list_23
       parameters:
       - name: orgId
         in: path
@@ -5858,7 +6117,7 @@ paths:
       tags:
       - Shared · Me & notifications
       summary: List your in-app notifications
-      operationId: list_23
+      operationId: list_24
       parameters:
       - name: "page[size]"
         in: query
@@ -6131,7 +6390,7 @@ paths:
       tags:
       - Shared · Settings & flags
       summary: List feature flags
-      operationId: list_24
+      operationId: list_25
       parameters:
       - name: "page[size]"
         in: query
@@ -6181,7 +6440,7 @@ paths:
       description: "Each handler names the dataset it moves, the permissions its imports\
         \ and exports require, `header` — the exact column order its files use — and\
         \ the current `templateVersion`. Download a ready-to-fill file from `/handlers/{id}/template`."
-      operationId: list_25
+      operationId: list_26
       parameters:
       - name: X-Impersonate
         in: header
@@ -6477,9 +6736,9 @@ paths:
   /api/v1/admin/users:
     get:
       tags:
-      - Platform · Users & impersonation
+      - Platform · Users
       summary: List provisioned users across the platform
-      operationId: list_26
+      operationId: list_27
       parameters:
       - name: "page[size]"
         in: query
@@ -6514,7 +6773,7 @@ paths:
   /api/v1/admin/users/{personId}:
     get:
       tags:
-      - Platform · Users & impersonation
+      - Platform · Users
       summary: Get one user's identity and name
       description: "The record an operator opens before correcting it: the same attributes\
         \ as a row of the listing, for one person. A soft-deleted account answers\
@@ -6543,7 +6802,7 @@ paths:
   /api/v1/admin/users/{personId}/profile:
     get:
       tags:
-      - Platform · Users & impersonation
+      - Platform · Users
       summary: Read a person's profile as the platform
       operationId: profile_1
       parameters:
@@ -6569,13 +6828,13 @@ paths:
   /api/v1/admin/users/{personId}/devices:
     get:
       tags:
-      - Platform · Users & impersonation
+      - Platform · Users
       summary: List a user's devices as the platform
       description: "`trusted` here means trusted by AT LEAST ONE organization. This\
         \ view has no organization in context, unlike the tenant-facing listing where\
         \ the flag is answered for one org; since V51 trust is granted per organization,\
         \ so there is no single device-wide answer to report."
-      operationId: list_27
+      operationId: list_28
       parameters:
       - name: personId
         in: path
@@ -6743,7 +7002,7 @@ paths:
       - Platform · Organizations
       summary: List every organization on the platform
       description: Newest first; narrow with `status` (ACTIVE or SUSPENDED).
-      operationId: list_28
+      operationId: list_29
       parameters:
       - name: status
         in: query
@@ -6837,7 +7096,7 @@ paths:
       - Platform · SLA policies
       summary: List an org's SLA overrides
       description: Priorities not listed fall back to the seeded per-priority default.
-      operationId: list_29
+      operationId: list_30
       parameters:
       - name: orgId
         in: path
@@ -6866,7 +7125,7 @@ paths:
       - Platform · Retention
       summary: List an org's retention overrides
       description: Scopes not listed use the platform default retention for that log.
-      operationId: list_30
+      operationId: list_31
       parameters:
       - name: orgId
         in: path
@@ -7354,6 +7613,48 @@ paths:
                 \ ULID)."
               schema:
                 type: string
+  /api/v1/me/contacts/{id}:
+    delete:
+      tags:
+      - Shared · My contacts
+      summary: Remove a contact address
+      description: "Refused (409) when it would leave the platform unable to reach\
+        \ or resolve you: your last e-mail, your last VERIFIED e-mail, or the last\
+        \ one that is primary or verified — the platform will not silently fall back\
+        \ to an address nobody established. Removing your primary promotes the best\
+        \ verified address left."
+      operationId: remove_2
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: user
+        in: query
+        required: true
+        schema:
+          $ref: "#/components/schemas/CurrentUser"
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "204":
+          description: No Content
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
   /api/v1/admin/maintenance/{id}:
     delete:
       tags:
@@ -7401,7 +7702,7 @@ paths:
   /api/v1/admin/impersonations/{id}:
     delete:
       tags:
-      - Platform · Users & impersonation
+      - Platform · Impersonation
       summary: End an impersonation session
       description: "Takes effect on the very next request: the session is re-authorized\
         \ every time, so ending it revokes the reach it already granted rather than\
@@ -7929,6 +8230,15 @@ components:
         fingerprint:
           type: string
         pushToken:
+          type: string
+    AddContactRequest:
+      type: object
+      properties:
+        kind:
+          type: string
+        value:
+          type: string
+        label:
           type: string
     ConsentRequest:
       type: object

@@ -22,14 +22,20 @@ import java.util.UUID;
 public interface PersonDirectory {
 
     /**
-     * The person reachable at this e-mail address, if any (case-insensitive).
+     * The person who has PROVEN this e-mail address, if any (case-insensitive).
      *
-     * <p>A VERIFIED address wins over an unverified one holding the same value. That is not a
-     * preference — it is the only ordering the database can guarantee is unambiguous: {@code
-     * uq_person_contact_verified_live} makes a proven address globally unique, while unverified
-     * duplicates are legal by design (a re-created account, a case variant). Preferring the oldest
-     * claim instead would let a stale unverified row outrank the person who actually proved the
-     * address.
+     * <p><b>Verified addresses only, and that is the contract — not an implementation detail.</b> An
+     * unverified {@code person_contact} row is a string somebody typed, and since a person may add
+     * addresses to their own account it may well name a mailbox they have never had access to. This
+     * method answers "whose address is this", so honouring an unproven row would make adding one an
+     * account-takeover primitive: park a claim on a colleague's address and every caller that resolves a
+     * person by address hands you their place. A caller that gets {@link Optional#empty()} for an
+     * address it can see on screen is being told the truth — nobody has established it.
+     *
+     * <p>The database backs the answer rather than the code merely preferring it:
+     * {@code uq_person_contact_verified_live} makes a proven address globally unique, so there is at
+     * most one person to return. Unverified duplicates stay legal by design (a re-created account, a
+     * case variant) precisely because nothing resolves through them.
      */
     Optional<UUID> findPersonIdByEmail(String email);
 
@@ -38,6 +44,14 @@ public interface PersonDirectory {
      * call): person id → primary e-mail for every id that has one. Ids with no e-mail on file are
      * simply absent from the map, exactly as unknown ids are — a caller that needs to tell the two
      * apart is asking a question this port deliberately does not answer.
+     *
+     * <p><b>This is "where do we send", not "who is this", and the difference is the opposite of
+     * pedantry.</b> It answers WITH an unverified address when that is all a person has, because the
+     * invite this platform mails to a brand-new account has to go somewhere and nobody has proven
+     * anything yet. It is safe in that direction and only that direction: the caller already knows which
+     * person it is asking about. Never invert it — matching an address back to a person is
+     * {@link #findPersonIdByEmail}, which refuses to answer from an unproven row for exactly this
+     * reason.
      */
     Map<UUID, String> emailsByPersonIds(Collection<UUID> personIds);
 

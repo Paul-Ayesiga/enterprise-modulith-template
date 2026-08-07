@@ -391,6 +391,46 @@ shipped file is silently absent under test, and the suite will happily prove a g
 not actually make. When you pin something there, mirror it — `ShippedRouteTableTest` guards the shipped
 file precisely because nothing else does.
 
+## A build that will not die, and the PVC that stops CI dead
+
+Two failure modes met while recovering from the disk outage. Both look like Jenkins being broken and
+neither is.
+
+**The wedged build.** A build whose agent pod is evicted mid-step can survive its own 40-minute
+timeout: the console shows `Aborted by admin` on repeat next to "Click here to forcibly terminate
+running steps", `duration` stays 0, and `building` stays true forever. Because the job declares
+`disableConcurrentBuilds()`, EVERY later build then sits in the queue behind it with
+`why: "Build #N is already in progress"` — so the pipeline looks idle when it is actually jammed.
+
+The UI's abort does nothing here, and neither does the API's `/stop` or `/term` (both answered 302 and
+changed nothing). Only the hard kill works:
+
+    curl -u admin:$PW -H "Jenkins-Crumb: $C" -X POST \
+      http://jenkins.smsone.local/job/enterprise-modulith-template/job/main/<N>/kill
+
+Check `.../<N>/api/json?tree=building,result` afterwards — it should read `building:false`,
+`result:"ABORTED"` — and confirm `/queue/api/json` has drained.
+
+**The missing PVC.** `kubectl -n jenkins delete pvc jenkins-dind-cache` is the right way to reclaim the
+node's disk, and it does NOT recreate the claim. The agent pod template mounts it by name, so from that
+moment every build is Unschedulable:
+
+    Pod [Pending][Unschedulable] 0/1 nodes are available:
+      persistentvolumeclaim "jenkins-dind-cache" not found
+
+Nothing fails; builds simply never start, which is easy to misread as a quiet queue. Re-apply the
+manifest — `kubectl apply -f deploy/k3s-local/jenkins/jenkins.yaml` — or just the PVC document from it.
+
+**And then wait for the old agent pod to be gone.** The claim is ReadWriteOnce, but on a single-node
+cluster both pods schedule to that one node and both mount `/var/lib/docker`, so two dockerd instances
+race the same state and the sidecar dies with `failed to start containerd: timeout waiting for
+containerd to start`. Kill the build, then:
+
+    kubectl -n jenkins delete pods -l jenkins=slave --wait=true
+    kubectl -n jenkins get pods            # only jenkins-<hash> should remain
+
+before triggering the next one.
+
 ## Recovery — cluster wedged during or after a build
 
 Run these from the VM (`ssh gopher@192.168.64.5`); the Mac's `kubectl` sometimes cannot reach `:6443`

@@ -88,9 +88,22 @@ spec:
 # storage and were re-pulled every single build. That download is what failed build #10.
 #
 # CAUTION: local-path does NOT enforce the size below — it is a directory on the node, so a runaway dind
-# can fill the VM disk and take the cluster with it (DiskPressure evicts everything). The VM had ~9.8 GB
-# free when this was added, hence the modest request; the pipeline also prunes dangling images after each
-# image build. Check with `df -h /` on the VM, and delete this PVC to reset Docker state entirely.
+# can fill the VM disk and take the cluster with it. That is not hypothetical: this PVC reached 8.9G
+# against a 6Gi request, the node's image filesystem hit 88%, and the kubelet's image GC started deleting
+# images — including the ctr-imported `smsone/modulith:dev`, which imagePullPolicy: Never then could not
+# re-pull, so the platform stayed down until it was rebuilt on the Mac. See docs/runbooks/ci-jenkins.md,
+# "Outage 2, disk".
+#
+# Two things now keep it bounded: the buildpack cache volumes are pinned to STABLE names in the Gradle
+# builds (they used to be derived from an image tag containing ${GIT_COMMIT}, so every build abandoned a
+# fresh set), and Preflight fails the build outright if the image filesystem is already low.
+#
+# RESETTING IT: `kubectl -n jenkins delete pvc jenkins-dind-cache` frees the space, but DOES NOT recreate
+# it — the agent pod template mounts it by name, so every subsequent build sits Unschedulable with
+# "persistentvolumeclaim not found" and CI is silently dead. Re-apply this file afterwards. And wait for
+# any existing agent pod to be GONE before the next build: the volume is ReadWriteOnce but both pods land
+# on the same single node, so two dind containers will happily mount one /var/lib/docker and race it into
+# "failed to start containerd: timeout waiting for containerd to start".
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

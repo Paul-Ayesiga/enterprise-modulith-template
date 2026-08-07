@@ -301,6 +301,8 @@ stored response replays; same key with a <em>different</em> body ⇒ <code>409</
   that works while <code>INVITED</code> — so you can see your own onboarding.</p>
   <pre><code>{ "data": { "id":"5862…", "type":"user", "attributes": {
     "personId":"5862…", "email":"you@acme.test",
+    "name": { "formattedName":"Dr. Ada Lovelace-Byron MBE", "givenName":"Ada",
+              "familyName":"Lovelace-Byron", "honorificPrefix":"Dr.", "preferredName":"Addy" },
     "roles":["platform-admin","USER","platform-support","platform-superadmin"],
     "activeOrgId":"6a1f…", "provisioningStatus":"ACTIVE" } } }</code></pre>
   <p class="mut">Four roles from two grants: <code>platform-superadmin</code> + <code>USER</code> — the hierarchy expands
@@ -308,13 +310,183 @@ stored response replays; same key with a <em>different</em> body ⇒ <code>409</
   <p class="mut">The resource id is your <code>person.id</code>; <code>personId</code> repeats it as a typed field and is
   <code>null</code> exactly while <code>provisioningStatus</code> is <code>UNPROVISIONED</code> — those are the two states
   onboarding branches on, so a client should not have to infer one from the resource id. Before provisioning there is no
-  person to name and the id falls back to your own token subject. <code>email</code> comes from your
-  <code>person_contact</code> row, not from the token: the address <em>this</em> platform can reach you at, which need not
-  be the one your provider put in the JWT. There is no <code>activeOrgAlias</code> any more — the alias belongs to the
-  organization resource that <code>activeOrgId</code> now names directly, so
-  <code>GET /api/v1/orgs/{activeOrgId}</code> is the honest way to get it.</p></div></div>
+  person to name and the id falls back to your own token subject. There is no <code>activeOrgAlias</code> any more — the
+  alias belongs to the organization resource that <code>activeOrgId</code> now names directly, so
+  <code>GET /api/v1/orgs/{activeOrgId}</code> is the honest way to get it.</p>
+  <p class="mut"><code>name</code> is the SCIM/OIDC name block and is <strong>always an object</strong> — <code>{}</code> for
+  anyone this platform was never told a name for, which is an ordinary state and not an error. <em>Null components are
+  omitted entirely</em>, so test for the key, never for a null value. The seven keys are <code>formattedName</code>,
+  <code>givenName</code>, <code>familyName</code>, <code>middleName</code>, <code>honorificPrefix</code>,
+  <code>honorificSuffix</code>, <code>preferredName</code> — the same names SCIM 2.0 and OIDC use, so a client that already
+  speaks either does not translate.</p>
+  <p class="mut"><code>email</code> comes from your <code>person_contact</code> book, not from the token: the address
+  <em>this</em> platform can reach you at, which need not be the one your provider put in the JWT. It is the <em>best</em>
+  address on file, so <strong>it changes</strong> when you prove a new address or re-point your primary — see
+  <a href="#mycontacts">B2 · Contact addresses</a>. It is absent when nothing is on file.</p></div></div>
+<div class="card warn"><strong><code>formattedName</code> is never derived from the parts — not composed, not as a
+fallback.</strong> This is the single thing an integrator is most likely to get wrong. Name order is cultural
+(given-then-family is one convention among several) and mononyms are ordinary, so the display value is supplied
+<em>whole</em> or it is absent, and <em>the client</em> decides what to render when it is absent. Falling back to
+<code>givenName + " " + familyName</code> shows a large part of the world their own name backwards; falling back to the
+e-mail is right. The server never assembles one either: patch the parts and <code>formattedName</code> stays exactly as
+it was until you send it explicitly.</div>
+<div class="ep"><div class="ep-head"><span class="method PATCH">PATCH</span><span class="path">/api/v1/me/name</span><span class="perm any">any caller</span></div>
+  <div class="ep-body"><p>Correct your own name — and only your own. The body is a <strong>flat JSON object of name
+  components</strong>, not the <code>data/attributes</code> envelope; the response <em>is</em> the envelope, with
+  <code>type: "person-name"</code> and <code>id</code> = your <code>personId</code>.</p>
+  <table class="params"><tr><th>Key</th><th>Type</th><th>Max</th><th>Description</th></tr>
+    <tr><td>formattedName</td><td>string</td><td>200</td><td>The display value, supplied whole. Never composed by the server.</td></tr>
+    <tr><td>givenName</td><td>string</td><td>100</td><td>The name given at birth. Not "first" — that encodes an order.</td></tr>
+    <tr><td>familyName</td><td>string</td><td>100</td><td>The family name. Not "last", for the same reason.</td></tr>
+    <tr><td>middleName</td><td>string</td><td>100</td><td>Middle name(s).</td></tr>
+    <tr><td>honorificPrefix</td><td>string</td><td>50</td><td>e.g. <code>Dr.</code></td></tr>
+    <tr><td>honorificSuffix</td><td>string</td><td>50</td><td>e.g. <code>MBE</code></td></tr>
+    <tr><td>preferredName</td><td>string</td><td>100</td><td>What they would rather be called. Distinct from the profile's
+      <code>displayName</code>, which is a UI preference.</td></tr></table>
+  <pre><code>PATCH /api/v1/me/name   {"givenName":"Augusta","honorificSuffix":null}
+# → 200
+{ "data": { "id":"5862…", "type":"person-name", "attributes": {
+    "formattedName":"Dr. Ada Lovelace-Byron MBE", "givenName":"Augusta",
+    "familyName":"Lovelace-Byron", "honorificPrefix":"Dr." } },
+  "meta": { "requestId":"01J4X9…" } }
+# honorificSuffix is gone (cleared); formattedName is untouched — it still says MBE, because
+# nothing composes it. Send it yourself if it should change.</code></pre>
+  <p class="mut">Values are trimmed. An over-long component is <code>422 VALIDATION_FAILED</code> with
+  <code>source.pointer</code> naming the field. A body of <code>{}</code> is a legal no-op (<code>200</code>), and a patch
+  that changes nothing writes nothing — no version bump, no audit row. A machine key (<code>X-Api-Key</code>) gets
+  <code>403</code>: a credential has no name.</p></div></div>
+<div class="card"><strong>Why PATCH-with-a-map, and what the four cases mean.</strong> Seven mostly-nullable fields behind a
+<code>PUT</code> means any client that omits <code>honorificSuffix</code> silently erases it — so the shape here is a
+partial map where <em>key presence is the instruction</em>:
+<table class="compare">
+  <tr><th>You send</th><th>What happens</th></tr>
+  <tr><td>key absent</td><td><b>Unchanged.</b> Send only what you are changing.</td></tr>
+  <tr><td><code>"key": null</code></td><td><b>Cleared.</b> The explicit null is the only way to erase a component.</td></tr>
+  <tr><td><code>"key": ""</code> or whitespace</td><td><b>Cleared</b>, same as null — whitespace is not a name, so nothing stores a space.</td></tr>
+  <tr><td><code>{}</code></td><td>Legal no-op — <code>200</code> with the name as it stands.</td></tr>
+  <tr><td>an unknown key</td><td><b>Refused</b> — <code>422 VALIDATION_FAILED</code>, <code>source.pointer</code> = the offending key.</td></tr>
+</table>
+That last row is the point of the design: a typo'd <code>familyname</code> that quietly did nothing would look exactly
+like a save that worked. The same body, the same semantics and the same <code>person-name</code> response serve the
+operator's <a href="#users"><code>PATCH /api/v1/admin/users/{personId}/name</code></a> — one operation, two callers.</div>
 
-<h2 id="profile">B2 · Profile, preferences &amp; notifications</h2>
+<h2 id="mycontacts">B2 · Contact addresses (where the platform reaches you)</h2>
+<p>Your own contact book — the addresses this platform may send to and resolve you by, one row each in
+<code>person_contact</code>. Everything here is about a single rule, and every response below is a face of it:</p>
+<div class="card warn"><strong>An unverified address is inert.</strong> Nothing resolves you by it, no invite matches it,
+it can never be your primary, and the platform will never fall back to it. It is a <em>claim</em> until somebody proves
+it — which is why you may freely add an address another account also holds (you get <code>201</code>, on purpose: refusing
+would turn this endpoint into an oracle for "does this address have an account here?"). The collision is settled at
+<em>verification</em>, where exactly one account can win.</div>
+<p class="mut">Attributes of a <code>contact</code> resource: <code>kind</code> (<code>EMAIL</code> · <code>PHONE</code> ·
+<code>OTHER</code>), <code>value</code>, <code>label</code> (yours, optional), <code>primary</code> and
+<code>verified</code> (both booleans, both always present), <code>verifiedAt</code> and <code>createdAt</code> (ISO-8601
+instants). Nulls are omitted from every payload in this API, so <code>verifiedAt</code> is simply <em>absent</em> while
+unproven — <strong>branch on <code>verified</code>, never on the presence of <code>verifiedAt</code></strong>. These are
+person-scoped: a machine key (<code>X-Api-Key</code>) gets <code>403</code>, because a credential has no mailbox.</p>
+<div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/me/contacts</span><span class="perm any">any caller</span></div>
+  <div class="ep-body"><p>Every address on file for you, best first within each kind: primary, then proven, then
+  oldest.</p>
+  <pre><code>{ "data": [
+    { "id":"9f2c…", "type":"contact", "attributes": {
+        "kind":"EMAIL", "value":"ada@acme.test", "label":"work",
+        "primary":true, "verified":true, "verifiedAt":"2026-08-06T09:12:44Z",
+        "createdAt":"2026-07-30T11:02:07Z" } },
+    { "id":"1b70…", "type":"contact", "attributes": {
+        "kind":"EMAIL", "value":"ada@personal.test",
+        "primary":false, "verified":false, "createdAt":"2026-08-06T09:10:01Z" } } ],
+  "meta": { "requestId":"01J4X9…" }, "links": { "self":"/api/v1/me/contacts" } }</code></pre>
+  <div class="card tip"><strong>This one list does not page</strong> — no <code>page[size]</code>, no
+  <code>page[after]</code>, no <code>meta.page</code>, no <code>links.next</code>. <a href="#paging">A3</a>'s keyset rule
+  exists to stop unbounded scans, and this collection cannot grow one: it is capped at <strong>10 addresses per
+  kind</strong>. A cursor here would be ceremony no client would ever page through. (Same shape, same reasoning, as the
+  payment-methods list.)</div>
+  <p class="mut">Why primary outranks verified in the ordering: primary is what you (or the admin who invited you)
+  <em>chose</em>, and honouring a verified-but-unchosen address would quietly redirect your mail. Verified breaks the tie
+  underneath.</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/me/contacts</span><span class="perm any">any caller</span></div>
+  <div class="ep-body"><p>Record an address you claim. It arrives <code>verified:false</code> and
+  <code>primary:false</code>, always — there is no way to add a pre-proven address.</p>
+  <table class="params"><tr><th>Field</th><th>Type</th><th>Req</th><th>Description</th></tr>
+    <tr><td>kind</td><td>enum</td><td>yes</td><td><code>EMAIL</code> · <code>PHONE</code> · <code>OTHER</code>, case-insensitive.</td></tr>
+    <tr><td>value</td><td>string</td><td>yes</td><td>≤320 chars. <code>EMAIL</code> is shape-checked; <code>PHONE</code> must be international form (<code>^\+?[0-9][0-9 .()-]{4,24}$</code>).</td></tr>
+    <tr><td>label</td><td>string</td><td>no</td><td>Your own name for it, ≤50 chars — e.g. <code>work</code>.</td></tr></table>
+  <pre><code>POST /api/v1/me/contacts   {"kind":"EMAIL","value":"Ada@Personal.Test","label":"home"}
+# → 201
+{ "data": { "id":"1b70…", "type":"contact", "attributes": {
+    "kind":"EMAIL", "value":"ada@personal.test", "label":"home",
+    "primary":false, "verified":false, "createdAt":"2026-08-06T09:10:01Z" } } }</code></pre>
+  <p class="mut"><strong>E-mail is lower-cased on the way in</strong>, so the stored and returned <code>value</code> may
+  differ in case from what you sent — read it back rather than echoing your own input. Nothing else is folded (a phone
+  number has no case, and <code>OTHER</code> is free text this platform makes no claim about).</p>
+  <table class="compare">
+    <tr><th>Status</th><th>Why</th></tr>
+    <tr><td><code>422</code> <code>/data/attributes/kind</code></td><td>Missing, or not in the vocabulary.</td></tr>
+    <tr><td><code>422</code> <code>/data/attributes/value</code></td><td>Blank, over 320 chars, not an e-mail (<code>EMAIL</code>), or not an international phone number (<code>PHONE</code>).</td></tr>
+    <tr><td><code>422</code> <code>/data/attributes/label</code></td><td>Over 50 chars.</td></tr>
+    <tr><td><code>409</code> <code>CONFLICT</code></td><td>"You have already added that address." — same kind + value on <em>your</em> account, case-insensitively.</td></tr>
+    <tr><td><code>409</code> <code>CONFLICT</code></td><td>"You can keep at most 10 EMAIL addresses — remove one first."</td></tr>
+  </table>
+  <p class="mut">The pointers are JSON:API-shaped (<code>/data/attributes/…</code>) even though the request body is flat —
+  that is the house error convention, not a hint about the body.</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/me/contacts/{id}/verification</span><span class="perm any">any caller</span></div>
+  <div class="ep-body"><p>Prove an address. <strong>No request body</strong> — the proof is your own token, which must carry
+  <code>email_verified: true</code> and an <code>email</code> claim equal (case-insensitively) to this contact's
+  <code>value</code>.</p>
+  <div class="card warn"><strong>This platform sends no verification message.</strong> There is no e-mailed challenge in
+  this slice; the proof is the identity provider's, already sitting in your token. So proving a <em>new</em> address is a
+  four-step dance, and a client that offers a "resend verification" button is promising something that does not exist:
+  <ol><li>add it here (<code>POST /api/v1/me/contacts</code>);</li>
+      <li>change the e-mail on your Keycloak account console;</li>
+      <li>complete the confirmation Keycloak mails you;</li>
+      <li>sign in again so the fresh token carries it — then call this.</li></ol></div>
+  <pre><code>POST /api/v1/me/contacts/1b70…/verification        # no body; Bearer token does the talking
+# → 200
+{ "data": { "id":"1b70…", "type":"contact", "attributes": {
+    "kind":"EMAIL", "value":"ada@personal.test", "primary":true, "verified":true,
+    "verifiedAt":"2026-08-06T09:12:44Z", "createdAt":"2026-08-06T09:10:01Z" } } }</code></pre>
+  <p class="mut">Note <code>primary</code> flipped to <code>true</code> without being asked. <strong>The first
+  <em>proven</em> address of a kind takes the primary flag</strong>, retiring the unproven placeholder your invite left —
+  the platform stops preferring an address nobody established over one somebody did. A <em>proven</em> primary is a
+  choice and is never overridden; that is what the next endpoint is for.</p>
+  <p class="mut">Idempotent: re-verifying an already-verified contact returns <code>200</code> unchanged.</p>
+  <table class="compare">
+    <tr><th>Status</th><th>Why</th></tr>
+    <tr><td><code>409</code> <code>CONFLICT</code></td><td>Your token carries no verified e-mail claim at all. <em>Checked before the contact is looked up</em>, so an unknown id answers this too when you have no proof to offer.</td></tr>
+    <tr><td><code>404</code> <code>RESOURCE_NOT_FOUND</code></td><td>"No such contact." — unknown id, or somebody else's. One answer for both, deliberately.</td></tr>
+    <tr><td><code>409</code> <code>CONFLICT</code></td><td>Your token proves a <em>different</em> address than this contact.</td></tr>
+    <tr><td><code>409</code> <code>CONFLICT</code></td><td>"Another account has already proven that address." — a verified address is unique platform-wide, and this is where that is enforced.</td></tr>
+    <tr><td><code>409</code> <code>CONFLICT</code></td><td>The contact is not an <code>EMAIL</code>. No proof channel exists for <code>PHONE</code>/<code>OTHER</code> — no SMS challenge yet — so they can never be verified, and therefore never primary.</td></tr>
+  </table></div></div>
+<div class="ep"><div class="ep-head"><span class="method PUT">PUT</span><span class="path">/api/v1/me/contacts/{id}/primary</span><span class="perm any">any caller</span></div>
+  <div class="ep-body"><p>Choose the address of that kind the platform prefers. <strong>No request body.</strong> Exactly
+  one primary per (person, kind) — the previous one silently loses the flag.</p>
+  <pre><code>PUT /api/v1/me/contacts/1b70…/primary   → 200  {"data":{…,"attributes":{"primary":true,…}}}</code></pre>
+  <p class="mut">Idempotent (already primary ⇒ <code>200</code>, unchanged). <code>404 RESOURCE_NOT_FOUND</code> for an
+  unknown id or one that is not yours. <code>409 CONFLICT</code> — "Verify this address before making it your primary
+  one." <strong>A refusal never stands your current primary down</strong>: the check runs before the flag moves, so a
+  <code>409</code> here cannot leave you with no primary at all.</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method DELETE">DELETE</span><span class="path">/api/v1/me/contacts/{id}</span><span class="perm any">any caller</span></div>
+  <div class="ep-body"><p><code>204 No Content</code>, no body. A soft delete — and the address is <em>immediately</em> free
+  for another account to claim and prove. Removing your primary automatically promotes the best remaining
+  <strong>verified</strong> contact of that kind.</p>
+  <p><code>404 RESOURCE_NOT_FOUND</code> for an unknown id or one that is not yours. The <code>409</code>s below are
+  <strong><code>EMAIL</code> only</strong> — a phone number reaches nothing and resolves nobody, so
+  <code>PHONE</code>/<code>OTHER</code> always delete:</p>
+  <table class="compare">
+    <tr><th>Guard</th><th><code>CONFLICT</code> detail</th></tr>
+    <tr><td>Reachability</td><td>"This is the only address the platform can reach you at — add another first."</td></tr>
+    <tr><td>Resolvability</td><td>"This is your only verified address, and it is what this platform resolves you by — verify another one first."</td></tr>
+    <tr><td>No fallback to a claim</td><td>"Everything else on file is unproven, and the platform will not fall back to an address nobody has established — verify another first."</td></tr>
+  </table>
+  <p class="mut">The third guard is the interesting one, and it is why "add an address, delete the rest" is not a way to
+  point this platform's outbound mail at a stranger: a self-added claim can only become your best address by outlasting
+  every primary and every verified one, so the API refuses to let the last of those go.</p></div></div>
+<p class="mut">Audit actions written by this surface: <code>identity.contact_added</code>,
+<code>identity.contact_verified</code>, <code>identity.contact_primary_changed</code>,
+<code>identity.contact_removed</code> — all with <code>target</code> = your <code>person.id</code>.</p>
+
+<h2 id="profile">B3 · Profile, preferences &amp; notifications</h2>
 <div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/me/profile</span><span class="perm any">any caller</span></div>
   <div class="ep-body"><p>Read your profile; <code>PUT</code> the same path to update display name, locale, timezone, avatar reference.</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method PUT">PUT</span><span class="path">/api/v1/me/preferences</span><span class="perm any">any caller</span></div>
@@ -323,7 +495,7 @@ stored response replays; same key with a <em>different</em> body ⇒ <code>409</
   <div class="ep-body"><p>Your in-app notification feed (cursor-paginated). Mark one read with
   <code>POST /api/v1/me/notifications/{id}/read</code>. Background events (an import finishing, a ticket reply) land here.</p></div></div>
 
-<h2 id="privacy">B3 · Privacy, consents &amp; devices (GDPR, self-service)</h2>
+<h2 id="privacy">B4 · Privacy, consents &amp; devices (GDPR, self-service)</h2>
 <div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/me/consents</span><span class="perm any">any caller</span></div>
   <div class="ep-body"><p>Record a consent decision. <strong>Append-only</strong> — a withdrawal is a new record, never an overwrite.</p>
   <table class="params"><tr><th>Field</th><th>Type</th><th>Req</th><th>Description</th></tr>
@@ -345,7 +517,7 @@ GET  /api/v1/me/consents                                            # full histo
   trusted-device policy). <code>GET</code> lists yours with last-seen; <code>DELETE …/{id}</code> revokes.</p>
   <pre><code>POST /api/v1/me/devices  {"name":"Work laptop","kind":"BROWSER","fingerprint":"dev-abc123"}</code></pre></div></div>
 
-<h2 id="myfiles">B4 · Files, documents &amp; reference data</h2>
+<h2 id="myfiles">B5 · Files, documents &amp; reference data</h2>
 <div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/files</span><span class="perm any">any caller</span></div>
   <div class="ep-body"><p>Raw object storage, namespaced to you. Multipart field <code>file</code>. <code>GET …/{key}</code> 302s to a short-lived
   presigned URL; <code>POST /api/v1/files/presign</code> mints a presigned <code>PUT</code>/<code>GET</code> without proxying bytes.</p></div></div>
@@ -408,16 +580,105 @@ POST /api/v1/signup/verify {"token":"…from the link…"}
 <h2 id="users">C2 · Users &amp; impersonation</h2>
 <div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/admin/users</span><span class="perm plat">platform-support</span></div>
   <div class="ep-body"><p>Every person on the platform, across every tenant (cursor-paginated). <code>…/{personId}/profile</code> reads one,
-  <code>…/{personId}/devices</code> lists their registered devices. Rows carry <code>personId</code>,
-  <code>formattedName</code>, <code>email</code> and <code>status</code>
+  <code>…/{personId}/devices</code> lists their registered devices. Rows carry <code>personId</code>, <code>name</code>,
+  <code>email</code> and <code>status</code>
   (<code>INVITED</code> → <code>ACTIVE</code> → <code>DISABLED</code>).</p>
+  <div class="card warn"><strong>Breaking change:</strong> <code>attributes.formattedName</code> is <strong>gone</strong>,
+  replaced by the nested <code>attributes.name</code> block — the same seven-component SCIM/OIDC object
+  <a href="#me"><code>GET /api/v1/me</code></a> returns, with null components omitted and <code>{}</code> for a person no
+  name was ever supplied for. A client still reading <code>attributes.formattedName</code> now reads
+  <code>undefined</code>; it wants <code>attributes.name.formattedName</code>. The whole block travels rather than the
+  lone display value because an operator about to fix a typo needs to see the component the typo is <em>in</em> — being
+  shown only the display value and then asked to patch <code>givenName</code> blind is how a correction lands on the
+  wrong field.</div>
+  <pre><code>{ "data": [ { "id":"5862…", "type":"user", "attributes": {
+      "personId":"5862…", "email":"ada@acme.test", "status":"ACTIVE",
+      "name": { "formattedName":"Dr. Ada Lovelace-Byron MBE", "givenName":"Ada",
+                "familyName":"Lovelace-Byron", "honorificPrefix":"Dr." } } } ],
+  "meta": { "requestId":"01J4X9…", "page": { "size":20, "count":1, "hasMore":false } } }</code></pre>
   <p class="mut">The path and the <code>user</code> resource type are unchanged on purpose — "user" is this API's word
   for a human with an account — but the payload no longer carries a provider subject, because it was never something an
   operator could act on. The id is a <code>person.id</code>, and that id is what every other admin surface here takes.
-  <code>formattedName</code> is rendered as the provider gave it and may be <code>null</code>; a UI that falls back to the
-  email is right where one that prints <code>given + " " + family</code> would show some people their name backwards.
-  On email: a <em>verified</em> address is unique platform-wide (per kind, case-insensitively, among live rows), so two
-  live accounts cannot both prove the same one — an unverified claim is not held to that.</p></div></div>
+  <code>name.formattedName</code> is rendered as the provider gave it and may be absent; a UI that falls back to the
+  email is right where one that prints <code>given + " " + family</code> would show some people their name backwards —
+  see <a href="#me">B1</a> for the rule in full. On email: a <em>verified</em> address is unique platform-wide (per kind,
+  case-insensitively, among live rows), so two live accounts cannot both prove the same one — an unverified claim is not
+  held to that, and a person with no contact on file has no <code>email</code> key at all.</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/admin/users/{personId}</span><span class="perm plat">platform-support</span></div>
+  <div class="ep-body"><p>One person, whole — the record an operator opens before correcting it. Same attributes as a row
+  of the listing: <code>personId</code>, <code>name</code>, <code>email</code>, <code>status</code>.</p>
+  <p class="mut"><code>404 RESOURCE_NOT_FOUND</code> ("No such user.") for an unknown <em>or soft-deleted</em> person: to
+  an operator an erased account is gone, and "it exists but you may not touch it" would only invite them to re-create
+  it.</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method PATCH">PATCH</span><span class="path">/api/v1/admin/users/{personId}/name</span><span class="perm plat">platform-admin</span></div>
+  <div class="ep-body"><p>Correct somebody else's name — an operator fixing a typo. <strong>Identical in body, semantics
+  and response to <a href="#me"><code>PATCH /api/v1/me/name</code></a></strong> (flat map of components; absent =
+  unchanged, <code>null</code>/<code>""</code> = cleared, unknown key = <code>422</code> with a pointer;
+  <code>type: "person-name"</code> back). One operation, two callers.</p>
+  <p class="mut"><strong>Note the floor: <code>platform-admin</code>, not <code>platform-support</code></strong>, even
+  though support may <em>read</em> this surface. Reading a person is support's job; rewriting another human's identity is
+  not. The role hierarchy makes an admin satisfy the read checks too, so the split costs an operator nothing.</p>
+  <p class="mut">Audited as <code>identity.person_name_changed</code> with <code>actor_person_id</code> = the operator and
+  <code>target</code> = the person changed, and <code>from_state</code>/<code>to_state</code> carrying the before and
+  after of <em>exactly the fields sent</em>. That actor field is also what distinguishes a self-edit from a correction
+  afterwards — they equal each other for the former. A patch that changes nothing is not audited.</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/admin/users/{personId}/disable</span><span class="perm plat">platform-admin</span></div>
+  <div class="ep-body"><p>Suspend a person's access. <strong>No request body</strong>, and no <code>Idempotency-Key</code>
+  needed — the operation is naturally idempotent. <code>{personId}</code> is a <code>person.id</code> from the listing
+  above.</p>
+  <pre><code>POST /api/v1/admin/users/5862…/disable          # no body
+# → 200
+{ "data": { "id":"5862…", "type":"user", "attributes": {
+    "personId":"5862…", "email":"ada@acme.test", "status":"DISABLED",
+    "name": { "formattedName":"Dr. Ada Lovelace-Byron MBE", "givenName":"Ada" } } },
+  "meta": { "requestId":"01J4X9…" } }</code></pre>
+  <div class="card warn"><strong>It bites on their very next request — there is no cache lag.</strong> The next
+  <code>/api/**</code> call that person makes is refused <code>403 ACCOUNT_DISABLED</code> ("Your account has been
+  disabled."), and any <a href="#users">impersonation</a> session they hold as operator, or are worn through as target,
+  is refused on its next request too. The edge caches <em>who a subject is</em>, never <em>whether they may in</em>, so
+  nothing has to be evicted for this to be immediate.</div>
+  <p class="mut"><strong>Nothing else changes.</strong> Memberships, org roles and name survive untouched, and
+  <code>…/enable</code> puts them back exactly as they were — this is a reversible suspension, not an erasure (that is
+  <a href="#privacy"><code>POST /api/v1/me/erasure-request</code></a>, which is terminal).</p>
+  <table class="compare">
+    <tr><th>Status</th><th>Why</th></tr>
+    <tr><td><code>403</code> <code>FORBIDDEN</code></td><td>The caller is <code>platform-support</code>, or a plain signed-in person. Support reads this surface; it never changes access.</td></tr>
+    <tr><td><code>404</code> <code>RESOURCE_NOT_FOUND</code></td><td>"No such user." — an erased person answers this too.</td></tr>
+    <tr><td><code>409</code> <code>CONFLICT</code></td><td>"You cannot suspend your own account. Ask another platform administrator to do it." — it would lock you out of the surface you would need to undo it. <code>409</code> not <code>403</code>: you <em>are</em> authorized, the request conflicts with the state of the target, that state being "it is you".</td></tr>
+    <tr><td><code>409</code> <code>CONFLICT</code></td><td>"This account is the last platform super-admin; grant that role to another account before suspending this one." — the tier that grants tiers cannot be restored from inside the application.</td></tr>
+  </table>
+  <p class="mut"><strong>Idempotent:</strong> suspending an already-<code>DISABLED</code> person returns <code>200</code>
+  with <code>status:"DISABLED"</code>, changes nothing, files <em>no</em> audit row, and makes no call to the identity
+  provider. Audit row on a real transition: <code>identity.person_disabled</code>, <code>org_id</code> <code>NULL</code>
+  (a person belongs to the platform, not a tenant), <code>target</code> = the personId, <code>actor_person_id</code> =
+  the operator, <code>from_state</code> = <code>status=ACTIVE</code> or <code>status=INVITED</code>,
+  <code>to_state</code> = <code>status=DISABLED</code>. Distinct from
+  <code>identity.person_disabled_by_reconciliation</code>, which the nightly identity sweep files with a
+  <code>NULL</code> actor — two actions, so a review can tell an operator's decision from a machine's.</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/admin/users/{personId}/enable</span><span class="perm plat">platform-admin</span></div>
+  <div class="ep-body"><p>Restore a suspended person. No request body. Same envelope as <code>…/disable</code>.</p>
+  <div class="card"><strong>What they come back <em>as</em> is contractual.</strong> <code>status</code> is
+  <code>"ACTIVE"</code> for somebody who had signed in before, and <code>"INVITED"</code> for somebody who never did — a
+  restore must never mark an invitation as accepted by a person who has not turned up. Such a person is flipped to
+  <code>ACTIVE</code> only by their own first real API request, through the same gate that has always meant "they finally
+  showed up".</div>
+  <table class="compare">
+    <tr><th>Status</th><th>Why</th></tr>
+    <tr><td><code>403</code> <code>FORBIDDEN</code></td><td>As above — <code>platform-admin</code> or nothing.</td></tr>
+    <tr><td><code>404</code> <code>RESOURCE_NOT_FOUND</code></td><td>"No such user."</td></tr>
+    <tr><td><code>409</code> <code>CONFLICT</code></td><td>"This person's account no longer exists in the identity provider, so restoring access here would be reversed by the nightly identity reconciliation and they still could not sign in. Re-create or restore their provider account first, then enable them here."</td></tr>
+  </table>
+  <p class="mut">That last refusal exists to stop an operator and the nightly sweep fighting: the sweep disables people
+  whose provider account has disappeared, so a restore would be undone tonight and again tomorrow, with this surface
+  claiming one thing every evening and the system doing another every morning. <strong>Only a definitive "deleted"
+  refuses</strong> — an <em>inconclusive</em> provider lookup restores, so an operator's ability to undo their own
+  mistake is never hostage to Keycloak's uptime.</p>
+  <p class="mut"><strong>Idempotent:</strong> enabling somebody who already has access returns <code>200</code> with their
+  current status, files no audit row, and makes no provider call. Audit row on a real transition:
+  <code>identity.person_enabled</code>, <code>org_id</code> <code>NULL</code>, <code>target</code> = the personId,
+  <code>actor_person_id</code> = the operator, <code>from_state</code> = <code>status=DISABLED</code>,
+  <code>to_state</code> = <code>status=ACTIVE</code> <em>or</em> <code>status=INVITED</code> — both sides spelled out,
+  because "restored" alone cannot answer whether an invitation was marked accepted.</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/admin/impersonations</span><span class="perm plat">platform-support</span></div>
   <div class="ep-body"><p>The <strong>only</strong> sanctioned bridge from an operator to tenant data — and it's audited. Open a session, then
   repeat your <em>own</em> tenant call with <code>X-Impersonate: &lt;id&gt;</code>. <code>mode:WRITE</code> needs <code>platform-admin</code>.</p>
@@ -528,7 +789,7 @@ usage (tracking-id-deduped) for usage-based plans.</div>
   <div class="ep-body"><p>The platform-default provider for a <code>kind</code> (<code>SMS_PROVIDER</code>, <code>EMAIL_PROVIDER</code>,
   <code>PAYMENT_GATEWAY</code>) — used by any org without its own override. Secret settings are encrypted + masked on read.</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method PUT">PUT</span><span class="path">/api/v1/settings/{key}</span> · <span class="path">/api/v1/feature-flags/{key}</span> · <span class="path">/api/v1/translations/{locale}/{key}</span><span class="perm plat">platform-admin</span></div>
-  <div class="ep-body"><p>Write platform reference data (any caller reads it — B4). Translations power <code>Accept-Language</code> error details.</p>
+  <div class="ep-body"><p>Write platform reference data (any caller reads it — B5). Translations power <code>Accept-Language</code> error details.</p>
   <pre><code>PUT /api/v1/settings/branding.name          {"value":"SMSOne"}
 PUT /api/v1/translations/fr/error.forbidden {"value":"Accès refusé."}</code></pre></div></div>
 <div class="ep"><div class="ep-head"><span class="method PUT">PUT</span><span class="path">/api/v1/feature-flags/{key}/orgs/{orgId}</span><span class="perm plat">platform-admin</span></div>
@@ -748,9 +1009,9 @@ POST …/security-policy/trusted-devices {"personId":"5862…","deviceId":"…",
 <tr><td>401</td><td><code>UNAUTHORIZED</code></td><td>Missing / expired / foreign-audience token, or a bad API key</td></tr>
 <tr><td>402</td><td><code>SUBSCRIPTION_PAUSED</code></td><td>Org write while the plan is <code>PAUSED</code> (reads still pass)</td></tr>
 <tr><td>403</td><td><code>FORBIDDEN</code></td><td>RBAC, escalation guard, entitlement gates (upgrade-shaped), policy denials</td></tr>
-<tr><td>403</td><td><code>ACCOUNT_NOT_PROVISIONED</code> / <code>ACCOUNT_DISABLED</code></td><td>No-JIT gate / a disabled or erased account</td></tr>
-<tr><td>404</td><td><code>RESOURCE_NOT_FOUND</code></td><td>Unknown id — including another org's id (never a 403 oracle)</td></tr>
-<tr><td>409</td><td><code>CONFLICT</code></td><td>Duplicate alias, last-owner, last-super-admin, idempotency body mismatch, delete-before-suspend</td></tr>
+<tr><td>403</td><td><code>ACCOUNT_NOT_PROVISIONED</code> / <code>ACCOUNT_DISABLED</code></td><td>No-JIT gate / an erased account, or one an operator <a href="#users">suspended</a> — effective on the very next request</td></tr>
+<tr><td>404</td><td><code>RESOURCE_NOT_FOUND</code></td><td>Unknown id — including another org's id, another person's contact, and a soft-deleted person (never a 403 oracle)</td></tr>
+<tr><td>409</td><td><code>CONFLICT</code></td><td>Duplicate alias, last-owner, last-super-admin, self-suspension, an unproven address made primary or its last proven one removed, idempotency body mismatch, delete-before-suspend</td></tr>
 <tr><td>413 / 422</td><td><code>PAYLOAD_TOO_LARGE</code> / <code>VALIDATION_FAILED</code></td><td>Body cap / field problems with <code>source.pointer|parameter</code></td></tr>
 <tr><td>429</td><td><code>RATE_LIMITED</code></td><td>Bucket empty (or plan quota) — honor <code>Retry-After</code></td></tr>
 <tr><td>503</td><td><code>SERVICE_UNAVAILABLE</code></td><td>Maintenance window, or a dependency breaker open — retry later</td></tr>

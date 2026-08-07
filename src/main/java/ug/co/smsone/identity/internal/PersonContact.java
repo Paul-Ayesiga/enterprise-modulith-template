@@ -9,6 +9,7 @@ import java.time.Instant;
 import java.util.UUID;
 import org.hibernate.annotations.SQLDelete;
 import org.hibernate.annotations.SQLRestriction;
+import ug.co.smsone.shared.error.ConflictException;
 import ug.co.smsone.shared.persistence.SoftDeletableEntity;
 
 /**
@@ -27,6 +28,14 @@ import ug.co.smsone.shared.persistence.SoftDeletableEntity;
  * arrives one proof at a time: {@code uq_person_contact_verified_live} makes a verified address
  * globally unique, and a duplicate therefore fails AT VERIFICATION, where a human is present and an
  * error message makes sense, rather than at provisioning inside a batch job.
+ *
+ * <p><b>An unverified row is INERT, and that is a rule the whole module leans on.</b> Since anyone may
+ * now add an address to their own account ({@code MeContactController}), an unproven claim is a string a
+ * stranger typed about somebody else's mailbox. So nothing resolves a person by one
+ * ({@link PersonContactRepository#findVerifiedPersonIdsByValue} is what the directory port reads) and
+ * nothing provisions against one (see {@link PersonContactRepository#findPersonIdsByValue}, which is
+ * restricted to rows that are verified OR primary). The two states that a claim CAN reach —
+ * {@link #verify} and {@link #makePrimary} — are the two doors, and both are locked behind a proof.
  */
 @Entity
 @Table(name = "person_contact")
@@ -47,10 +56,9 @@ class PersonContact extends SoftDeletableEntity {
     private String contactValue;
 
     /**
-     * The human's own name for this address ("work", "billing"). Deliberately written by nothing today:
-     * the only factory is {@link #primaryEmail}, which has no label to give, and there is no
-     * multi-contact UI yet. Mapped so the column stays reachable the day that lands — the accessor is
-     * not, because an accessor over an always-NULL column reads like data that exists.
+     * The human's own name for this address ("work", "billing"). Null for anything the platform wrote
+     * itself — {@link #primaryEmail} has no label to give, because a provisioning invite is not somebody
+     * naming their own mailbox.
      */
     @Column(length = 50)
     private String label;
@@ -69,7 +77,16 @@ class PersonContact extends SoftDeletableEntity {
     /**
      * The address a provisioning invite is sent to: primary for its person, and UNVERIFIED, because
      * nobody has proven anything yet. It becomes verified when the human completes the invite's
-     * {@code VERIFY_EMAIL} action, not when an admin types it in.
+     * {@code VERIFY_EMAIL} action and comes back with a token that says so — see
+     * {@link PersonContacts#verifyWithProof}.
+     *
+     * <p><b>This is the one place a primary is set without a proof, and it has to be.</b> Assigning the
+     * field directly rather than calling {@link #makePrimary} is deliberate: at invite time the address
+     * is the only one that exists and nobody has had the chance to prove anything, so requiring a proof
+     * here would make provisioning impossible. It is also exactly why "primary implies verified" cannot
+     * be a CHECK constraint in V10 — the schema cannot tell this row apart from a chosen one. The rule
+     * binds every path where a PERSON chooses, which is {@link #makePrimary}, and nothing else may
+     * touch the field.
      */
     static PersonContact primaryEmail(UUID personId, String address) {
         PersonContact contact = new PersonContact();
@@ -80,10 +97,48 @@ class PersonContact extends SoftDeletableEntity {
         return contact;
     }
 
+    /**
+     * An address its owner has typed in but not yet proven: never primary, never trusted, and visible to
+     * nothing except its own person's contact list until {@link #verify} runs.
+     */
+    static PersonContact claimed(UUID personId, ContactKind kind, String value, String label) {
+        PersonContact contact = new PersonContact();
+        contact.personId = personId;
+        contact.kind = kind;
+        contact.contactValue = value;
+        contact.label = label;
+        contact.isPrimary = false;
+        return contact;
+    }
+
+    /** Idempotent: a second proof of the same address must not move the date the first one recorded. */
     void verify(Instant when) {
         if (verifiedAt == null) {
             this.verifiedAt = when;
         }
+    }
+
+    /**
+     * Makes this the address of its kind the platform prefers.
+     *
+     * <p>The proof check lives HERE rather than in the service so that no future caller can set the flag
+     * without one. It is not decoration: a primary address outranks every other in
+     * {@link PersonContacts} and is one of the two states {@code findPersonIdsByValue} will provision
+     * against, so a person who could promote an unproven claim could point either at a mailbox they do
+     * not own.
+     */
+    void makePrimary() {
+        if (verifiedAt == null) {
+            throw new ConflictException(
+                    "Verify this address before making it your primary one — an unproven address is "
+                    + "not something this platform will send to or resolve you by.");
+        }
+        this.isPrimary = true;
+    }
+
+    /** Gives up the primary flag. Always safe: at-most-one is the constraint, at-least-one is not. */
+    void standDown() {
+        this.isPrimary = false;
     }
 
     UUID getPersonId() {
@@ -98,8 +153,16 @@ class PersonContact extends SoftDeletableEntity {
         return contactValue;
     }
 
+    String getLabel() {
+        return label;
+    }
+
     boolean isPrimary() {
         return isPrimary;
+    }
+
+    boolean isVerified() {
+        return verifiedAt != null;
     }
 
     Instant getVerifiedAt() {

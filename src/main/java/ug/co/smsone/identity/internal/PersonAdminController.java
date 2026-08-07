@@ -7,6 +7,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -16,8 +17,8 @@ import ug.co.smsone.shared.web.ResourceObject;
 import ug.co.smsone.shared.web.WindowedResult;
 
 /**
- * The operator surface on a person: the platform-wide listing, one person read whole, and the one
- * write — correcting a name that is wrong.
+ * The operator surface on a person: the platform-wide listing, one person read whole, and the writes —
+ * correcting a name that is wrong, and suspending or restoring access.
  *
  * <p>The path and the {@code user} resource type are unchanged on purpose. "User" is the API's word for
  * a human with an account — the profile module hangs {@code /admin/users/{id}/profile} and
@@ -27,9 +28,14 @@ import ug.co.smsone.shared.web.WindowedResult;
  * something a support operator could do anything with.
  *
  * <p><b>Two floors, not one.</b> This controller was read-only, and {@code platform-support} was the
- * floor for all of it. Reading still is support's job; editing another human's name is not, so the
- * PATCH is {@code platform-admin}. The role hierarchy makes an admin satisfy the read checks too, so
- * the split costs an operator nothing and means a support login cannot rewrite anyone's identity.
+ * floor for all of it. Reading still is support's job; changing another human's identity or their access
+ * is not, so every write here is {@code platform-admin}. The role hierarchy makes an admin satisfy the
+ * read checks too, so the split costs an operator nothing and means a support login can neither rewrite
+ * anyone's identity nor take their access away. The line is drawn at "does this alter another human's
+ * account", not at "is this a write" — which is why suspension sits on the same floor as a name
+ * correction rather than being escalated to {@code platform-superadmin}: it is reversible from this very
+ * surface, it is audited with both states, and the one irreversible-from-here case (the last
+ * super-admin) is refused outright instead of being handed to a higher tier.
  */
 @RestController
 @RequestMapping("/api/v1/admin/users")
@@ -100,6 +106,39 @@ class PersonAdminController {
     @PreAuthorize("hasRole('platform-admin')")
     ResourceObject patchName(@PathVariable UUID personId, @RequestBody Map<String, String> body) {
         return PersonNameAttributes.toResource(personId, names.apply(personId, NamePatch.of(body)));
+    }
+
+    // Suspension is a POST to a named sub-path rather than a PATCH of `status`, matching
+    // OrganizationController's suspend/reactivate pair. A writable status field would put every
+    // transition behind one handler and one authorization annotation, and would invite a client to send
+    // INVITED — a state only the invitation flow may produce.
+
+    @PostMapping("/{personId}/disable")
+    @Operation(summary = "Suspend a user's access",
+            description = """
+                    Revokes access immediately: the very next API request this person makes is refused \
+                    with `ACCOUNT_DISABLED`, and any impersonation session they hold or are worn through \
+                    dies with it. Nothing else is changed — memberships, roles and name survive, and \
+                    `POST .../enable` puts them back exactly where they were. Idempotent: suspending an \
+                    already-suspended account returns it unchanged and files no audit row. Refused with \
+                    409 when the target is the caller themselves, or the last platform super-admin.""")
+    @PreAuthorize("hasRole('platform-admin')")
+    ResourceObject disable(@PathVariable UUID personId) {
+        return toResource(access.disable(personId));
+    }
+
+    @PostMapping("/{personId}/enable")
+    @Operation(summary = "Restore a suspended user's access",
+            description = """
+                    Returns the person to the status they held before suspension — `ACTIVE` for someone \
+                    who had signed in, `INVITED` for someone who never did, so restoring never marks an \
+                    invitation as accepted by a person who has not turned up. Idempotent, and files no \
+                    audit row for an account that already has access. Refused with 409 when the person's \
+                    identity-provider account no longer exists: restoring them would be undone by the \
+                    nightly identity reconciliation and they still could not sign in.""")
+    @PreAuthorize("hasRole('platform-admin')")
+    ResourceObject enable(@PathVariable UUID personId) {
+        return toResource(access.enable(personId));
     }
 
     private static ResourceObject toResource(PersonSummary person) {

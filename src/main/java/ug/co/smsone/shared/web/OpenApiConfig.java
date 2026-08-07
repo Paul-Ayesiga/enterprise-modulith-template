@@ -58,7 +58,13 @@ public class OpenApiConfig {
     /** U+00B7 MIDDLE DOT, spaced. Reads as a breadcrumb and survives Postman's flat folder list. */
     static final String AXIS_SEPARATOR = " · ";
 
-    private static final String TAG_PLATFORM_USERS = AXIS_PLATFORM + AXIS_SEPARATOR + "Users & impersonation";
+    private static final String TAG_PLATFORM_USERS = AXIS_PLATFORM + AXIS_SEPARATOR + "Users";
+    // Split out of "Users & impersonation" when the person lifecycle landed: that group reached 10
+    // operations and OpenApiTagContractTest caps a group at 8, because a Postman folder you have to
+    // scroll is a folder nobody reads. The split is also the better filing — impersonation is a
+    // distinct capability with its own authority rules, not another user CRUD operation.
+    private static final String TAG_PLATFORM_IMPERSONATION =
+            AXIS_PLATFORM + AXIS_SEPARATOR + "Impersonation";
     private static final String TAG_PLATFORM_ORGS = AXIS_PLATFORM + AXIS_SEPARATOR + "Organizations";
     private static final String TAG_PLATFORM_SETTINGS = AXIS_PLATFORM + AXIS_SEPARATOR + "Settings & flags";
     private static final String TAG_PLATFORM_OPS = AXIS_PLATFORM + AXIS_SEPARATOR + "Ops";
@@ -81,6 +87,7 @@ public class OpenApiConfig {
     private static final String TAG_SHARED_WEBHOOK_EVENTS = AXIS_SHARED + AXIS_SEPARATOR + "Webhook events";
     private static final String TAG_SHARED_PROFILE = AXIS_SHARED + AXIS_SEPARATOR + "My profile";
     private static final String TAG_SHARED_DEVICES = AXIS_SHARED + AXIS_SEPARATOR + "My devices";
+    private static final String TAG_SHARED_CONTACTS = AXIS_SHARED + AXIS_SEPARATOR + "My contacts";
     private static final String TAG_SHARED_PRIVACY = AXIS_SHARED + AXIS_SEPARATOR + "My privacy";
     private static final String TAG_PLATFORM_COMPLIANCE = AXIS_PLATFORM + AXIS_SEPARATOR + "Compliance";
     private static final String TAG_ORG_SECURITY = AXIS_ORGANIZATION + AXIS_SEPARATOR + "Security policy";
@@ -118,8 +125,8 @@ public class OpenApiConfig {
             // fallback group instead of failing to compile — exactly the failure this file's own
             // javadoc predicts for a rename. It stayed invisible while that controller had one
             // operation and surfaced only when adding two more pushed the fallback group past its cap.
-            Map.entry("PersonAdminController", "Users & impersonation"),
-            Map.entry("ImpersonationController", "Users & impersonation"),
+            Map.entry("PersonAdminController", "Users"),
+            Map.entry("ImpersonationController", "Impersonation"),
             Map.entry("SettingController", "Settings & flags"),
             Map.entry("FeatureFlagController", "Settings & flags"),
             Map.entry("SchedulerController", "Ops"),
@@ -150,12 +157,16 @@ public class OpenApiConfig {
             Map.entry("WebhookEventTypesController", "Webhook events"),
             Map.entry("MeProfileController", "My profile"),
             Map.entry("MeDeviceController", "My devices"),
+            // NOT folded into "My profile": that group is already at the readability cap, and the two
+            // are different in kind anyway — a profile is cosmetics its owner may set to anything, a
+            // contact address is what the platform reaches and resolves you by, half of it proven.
+            Map.entry("MeContactController", "My contacts"),
             Map.entry("MeComplianceController", "My privacy"),
             Map.entry("AdminComplianceController", "Compliance"),
             Map.entry("OrgSecurityPolicyController", "Security policy"),
-            Map.entry("AdminDeviceController", "Users & impersonation"),
+            Map.entry("AdminDeviceController", "Users"),
             Map.entry("OrgMembershipsController", "Me & notifications"),
-            Map.entry("AdminProfileController", "Users & impersonation"),
+            Map.entry("AdminProfileController", "Users"),
             Map.entry("MeController", "Me & notifications"),
             Map.entry("NotificationController", "Me & notifications"),
             Map.entry("FileController", "Files"),
@@ -249,11 +260,16 @@ public class OpenApiConfig {
                 // an undeclared tag sorts outside this order and reaches Postman as a bare folder.
                 .tags(List.of(
                         new Tag().name(TAG_PLATFORM_USERS).description(
-                                "Identities across every tenant, and the impersonation sessions that are "
-                                + "the only sanctioned way from an operator to tenant data. platform-support "
-                                + "reads and may open a session; wearing an account that itself holds a "
-                                + "platform role needs platform-superadmin. A session carries no authority "
-                                + "of its own, so from inside one this whole group answers 403."),
+                                "Identities across every tenant: read one or many, correct a name, and "
+                                + "suspend or restore access. platform-support reads; changing another "
+                                + "human's name or access needs platform-admin. Suspension takes effect on "
+                                + "the target's very next request, and a person suspended before they ever "
+                                + "signed in is restored to INVITED, not ACTIVE."),
+                        new Tag().name(TAG_PLATFORM_IMPERSONATION).description(
+                                "The only sanctioned way from an operator to tenant data. platform-support "
+                                + "may open a session; wearing an account that itself holds a platform role "
+                                + "needs platform-superadmin. A session carries no authority of its own, so "
+                                + "from inside one this whole group answers 403."),
                         new Tag().name(TAG_PLATFORM_ORGS).description(
                                 "Creating a tenant, suspending it, reactivating it. These are platform "
                                 + "actions ON an organization, not actions inside one, and that is why they "
@@ -423,6 +439,12 @@ public class OpenApiConfig {
                                 "The caller's own devices — register (idempotent per X-Device-Id), list, "
                                 + "revoke. Marking one TRUSTED is not here: trust is an organization's "
                                 + "grant (its security policy), not a self-claim."),
+                        new Tag().name(TAG_SHARED_CONTACTS).description(
+                                "The addresses this platform can reach you at — add, remove, choose "
+                                + "your primary, and prove one. An UNVERIFIED address is inert: nothing "
+                                + "resolves you by it and nothing falls back to it, which is why it can "
+                                + "never be made primary. Proof is your identity provider's own "
+                                + "verified-email claim; this platform sends no challenge of its own."),
                         new Tag().name(TAG_SHARED_PRIVACY).description(
                                 "Your own compliance controls — consent history (append-only), a data "
                                 + "export of your record (portability), and requesting your own erasure "
