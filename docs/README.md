@@ -19,7 +19,7 @@ Y" duties table is [../AGENTS.md](../AGENTS.md) §13 — this page only says wha
 | Document | One job |
 |---|---|
 | [SRS.md](SRS.md) | Requirements with stable IDs, external interfaces, NFRs, and traceability to the tests that verify them |
-| [DATA_MODEL.md](DATA_MODEL.md) | Every table, column, index and invariant; migration history; lifecycle and retention |
+| [DATA_MODEL.md](DATA_MODEL.md) | The tables reference — all 54 tables grouped by module, every column with its meaning, and the real-FK-vs-soft-ref relationships; generated from the migrations |
 | [erd/schema.dbml](erd/schema.dbml) | The full schema as dbdiagram.io DBML — 52 tables, real FKs + tenant/soft-ref relationships, per-module groups; generated from the applied migrations, import to visualize |
 | [EVENTS.md](EVENTS.md) | Domain event catalog: publishers, payloads, consumers, idempotency keys |
 | [SLO.md](SLO.md) | Service-level objectives: the promise, the exact measuring expression, the error budget, the discipline when it runs out |
