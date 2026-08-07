@@ -54,6 +54,7 @@ Rendered HTML explainers, each with diagrams and a light/dark toggle.
 | [0007](adr/0007-api-gateway.md) | API gateway: a reactive Spring Cloud Gateway as a hexagonal platform product |
 | [0008](adr/0008-geolocation-storage.md) | Geolocation stored as numeric lat/lng behind a spatial port (`GeoSearch`), PostGIS deferred |
 | [0009](adr/0009-mcp-server.md) | MCP server: the agent surface as a second protocol surface over the same module ports — stateless streamable HTTP, API-key auth |
+| [0010](adr/0010-schema-based-multi-tenancy.md) | **Proposed** — schema tenancy for EXTRACTABILITY: pooled by default, promoted to a silo on demand, `org_id` kept everywhere as the misroute detector |
 
 ## Plans — [plans/](plans/)
 
