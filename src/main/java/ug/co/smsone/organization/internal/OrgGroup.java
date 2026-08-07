@@ -35,8 +35,19 @@ class OrgGroup extends SoftDeletableEntity {
      * sharpest case of the old shape: a Keycloak subject was not merely referenced here, it was
      * load-bearing key data in a table that could not point at the thing it keyed on. Still a soft ref
      * (person is another module), but now at least it is our identifier.
+     *
+     * <p><b>LAZY, unlike {@link Role#getPermissions()} beside it</b>, and the difference is the bound:
+     * a role's permissions are bounded by the {@code Permission} enum, a group's members are bounded by
+     * the ORGANIZATION's headcount. EAGER meant every query that returned groups also dragged every
+     * member row of every group it returned — the group LISTING therefore cost the org's total group
+     * membership per page, no matter how small the page. {@code default_batch_fetch_size} makes that
+     * one query instead of N; it does not make it fewer rows, which was the actual cost.
+     *
+     * <p>The trap LAZY sets in exchange: {@code open-in-view} is false, so this set may only be read
+     * inside a service transaction. Reach for it via {@link OrgGroupService}'s materialized views —
+     * never by handing an {@code OrgGroup} to a controller and calling {@code getMembers()} there.
      */
-    @ElementCollection(fetch = FetchType.EAGER)
+    @ElementCollection(fetch = FetchType.LAZY)
     @CollectionTable(name = "org_group_member", joinColumns = @JoinColumn(name = "group_id"))
     @Column(name = "person_id", nullable = false)
     private Set<UUID> members = new LinkedHashSet<>();

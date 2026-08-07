@@ -5,6 +5,7 @@ import java.sql.Date;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -40,6 +41,10 @@ import ug.co.smsone.shared.security.GatewaySecretVerifier;
  * organization inserts perfectly happily and no later query ever finds it. The database will not catch
  * that. So the ids are checked against the organization directory in ONE batched call before any
  * upsert, which is the membership test the link table was standing in for.
+ *
+ * <p>The write side is batched to match: a flush carrying every active consumer costs two round trips
+ * (one existence check, one {@code batchUpdate}) rather than 1 + N, so the cost of this endpoint tracks
+ * the flush INTERVAL and not the tenant count.
  */
 @Hidden
 @RestController
@@ -83,17 +88,28 @@ class GatewayUsageReportController {
         }
         Set<UUID> known = organizations.existing(billable.keySet());
         Date day = Date.valueOf(LocalDate.now(clock));
-        billable.forEach((orgId, requests) -> {
-            if (!known.contains(orgId)) {
-                return; // not a tenant of ours — the gateway meters some consumers that are not
-            }
-            jdbc.update("""
-                    insert into api_usage_daily (org_id, day, requests)
-                    values (?, ?, ?)
-                    on conflict (org_id, day)
-                    do update set requests = api_usage_daily.requests + excluded.requests
-                    """, orgId, day, requests);
-        });
+        // Filter BEFORE the batch: batchUpdate has no way to skip a row once it is in the list, and the
+        // gateway legitimately meters consumers that are not tenants of ours.
+        List<Object[]> rows = billable.entrySet().stream()
+                .filter(entry -> known.contains(entry.getKey()))
+                .map(entry -> new Object[] {entry.getKey(), day, entry.getValue()})
+                .toList();
+        if (rows.isEmpty()) {
+            return;
+        }
+        // One round trip for the whole flush instead of one per consumer. Still N statements — each
+        // upsert stays its own row-level operation, which is what keeps the batch safe: the merge above
+        // guarantees one row per org, but even a duplicate would only re-enter the additive
+        // do-update. The trap is the "obvious" next step — collapsing this into a single multi-row
+        // VALUES — which Postgres refuses outright ("ON CONFLICT DO UPDATE command cannot affect row a
+        // second time") the first time one flush carries the same org twice, e.g. the same UUID
+        // presented in two casings. Keep the batch, not the multi-row insert.
+        jdbc.batchUpdate("""
+                insert into api_usage_daily (org_id, day, requests)
+                values (?, ?, ?)
+                on conflict (org_id, day)
+                do update set requests = api_usage_daily.requests + excluded.requests
+                """, rows);
     }
 
     /**

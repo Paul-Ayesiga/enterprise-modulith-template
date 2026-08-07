@@ -70,7 +70,10 @@ class SupportToolManifest implements ToolManifest {
                         (context, args) -> Map.of("messages", desk.messages(context.orgId(), id(args)))),
 
                 new ToolDefinition("ticket_reply", "Reply on ticket",
-                        "Add a tenant reply to a ticket's conversation.",
+                        "Add a tenant reply to a ticket's conversation. Like ticket_create, the "
+                                + "author recorded is the PERSON behind this call — an API key has "
+                                + "none and is refused, so holding ticket:write does not by itself "
+                                + "make this callable.",
                         1, "support", Kind.WRITE, "ticket:write",
                         ToolArgs.schema(Map.of(
                                         "ticket_id", ToolArgs.string("The ticket id."),

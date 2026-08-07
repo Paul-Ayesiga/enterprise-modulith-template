@@ -1,7 +1,6 @@
 package ug.co.smsone.support.internal;
 
 import io.swagger.v3.oas.annotations.Operation;
-import java.util.List;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -68,11 +67,13 @@ class OrgTicketController {
 
     @GetMapping("/{id}/messages")
     @Operation(summary = "The ticket's public messages",
-            description = "Internal platform notes are never shown to the tenant.")
+            description = "Oldest first, cursor-paged. Internal platform notes are never shown to "
+                    + "the tenant — they are excluded by the query, not hidden by this layer.")
     @PreAuthorize("hasPermission(#orgId, 'organization', 'ticket:read')")
-    List<ResourceObject> messages(@PathVariable UUID orgId, @PathVariable UUID id) {
+    WindowedResult<ResourceObject> messages(@PathVariable UUID orgId, @PathVariable UUID id,
+            CursorPageRequest page) {
         support.requireInOrg(orgId, id); // 404 for a foreign org's ticket
-        return support.messages(id, false).stream().map(TicketResources::toResource).toList();
+        return WindowedResult.of(support.messages(id, false, page), page, TicketResources::toResource);
     }
 
     @PostMapping("/{id}/messages")

@@ -3,6 +3,7 @@ package ug.co.smsone.organization.internal;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -26,6 +27,11 @@ import ug.co.smsone.testsupport.EdgeSeed;
  * AUDITOR group resolves MEMBER ∪ AUDITOR, and removing them drops it back — with the permission
  * cache cleared on every group mutation. Handing out a group role passes the escalation guard, and
  * only existing members can be grouped.
+ *
+ * <p>The first test also pins the summary/detail split of the read surface, at the one point in the
+ * fixture where a group HAS a member: the listing answers {@code memberCount} and no ids, the group's
+ * own resource answers the ids. That split is what keeps a page's cost tied to {@code page[size]}
+ * rather than to the organization's total group membership, and it is only visible from the wire.
  */
 @AutoConfigureMockMvc
 class OrgGroupRbacTest extends AbstractIntegrationTest {
@@ -72,6 +78,21 @@ class OrgGroupRbacTest extends AbstractIntegrationTest {
         // The union is live (cache cleared on add): the worker now holds audit:read via the group.
         assertThat(authorization.permissions(worker, orgId))
                 .containsExactlyInAnyOrder("org:read", "audit:read");
+
+        // The LISTING is a summary on purpose: a count, and no member ids. Serializing every member of
+        // every group made a page cost the org's total group membership rather than page[size] — the ids
+        // live on the single-group endpoint, which one caller asked for one group's worth of.
+        mockMvc.perform(get("/api/v1/orgs/{orgId}/groups", orgId).with(member(orgId, manager)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].attributes.roleCode").value("AUDITOR"))
+                .andExpect(jsonPath("$.data[0].attributes.memberCount").value(1))
+                .andExpect(jsonPath("$.data[0].attributes.members").doesNotExist());
+
+        // ...and the group's own resource still carries them.
+        mockMvc.perform(get("/api/v1/orgs/{orgId}/groups/{id}", orgId, groupId).with(member(orgId, manager)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.attributes.members[0]").value(worker.toString()));
 
         mockMvc.perform(delete("/api/v1/orgs/{orgId}/groups/{id}/members/{personId}", orgId, groupId, worker)
                         .with(member(orgId, manager)))

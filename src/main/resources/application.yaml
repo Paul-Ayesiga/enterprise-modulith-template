@@ -67,7 +67,12 @@ spring:
           writetimeout: ${SMTP_WRITE_TIMEOUT_MS:5000}
   modulith:
     events:
-      republish-outstanding-events-on-restart: true
+      # OFF, and replaced — not abandoned — by shared.events.OutboxResubmissionJob. Modulith runs this
+      # inside afterSingletonsInstantiated(): every incomplete publication, no limit, every listener
+      # invoked before the context finishes refreshing, so a backlog is paid for in startup time
+      # ahead of the readiness probe. The job does the same retries in capped passes, starting one
+      # right after ApplicationReadyEvent so crash recovery keeps its promptness.
+      republish-outstanding-events-on-restart: false
   docker:
     compose:
       file: docker/docker-compose.yml
@@ -400,6 +405,19 @@ app:
     in-progress-lease: ${IDEMPOTENCY_LEASE:PT5M}
     max-body-bytes: ${IDEMPOTENCY_MAX_BODY_BYTES:262144}
     retention: ${IDEMPOTENCY_RETENTION:P1D}
+  events:
+    resubmission:
+      # The outbox's retry sweep, replacing Modulith's republish-on-restart (see spring.modulith above).
+      # Off only turns retries off — publications a crash stranded then stay incomplete until someone
+      # turns it back on, so this is an incident switch, not a tuning knob.
+      enabled: ${EVENT_RESUBMISSION_ENABLED:true}
+      # Read as a pair with retry-backoff: at the five-minute cron, one backoff cycle covers
+      # 12 × max-per-run = 6000 publications before the head of the backlog comes round again. That
+      # is the size of backlog the sweep drains strictly forward; past it a permanently-failing head
+      # starts competing with the tail. Widen the backoff before raising the cap — the cap is how
+      # much listener work one pass may do, and it is what keeps a pass inside its ShedLock lease.
+      max-per-run: ${EVENT_RESUBMISSION_MAX_PER_RUN:500}
+      retry-backoff: ${EVENT_RESUBMISSION_RETRY_BACKOFF:PT1H}
   scheduler:
     # Completed event publications stay inspectable for a week, then the nightly purge removes them.
     event-retention: ${SCHEDULER_EVENT_RETENTION:P7D}

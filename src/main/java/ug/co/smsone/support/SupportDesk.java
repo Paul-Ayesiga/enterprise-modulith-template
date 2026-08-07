@@ -26,8 +26,23 @@ public interface SupportDesk {
 
     TicketView open(UUID orgId, UUID openerPersonId, String subject, String category, String priority);
 
-    /** The tenant-visible conversation — internal (platform-only) notes are filtered out. */
-    List<MessageView> messages(UUID orgId, UUID ticketId);
+    /**
+     * The tenant-visible conversation, oldest first — internal (platform-only) notes are excluded by
+     * the QUERY, so they are never read on this path at all.
+     */
+    WindowedResult<MessageView> messages(UUID orgId, UUID ticketId, CursorPageRequest page);
+
+    /**
+     * The conversation's FIRST page, for callers that hand back a plain list.
+     *
+     * <p>It is capped, not complete: a ticket's message count is unbounded and this port refuses to
+     * offer a read whose cost is a tenant's to decide. A caller that must walk a long conversation
+     * pages {@link #messages(UUID, UUID, CursorPageRequest)} instead — the trap is reading this
+     * method's list as "the conversation" when it is only the oldest end of one.
+     */
+    default List<MessageView> messages(UUID orgId, UUID ticketId) {
+        return messages(orgId, ticketId, new CursorPageRequest(CursorPageRequest.MAX_SIZE, null)).items();
+    }
 
     MessageView reply(UUID orgId, UUID ticketId, UUID authorPersonId, String body);
 

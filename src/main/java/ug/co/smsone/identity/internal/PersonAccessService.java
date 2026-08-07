@@ -11,6 +11,7 @@ import org.springframework.data.domain.Window;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ug.co.smsone.identity.ProvisioningStatus;
+import ug.co.smsone.shared.error.NotFoundException;
 import ug.co.smsone.shared.web.CursorPageRequest;
 
 /**
@@ -34,15 +35,25 @@ class PersonAccessService {
         DISABLED
     }
 
-    /** One row of the platform listing: identity, the label to show, and how to reach them. */
-    record PersonSummary(UUID personId, String formattedName, String email, ProvisioningStatus status) {
+    /**
+     * One person on the platform surface: identity, what they are called, and how to reach them.
+     *
+     * <p>It carries the whole {@link PersonName} rather than just {@code formattedName} because the
+     * operator surface has two readers of it now — a listing that renders the display value, and the
+     * single read an operator opens before correcting a typo, which needs the components the typo is
+     * in. Projecting the name down to one string here would have forced a second query shape for the
+     * second reader.
+     */
+    record PersonSummary(UUID personId, PersonName name, String email, ProvisioningStatus status) {
     }
 
     /**
      * What {@code /me} needs about the caller's own account. {@code personId} and {@code email} are both
-     * null before provisioning — there is no person yet, so there is nothing to reach them at either.
+     * null before provisioning — there is no person yet, so there is nothing to reach them at either —
+     * and {@code name} is {@link PersonName#UNKNOWN} for the same reason. Never null: "we know of no
+     * name" is a state every caller must render, and an absent object would make it a second one.
      */
-    record SelfView(UUID personId, String email, String provisioningStatus) {
+    record SelfView(UUID personId, String email, PersonName name, String provisioningStatus) {
     }
 
     private final PersonRepository persons;
@@ -112,12 +123,31 @@ class PersonAccessService {
     @Transactional(readOnly = true)
     SelfView selfView(UUID personId) {
         if (personId == null) {
-            return new SelfView(null, null, "UNPROVISIONED");
+            return unprovisioned();
         }
         return persons.findById(personId)
                 .map(person -> new SelfView(person.getId(), contacts.emailOf(person.getId()).orElse(null),
-                        person.getStatus().name()))
-                .orElseGet(() -> new SelfView(null, null, "UNPROVISIONED"));
+                        person.getName(), person.getStatus().name()))
+                .orElseGet(PersonAccessService::unprovisioned);
+    }
+
+    /**
+     * One person, for the operator surface's single read. Throws rather than returning an Optional
+     * because its caller wants the 404: {@code @SQLRestriction} makes an erased person and one that
+     * never existed the same absence here, and to an operator both mean "not something you can look
+     * at". {@link PersonNameService} answers the same 404 from its own lookup rather than calling this
+     * one — it needs the managed entity to write to, not a projection of it.
+     */
+    @Transactional(readOnly = true)
+    PersonSummary require(UUID personId) {
+        return persons.findById(personId)
+                .map(person -> new PersonSummary(person.getId(), person.getName(),
+                        contacts.emailOf(person.getId()).orElse(null), person.getStatus()))
+                .orElseThrow(() -> new NotFoundException("No such user."));
+    }
+
+    private static SelfView unprovisioned() {
+        return new SelfView(null, null, PersonName.UNKNOWN, "UNPROVISIONED");
     }
 
     /**
@@ -131,7 +161,7 @@ class PersonAccessService {
                 query -> query.limit(page.size()).sortBy(LIST_SORT).scroll(page.scrollPosition(LIST_SORT)));
         List<UUID> ids = window.stream().map(Person::getId).toList();
         Map<UUID, String> emails = contacts.emailsByPersonIds(ids);
-        return window.map(person -> new PersonSummary(person.getId(), person.getFormattedName(),
+        return window.map(person -> new PersonSummary(person.getId(), person.getName(),
                 emails.get(person.getId()), person.getStatus()));
     }
 

@@ -24,9 +24,13 @@ class FoundationToolManifest implements ToolManifest {
                 "whoami",
                 "Who am I",
                 "Identify the authenticated caller: the person behind the call (null for an API key — "
-                        + "a key acts for nobody), credential kind, the organization every tool call is "
-                        + "scoped to, and the exact permission codes this credential holds. Call this "
-                        + "first to plan with real capabilities.",
+                        + "a key acts for nobody), credential kind, and the organization every tool "
+                        + "call is scoped to. 'permissions' lists exact codes ONLY for an API key, "
+                        + "whose subset is frozen at mint; for a signed-in person it is null on "
+                        + "purpose, because membership permissions are resolved per call and no list "
+                        + "here could stay true — use the permission-filtered tools/list as the "
+                        + "capability answer instead. Call this first to plan with real capabilities, "
+                        + "and read personId to know whether the person-only tools are open to you.",
                 1,
                 "foundation",
                 ToolDefinition.Kind.READ,

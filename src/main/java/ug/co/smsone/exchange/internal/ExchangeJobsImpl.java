@@ -15,10 +15,19 @@ import ug.co.smsone.shared.web.WindowedResult;
  * The {@link ExchangeJobs} port: mappings over {@link ExchangeService}, with the caller resolved
  * from the security context exactly as the REST controllers resolve it.
  *
- * <p>READS work for any caller; SUBMIT and CANCEL need a person, so an API-key agent is refused by
- * {@code ExchangeService.requireRequester} while an OAuth agent (which resolves to a person like any
- * other sign-in) is not. That is the schema's rule, not this port's: a job re-checks its requester's
- * permissions when it runs, and a machine key has no membership to re-check.
+ * <p>READS work for any caller. SUBMIT — and only submit — needs a PERSON: an API-key agent is refused
+ * by {@code ExchangeService.requireRequester} while an OAuth agent (which resolves to a person like any
+ * other sign-in) is not. That is the schema's rule, not this port's: {@code requester_person_id} is NOT
+ * NULL because the job outlives the request and re-checks its requester's permissions when it runs, and
+ * a machine key has no membership to re-check.
+ *
+ * <p>CANCEL is NOT in that set, which reads like an inconsistency and is not. It goes through
+ * {@code ExchangeService.requireArtifactAccess}, whose requester comparison a machine simply loses — a
+ * robot is nobody's requester — so it falls through to the handler permission its minted subset CAN
+ * answer. Nothing is written that needs a person to name: cancelling only flips a flag on a row whose
+ * requester already exists. So a key holding {@code exchange:submit} plus the handler's own permission
+ * can cancel a job it could never have submitted, and the MCP tests pin exactly that. Do not "fix" the
+ * asymmetry by routing cancel through {@code requireRequester}.
  */
 @Component
 class ExchangeJobsImpl implements ExchangeJobs {

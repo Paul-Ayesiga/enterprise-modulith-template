@@ -1,9 +1,9 @@
 package ug.co.smsone.organization.internal;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.Map;
 import java.util.UUID;
-import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
@@ -77,11 +77,21 @@ class MemberService {
         this.securityPolicies = securityPolicies;
     }
 
-    /** The id → code map the member listing renders with — see {@link RoleRepository#codesByOrgId}. */
+    /** The id → code map the member listing renders with — see {@link RoleRepository#codeMapByOrgId}. */
     @Transactional(readOnly = true)
     Map<UUID, String> roleCodes(UUID orgId) {
-        return roles.codesByOrgId(orgId).stream()
-                .collect(Collectors.toMap(RoleRepository.RoleCode::getId, RoleRepository.RoleCode::getCode));
+        return roles.codeMapByOrgId(orgId);
+    }
+
+    /**
+     * {@link #roleCodes(UUID)} for rows that span organizations. Asking per org is the trap here:
+     * {@code GET /me/organizations} did exactly that inside its stream, so a person in twelve tenants
+     * paid twelve role queries to render twelve rows. The role ids are known up front, so one query
+     * answers them all.
+     */
+    @Transactional(readOnly = true)
+    Map<UUID, String> roleCodesByIds(Collection<UUID> roleIds) {
+        return roles.codeMapByIds(roleIds);
     }
 
     Membership invite(UUID orgId, String email, String givenName, String familyName, String roleCode) {

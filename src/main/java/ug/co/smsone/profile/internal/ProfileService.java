@@ -72,14 +72,21 @@ class ProfileService {
     /**
      * Additive upsert: only the sent keys change; a null value deletes its key.
      *
-     * <p>Validated in full, then loaded in ONE query. It used to issue a {@code findById} per submitted
-     * key, which made the query count of this endpoint the CLIENT's to choose — a body of fifty
-     * preferences was fifty selects before any write. The rows are keyed by a composite id, so
-     * {@code findAllById} over the whole set is the same index and one round trip.
+     * <p>Validated in full, then loaded in ONE query — because the query count of this endpoint is the
+     * CLIENT's to choose otherwise: a body of fifty preferences was fifty selects before any write.
+     *
+     * <p>The load deliberately does NOT go through {@code findAllById}, which is what this loop was
+     * "fixed" to once and which reads as the batch form everywhere else in this codebase. For a
+     * COMPOSITE-ID entity Spring Data implements it as a {@code findById} loop, so it issues exactly
+     * the N selects it appears to remove — see
+     * {@link PersonPreferenceRepository#findByPersonIdAndPrefKeyIn}, which spells the trap out and is
+     * the one-round-trip replacement. Keying the working map by pref key rather than by
+     * {@code PersonPreference.Key} is part of that: every row here belongs to one person, so the
+     * person is a constant of the request and only the key varies.
      */
     @Transactional
     Map<String, String> putPreferences(UUID personId, Map<String, String> changes) {
-        Map<PersonPreference.Key, String> requested = new LinkedHashMap<>();
+        Map<String, String> requested = new LinkedHashMap<>();
         changes.forEach((key, value) -> {
             if (key == null || key.isBlank() || key.length() > 100) {
                 throw new ValidationException("preference keys must be 1–100 characters.",
@@ -89,22 +96,25 @@ class ProfileService {
                 throw new ValidationException("preference values cap at 500 characters.",
                         ApiSource.pointer("/data/attributes/preferences"));
             }
-            requested.put(new PersonPreference.Key(personId, key.trim()), value);
+            requested.put(key.trim(), value);
         });
-        Map<PersonPreference.Key, PersonPreference> existing = new LinkedHashMap<>();
-        preferences.findAllById(requested.keySet()).forEach(preference ->
-                existing.put(new PersonPreference.Key(personId, preference.getPrefKey()), preference));
+        if (requested.isEmpty()) {
+            return preferences(personId); // an empty body changes nothing; don't spend an `in ()` query
+        }
+        Map<String, PersonPreference> stored = new LinkedHashMap<>();
+        preferences.findByPersonIdAndPrefKeyIn(personId, requested.keySet())
+                .forEach(preference -> stored.put(preference.getPrefKey(), preference));
         Instant now = clock.instant();
-        requested.forEach((id, value) -> {
-            PersonPreference stored = existing.get(id);
+        requested.forEach((key, value) -> {
+            PersonPreference existing = stored.get(key);
             if (value == null) {
-                if (stored != null) {
-                    preferences.delete(stored);
+                if (existing != null) {
+                    preferences.delete(existing);
                 }
-            } else if (stored != null) {
-                stored.change(value, now);
+            } else if (existing != null) {
+                existing.change(value, now);
             } else {
-                preferences.save(PersonPreference.of(personId, id.prefKey(), value, now));
+                preferences.save(PersonPreference.of(personId, key, value, now));
             }
         });
         return preferences(personId);

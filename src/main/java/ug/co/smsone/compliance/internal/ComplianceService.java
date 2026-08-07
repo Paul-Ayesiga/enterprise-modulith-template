@@ -7,6 +7,8 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.domain.Window;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,6 +18,7 @@ import ug.co.smsone.shared.error.NotFoundException;
 import ug.co.smsone.shared.error.ValidationException;
 import ug.co.smsone.shared.security.PlatformAdmins;
 import ug.co.smsone.shared.web.ApiSource;
+import ug.co.smsone.shared.web.CursorPageRequest;
 
 /**
  * Consent history, legal holds, and GDPR erasure. Erasure is the sharp edge: a person under an active
@@ -32,6 +35,15 @@ import ug.co.smsone.shared.web.ApiSource;
 class ComplianceService {
 
     private static final Logger log = LoggerFactory.getLogger(ComplianceService.class);
+
+    /**
+     * The active-holds keyset (AGENTS §3.3): stable AND unique. {@code placedAt} is the order an
+     * operator reads holds in; {@code id} is the tiebreaker that makes the sort total. The tiebreaker
+     * is not decoration — a litigation sweep places holds in a batch and {@code placed_at} is only as
+     * fine as the clock, so ties are the normal case here, and a cursor built on a non-unique key
+     * silently skips or repeats rows across the page seam.
+     */
+    private static final Sort HOLD_SORT = Sort.by(Sort.Order.desc("placedAt"), Sort.Order.desc("id"));
 
     /** A table an erasure clears, and the column it is keyed by. Constants — never input. */
     private record OwnedTable(String table, String keyColumn) {
@@ -132,9 +144,20 @@ class ComplianceService {
         return hold;
     }
 
+    /**
+     * Active holds, one keyset page at a time (ADR 0002). This used to hand back every un-released
+     * hold as a single JSON list, which is unbounded by construction: holds are never deleted, only
+     * released, and nothing caps how many a litigation sweep places at once. It also sorted every
+     * active row on each call — the query has no index that satisfies {@code placed_at desc} under
+     * {@code released_at is null}, so a 20-row page cost a top-N heapsort over all of them (measured:
+     * 3,334 active holds → 95 buffers / 1.31 ms, versus 23 buffers / 0.10 ms once such an index
+     * exists). That index is DDL and is reported to the migration owner rather than written here.
+     */
     @Transactional(readOnly = true)
-    List<LegalHold> activeHolds() {
-        return holds.findByReleasedAtIsNullOrderByPlacedAtDesc();
+    Window<LegalHold> activeHolds(CursorPageRequest page) {
+        return holds.findBy((root, query, cb) -> cb.isNull(root.get("releasedAt")),
+                query -> query.limit(page.size()).sortBy(HOLD_SORT)
+                        .scroll(page.scrollPosition(HOLD_SORT)));
     }
 
     @Transactional
@@ -153,6 +176,9 @@ class ComplianceService {
 
     @Transactional
     ErasureRequest requestErasure(UUID personId, UUID requestedByPersonId) {
+        // Saved BEFORE the decision, so a request that is about to be refused still exists as a record
+        // of having been made. The save()s further down land on this same managed instance, so they
+        // cost nothing extra — see ErasureRequest's id field for why only the first one ever could.
         ErasureRequest request = erasures.save(
                 ErasureRequest.received(personId, requestedByPersonId, clock.instant()));
         if (legalHolds.personHeld(personId)) {

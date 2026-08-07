@@ -6,6 +6,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.UUID;
+import org.hibernate.annotations.UuidGenerator;
 
 /**
  * An active-until-released legal hold. Never soft-deleted; a released row is the trail.
@@ -28,7 +29,14 @@ class LegalHold {
     private static final String SCOPE_PERSON = "SUBJECT";
     private static final String SCOPE_ORG = "ORG";
 
+    /**
+     * Generated at {@code persist()}, never in the factory: with no {@code @Version} on this entity a
+     * pre-assigned id makes Spring Data read {@code save()} as an update and route it through
+     * {@code merge()} — a SELECT before every INSERT. The trap is spelled out in full on
+     * {@link ConsentRecord}.
+     */
     @Id
+    @UuidGenerator
     private UUID id;
 
     @Column(nullable = false, length = 10)
@@ -61,7 +69,6 @@ class LegalHold {
 
     static LegalHold onPerson(UUID personId, String reason, UUID placedByPersonId, Instant when) {
         LegalHold hold = new LegalHold();
-        hold.id = UUID.randomUUID();
         hold.scope = SCOPE_PERSON;
         hold.personId = personId;
         hold.reason = reason;
@@ -72,7 +79,6 @@ class LegalHold {
 
     static LegalHold onOrg(UUID orgId, String reason, UUID placedByPersonId, Instant when) {
         LegalHold hold = new LegalHold();
-        hold.id = UUID.randomUUID();
         hold.scope = SCOPE_ORG;
         hold.orgId = orgId;
         hold.reason = reason;

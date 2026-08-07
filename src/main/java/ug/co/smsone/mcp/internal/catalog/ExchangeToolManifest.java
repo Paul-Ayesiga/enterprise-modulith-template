@@ -15,9 +15,17 @@ import ug.co.smsone.shared.web.ApiSource;
 /**
  * Exchange tools — the async pattern for agents: discover handlers, submit an EXPORT, poll the job,
  * follow the result URL. Reads need {@code exchange:read}, submit/cancel need {@code
- * exchange:submit} (the REST rule); each handler additionally enforces its OWN export permission at
- * submit, so the gate an agent sees in tools/list is the floor, not the whole story — the
- * description says so.
+ * exchange:submit} (the REST rule); the handler's OWN permission is enforced on top at submit AND on
+ * every artifact-bearing call (cancel, result, error report) a non-requester makes. So the gate an
+ * agent sees in {@code tools/list} is the FLOOR, not the whole story, and every description that has
+ * a second gate behind it says which one — a tool an agent can see but never use is a bug report
+ * waiting to happen.
+ *
+ * <p>Two gates that are easy to confuse and are not the same: {@code exchange_submit} needs a PERSON
+ * ({@code requester_person_id} is NOT NULL and is re-checked at processing time), while cancel and
+ * the artifact URLs do NOT — a machine simply loses the requester comparison and falls through to the
+ * handler permission its minted subset can still answer. Both facts are stated in the descriptions
+ * because an API-key agent can otherwise only discover them by calling and reading a 403.
  */
 @Component
 class ExchangeToolManifest implements ToolManifest {
@@ -53,11 +61,15 @@ class ExchangeToolManifest implements ToolManifest {
                         (context, args) -> exchange.get(context.orgId(), id(args))),
 
                 new ToolDefinition("exchange_submit", "Submit export job",
-                        "Submit an EXPORT through a handler (see exchange_handlers). Asynchronous: "
-                                + "returns the queued job — poll exchange_job_get, then fetch "
-                                + "exchange_result_url when COMPLETED. The handler's own export "
-                                + "permission is enforced at submit. Imports are not available over "
-                                + "MCP (file upload is a REST surface).",
+                        "Submit an EXPORT through a handler (see exchange_handlers). NEEDS A "
+                                + "SIGNED-IN PERSON: the job outlives this call and re-checks its "
+                                + "requester's permissions when it runs, so an API key — which acts "
+                                + "for nobody and whose permissions are frozen at mint — is refused "
+                                + "here even holding every permission (check whoami.personId first). "
+                                + "Asynchronous: returns the queued job — poll exchange_job_get, then "
+                                + "fetch exchange_result_url when COMPLETED. The handler's own export "
+                                + "permission is enforced at submit, on top of exchange:submit. "
+                                + "Imports are not available over MCP (file upload is a REST surface).",
                         1, "exchange", Kind.WRITE, "exchange:submit",
                         ToolArgs.schema(submitProperties(), "handler"),
                         (context, args) -> exchange.submitExport(context.orgId(),
@@ -66,13 +78,18 @@ class ExchangeToolManifest implements ToolManifest {
 
                 new ToolDefinition("exchange_cancel", "Cancel exchange job",
                         "Request cancellation of a queued or running job. Finished jobs answer a "
-                                + "conflict.",
+                                + "conflict. Unlike exchange_submit this does NOT need a person — but "
+                                + "unless you are the job's requester you also need the handler's own "
+                                + "import/export permission, on top of exchange:submit.",
                         1, "exchange", Kind.WRITE, "exchange:submit",
                         ToolArgs.schema(Map.of("job_id", ToolArgs.string("The job id.")), "job_id"),
                         (context, args) -> exchange.cancel(context.orgId(), id(args))),
 
                 new ToolDefinition("exchange_result_url", "Export result URL",
-                        "Mint a short-lived download URL for a COMPLETED export's result file.",
+                        "Mint a short-lived download URL for a COMPLETED export's result file. The "
+                                + "file carries the data itself, so exchange:read alone is not enough: "
+                                + "unless you are the job's requester you also need the handler's own "
+                                + "import/export permission.",
                         1, "exchange", Kind.READ, "exchange:read",
                         ToolArgs.schema(Map.of("job_id", ToolArgs.string("The job id.")), "job_id"),
                         (context, args) -> Map.of("url",
@@ -80,7 +97,9 @@ class ExchangeToolManifest implements ToolManifest {
 
                 new ToolDefinition("exchange_error_report_url", "Error report URL",
                         "Mint a short-lived download URL for a job's row-addressed error report, "
-                                + "when one exists.",
+                                + "when one exists. Gated like exchange_result_url: the report quotes "
+                                + "the rows, so a non-requester also needs the handler's own "
+                                + "import/export permission.",
                         1, "exchange", Kind.READ, "exchange:read",
                         ToolArgs.schema(Map.of("job_id", ToolArgs.string("The job id.")), "job_id"),
                         (context, args) -> Map.of("url",

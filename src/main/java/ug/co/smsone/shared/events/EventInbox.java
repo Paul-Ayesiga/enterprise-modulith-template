@@ -38,6 +38,13 @@ public class EventInbox {
      * Dedup only needs to cover the at-least-once redelivery window (a restart re-publishing
      * incomplete publications) — not all history, which is what this table accumulated before the
      * purge existed.
+     *
+     * <p>THE TRAP, and the reason the {@code order by} is not decoration: the sub-select is only
+     * bounded work because V52 indexes {@code processed_at}. Unindexed, "the thousand oldest" can
+     * only be found by seq-scanning and top-N sorting everything past the cutoff on EVERY batch, so
+     * the caller's 100-batch loop costs 100 full scans and the batching is a pessimisation rather
+     * than a fix. With the index the scan IS the order and {@code limit} stops it at 1000 rows; the
+     * outer delete then drives the primary key from those, which was never the expensive half.
      */
     public int purgeProcessedBatch(java.time.Instant cutoff, int batchSize) {
         return jdbcTemplate.update("""

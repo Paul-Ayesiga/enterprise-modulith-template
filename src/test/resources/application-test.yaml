@@ -31,6 +31,13 @@ app:
   organization:
     dev-bootstrap:
       enabled: false
+  # Outbox retry sweep off: its five-minute cron would otherwise fire from every cached context
+  # against the one shared registry, resubmitting publications other tests left incomplete while
+  # those tests assert on them. OutboxResubmissionJobIntegrationTest drives resubmitOnce() directly —
+  # the entry point that carries neither the flag nor the ShedLock.
+  events:
+    resubmission:
+      enabled: false
   # Exchange worker is driven explicitly by tests via drainOnce() — no background claims racing asserts.
   exchange:
     worker-auto-start: false

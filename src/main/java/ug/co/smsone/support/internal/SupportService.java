@@ -140,12 +140,15 @@ class SupportService {
         return tickets.findById(id).orElseThrow(() -> new NotFoundException("Ticket not found."));
     }
 
-    /** Messages a TENANT may see: public only. Platform sees all. */
+    /**
+     * One page of a ticket's conversation, oldest first. {@code includeInternal} is the PLATFORM
+     * view; a tenant read passes false and the note never leaves the database — the cut is a
+     * predicate in {@link TicketMessageRepository#pageByTicket}, not a filter applied to rows this
+     * caller was not entitled to read in the first place.
+     */
     @Transactional(readOnly = true)
-    List<TicketMessage> messages(UUID ticketId, boolean includeInternal) {
-        return messages.findByTicketIdOrderByCreatedAtAsc(ticketId).stream()
-                .filter(message -> includeInternal || !message.isInternal())
-                .toList();
+    Window<TicketMessage> messages(UUID ticketId, boolean includeInternal, CursorPageRequest page) {
+        return messages.pageByTicket(ticketId, includeInternal, page);
     }
 
     /** The tenant's own reply. Moves a WAITING ticket back to IN_PROGRESS. */

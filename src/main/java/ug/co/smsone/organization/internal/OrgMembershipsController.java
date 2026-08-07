@@ -54,14 +54,20 @@ class OrgMembershipsController {
         Map<UUID, Organization> orgs = organizations.findAllById(
                         mine.stream().map(Membership::getOrgId).collect(Collectors.toSet())).stream()
                 .collect(Collectors.toMap(Organization::getId, org -> org));
+        // Both maps are built BEFORE the stream, and that is the whole point: the role code used to be
+        // fetched inside it with a per-org query, so this endpoint cost one role query per tenant the
+        // caller belongs to — the one caller whose row count is, by definition, several organizations
+        // wide. The organizations were already batched here; the roles now are too, by the exact role
+        // ids the memberships name rather than by org (see MemberService#roleCodesByIds).
+        Map<UUID, String> roleCodes = members.roleCodesByIds(
+                mine.stream().map(Membership::getRoleId).collect(Collectors.toSet()));
         return mine.stream()
                 .map(membership -> {
                     Organization org = orgs.get(membership.getOrgId());
                     if (org == null) {
                         return null; // org soft-deleted under the membership: not a switch target
                     }
-                    String roleCode = members.roleCodes(membership.getOrgId())
-                            .get(membership.getRoleId());
+                    String roleCode = roleCodes.get(membership.getRoleId());
                     return new ResourceObject(org.getId().toString(), "my-organization",
                             new MyOrgAttributes(org.getAlias(), org.getName(),
                                     org.getStatus().name(), roleCode));

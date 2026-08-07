@@ -6,6 +6,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.UUID;
+import org.hibernate.annotations.UuidGenerator;
 
 /**
  * One consent decision. APPEND-ONLY: a withdrawal is a new row, so the history is intact.
@@ -19,7 +20,28 @@ import java.util.UUID;
 @Table(name = "consent_record")
 class ConsentRecord {
 
+    /**
+     * Hibernate assigns the id at {@code persist()}, and that is not a style preference — it is what
+     * keeps an append-only table from doing a read before every write.
+     *
+     * <p>The trap: {@code SimpleJpaRepository.save()} branches on {@code isNew(entity)}, and
+     * {@code JpaMetamodelEntityInformation.isNew()} only consults a version attribute when one exists
+     * AND is non-primitive; otherwise it falls back to "the id is null". These three compliance
+     * entities have no {@code @Version} at all (V34 gave the tables no {@code version} column — they
+     * are records, not aggregates), so an id assigned in the factory made every entity look ALREADY
+     * PERSISTENT. Every first {@code save()} therefore took the {@code merge()} branch, and merge must
+     * load the existing state first: a SELECT before every INSERT, on a table whose whole design is
+     * "only ever append". It is invisible in behaviour, which is why it survived: nothing breaks, the
+     * statement count per written row simply doubles — visible only with SQL logging on.
+     *
+     * <p>{@code @UuidGenerator} is the mechanism {@link ug.co.smsone.shared.persistence.BaseEntity}
+     * already uses for exactly this reason; borrowing it is cheaper than inventing a
+     * {@code Persistable} + transient-flag pattern this codebase has nowhere else. The id is populated
+     * by the time {@code save()} returns (the generator runs in-memory during persist, not at flush),
+     * so callers that read {@code getId()} straight after are unaffected.
+     */
     @Id
+    @UuidGenerator
     private UUID id;
 
     @Column(name = "person_id", nullable = false)
@@ -43,7 +65,6 @@ class ConsentRecord {
 
     static ConsentRecord of(UUID personId, String purpose, boolean granted, String source, Instant when) {
         ConsentRecord record = new ConsentRecord();
-        record.id = UUID.randomUUID();
         record.personId = personId;
         record.purpose = purpose;
         record.granted = granted;

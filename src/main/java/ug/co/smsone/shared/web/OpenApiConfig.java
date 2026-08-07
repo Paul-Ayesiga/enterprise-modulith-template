@@ -113,7 +113,12 @@ public class OpenApiConfig {
      * {@code NotificationController} are both "my stuff"). Nothing here decides authority.
      */
     private static final Map<String, String> RESOURCE_BY_CONTROLLER = Map.ofEntries(
-            Map.entry("UserAdminController", "Users & impersonation"),
+            // PersonAdminController, not UserAdminController: the identity refactor renamed the class
+            // and this key kept the old name, so the controller quietly fell through to the Platform
+            // fallback group instead of failing to compile — exactly the failure this file's own
+            // javadoc predicts for a rename. It stayed invisible while that controller had one
+            // operation and surfaced only when adding two more pushed the fallback group past its cap.
+            Map.entry("PersonAdminController", "Users & impersonation"),
             Map.entry("ImpersonationController", "Users & impersonation"),
             Map.entry("SettingController", "Settings & flags"),
             Map.entry("FeatureFlagController", "Settings & flags"),

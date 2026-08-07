@@ -21,6 +21,11 @@ import ug.co.smsone.shared.web.WindowedResult;
  * pagination over {@code (rank desc, id desc)} — the cursor carries the mode, so page 2 continues
  * the strategy page 1 chose instead of re-deciding. Snippets are computed only for the returned
  * page ({@code ts_headline} on the outer select), never for every match.
+ *
+ * <p>Every read is bounded by something. A tenant search — and a platform search narrowed to an org
+ * — is bounded by the org predicate, which is also the tenancy cut. An UNSCOPED platform search has
+ * no such predicate, so it is bounded explicitly by {@link #CANDIDATE_CAP} instead: it ranks a
+ * capped slice of the matches rather than all of them.
  */
 @Service
 @Transactional(readOnly = true)
@@ -33,6 +38,13 @@ class SearchQueryService {
     private static final int MAX_QUERY_LENGTH = 200;
     private static final String MODE_FTS = "fts";
     private static final String MODE_TRGM = "trgm";
+    /**
+     * How many matches an UNSCOPED platform search ranks. Measured on a 200k-document corpus with a
+     * word every document contains: uncapped 460ms, capped 15ms — and the uncapped figure grows with
+     * the corpus while this one does not. 2 000 is 20 pages at the maximum page size, which is far
+     * past where a ranked search is still the right tool for the question being asked.
+     */
+    private static final int CANDIDATE_CAP = 2_000;
 
     private final JdbcTemplate jdbc;
 
@@ -92,22 +104,25 @@ class SearchQueryService {
             params.add(q); // SELECT: word_similarity(?, d.title)
         }
 
-        StringBuilder where = new StringBuilder(fts ? "d.tsv @@ query" : "? <% d.title");
+        // The MATCH predicate (what an index can answer) is built apart from the KEYSET predicate
+        // (what the cursor answers), because the platform-wide plan puts a row cap between the two.
+        StringBuilder match = new StringBuilder(fts ? "d.tsv @@ query" : "? <% d.title");
         if (!fts) {
             params.add(q); // WHERE: ? <% d.title
         }
         // Tenant search ALWAYS filters by the caller's org (the cut is in the query, §5.6); the
         // platform search filters only when the operator narrowed it.
         if (!platformWide || orgScope != null) {
-            where.append(" and d.org_id = ?");
+            match.append(" and d.org_id = ?");
             params.add(orgScope);
         }
         if (type != null && !type.isBlank()) {
-            where.append(" and d.entity_type = ?");
+            match.append(" and d.entity_type = ?");
             params.add(type.trim());
         }
+        String keyset = "";
         if (cursor != null) {
-            where.append(" and (").append(rankExpr).append(", d.id) < (?, ?)");
+            keyset = "(" + rankExpr + ", d.id) < (?, ?)";
             if (!fts) {
                 params.add(q); // the keyset predicate repeats word_similarity(?, d.title)
             }
@@ -115,15 +130,34 @@ class SearchQueryService {
             params.add(cursor.id());
         }
 
+        String matchSql = match.toString();
         String from = fts
                 ? "search_document d, websearch_to_tsquery('simple', ?) query"
                 : "search_document d";
         String headline = fts
                 ? "ts_headline('simple', hit.body, hit.query, 'MaxFragments=1, MaxWords=18, MinWords=6')"
                 : "left(hit.body, 160)";
+        // An UNSCOPED platform search is the one shape with no natural bound: every other caller is
+        // cut down to one org's documents by the org predicate, but here a single common word matches
+        // the whole corpus and every match is then RANKED (ts_rank_cd detoasts a tsvector per row)
+        // just to return twenty. So the match is capped first and the ranking runs over the capped
+        // slice — the cap sits under the keyset, which is what keeps paging consistent: page 2 ranks
+        // the same candidate slice and walks past the cursor inside it. The trap is expecting to page
+        // beyond CANDIDATE_CAP hits; you cannot, by design — an operator that far down is telling us
+        // the query, not the pagination, was wrong. Never applied to the tenant path.
+        boolean capped = platformWide && orgScope == null;
+        String scan = capped
+                ? "(select d.id, d.org_id, d.entity_type, d.entity_id, d.title, d.body"
+                        + (fts ? ", d.tsv, query" : "")
+                        + " from " + from + " where " + matchSql + " limit " + CANDIDATE_CAP + ") d"
+                : from;
+        String predicate = capped
+                ? keyset
+                : matchSql + (keyset.isEmpty() ? "" : " and " + keyset);
         String inner = "select d.id, d.org_id, d.entity_type, d.entity_id, d.title, d.body, "
                 + (fts ? "query, " : "")
-                + rankExpr + " as rank from " + from + " where " + where
+                + rankExpr + " as rank from " + scan
+                + (predicate.isEmpty() ? "" : " where " + predicate)
                 + " order by rank desc, d.id desc limit ?";
         params.add(limit);
         String sql = "select hit.id, hit.org_id, hit.entity_type, hit.entity_id, hit.title, "

@@ -1,7 +1,6 @@
 package ug.co.smsone.support.internal;
 
 import io.swagger.v3.oas.annotations.Operation;
-import java.util.List;
 import java.util.UUID;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -62,11 +61,12 @@ class AdminTicketController {
     }
 
     @GetMapping("/{id}/messages")
-    @Operation(summary = "All the ticket's messages, including internal notes")
+    @Operation(summary = "All the ticket's messages, including internal notes",
+            description = "Oldest first, cursor-paged.")
     @PreAuthorize("hasRole('platform-support')")
-    List<ResourceObject> messages(@PathVariable UUID id) {
+    WindowedResult<ResourceObject> messages(@PathVariable UUID id, CursorPageRequest page) {
         support.requireAnyOrg(id);
-        return support.messages(id, true).stream().map(TicketResources::toResource).toList();
+        return WindowedResult.of(support.messages(id, true, page), page, TicketResources::toResource);
     }
 
     @PostMapping("/{id}/messages")

@@ -2214,7 +2214,9 @@ paths:
       tags:
       - Organization · Support
       summary: The ticket's public messages
-      description: Internal platform notes are never shown to the tenant.
+      description: "Oldest first, cursor-paged. Internal platform notes are never\
+        \ shown to the tenant — they are excluded by the query, not hidden by this\
+        \ layer."
       operationId: messages
       parameters:
       - name: orgId
@@ -2229,6 +2231,23 @@ paths:
         schema:
           type: string
           format: uuid
+      - name: "page[size]"
+        in: query
+        description: "Items per page, 1–100. Defaults to 20."
+        required: false
+        schema:
+          maximum: 100
+          minimum: 1
+          type: integer
+          format: int32
+          default: 20
+      - name: "page[after]"
+        in: query
+        description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
+          Omit for the first page.
+        required: false
+        schema:
+          type: string
       - name: X-Impersonate
         in: header
         description: "Run this request as the target of an impersonation session (its\
@@ -2251,9 +2270,7 @@ paths:
           content:
             '*/*':
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/ResourceObject"
+                $ref: "#/components/schemas/WindowedResultResourceObject"
     post:
       tags:
       - Organization · Support
@@ -2726,6 +2743,8 @@ paths:
       tags:
       - Organization · Groups
       summary: List the organization's groups
+      description: "Each row carries `memberCount`; the member ids come from the single-group\
+        \ endpoint, so a page never grows with the organization's total group membership."
       operationId: list_6
       parameters:
       - name: orgId
@@ -4138,6 +4157,7 @@ paths:
       tags:
       - Platform · Support queue
       summary: "All the ticket's messages, including internal notes"
+      description: "Oldest first, cursor-paged."
       operationId: messages_1
       parameters:
       - name: id
@@ -4146,6 +4166,23 @@ paths:
         schema:
           type: string
           format: uuid
+      - name: "page[size]"
+        in: query
+        description: "Items per page, 1–100. Defaults to 20."
+        required: false
+        schema:
+          maximum: 100
+          minimum: 1
+          type: integer
+          format: int32
+          default: 20
+      - name: "page[after]"
+        in: query
+        description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
+          Omit for the first page.
+        required: false
+        schema:
+          type: string
       responses:
         "200":
           description: OK
@@ -4158,9 +4195,7 @@ paths:
           content:
             '*/*':
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/ResourceObject"
+                $ref: "#/components/schemas/WindowedResultResourceObject"
     post:
       tags:
       - Platform · Support queue
@@ -4760,6 +4795,93 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/UpdateOrganizationRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+  /api/v1/me/name:
+    patch:
+      tags:
+      - Shared · Me & notifications
+      summary: Correct your own name
+      description: "Partial update of the SCIM/OIDC name block. Send only the components\
+        \ you are changing: an absent key is left alone, `null` or `\"\"` clears it,\
+        \ and everything is trimmed. Keys are `formattedName`, `givenName`, `familyName`,\
+        \ `middleName`, `honorificPrefix`, `honorificSuffix`, `preferredName`; anything\
+        \ else is a 422, so a typo cannot look like a save that worked. `formattedName`\
+        \ is the display value and is NEVER derived from the parts — change it explicitly\
+        \ or it stays as it was. A person with no name at all is a valid state."
+      operationId: patchName
+      parameters:
+      - name: X-Impersonate
+        in: header
+        description: "Run this request as the target of an impersonation session (its\
+          \ id, from POST /api/v1/admin/impersonations). The session must belong to\
+          \ the calling operator; a READ_ONLY session refuses any unsafe method. Every\
+          \ write is audited against the operator, not the target."
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties:
+                type: string
+        required: true
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
+  /api/v1/admin/users/{personId}/name:
+    patch:
+      tags:
+      - Platform · Users & impersonation
+      summary: Correct a user's name
+      description: "Partial update of another person's SCIM/OIDC name block — an operator\
+        \ fixing a typo. Send only the components you are changing: an absent key\
+        \ is left alone, `null` or `\"\"` clears it, and everything is trimmed. Keys\
+        \ are `formattedName`, `givenName`, `familyName`, `middleName`, `honorificPrefix`,\
+        \ `honorificSuffix`, `preferredName`; anything else is a 422. `formattedName`\
+        \ is the display value and is NEVER derived from the parts. Every change is\
+        \ written to the audit trail naming the operator, the person changed, and\
+        \ the before and after of exactly the fields sent."
+      operationId: patchName_1
+      parameters:
+      - name: personId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties:
+                type: string
         required: true
       responses:
         "200":
@@ -6355,7 +6477,7 @@ paths:
   /api/v1/admin/users:
     get:
       tags:
-      - Platform · Ops
+      - Platform · Users & impersonation
       summary: List provisioned users across the platform
       operationId: list_26
       parameters:
@@ -6389,6 +6511,35 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/WindowedResultResourceObject"
+  /api/v1/admin/users/{personId}:
+    get:
+      tags:
+      - Platform · Users & impersonation
+      summary: Get one user's identity and name
+      description: "The record an operator opens before correcting it: the same attributes\
+        \ as a row of the listing, for one person. A soft-deleted account answers\
+        \ 404 — to an operator an erased account is gone."
+      operationId: get_14
+      parameters:
+      - name: personId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id:
+              description: "Public request id (accepted inbound, else minted as a\
+                \ ULID)."
+              schema:
+                type: string
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ResourceObject"
   /api/v1/admin/users/{personId}/profile:
     get:
       tags:
@@ -6510,7 +6661,7 @@ paths:
       tags:
       - Platform · Support queue
       summary: Get one ticket (any org)
-      operationId: get_14
+      operationId: get_15
       parameters:
       - name: id
         in: path
@@ -6634,7 +6785,7 @@ paths:
       tags:
       - Platform · Organizations
       summary: Inspect one organization as the platform
-      operationId: get_15
+      operationId: get_16
       parameters:
       - name: orgId
         in: path
@@ -6848,8 +6999,13 @@ paths:
       summary: Export one organization's records (offboarding bundle)
       description: "A JSON bundle of the organization's rows across every org-owned\
         \ table — membership, roles, subscription, integrations, webhooks, payments,\
-        \ usage, tickets, audit (capped per table; the cap is stated in the payload).\
-        \ Secret-bearing columns never leave the database. Audited as compliance.org_exported."
+        \ usage, tickets, audit. LIVE rows only (soft-deleted rows are excluded; the\
+        \ organization row itself is the exception, since offboarding runs after the\
+        \ tenant is deleted), each table in a fixed newest-first order so the same\
+        \ data always produces the same bundle. Capped per table: `rowCapPerTable`\
+        \ states the cap, and a bundle that hit it says so — `complete:false` plus\
+        \ `truncatedTables`. Secret-bearing columns never leave the database. Audited\
+        \ as compliance.org_exported."
       operationId: exportOrg
       parameters:
       - name: orgId
@@ -6876,7 +7032,28 @@ paths:
       tags:
       - Platform · Compliance
       summary: List active legal holds
+      description: "Newest first, cursor-paginated (`page[size]`, `page[after]`).\
+        \ Holds are never deleted — only released — so the active set has no natural\
+        \ ceiling and this collection has never been safe to return whole."
       operationId: holds
+      parameters:
+      - name: "page[size]"
+        in: query
+        description: "Items per page, 1–100. Defaults to 20."
+        required: false
+        schema:
+          maximum: 100
+          minimum: 1
+          type: integer
+          format: int32
+          default: 20
+      - name: "page[after]"
+        in: query
+        description: Opaque keyset cursor taken from a previous response's meta.page.nextCursor.
+          Omit for the first page.
+        required: false
+        schema:
+          type: string
       responses:
         "200":
           description: OK
@@ -6889,9 +7066,7 @@ paths:
           content:
             '*/*':
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/ResourceObject"
+                $ref: "#/components/schemas/WindowedResultResourceObject"
   /api/v1/orgs/{orgId}/members/{personId}:
     delete:
       tags:

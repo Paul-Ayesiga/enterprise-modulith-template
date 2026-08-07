@@ -37,7 +37,12 @@ class OrgGroupController {
         this.groups = groups;
     }
 
+    /** One named group, with its members — the shape of every response that addresses ONE group. */
     record GroupAttributes(String name, String roleCode, List<UUID> members, Instant createdAt) {
+    }
+
+    /** A group in a listing: {@code memberCount} where {@link GroupAttributes} has {@code members}. */
+    record GroupSummaryAttributes(String name, String roleCode, long memberCount, Instant createdAt) {
     }
 
     record CreateRequest(String name, String roleCode) {
@@ -59,18 +64,37 @@ class OrgGroupController {
         return toResource(groups.create(orgId, request.name(), request.roleCode()));
     }
 
+    /**
+     * The listing answers {@code memberCount}, not the member ids — the one decision worth explaining
+     * here.
+     *
+     * <p>It used to serialize every member of every group on the page. That made the response, and the
+     * rows behind it, a function of the organization's TOTAL group membership: {@code page[size]=20}
+     * over twenty thousand-member groups is twenty thousand ids in one JSON array, and no page size the
+     * client picks bounds it. A count is what a list actually renders ("Auditors · 12 members"), it is
+     * one aggregate for the whole page, and it cannot grow.
+     *
+     * <p>The ids are one hop away and bounded there: {@code GET /groups/{id}} returns them for the group
+     * the caller names. That endpoint is deliberately NOT paginated — a group's membership is bounded by
+     * the organization's headcount, which the plan's member entitlement already caps — so this is a
+     * summary/detail split, not a truncation the client has to detect. If member sets ever outgrow one
+     * response, the sub-resource to paginate is {@code /groups/{id}/members}, and the listing's shape
+     * would not change.
+     */
     @GetMapping
-    @Operation(summary = "List the organization's groups")
+    @Operation(summary = "List the organization's groups",
+            description = "Each row carries `memberCount`; the member ids come from the single-group "
+                    + "endpoint, so a page never grows with the organization's total group membership.")
     @PreAuthorize("hasPermission(#orgId, 'organization', 'member:read')")
     WindowedResult<ResourceObject> list(@PathVariable UUID orgId, CursorPageRequest page) {
-        return WindowedResult.of(groups.list(orgId, page), page, this::toResource);
+        return WindowedResult.of(groups.list(orgId, page), page, OrgGroupController::toSummaryResource);
     }
 
     @GetMapping("/{id}")
     @Operation(summary = "Get one group with its members")
     @PreAuthorize("hasPermission(#orgId, 'organization', 'member:read')")
     ResourceObject get(@PathVariable UUID orgId, @PathVariable UUID id) {
-        return toResource(groups.require(orgId, id));
+        return toResource(groups.get(orgId, id));
     }
 
     @PutMapping("/{id}/role")
@@ -103,9 +127,15 @@ class OrgGroupController {
         groups.delete(orgId, id);
     }
 
-    private ResourceObject toResource(OrgGroup group) {
-        return new ResourceObject(group.getId().toString(), RESOURCE_TYPE,
-                new GroupAttributes(group.getName(), groups.roleCode(group.getRoleId()),
-                        List.copyOf(group.getMembers()), group.getCreatedAt()));
+    private static ResourceObject toResource(OrgGroupService.GroupDetail group) {
+        return new ResourceObject(group.id().toString(), RESOURCE_TYPE,
+                new GroupAttributes(group.name(), group.roleCode(), group.members(), group.createdAt()));
+    }
+
+    /** Named apart from {@link #toResource} rather than overloading it: two shapes, two names. */
+    private static ResourceObject toSummaryResource(OrgGroupService.GroupSummary group) {
+        return new ResourceObject(group.id().toString(), RESOURCE_TYPE,
+                new GroupSummaryAttributes(group.name(), group.roleCode(), group.memberCount(),
+                        group.createdAt()));
     }
 }

@@ -1,6 +1,5 @@
 package ug.co.smsone.support.internal;
 
-import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,11 +40,10 @@ class SupportDeskImpl implements SupportDesk {
 
     @Override
     @Transactional(readOnly = true)
-    public List<MessageView> messages(UUID orgId, UUID ticketId) {
+    public WindowedResult<MessageView> messages(UUID orgId, UUID ticketId, CursorPageRequest page) {
         Ticket ticket = support.requireInOrg(orgId, ticketId); // tenancy before any message read
-        return support.messages(ticket.getId(), false).stream()
-                .map(SupportDeskImpl::toView)
-                .toList();
+        return WindowedResult.of(support.messages(ticket.getId(), false, page), page,
+                SupportDeskImpl::toView);
     }
 
     @Override

@@ -50,4 +50,6 @@ _Others_
 * `u.c.s.s.web.OpenApiConfig`
 * `u.c.s.s.web.RequestIdFilter`
 * `u.c.s.s.web.WebMvcConfig`
+|Events listened to
+|* `org.springframework.boot.context.event.ApplicationReadyEvent` (async) 
 |===

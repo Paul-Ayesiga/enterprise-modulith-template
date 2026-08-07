@@ -1,7 +1,6 @@
 package ug.co.smsone.compliance.internal;
 
 import io.swagger.v3.oas.annotations.Operation;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
@@ -18,7 +17,9 @@ import ug.co.smsone.shared.error.ForbiddenException;
 import ug.co.smsone.shared.error.ValidationException;
 import ug.co.smsone.shared.security.CurrentUser;
 import ug.co.smsone.shared.web.ApiSource;
+import ug.co.smsone.shared.web.CursorPageRequest;
 import ug.co.smsone.shared.web.ResourceObject;
+import ug.co.smsone.shared.web.WindowedResult;
 
 /**
  * The platform's compliance controls: place and release legal holds (which BLOCK the purge and any
@@ -54,16 +55,18 @@ class AdminComplianceController {
     }
 
     @GetMapping("/legal-holds")
-    @Operation(summary = "List active legal holds")
+    @Operation(summary = "List active legal holds",
+            description = "Newest first, cursor-paginated (`page[size]`, `page[after]`). Holds are "
+                    + "never deleted — only released — so the active set has no natural ceiling and "
+                    + "this collection has never been safe to return whole.")
     @PreAuthorize("hasRole('platform-support')")
-    List<ResourceObject> holds() {
-        return compliance.activeHolds().stream()
-                .map(h -> new ResourceObject(h.getId().toString(), "legal-hold",
+    WindowedResult<ResourceObject> holds(CursorPageRequest page) {
+        return WindowedResult.of(compliance.activeHolds(page), page,
+                h -> new ResourceObject(h.getId().toString(), "legal-hold",
                         Map.of("scope", h.getScope(),
                                 "personId", h.getPersonId() == null ? "" : h.getPersonId().toString(),
                                 "orgId", h.getOrgId() == null ? "" : h.getOrgId().toString(),
-                                "reason", h.getReason(), "placedAt", h.getPlacedAt())))
-                .toList();
+                                "reason", h.getReason(), "placedAt", h.getPlacedAt())));
     }
 
     @PostMapping("/legal-holds/subject")
@@ -110,16 +113,20 @@ class AdminComplianceController {
                         "detail", erasure.getDetail() == null ? "" : erasure.getDetail()));
     }
 
-    @org.springframework.web.bind.annotation.GetMapping("/orgs/{orgId}/export")
-    @io.swagger.v3.oas.annotations.Operation(summary = "Export one organization's records (offboarding bundle)",
+    @GetMapping("/orgs/{orgId}/export")
+    @Operation(summary = "Export one organization's records (offboarding bundle)",
             description = """
                     A JSON bundle of the organization's rows across every org-owned table — membership, \
-                    roles, subscription, integrations, webhooks, payments, usage, tickets, audit (capped \
-                    per table; the cap is stated in the payload). Secret-bearing columns never leave the \
+                    roles, subscription, integrations, webhooks, payments, usage, tickets, audit. \
+                    LIVE rows only (soft-deleted rows are excluded; the organization row itself is the \
+                    exception, since offboarding runs after the tenant is deleted), each table in a \
+                    fixed newest-first order so the same data always produces the same bundle. Capped \
+                    per table: `rowCapPerTable` states the cap, and a bundle that hit it says so — \
+                    `complete:false` plus `truncatedTables`. Secret-bearing columns never leave the \
                     database. Audited as compliance.org_exported.""")
     @PreAuthorize("hasRole('platform-admin')")
-    ug.co.smsone.shared.web.ResourceObject exportOrg(@org.springframework.web.bind.annotation.PathVariable java.util.UUID orgId) {
-        return new ug.co.smsone.shared.web.ResourceObject(orgId.toString(), "org-export", orgExport.export(orgId));
+    ResourceObject exportOrg(@PathVariable UUID orgId) {
+        return new ResourceObject(orgId.toString(), "org-export", orgExport.export(orgId));
     }
 
     /**

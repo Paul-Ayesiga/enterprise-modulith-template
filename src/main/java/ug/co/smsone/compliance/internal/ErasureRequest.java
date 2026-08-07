@@ -6,6 +6,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.UUID;
+import org.hibernate.annotations.UuidGenerator;
 
 /**
  * A GDPR art. 17 request and its outcome. Kept as a compliance record — not soft-deletable.
@@ -19,7 +20,15 @@ import java.util.UUID;
 @Table(name = "erasure_request")
 class ErasureRequest {
 
+    /**
+     * Generated at {@code persist()}, never in the factory — see {@link ConsentRecord} for why a
+     * pre-assigned id turns the first {@code save()} into a {@code merge()} (a SELECT before the
+     * INSERT). This entity is the one saved TWICE in a request: the second call lands on an instance
+     * the persistence context already manages, so it resolves without a database round trip either
+     * way — but only the FIRST save decides whether a row is inserted or hunted for first.
+     */
     @Id
+    @UuidGenerator
     private UUID id;
 
     @Column(name = "person_id", nullable = false)
@@ -46,7 +55,6 @@ class ErasureRequest {
 
     static ErasureRequest received(UUID personId, UUID requestedByPersonId, Instant when) {
         ErasureRequest request = new ErasureRequest();
-        request.id = UUID.randomUUID();
         request.personId = personId;
         request.requestedByPersonId = requestedByPersonId;
         request.status = "RECEIVED";

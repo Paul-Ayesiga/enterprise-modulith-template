@@ -18,6 +18,11 @@ import ug.co.smsone.webhooks.WebhookAdmin;
  * Webhook tools — the full management surface plus the two an agent diagnosing an integration
  * actually lives in: the delivery log and redelivery. One REST gate ({@code webhook:manage})
  * covers all of it, mirrored here; the SSRF guard and secret-shown-once rules ride the port.
+ *
+ * <p>The one asymmetry an agent cannot infer from the permission alone: a deleted subscription's
+ * delivery log stays READABLE (until retention purges it) while redelivery on it does not, because
+ * sending to a revoked endpoint would resurrect traffic its owner turned off. Both descriptions say
+ * so — "eligible for webhook_redeliver" unqualified read as a promise the service refuses.
  */
 @Component
 class WebhookToolManifest implements ToolManifest {
@@ -89,8 +94,9 @@ class WebhookToolManifest implements ToolManifest {
                 new ToolDefinition("webhook_deliveries", "Delivery log",
                         "A subscription's delivery attempts, newest first: attempts vs maxAttempts, "
                                 + "the receiver's responseStatus, and lastError for failures. Readable "
-                                + "even after the subscription is deleted. FAILED rows are "
-                                + "dead-lettered and eligible for webhook_redeliver.",
+                                + "even after the subscription is deleted — but that is READ only: "
+                                + "FAILED rows are dead-lettered and eligible for webhook_redeliver "
+                                + "while the subscription is LIVE, and a deleted one's are not.",
                         1, "webhooks", Kind.READ, "webhook:manage",
                         ToolArgs.schema(deliveriesProperties(), "subscription_id"),
                         (context, args) -> webhooks.deliveries(context.orgId(),
@@ -99,7 +105,9 @@ class WebhookToolManifest implements ToolManifest {
                 new ToolDefinition("webhook_redeliver", "Redeliver failed delivery",
                         "Re-queue one FAILED (dead-lettered) delivery for a fresh retry cycle — after "
                                 + "fixing the receiver. Only FAILED deliveries qualify; anything else "
-                                + "answers a conflict.",
+                                + "answers a conflict. The subscription must still exist: its log "
+                                + "outlives deletion but redelivery does not, because sending to a "
+                                + "deleted endpoint would resurrect traffic its owner revoked.",
                         1, "webhooks", Kind.WRITE, "webhook:manage",
                         ToolArgs.schema(Map.of(
                                         "subscription_id", ToolArgs.string("The subscription id."),

@@ -17,9 +17,10 @@ import ug.co.smsone.support.TicketEscalated;
 
 /**
  * Flags SLA breaches every minute: a ticket past its resolution due, not yet escalated and not
- * terminal, is bumped one priority, counted (`smsone.support.breached`), the support queue notified,
- * and {@code TicketEscalated} published (fanned out as a webhook). ShedLock so one instance runs it;
- * rows are row-locked with SKIP LOCKED so a manual re-run never double-escalates.
+ * terminal, is bumped one priority, counted (`smsone.support.breached`), and {@code TicketEscalated}
+ * published (fanned out as a webhook). The support queue is told once per sweep, as a digest —
+ * see {@link SupportNotifier#ticketsEscalated}. ShedLock so one instance runs it; rows are row-locked
+ * with SKIP LOCKED so a manual re-run never double-escalates.
  */
 @Component
 class SlaEscalationJob {
@@ -58,10 +59,14 @@ class SlaEscalationJob {
                     .tag("priority", bumped)
                     .register(meters)
                     .increment();
-            notifier.ticketEscalated(ticket);
             events.publishEvent(new TicketEscalated(ticket.getId(), ticket.getOrgId(), bumped, now));
             log.info("Ticket {} breached SLA — escalated to {}", ticket.getId(), bumped);
         }
+        // Outside the loop on purpose. The per-ticket work above is per-ticket by nature — its own
+        // row, its own counter sample, its own event for the webhook fan-out. Notifying the admins is
+        // NOT: every notifyAdmins call re-resolves the roster, and the roster is the same for all
+        // BATCH tickets of one sweep, so one digest replaces up to BATCH identical resolutions.
+        notifier.ticketsEscalated(breached);
     }
 
     private static String bump(String priority) {

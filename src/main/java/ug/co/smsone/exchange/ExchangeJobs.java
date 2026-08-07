@@ -23,9 +23,18 @@ public interface ExchangeJobs {
 
     JobView get(UUID orgId, UUID jobId);
 
-    /** Submit an EXPORT through a handler; enforces the handler's own export permission. */
+    /**
+     * Submit an EXPORT through a handler; enforces the handler's own export permission AND requires a
+     * signed-in person — a machine caller is refused however many permissions it holds, because the
+     * job re-resolves its requester's authority at processing time.
+     */
     JobView submitExport(UUID orgId, String handlerId, String format);
 
+    /**
+     * Request cancellation. NOT person-only, unlike {@link #submitExport}: a machine loses the
+     * requester comparison and falls through to the handler permission it can still answer — see
+     * {@code ExchangeJobsImpl} for why the asymmetry is correct rather than an oversight.
+     */
     JobView cancel(UUID orgId, UUID jobId);
 
     /** A short-lived URL for a COMPLETED export's result file. */

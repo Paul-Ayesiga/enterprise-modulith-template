@@ -498,7 +498,10 @@ usage (tracking-id-deduped) for usage-based plans.</div>
 <div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/admin/tickets</span><span class="perm plat">platform-support</span></div>
   <div class="ep-body"><p>The cross-tenant support queue. Assign (<code>…/{id}/assignment</code>), reply public or <code>internal:true</code>
   (<code>…/{id}/messages</code>), set status (<code>PUT …/{id}/status</code>). SLA breaches auto-escalate + fire
-  <code>org.ticket.escalated</code>. Per-priority SLA overrides live at <code>…/admin/orgs/{orgId}/sla/{P1..P4}</code>.</p></div></div>
+  <code>org.ticket.escalated</code>. Per-priority SLA overrides live at <code>…/admin/orgs/{orgId}/sla/{P1..P4}</code>.</p>
+  <p class="mut"><code>GET …/{id}/messages</code> is a cursor-paged collection like every other one here — oldest first,
+  <code>page[size]</code>/<code>page[after]</code>, <code>meta.page.nextCursor</code>. A long incident's conversation is
+  not a single response.</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/admin/compliance/legal-holds/subject</span><span class="perm plat">platform-admin</span></div>
   <div class="ep-body"><p>A legal hold BLOCKS the purge and any erasure of the held person/org until released
   (<code>DELETE …/legal-holds/{id}</code>). The body is <code>{"personId":"…","reason":"…"}</code> — a
@@ -707,7 +710,8 @@ POST …/security-policy/trusted-devices {"personId":"5862…","deviceId":"…",
   <div class="ep-body"><p>Ranked full-text (with trigram fallback for typos), tenant cut inside the SQL. Platform-wide search is
   <code>/api/v1/admin/search</code> (<code>platform-support</code>).</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/tickets</span><span class="perm org">ticket:write · reads ticket:read</span></div>
-  <div class="ep-body"><p>Open + converse on your support tickets (<code>…/{id}/messages</code> — public messages only; internal notes hidden).
+  <div class="ep-body"><p>Open + converse on your support tickets (<code>GET …/{id}/messages</code> — cursor-paged, oldest first;
+  public messages only, and the internal notes are excluded by the query rather than hidden after it).
   The platform side is C4.</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/orgs/{orgId}/audit</span><span class="perm org">audit:read</span></div>
   <div class="ep-body"><p>Your tenant's own trail; filter <code>action</code>/<code>from</code>/<code>to</code>. Every row carries

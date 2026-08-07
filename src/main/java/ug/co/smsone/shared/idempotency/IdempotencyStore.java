@@ -19,6 +19,12 @@ public class IdempotencyStore {
         }
     }
 
+    // Same numbers as EventInboxPurgeJob's loop, for the same two reasons: a batch small enough that
+    // its locks are never held long, and a run short enough to finish inside a PT30M ShedLock lease.
+    // Package-private so the purge test pins the real LIMIT instead of hard-coding a copy of it.
+    static final int PURGE_BATCH_SIZE = 1000;
+    private static final int MAX_PURGE_BATCHES = 100;
+
     private final JdbcTemplate jdbcTemplate;
     private final Clock clock;
 
@@ -84,8 +90,48 @@ public class IdempotencyStore {
                 principal, key, Timestamp.from(claimedAt));
     }
 
+    /**
+     * Sweeps every key past retention in bounded batches, oldest first, and returns the total.
+     *
+     * <p>This used to be one unbatched {@code delete … where created_at < ?} across the whole
+     * retention window: a single transaction taking a row lock per key and holding every one of them
+     * until it commits. On a busy day that is most of the table, and {@link #claim} blocks on each
+     * locked key for the duration — a nightly sweep turning into a request-path outage. Batching is
+     * the fix {@code EventInbox.purgeProcessedBatch} already applies, so this follows it rather than
+     * inventing a second shape: one statement per batch, each committing on its own (the purge job
+     * is deliberately not {@code @Transactional}, AGENTS §7), so locks are released 1000 at a time.
+     *
+     * <p>THE TRAP: the sub-select is only cheap because V52 indexes {@code created_at}. Without that
+     * index Postgres seq-scans and top-N sorts the whole table for EVERY batch, so 100 batches cost
+     * 100 full scans — strictly worse than the single delete this replaced. Measured on 100k rows,
+     * one batch: 28.9ms unindexed against 2.4ms indexed. The outer delete is fine either way; it
+     * drives the primary key from the rows the sub-select returns.
+     *
+     * <p>{@value #MAX_PURGE_BATCHES} batches cap one run for the same reason the inbox purge caps
+     * its own: the run must finish inside the caller's ShedLock lease. A key left behind is still
+     * past retention tomorrow, so the remainder goes in the next nightly run.
+     */
     public int purgeOlderThan(Duration retention) {
-        return jdbcTemplate.update("delete from idempotency_key where created_at < ?",
-                Timestamp.from(clock.instant().minus(retention)));
+        Timestamp cutoff = Timestamp.from(clock.instant().minus(retention));
+        int total = 0;
+        for (int batch = 0; batch < MAX_PURGE_BATCHES; batch++) {
+            int deleted = purgeBatch(cutoff);
+            total += deleted;
+            if (deleted < PURGE_BATCH_SIZE) {
+                break;
+            }
+        }
+        return total;
+    }
+
+    /** One batch. Package-private so a test can drive a single one and see the bound hold. */
+    int purgeBatch(Timestamp cutoff) {
+        return jdbcTemplate.update("""
+                delete from idempotency_key where (principal, idem_key) in (
+                    select principal, idem_key from idempotency_key
+                    where created_at < ?
+                    order by created_at
+                    limit ?)
+                """, cutoff, PURGE_BATCH_SIZE);
     }
 }
