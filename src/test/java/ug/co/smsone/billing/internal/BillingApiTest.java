@@ -27,6 +27,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
+import ug.co.smsone.testsupport.EdgeSeed;
 
 /**
  * The billing flows with Kill Bill mocked at the GATEWAY (the system edge — its own IT pins the
@@ -114,10 +115,11 @@ class BillingApiTest extends AbstractIntegrationTest {
 
     @Test
     void invoicesProxyForBothSurfacesAndUnprovisionedIs404() throws Exception {
-        UUID orgId = UUID.randomUUID();
-        seedOrgRead(orgId, "billing-member");
+        UUID orgId = seedOrg();
+        String reader = "billing-member-" + UUID.randomUUID();
+        seedOrgRead(orgId, reader);
         mockMvc.perform(get("/api/v1/orgs/{orgId}/billing/invoices", orgId)
-                        .with(member(orgId, "billing-member")))
+                        .with(member(orgId, reader)))
                 .andExpect(status().isNotFound());
 
         UUID kbAccountId = UUID.randomUUID();
@@ -129,7 +131,7 @@ class BillingApiTest extends AbstractIntegrationTest {
                 .andExpect(status().isCreated());
 
         mockMvc.perform(get("/api/v1/orgs/{orgId}/billing/invoices", orgId)
-                        .with(member(orgId, "billing-member")))
+                        .with(member(orgId, reader)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].attributes.invoiceNumber").value("1001"));
         mockMvc.perform(get("/api/v1/admin/orgs/{orgId}/billing/invoices", orgId).with(support()))
@@ -147,11 +149,13 @@ class BillingApiTest extends AbstractIntegrationTest {
 
     @Test
     void paymentMethodsAreManagedOnTheOrgSurfaceAndRequireOrgUpdate() throws Exception {
-        UUID orgId = UUID.randomUUID();
+        UUID orgId = seedOrg();
         UUID kbAccountId = UUID.randomUUID();
         UUID pmId = UUID.randomUUID();
-        seedOrgUpdate(orgId, "pm-admin");
-        seedOrgRead(orgId, "pm-reader");
+        String pmAdmin = "pm-admin-" + UUID.randomUUID();
+        String pmReader = "pm-reader-" + UUID.randomUUID();
+        seedOrgUpdate(orgId, pmAdmin);
+        seedOrgRead(orgId, pmReader);
         given(killBill.ensureAccount(any(), anyString())).willReturn(kbAccountId);
         given(killBill.addPaymentMethod(eq(kbAccountId), eq("stripe"), eq(true), any())).willReturn(pmId);
         given(killBill.paymentMethodDetails(kbAccountId)).willReturn(
@@ -165,29 +169,29 @@ class BillingApiTest extends AbstractIntegrationTest {
         mockMvc.perform(post("/api/v1/orgs/{orgId}/billing/payment-methods", orgId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"pluginName\":\"stripe\",\"isDefault\":true}")
-                        .with(member(orgId, "pm-reader")))
+                        .with(member(orgId, pmReader)))
                 .andExpect(status().isForbidden());
         // ...but org:update can, and never sees raw card data — only a plugin reference.
         mockMvc.perform(post("/api/v1/orgs/{orgId}/billing/payment-methods", orgId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"pluginName\":\"stripe\",\"isDefault\":true}")
-                        .with(member(orgId, "pm-admin")))
+                        .with(member(orgId, pmAdmin)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.id").value(pmId.toString()))
                 .andExpect(jsonPath("$.data.attributes.pluginName").value("stripe"));
 
         // Any org:read member can list.
         mockMvc.perform(get("/api/v1/orgs/{orgId}/billing/payment-methods", orgId)
-                        .with(member(orgId, "pm-reader")))
+                        .with(member(orgId, pmReader)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].attributes.isDefault").value(true));
 
         // Set-default and remove need org:update and reach the gateway.
         mockMvc.perform(put("/api/v1/orgs/{orgId}/billing/payment-methods/{id}/default", orgId, pmId)
-                        .with(member(orgId, "pm-admin")))
+                        .with(member(orgId, pmAdmin)))
                 .andExpect(status().isOk());
         mockMvc.perform(delete("/api/v1/orgs/{orgId}/billing/payment-methods/{id}", orgId, pmId)
-                        .with(member(orgId, "pm-admin")))
+                        .with(member(orgId, pmAdmin)))
                 .andExpect(status().isNoContent());
         verify(killBill).setDefaultPaymentMethod(kbAccountId, pmId);
         verify(killBill).deletePaymentMethod(kbAccountId, pmId);
@@ -203,34 +207,51 @@ class BillingApiTest extends AbstractIntegrationTest {
                 .authorities(new SimpleGrantedAuthority("ROLE_platform-support"));
     }
 
+    /**
+     * A tenant caller: the subject resolves to a person through {@code external_identity}, and the
+     * alias-keyed {@code organization} claim resolves to {@code orgId} through
+     * {@code external_organization} — so the claim carries the PROVIDER's org id, read back from the
+     * link, while the URL keeps using {@code organization.id}. The {@code iss} must be the seeded
+     * issuer or nothing resolves and the org surface answers 403 instead of what is being asserted.
+     */
     private org.springframework.test.web.servlet.request.RequestPostProcessor member(UUID orgId, String subject) {
+        Map<String, Object> link = jdbc.queryForMap(
+                "select external_org_id, external_alias from external_organization where organization_id = ?",
+                orgId);
         return jwt().jwt(token -> token.subject(subject)
-                .claim("organization", Map.of("acme", Map.of("id", orgId.toString()))));
+                .claim("iss", EdgeSeed.ISSUER)
+                .claim("organization", Map.of(String.valueOf(link.get("external_alias")),
+                        Map.of("id", String.valueOf(link.get("external_org_id"))))));
     }
 
+    /**
+     * The tenant both billing surfaces address — seeded ONCE per test: {@code organization} mints its
+     * own id now, so calling this twice for one test would hand out two different tenants rather than
+     * re-finding one (what the old {@code on conflict (kc_org_id)} insert did).
+     */
+    private UUID seedOrg() {
+        return EdgeSeed.organization(jdbc, "kc-org-" + UUID.randomUUID(), "acme-" + UUID.randomUUID());
+    }
+
+    /** A linked person holding org:read in {@code orgId}. */
     private void seedOrgRead(UUID orgId, String subject) {
-        jdbc.update("insert into organization (id, kc_org_id, alias, name, status, version, created_at) "
-                        + "values (?, ?, ?, ?, 'ACTIVE', 0, now()) "
-                        + "on conflict (kc_org_id) where deleted_at is null do nothing",
-                UUID.randomUUID(), orgId, "org-" + orgId.toString().substring(0, 13), "Org " + orgId);
+        UUID personId = EdgeSeed.person(jdbc, subject);
         UUID roleId = UUID.randomUUID();
         jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
                 + "values (?, ?, 'BILL', 'Bill', false, 0, now())", roleId, orgId);
         jdbc.update("insert into role_permission (role_id, permission) values (?, 'ORG_READ')", roleId);
-        jdbc.update("insert into membership (id, org_id, user_subject, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, subject, roleId);
+        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
+                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
     }
 
+    /** A linked person holding org:update — the permission the payment-method writes demand. */
     private void seedOrgUpdate(UUID orgId, String subject) {
-        jdbc.update("insert into organization (id, kc_org_id, alias, name, status, version, created_at) "
-                        + "values (?, ?, ?, ?, 'ACTIVE', 0, now()) "
-                        + "on conflict (kc_org_id) where deleted_at is null do nothing",
-                UUID.randomUUID(), orgId, "org-" + orgId.toString().substring(0, 13), "Org " + orgId);
+        UUID personId = EdgeSeed.person(jdbc, subject);
         UUID roleId = UUID.randomUUID();
         jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
                 + "values (?, ?, 'BILLADM', 'BillAdmin', false, 0, now())", roleId, orgId);
         jdbc.update("insert into role_permission (role_id, permission) values (?, 'ORG_UPDATE')", roleId);
-        jdbc.update("insert into membership (id, org_id, user_subject, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, subject, roleId);
+        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
+                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
     }
 }

@@ -129,9 +129,13 @@ class AuditRecordingTest extends AbstractIntegrationTest {
         return (root, query, cb) -> cb.equal(root.get("target"), target);
     }
 
+    /**
+     * {@code actor_person_id}, not {@code actor}: V13 replaced the subject string with the person id, so
+     * the column the assertions read back is a {@code uuid} and the map key is its name.
+     */
     private Map<String, Object> row(String key, String toState) {
         return jdbc.queryForMap(
-                "select action, actor, from_state, to_state from audit_log "
+                "select action, actor_person_id, from_state, to_state from audit_log "
                         + "where action = 'settings.changed' and target = ? and to_state = ?", key, toState);
     }
 }

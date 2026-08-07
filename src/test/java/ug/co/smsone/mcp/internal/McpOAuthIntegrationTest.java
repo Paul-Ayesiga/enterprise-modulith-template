@@ -14,9 +14,12 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Map;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.GenericContainer;
@@ -26,8 +29,10 @@ import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
 /**
  * Phase 7's door policy against a REAL Keycloak importing the committed realm: a token minted with
- * the {@code mcp} scope carries both audiences and enters; the SAME user's token without the scope
- * (the web-app shape) is refused — no cross-surface token reuse. Also pins that anonymous dynamic
+ * the {@code mcp} scope carries both audiences and enters — resolving through
+ * {@code external_identity} to the PERSON behind the connector, which is what the platform then
+ * attributes to; the SAME user's token without the scope (the web-app shape) is refused — no
+ * cross-surface token reuse. Also pins that anonymous dynamic
  * client registration is POLICED, not open: from this test runner the registration arrives via the
  * container bridge, an untrusted host under the realm's trusted-hosts policy, so it must refuse
  * (real Desktop connectors register from localhost, which the policy allows).
@@ -66,6 +71,9 @@ class McpOAuthIntegrationTest extends AbstractIntegrationTest {
     @LocalServerPort
     private int port;
 
+    @Autowired
+    private JdbcTemplate jdbc;
+
     private static String keycloakBase() {
         return "http://" + KEYCLOAK.getHost() + ":" + KEYCLOAK.getMappedPort(KEYCLOAK_PORT);
     }
@@ -86,8 +94,30 @@ class McpOAuthIntegrationTest extends AbstractIntegrationTest {
         return JsonPath.read(response.body(), "$.access_token");
     }
 
+    /**
+     * Paul's {@code person} and the {@code external_identity} link the edge resolves his token
+     * through. Raw SQL rather than {@code EdgeSeed.person}: that helper pins the issuer to
+     * {@code application.yaml}'s default, and this class points the resource server at a container
+     * on an ephemeral port — the link's issuer must be byte-identical to the {@code iss} the
+     * resource server just validated, or the token resolves to no person at all.
+     */
+    private UUID linkPaulToAPerson() {
+        UUID personId = UUID.randomUUID();
+        jdbc.update("""
+                insert into person (id, status, invited_at, activated_at, version, created_at)
+                values (?, 'ACTIVE', now(), now(), 0, now())
+                """, personId);
+        jdbc.update("""
+                insert into external_identity (id, person_id, provider, issuer, external_subject,
+                                               linked_at, version, created_at)
+                values (?, ?, 'KEYCLOAK', ?, ?, now(), 0, now())
+                """, UUID.randomUUID(), personId, keycloakBase() + "/realms/smsone", PAUL_SUB);
+        return personId;
+    }
+
     @Test
     void aConsentedMcpTokenEntersAndTheSameUsersWebTokenDoesNot() throws Exception {
+        UUID paul = linkPaulToAPerson();
         String mcpToken = token("openid mcp");
 
         // The mcp scope stamps BOTH audiences: smsone-api (the resource server's global check)
@@ -104,7 +134,11 @@ class McpOAuthIntegrationTest extends AbstractIntegrationTest {
             assertThat(result.isError()).isNotEqualTo(Boolean.TRUE);
             @SuppressWarnings("unchecked")
             Map<String, Object> who = (Map<String, Object>) result.structuredContent();
-            assertThat(who).containsEntry("authKind", "oauth").containsEntry("subject", PAUL_SUB);
+            // The token's provider subject never reaches a payload: the edge turns (iss, sub) into
+            // a person through external_identity, and whoami answers with THAT — the platform's own
+            // durable id for the human on the other end of the connector.
+            assertThat(who).containsEntry("authKind", "oauth")
+                    .containsEntry("personId", paul.toString());
         }
 
         // Same user, same realm, NO mcp scope — the web-app token shape. Refused at the door

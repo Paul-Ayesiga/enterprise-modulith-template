@@ -58,7 +58,12 @@ class WebhookApiTest extends AbstractIntegrationTest {
         String subject = "mgr-" + UUID.randomUUID();
         UUID personId = EdgeSeed.person(jdbc, subject);
         given(orgAuthorization.permissions(personId, orgId)).willReturn(Set.of("webhook:manage"));
-        return jwt().jwt(builder -> builder.subject(subject).claim("organization", orgClaim(orgId)));
+        // The iss claim is load-bearing, not decoration: the edge resolves (iss, sub) through
+        // external_identity to a person, and EdgeSeed linked this subject under EdgeSeed.ISSUER. A
+        // token without it matches no link, resolves to no person, holds no org permission, and every
+        // request 403s — which reads like a broken authorization rule rather than an unseeded token.
+        return jwt().jwt(builder -> builder.subject(subject).claim("iss", EdgeSeed.ISSUER)
+                .claim("organization", orgClaim(orgId)));
     }
 
     /** The alias-keyed {@code organization} claim Keycloak mints, rebuilt from the seeded link. */

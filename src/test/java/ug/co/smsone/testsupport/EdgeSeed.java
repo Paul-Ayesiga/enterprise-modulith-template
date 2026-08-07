@@ -32,12 +32,20 @@ public final class EdgeSeed {
     private EdgeSeed() {
     }
 
-    /** A provisioned person with a Keycloak link, reachable by {@code subject}. Returns their id. */
+    /**
+     * An active person with a Keycloak link, reachable by {@code subject}. Returns their id.
+     *
+     * <p>{@code invited_at}, not {@code provisioned_at}: V10 renamed it because "provisioned" named the
+     * Keycloak call rather than anything about the human, and the whole point of the decoupling is that
+     * a person exists here whether or not any provider has heard of them. {@code activated_at} is set
+     * too — a person whose status is ACTIVE but who has no activation instant is a state the real
+     * provisioning path never produces.
+     */
     public static UUID person(JdbcTemplate jdbc, String subject) {
         UUID personId = UUID.randomUUID();
         jdbc.update("""
-                insert into person (id, status, provisioned_at, version, created_at)
-                values (?, 'ACTIVE', now(), 0, now())
+                insert into person (id, status, invited_at, activated_at, version, created_at)
+                values (?, 'ACTIVE', now(), now(), 0, now())
                 """, personId);
         link(jdbc, personId, subject);
         return personId;

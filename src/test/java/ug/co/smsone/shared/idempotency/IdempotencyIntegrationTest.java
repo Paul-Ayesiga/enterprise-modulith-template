@@ -7,6 +7,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -16,7 +19,9 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
+import ug.co.smsone.testsupport.EdgeSeed;
 
 @AutoConfigureMockMvc
 class IdempotencyIntegrationTest extends AbstractIntegrationTest {
@@ -29,6 +34,13 @@ class IdempotencyIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private IdempotencyStore store;
+
+    /**
+     * Logical caller name → the token subject seeded for them, so that naming the same caller twice in
+     * one test is the same human twice. One entry per name per test instance; JUnit builds a fresh
+     * instance per method, so no two tests share a person and no stored response can leak between them.
+     */
+    private final Map<String, String> subjects = new HashMap<>();
 
     /**
      * The lease-takeover fence — AGENTS §7's fencing rule applied to the store itself. A claimant
@@ -69,8 +81,7 @@ class IdempotencyIntegrationTest extends AbstractIntegrationTest {
         // same key, same body — but different query parameters: this is a different request, and
         // replaying the stored response would silently ignore the parameters the client sent
         mockMvc.perform(put("/api/v1/settings/idem.query?dryRun=true")
-                        .with(jwt().jwt(token -> token.subject("admin-alice"))
-                                .authorities(new SimpleGrantedAuthority("ROLE_platform-admin")))
+                        .with(admin("admin-alice"))
                         .header(IdempotencyFilter.KEY_HEADER, "key-query-1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"value\":\"one\"}"))
@@ -82,14 +93,39 @@ class IdempotencyIntegrationTest extends AbstractIntegrationTest {
         return adminPutAs("admin-alice", settingKey, value, idemKey);
     }
 
-    private MockHttpServletRequestBuilder adminPutAs(String subject, String settingKey, String value,
+    private MockHttpServletRequestBuilder adminPutAs(String caller, String settingKey, String value,
             String idemKey) {
         return put("/api/v1/settings/" + settingKey)
-                .with(jwt().jwt(token -> token.subject(subject))
-                        .authorities(new SimpleGrantedAuthority("ROLE_platform-admin")))
+                .with(admin(caller))
                 .header(IdempotencyFilter.KEY_HEADER, idemKey)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"value\":\"" + value + "\"}");
+    }
+
+    /**
+     * A platform-admin token for a caller the EDGE can resolve to a person.
+     *
+     * <p>Both halves matter and both were missing. {@code IdempotencyFilter.shouldNotFilter} skips any
+     * request whose {@code currentPrincipalKey()} is empty — keys are scoped per principal and an
+     * anonymous caller has none — so a token that resolves to nobody is not "an unscoped idempotent
+     * request", it is a request the filter never touches. That is why these tests were answering a
+     * plain 200 where a 409, a 413 or a replay was expected: the header was being ignored, not
+     * mishandled. So the person and their {@code external_identity} link are seeded, and the token
+     * carries {@code iss} — without it {@code CurrentUserProvider} has no issuer to resolve
+     * ({@code sub} alone is not unique across realms) and the link is never consulted.
+     *
+     * <p>The subject is suffixed with a UUID because nothing here rolls back: {@code external_identity}
+     * is unique per (provider, issuer, subject) among live rows, and a literal {@code "alice"} would
+     * collide with the next class in the run that wanted one.
+     */
+    private RequestPostProcessor admin(String caller) {
+        String subject = subjects.computeIfAbsent(caller, name -> {
+            String seeded = name + "-" + UUID.randomUUID();
+            EdgeSeed.person(jdbcTemplate, seeded);
+            return seeded;
+        });
+        return jwt().jwt(token -> token.claim("iss", EdgeSeed.ISSUER).subject(subject))
+                .authorities(new SimpleGrantedAuthority("ROLE_platform-admin"));
     }
 
     @Test

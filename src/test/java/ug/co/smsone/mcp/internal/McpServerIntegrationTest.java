@@ -64,8 +64,14 @@ class McpServerIntegrationTest extends AbstractIntegrationTest {
             assertThat(result.isError()).isNotEqualTo(Boolean.TRUE);
             @SuppressWarnings("unchecked")
             Map<String, Object> payload = (Map<String, Object>) result.structuredContent();
+            // whoami names the two id spaces separately and never merges them: personId is the
+            // person behind the call — NULL for a key, because a robot is not a person — and the
+            // credential is named by keyId/keyName. The old single "subject" field ("key:<id>")
+            // pretended a machine had an identity this platform owns.
             assertThat(payload)
-                    .containsEntry("subject", "key:" + key.keyId())
+                    .containsEntry("personId", null)
+                    .containsEntry("keyId", key.keyId().toString())
+                    .containsEntry("keyName", "loop-key")
                     .containsEntry("orgId", orgId.toString())
                     .containsEntry("authKind", "api_key")
                     .containsEntry("permissions", List.of("org:read"));

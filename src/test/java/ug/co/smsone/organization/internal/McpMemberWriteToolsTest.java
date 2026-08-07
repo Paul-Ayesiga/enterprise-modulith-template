@@ -22,6 +22,7 @@ import ug.co.smsone.identity.ProvisionedPerson;
 import ug.co.smsone.identity.ProviderOrgMembership;
 import ug.co.smsone.mcp.internal.McpTestSupport;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
+import ug.co.smsone.testsupport.EdgeSeed;
 
 /**
  * The member WRITE tools through the real MCP loop, from the org package so the Keycloak gateway
@@ -29,6 +30,12 @@ import ug.co.smsone.testsupport.AbstractIntegrationTest;
  * permission subset is its held set for the escalation guard — it can hand on roles whose
  * permissions sit inside that subset, nothing more, and a denial happens BEFORE any provisioning
  * side effect.
+ *
+ * <p>Tenants are seeded through {@link EdgeSeed#organization} rather than as a bare uuid: the
+ * provider link is not decoration here. {@code MemberService} resolves it on both write paths —
+ * invite REFUSES outright without one (a member attached to nothing would hold access nowhere), and
+ * remove needs it to unlink at the provider — so an org without its {@code external_organization}
+ * row exercises neither rule.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class McpMemberWriteToolsTest extends AbstractIntegrationTest {
@@ -48,10 +55,19 @@ class McpMemberWriteToolsTest extends AbstractIntegrationTest {
     @MockitoBean
     private KeycloakOrgAdminGateway keycloakOrg;
 
+    /**
+     * A tenant plus the {@code external_organization} row that names it at the provider — the pair a
+     * real org creation always leaves behind. Returns {@code organization.id}, the tenant key the
+     * key and every membership below are scoped by.
+     */
+    private UUID linkedOrg(String prefix) {
+        String distinct = prefix + "-" + UUID.randomUUID();
+        return EdgeSeed.organization(jdbc, "kc-org-" + distinct, distinct);
+    }
+
     @Test
     void aKeyWithInvitePermissionInvitesWithinItsMintedSubset() {
-        UUID orgId = UUID.randomUUID();
-        McpTestSupport.seedOrg(jdbc, orgId, "inv-" + orgId.toString().substring(0, 8), "Invites");
+        UUID orgId = linkedOrg("inv");
         McpTestSupport.seedRole(jdbc, orgId, "MEMBER", "org:read");
         McpTestSupport.SeededKey key = McpTestSupport.seedOrgKey(jdbc, orgId, "inviter",
                 "member:invite", "org:read");
@@ -78,8 +94,7 @@ class McpMemberWriteToolsTest extends AbstractIntegrationTest {
 
     @Test
     void aKeyCannotGrantARoleBeyondItsMintedSubset() {
-        UUID orgId = UUID.randomUUID();
-        McpTestSupport.seedOrg(jdbc, orgId, "esc-" + orgId.toString().substring(0, 8), "Escalation");
+        UUID orgId = linkedOrg("esc");
         // The role carries a permission the KEY does not hold — granting it would be escalation.
         McpTestSupport.seedRole(jdbc, orgId, "ADMINISH", "org:read", "member:remove");
         McpTestSupport.SeededKey key = McpTestSupport.seedOrgKey(jdbc, orgId, "capped",
@@ -100,8 +115,7 @@ class McpMemberWriteToolsTest extends AbstractIntegrationTest {
 
     @Test
     void aKeyWithoutThePermissionNeverReachesProvisioning() {
-        UUID orgId = UUID.randomUUID();
-        McpTestSupport.seedOrg(jdbc, orgId, "den-" + orgId.toString().substring(0, 8), "Denied");
+        UUID orgId = linkedOrg("den");
         McpTestSupport.seedRole(jdbc, orgId, "MEMBER", "org:read");
         McpTestSupport.SeededKey key = McpTestSupport.seedOrgKey(jdbc, orgId, "reader", "org:read");
 
@@ -118,13 +132,12 @@ class McpMemberWriteToolsTest extends AbstractIntegrationTest {
 
     @Test
     void memberRemoveEndsTheMembershipAndUnlinksKeycloak() {
-        UUID orgId = UUID.randomUUID();
-        McpTestSupport.seedOrg(jdbc, orgId, "rem-" + orgId.toString().substring(0, 8), "Removals");
+        UUID orgId = linkedOrg("rem");
         // An OWNER member must remain — remove() protects the last owner; the target is a MEMBER.
         UUID ownerRole = McpTestSupport.seedRole(jdbc, orgId, "OWNER", "org:read", "member:remove");
         UUID memberRole = McpTestSupport.seedRole(jdbc, orgId, "MEMBER", "org:read");
-        UUID owner = UUID.randomUUID();
-        UUID gone = UUID.randomUUID();
+        UUID owner = EdgeSeed.person(jdbc, "owner-" + UUID.randomUUID());
+        UUID gone = EdgeSeed.person(jdbc, "leaver-" + UUID.randomUUID());
         McpTestSupport.seedMembership(jdbc, orgId, owner, ownerRole);
         McpTestSupport.seedMembership(jdbc, orgId, gone, memberRole);
         McpTestSupport.SeededKey key = McpTestSupport.seedOrgKey(jdbc, orgId, "remover",

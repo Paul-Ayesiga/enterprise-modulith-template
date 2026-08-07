@@ -15,6 +15,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.JwtRequestPostProcessor;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import ug.co.smsone.shared.security.PlatformAdmins;
@@ -74,14 +75,15 @@ class ComplianceTest extends AbstractIntegrationTest {
     @Test
     void aLegalHoldMakesErasureRefused() throws Exception {
         UUID personId = seedPerson();
+        var operator = admin(); // one accountable human across both acts, as a real hold-then-erase is
         mockMvc.perform(post("/api/v1/admin/compliance/legal-holds/subject")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"personId\":\"" + personId + "\",\"reason\":\"litigation #99\"}")
-                        .with(admin()))
+                        .with(operator))
                 .andExpect(status().isCreated());
         mockMvc.perform(post("/api/v1/admin/compliance/erasure")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"personId\":\"" + personId + "\"}").with(admin()))
+                        .content("{\"personId\":\"" + personId + "\"}").with(operator))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.attributes.status").value("REFUSED"));
         // Refused erasure means the person was NOT soft-deleted.
@@ -99,9 +101,14 @@ class ComplianceTest extends AbstractIntegrationTest {
         assertThat(livePeople(personId)).as("the last super-admin must not be erased").isEqualTo(1);
     }
 
-    /** A platform operator: a realm role and no person of their own — nothing here reads one. */
-    private static org.springframework.test.web.servlet.request.RequestPostProcessor admin() {
-        return jwt().jwt(t -> t.subject("compliance-admin"))
+    /**
+     * A platform operator — and a {@code person}, which is the part V34 made load-bearing.
+     * {@code legal_hold.placed_by_person_id} and {@code erasure_request.requested_by_person_id} are NOT
+     * NULL, so {@code AdminComplianceController} refuses any caller it cannot name an accountable human
+     * for. The realm role alone is no longer a compliance credential.
+     */
+    private org.springframework.test.web.servlet.request.RequestPostProcessor admin() {
+        return tokenFor(EdgeSeed.person(jdbc, "kc-compliance-admin-" + UUID.randomUUID()))
                 .authorities(new SimpleGrantedAuthority("ROLE_platform-admin"));
     }
 
@@ -110,10 +117,15 @@ class ComplianceTest extends AbstractIntegrationTest {
         return EdgeSeed.personWithEmail(jdbc, EdgeSeed.subjectFor(personId), personId + "@smsone.co.ug");
     }
 
-    private org.springframework.test.web.servlet.request.RequestPostProcessor tokenFor(UUID personId) {
+    /**
+     * A token that resolves to {@code personId}. The {@code iss} claim is load-bearing:
+     * {@code external_identity} is keyed on (issuer, subject), so a token without it reaches no person
+     * and every endpoint here — each of which acts FOR a person — answers 403.
+     */
+    private JwtRequestPostProcessor tokenFor(UUID personId) {
         String subject = jdbc.queryForObject(
                 "select external_subject from external_identity where person_id = ?", String.class, personId);
-        return jwt().jwt(t -> t.subject(subject));
+        return jwt().jwt(t -> t.subject(subject).claim("iss", EdgeSeed.ISSUER));
     }
 
     private int livePeople(UUID personId) {

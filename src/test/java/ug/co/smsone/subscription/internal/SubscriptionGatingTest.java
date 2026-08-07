@@ -20,6 +20,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
+import ug.co.smsone.testsupport.EdgeSeed;
 
 /**
  * The entitlement gates through the REAL paths: a capped plan refuses the invite that would exceed
@@ -39,8 +40,9 @@ class SubscriptionGatingTest extends AbstractIntegrationTest {
 
     @Test
     void aCappedPlanRefusesTheGatesUntilUpgraded() throws Exception {
-        UUID orgId = UUID.randomUUID();
-        seedInviter(orgId, "gating-inviter");
+        UUID orgId = seedOrg();
+        String inviter = "gating-inviter-" + UUID.randomUUID();
+        seedInviter(orgId, inviter);
         seedTinyPlan();
 
         mockMvc.perform(put("/api/v1/admin/orgs/{orgId}/subscription", orgId)
@@ -55,7 +57,7 @@ class SubscriptionGatingTest extends AbstractIntegrationTest {
         mockMvc.perform(post("/api/v1/orgs/{orgId}/members", orgId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\":\"more@x.com\",\"firstName\":\"M\",\"lastName\":\"X\",\"roleCode\":\"GATED\"}")
-                        .with(member(orgId, "gating-inviter")))
+                        .with(member(orgId, inviter)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errors[0].detail",
                         org.hamcrest.Matchers.containsString("Upgrade the plan")));
@@ -64,7 +66,7 @@ class SubscriptionGatingTest extends AbstractIntegrationTest {
         mockMvc.perform(post("/api/v1/orgs/{orgId}/exchange/exports", orgId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"handler\":\"org-members\",\"format\":\"CSV\"}")
-                        .with(member(orgId, "gating-inviter")))
+                        .with(member(orgId, inviter)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errors[0].detail",
                         org.hamcrest.Matchers.containsString("does not include")));
@@ -81,11 +83,11 @@ class SubscriptionGatingTest extends AbstractIntegrationTest {
                 mockMvc.perform(post("/api/v1/orgs/{orgId}/exchange/exports", orgId)
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("{\"handler\":\"org-members\",\"format\":\"CSV\"}")
-                                .with(member(orgId, "gating-inviter")))
+                                .with(member(orgId, inviter)))
                         .andExpect(status().isAccepted()));
 
         mockMvc.perform(get("/api/v1/orgs/{orgId}/subscription", orgId)
-                        .with(member(orgId, "gating-inviter")))
+                        .with(member(orgId, inviter)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.attributes.planCode").value("PRO"))
                 .andExpect(jsonPath("$.data.attributes.entitlements['members.max']").value(250));
@@ -171,9 +173,21 @@ class SubscriptionGatingTest extends AbstractIntegrationTest {
                 .authorities(new SimpleGrantedAuthority("ROLE_platform-admin"));
     }
 
+    /**
+     * A token the edge can resolve to BOTH halves: the subject reaches a person through
+     * {@code external_identity}, and the alias-keyed {@code organization} claim reaches this tenant
+     * through {@code external_organization} — so the claim carries the PROVIDER's org id, read back
+     * from the link rather than the local {@code organization.id} the URL uses. The {@code iss} is
+     * the seeded issuer; without it neither lookup runs and every gate would 403 for the wrong reason.
+     */
     private org.springframework.test.web.servlet.request.RequestPostProcessor member(UUID orgId, String subject) {
+        Map<String, Object> link = jdbc.queryForMap(
+                "select external_org_id, external_alias from external_organization where organization_id = ?",
+                orgId);
         return jwt().jwt(token -> token.subject(subject)
-                .claim("organization", Map.of("acme", Map.of("id", orgId.toString()))));
+                .claim("iss", EdgeSeed.ISSUER)
+                .claim("organization", Map.of(String.valueOf(link.get("external_alias")),
+                        Map.of("id", String.valueOf(link.get("external_org_id"))))));
     }
 
     /** TINY: members capped at 1, no exchange — the plan that makes every gate observable. */
@@ -186,11 +200,18 @@ class SubscriptionGatingTest extends AbstractIntegrationTest {
                 + "values (?, 'members.max', 1) on conflict do nothing", actual);
     }
 
+    /** The tenant the URLs address: an {@code organization} plus the link its {@code organization} claim names. */
+    private UUID seedOrg() {
+        return EdgeSeed.organization(jdbc, "kc-org-" + UUID.randomUUID(), "acme-" + UUID.randomUUID());
+    }
+
+    /**
+     * The org's ONE member — the count the {@code members.max} cap is measured against. A real
+     * {@code person} plus its identity link, because the invite gate runs for a caller the edge has
+     * already resolved; a membership without one would authorize nobody.
+     */
     private void seedInviter(UUID orgId, String subject) {
-        jdbc.update("insert into organization (id, kc_org_id, alias, name, status, version, created_at) "
-                        + "values (?, ?, ?, ?, 'ACTIVE', 0, now()) "
-                        + "on conflict (kc_org_id) where deleted_at is null do nothing",
-                UUID.randomUUID(), orgId, "org-" + orgId.toString().substring(0, 13), "Org " + orgId);
+        UUID personId = EdgeSeed.person(jdbc, subject);
         UUID roleId = UUID.randomUUID();
         jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
                 + "values (?, ?, 'GATED', 'Gated', false, 0, now())", roleId, orgId);
@@ -198,7 +219,7 @@ class SubscriptionGatingTest extends AbstractIntegrationTest {
                 "SUBSCRIPTION_READ", "EXCHANGE_SUBMIT"}) {
             jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleId, permission);
         }
-        jdbc.update("insert into membership (id, org_id, user_subject, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, subject, roleId);
+        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
+                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
     }
 }

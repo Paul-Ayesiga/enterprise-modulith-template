@@ -11,6 +11,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import ug.co.smsone.organization.Permission;
 import ug.co.smsone.shared.persistence.SoftDeleteRecovery;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
+import ug.co.smsone.testsupport.EdgeSeed;
 
 /**
  * A role is the one soft-deletable aggregate whose payload IS the authorization data, and it is also
@@ -38,7 +39,7 @@ class RoleSoftDeleteTest extends AbstractIntegrationTest {
 
     @Test
     void deletingARoleHidesItWithoutTouchingItsPermissions() {
-        UUID orgId = UUID.randomUUID();
+        UUID orgId = seedOrg();
         UUID id = roles.save(Role.create(orgId, "AUDITOR", "Auditor", false, null, GRANTED)).getId();
 
         roleService.delete(orgId, id);
@@ -55,7 +56,7 @@ class RoleSoftDeleteTest extends AbstractIntegrationTest {
      */
     @Test
     void restoringADeletedRoleReturnsItsOriginalPermissions() {
-        UUID orgId = UUID.randomUUID();
+        UUID orgId = seedOrg();
         UUID id = roles.save(Role.create(orgId, "AUDITOR", "Auditor", false, null, GRANTED)).getId();
         roleService.delete(orgId, id);
 
@@ -63,6 +64,16 @@ class RoleSoftDeleteTest extends AbstractIntegrationTest {
 
         assertThat(roles.findById(id).orElseThrow().getPermissions())
                 .containsExactlyInAnyOrderElementsOf(GRANTED);
+    }
+
+    /**
+     * A real tenant row, not a bare {@code UUID.randomUUID()}: {@code org_role.org_id} is a genuine FK
+     * to {@code organization(id)} since the identity decoupling made {@code organization.id} the tenant
+     * key, so an invented org id no longer inserts at all. Nothing here authenticates, but seeding
+     * through {@link EdgeSeed#organization} keeps one spelling of "a tenant exists" across the suite.
+     */
+    private UUID seedOrg() {
+        return EdgeSeed.organization(jdbc, "kc-org-" + UUID.randomUUID(), "roles-" + UUID.randomUUID());
     }
 
     private Timestamp deletedAt(UUID id) {

@@ -32,6 +32,7 @@ import ug.co.smsone.notification.Notifications;
 import ug.co.smsone.notification.Recipient;
 import ug.co.smsone.notification.internal.NotificationDeliveryWorker;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
+import ug.co.smsone.testsupport.EdgeSeed;
 
 /**
  * Rate limiting against REAL Valkey (Bucket4j distributed buckets): the shared limiter, the edge
@@ -133,21 +134,29 @@ class RateLimitIntegrationTest extends AbstractIntegrationTest {
     }
 
     /**
-     * With no tenant to key on, the bucket falls back to the principal — which must be the immutable
-     * subject, not {@code preferred_username}. A name-keyed bucket is escapable (rename yourself for a
-     * fresh quota) and inheritable (a recycled username lands in the previous holder's bucket). Built
-     * through the real converter, which is what makes principal name differ from subject.
+     * With no tenant to key on, the bucket falls back to the principal — which must be the caller's
+     * durable identity, not {@code preferred_username}. A name-keyed bucket is escapable (rename
+     * yourself for a fresh quota) and inheritable (a recycled username lands in the previous holder's
+     * bucket). Built through the real converter, which is what makes principal name differ from subject.
+     *
+     * <p>That durable identity is now {@code person:<uuid>}, reached through {@code external_identity}
+     * — so the person and the link are seeded and the token carries {@code iss}. Without them
+     * {@code currentPrincipalKey()} is empty, the resolver degrades past the principal to the CLIENT IP,
+     * and this test silently proved nothing: 127.0.0.1 is the same key for every request in the class,
+     * so both names landed in one bucket whatever the resolver keyed on.
      */
     @Test
     void principalFallbackKeysBySubjectNotUsername() throws Exception {
         var converter = new ug.co.smsone.shared.security.KeycloakJwtAuthenticationConverter();
         String subject = "sub-" + UUID.randomUUID();
+        EdgeSeed.person(jdbc, subject);
 
         java.util.function.Function<String, RequestPostProcessor> as = username ->
                 org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors
                         .authentication(converter.convert(org.springframework.security.oauth2.jwt.Jwt
                                 .withTokenValue("token").header("alg", "RS256")
                                 .subject(subject)
+                                .claim("iss", EdgeSeed.ISSUER)
                                 .claim("preferred_username", username)
                                 .claim("realm_access", Map.of("roles", List.of("USER")))
                                 .issuedAt(java.time.Instant.now())
@@ -166,7 +175,13 @@ class RateLimitIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void edgeFilterKeysByActiveOrgFromTheOrganizationClaim() throws Exception {
-        UUID orgId = UUID.randomUUID();
+        // A tenant the EDGE can actually resolve. A bare random UUID in the claim names no
+        // organization: OrgResolver finds no external_organization link, CurrentUser.organizationId
+        // is null, and a TENANT-scoped tier then degrades past the (absent) flat tenant claim and the
+        // (absent) principal all the way to the CLIENT IP — 127.0.0.1 for every MockMvc request in
+        // this class, so this test was sharing one 3-request bucket with its siblings and 429ing on
+        // its first call. Seeding the org is what makes the key an org key at all.
+        UUID orgId = seedOrg();
         RequestPostProcessor org = orgToken(orgId, "user");
         // A DIFFERENT user in the SAME org — proves the bucket is keyed by org, not by sub.
         RequestPostProcessor sameOrgOtherUser = orgToken(orgId, "someone-else");
@@ -177,16 +192,37 @@ class RateLimitIntegrationTest extends AbstractIntegrationTest {
         mockMvc.perform(get("/api/v1/settings").with(org))
                 .andExpect(status().isTooManyRequests()); // 4th in the org -> throttled regardless of which user
 
-        // A different org has its own bucket.
-        mockMvc.perform(get("/api/v1/settings").with(orgToken(UUID.randomUUID(), "user")))
+        // A different org has its own bucket — seeded too, for the same reason.
+        mockMvc.perform(get("/api/v1/settings").with(orgToken(seedOrg(), "user")))
                 .andExpect(status().isOk());
     }
 
-    private static RequestPostProcessor orgToken(UUID orgId, String subject) {
+    /** An organization plus the provider link a token's {@code organization} claim resolves through. */
+    private UUID seedOrg() {
+        return EdgeSeed.organization(jdbc, "kc-org-" + UUID.randomUUID(), "acme-" + UUID.randomUUID());
+    }
+
+    /**
+     * A token whose {@code organization} claim resolves to {@code orgId}: {@code iss} byte-identical to
+     * what the link was seeded with (the resolver takes the issuer from the TOKEN, and a null one
+     * short-circuits before the lookup), and the alias-keyed claim rebuilt from
+     * {@code external_organization} rather than spelled by hand — the claim carries the PROVIDER's id
+     * and alias, which are not the local {@code organization.id}.
+     */
+    private RequestPostProcessor orgToken(UUID orgId, String subject) {
+        Map<String, Object> claim = orgClaim(orgId);
         return jwt()
-                .jwt(builder -> builder.subject(subject)
-                        .claim("organization", Map.of("acme", Map.of("id", orgId.toString()))))
+                .jwt(builder -> builder.claim("iss", EdgeSeed.ISSUER).subject(subject)
+                        .claim("organization", claim))
                 .authorities(new SimpleGrantedAuthority("ROLE_USER"));
+    }
+
+    private Map<String, Object> orgClaim(UUID orgId) {
+        Map<String, Object> link = jdbc.queryForMap(
+                "select external_org_id, external_alias from external_organization where organization_id = ?",
+                orgId);
+        return Map.of(String.valueOf(link.get("external_alias")),
+                Map.of("id", String.valueOf(link.get("external_org_id"))));
     }
 
     @Test

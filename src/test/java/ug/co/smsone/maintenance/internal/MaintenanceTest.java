@@ -19,10 +19,15 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
+import ug.co.smsone.testsupport.EdgeSeed;
 
 /**
  * A RESTRICT window in effect 503s an org write with Retry-After while reads pass; an ANNOUNCE
  * window never blocks; and a caller can always reach the window's own controls (no self-lockout).
+ *
+ * <p>The window is matched against {@code CurrentUser.organizationId()}, so the tenant has to be one
+ * the edge can actually resolve: a seeded {@code organization} plus the provider link its token's
+ * {@code organization} claim names, and a member who is a {@code person} with an identity link.
  */
 @AutoConfigureMockMvc
 class MaintenanceTest extends AbstractIntegrationTest {
@@ -42,8 +47,8 @@ class MaintenanceTest extends AbstractIntegrationTest {
 
     @Test
     void aRestrictWindowPausesWritesButNotReads() throws Exception {
-        UUID orgId = UUID.randomUUID();
-        seedMember(orgId, "tenant-1", "ORG_READ", "ORG_UPDATE", "MEMBER_READ");
+        UUID orgId = seedOrg();
+        String tenant = seedMember(orgId, "tenant-1", "ORG_READ", "ORG_UPDATE", "MEMBER_READ");
 
         // An org-scoped RESTRICT window in effect right now.
         window(orgId, "RESTRICT", Instant.now().minusSeconds(60), Instant.now().plusSeconds(600));
@@ -51,38 +56,38 @@ class MaintenanceTest extends AbstractIntegrationTest {
         // A write (PUT the security policy — an ordinary org write) is 503'd with Retry-After.
         mockMvc.perform(put("/api/v1/orgs/{orgId}/security-policy", orgId)
                         .contentType(MediaType.APPLICATION_JSON).content("{\"requireTrustedDevice\":false}")
-                        .with(member(orgId, "tenant-1")))
+                        .with(member(orgId, tenant)))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(header().exists("Retry-After"))
                 .andExpect(jsonPath("$.errors[0].code").value("SERVICE_UNAVAILABLE"));
 
         // A read passes untouched.
-        mockMvc.perform(get("/api/v1/orgs/{orgId}/members", orgId).with(member(orgId, "tenant-1")))
+        mockMvc.perform(get("/api/v1/orgs/{orgId}/members", orgId).with(member(orgId, tenant)))
                 .andExpect(status().isOk());
 
         // The tenant can still SEE the window (a read), for its banner.
         mockMvc.perform(get("/api/v1/orgs/{orgId}/maintenance?active=true", orgId)
-                        .with(member(orgId, "tenant-1")))
+                        .with(member(orgId, tenant)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].attributes.mode").value("RESTRICT"));
     }
 
     @Test
     void anAnnounceWindowNeverBlocks() throws Exception {
-        UUID orgId = UUID.randomUUID();
-        seedMember(orgId, "tenant-2", "ORG_READ", "ORG_UPDATE");
+        UUID orgId = seedOrg();
+        String tenant = seedMember(orgId, "tenant-2", "ORG_READ", "ORG_UPDATE");
         window(orgId, "ANNOUNCE", Instant.now().minusSeconds(60), Instant.now().plusSeconds(600));
 
         mockMvc.perform(put("/api/v1/orgs/{orgId}/security-policy", orgId)
                         .contentType(MediaType.APPLICATION_JSON).content("{\"requireTrustedDevice\":false}")
-                        .with(member(orgId, "tenant-2")))
+                        .with(member(orgId, tenant)))
                 .andExpect(status().isOk());
     }
 
     @Test
     void aPlatformWideRestrictWindowCoversEveryOrg() throws Exception {
-        UUID orgId = UUID.randomUUID();
-        seedMember(orgId, "tenant-3", "ORG_READ", "ORG_UPDATE");
+        UUID orgId = seedOrg();
+        String tenant = seedMember(orgId, "tenant-3", "ORG_READ", "ORG_UPDATE");
 
         mockMvc.perform(post("/api/v1/admin/maintenance")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -94,7 +99,7 @@ class MaintenanceTest extends AbstractIntegrationTest {
 
         mockMvc.perform(put("/api/v1/orgs/{orgId}/security-policy", orgId)
                         .contentType(MediaType.APPLICATION_JSON).content("{\"requireTrustedDevice\":false}")
-                        .with(member(orgId, "tenant-3")))
+                        .with(member(orgId, tenant)))
                 .andExpect(status().isServiceUnavailable());
     }
 
@@ -109,24 +114,44 @@ class MaintenanceTest extends AbstractIntegrationTest {
                 .authorities(new SimpleGrantedAuthority("ROLE_platform-admin"));
     }
 
+    /** The tenant's token: the linked subject, the issuer that link is under, and the org claim. */
     private org.springframework.test.web.servlet.request.RequestPostProcessor member(UUID orgId, String subject) {
-        return jwt().jwt(token -> token.subject(subject)
-                .claim("organization", Map.of("acme", Map.of("id", orgId.toString()))));
+        return jwt().jwt(token -> token.issuer(EdgeSeed.ISSUER).subject(subject)
+                .claim("organization", orgClaim(orgId)));
     }
 
-    private void seedMember(UUID orgId, String subject, String... permissions) {
-        jdbc.update("insert into organization (id, kc_org_id, alias, name, status, version, created_at) "
-                        + "values (?, ?, ?, ?, 'ACTIVE', 0, now()) "
-                        + "on conflict (kc_org_id) where deleted_at is null do nothing",
-                UUID.randomUUID(), orgId, "org-" + orgId.toString().substring(0, 13), "Org " + orgId);
+    /** A tenant the edge can resolve: an organization plus the provider link its claim names. */
+    private UUID seedOrg() {
+        return EdgeSeed.organization(jdbc, "kc-org-" + UUID.randomUUID(), "acme-" + UUID.randomUUID());
+    }
+
+    /** The alias-keyed {@code organization} claim Keycloak mints, rebuilt from the seeded link. */
+    private Map<String, Object> orgClaim(UUID orgId) {
+        Map<String, Object> link = jdbc.queryForMap(
+                "select external_org_id, external_alias from external_organization where organization_id = ?",
+                orgId);
+        return Map.of(String.valueOf(link.get("external_alias")),
+                Map.of("id", String.valueOf(link.get("external_org_id"))));
+    }
+
+    /**
+     * A person with an ACTIVE membership in {@code orgId} carrying {@code permissions}; returns the
+     * token subject that reaches them. The membership names the {@code person.id} — the subject lives
+     * only on the {@code external_identity} link {@link EdgeSeed#person} writes, and is unique per seed
+     * because that link is unique per (provider, issuer, subject) across the shared container.
+     */
+    private String seedMember(UUID orgId, String label, String... permissions) {
+        String subject = label + "-" + UUID.randomUUID();
+        UUID personId = EdgeSeed.person(jdbc, subject);
         UUID roleId = UUID.randomUUID();
         jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
                 + "values (?, ?, ?, 'MaintRole', false, 0, now())", roleId, orgId,
-                "MNT_" + subject.toUpperCase().replace('-', '_'));
+                "MNT_" + label.toUpperCase().replace('-', '_'));
         for (String permission : permissions) {
             jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleId, permission);
         }
-        jdbc.update("insert into membership (id, org_id, user_subject, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, subject, roleId);
+        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
+                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+        return subject;
     }
 }

@@ -39,11 +39,17 @@ class ExchangeRetentionOverrideTest extends AbstractIntegrationTest {
         assertThat(exists(purgedJob)).as("non-overridden org's 400-day-old job is purged").isFalse();
     }
 
+    /**
+     * The requester is a {@code person.id} now, not the subject string it used to be — the column is
+     * {@code requester_person_id uuid}. Nothing in the purge reads it, so an unlinked id is enough here
+     * (there is no FK to {@code person}); what matters is that it is a UUID and non-null.
+     */
     private UUID insertOldTerminalJob(UUID orgId) {
         UUID id = UUID.randomUUID();
-        jdbc.update("insert into exchange_job (id, org_id, requester, job_type, handler, format, status, created_at) "
-                + "values (?, ?, 'tester', 'EXPORT', 'noop', 'CSV', 'COMPLETED', now() - interval '400 days')",
-                id, orgId);
+        jdbc.update("insert into exchange_job (id, org_id, requester_person_id, job_type, handler, format, "
+                + "status, created_at) "
+                + "values (?, ?, ?, 'EXPORT', 'noop', 'CSV', 'COMPLETED', now() - interval '400 days')",
+                id, orgId, UUID.randomUUID());
         return id;
     }
 

@@ -114,11 +114,17 @@ class NotificationDeliveryTest {
     /**
      * A person and the address to reach them at — two rows now, because V10 split the identity from the
      * contact. The e-mail lives in person_contact, which is what NotificationService resolves through.
+     *
+     * <p>Hand-written rather than {@code EdgeSeed.personWithEmail}: this person's id is a CONSTANT the
+     * test also hands to {@code Recipient.inApp} and then queries {@code in_app_notification} by, and the
+     * helper mints a fresh id (plus a Keycloak link nothing here authenticates through). The columns are
+     * the current ones: {@code invited_at} is what {@code provisioned_at} became, and an ACTIVE person
+     * carries {@code activated_at} too — a status the provisioning path never leaves unset.
      */
     private void seedProvisionedAdmin() {
         jdbc.update("""
-                insert into person (id, status, provisioned_at, version, created_at)
-                values (?, 'ACTIVE', now(), 0, now())
+                insert into person (id, status, invited_at, activated_at, version, created_at)
+                values (?, 'ACTIVE', now(), now(), 0, now())
                 on conflict (id) do nothing
                 """, ADMIN_PERSON_ID);
         // The `where` is not optional: uq_person_contact_verified_live is PARTIAL, and Postgres only

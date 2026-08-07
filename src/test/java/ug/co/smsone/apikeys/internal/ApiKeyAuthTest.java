@@ -18,7 +18,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
+import ug.co.smsone.testsupport.EdgeSeed;
 
 /**
  * The machine-credential contract end to end: an org key mints only a SUBSET of its creator's
@@ -36,14 +38,15 @@ class ApiKeyAuthTest extends AbstractIntegrationTest {
 
     @Test
     void anOrgKeyCarriesASubsetAuthenticatesAndIsRevocable() throws Exception {
-        UUID orgId = UUID.randomUUID();
-        seedMember(orgId, "key-admin", "ORG_READ", "MEMBER_READ", "SUBSCRIPTION_READ", "APIKEY_MANAGE");
+        UUID orgId = seedOrg();
+        RequestPostProcessor keyAdmin =
+                seedMember(orgId, "key-admin", "ORG_READ", "MEMBER_READ", "SUBSCRIPTION_READ", "APIKEY_MANAGE");
 
         // Mint a key with a subset of what the caller holds.
         MvcResult minted = mockMvc.perform(post("/api/v1/orgs/{orgId}/api-keys", orgId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"ci-bot\",\"permissions\":[\"subscription:read\"]}")
-                        .with(member(orgId, "key-admin")))
+                        .with(keyAdmin))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.attributes.secret").exists())
                 .andExpect(jsonPath("$.data.attributes.prefix").exists())
@@ -66,7 +69,7 @@ class ApiKeyAuthTest extends AbstractIntegrationTest {
 
         // Revoke → the very next call 401s (no principal).
         mockMvc.perform(delete("/api/v1/orgs/{orgId}/api-keys/{id}", orgId, keyId)
-                        .with(member(orgId, "key-admin")))
+                        .with(keyAdmin))
                 .andExpect(status().isNoContent());
         mockMvc.perform(get("/api/v1/orgs/{orgId}/subscription", orgId)
                         .header("X-Api-Key", secret))
@@ -75,13 +78,14 @@ class ApiKeyAuthTest extends AbstractIntegrationTest {
 
     @Test
     void aKeyCannotOutrankItsCreator() throws Exception {
-        UUID orgId = UUID.randomUUID();
-        seedMember(orgId, "limited-admin", "ORG_READ", "APIKEY_MANAGE"); // no member:read
+        UUID orgId = seedOrg();
+        // no member:read
+        RequestPostProcessor limitedAdmin = seedMember(orgId, "limited-admin", "ORG_READ", "APIKEY_MANAGE");
 
         mockMvc.perform(post("/api/v1/orgs/{orgId}/api-keys", orgId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"greedy\",\"permissions\":[\"org:read\",\"member:read\"]}")
-                        .with(member(orgId, "limited-admin")))
+                        .with(limitedAdmin))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errors[0].detail",
                         org.hamcrest.Matchers.containsString("member:read")));
@@ -113,24 +117,47 @@ class ApiKeyAuthTest extends AbstractIntegrationTest {
                 .andExpect(status().isForbidden());
     }
 
-    private org.springframework.test.web.servlet.request.RequestPostProcessor member(UUID orgId, String subject) {
-        return jwt().jwt(token -> token.subject(subject)
-                .claim("organization", Map.of("acme", Map.of("id", orgId.toString()))));
+    /** A tenant the edge can resolve: an organization plus the provider link its claim names. */
+    private UUID seedOrg() {
+        return EdgeSeed.organization(jdbc, "kc-org-" + UUID.randomUUID(), "acme-" + UUID.randomUUID());
     }
 
-    private void seedMember(UUID orgId, String subject, String... permissions) {
-        jdbc.update("insert into organization (id, kc_org_id, alias, name, status, version, created_at) "
-                        + "values (?, ?, ?, ?, 'ACTIVE', 0, now()) "
-                        + "on conflict (kc_org_id) where deleted_at is null do nothing",
-                UUID.randomUUID(), orgId, "org-" + orgId.toString().substring(0, 13), "Org " + orgId);
+    /**
+     * The human minter: a person the edge resolves through {@code external_identity}, a role holding
+     * {@code permissions}, and the membership joining them to {@code orgId} — the set a minted key is
+     * capped against. Returns the token that resolves to them.
+     */
+    private RequestPostProcessor seedMember(UUID orgId, String label, String... permissions) {
+        String subject = label + "-" + UUID.randomUUID();
+        UUID personId = EdgeSeed.person(jdbc, subject);
         UUID roleId = UUID.randomUUID();
         jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
                 + "values (?, ?, ?, 'KeyRole', false, 0, now())", roleId, orgId,
-                "KEY_" + subject.toUpperCase().replace('-', '_'));
+                "KEY_" + roleId.toString().substring(0, 8).toUpperCase());
         for (String permission : permissions) {
             jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleId, permission);
         }
-        jdbc.update("insert into membership (id, org_id, user_subject, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, subject, roleId);
+        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
+                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+        return member(orgId, subject);
+    }
+
+    /**
+     * A token for a seeded person: {@code iss} must be {@link EdgeSeed#ISSUER} byte-for-byte or the
+     * (issuer, subject) pair resolves to no person, and the alias-keyed {@code organization} claim
+     * carries the PROVIDER's org id — both rebuilt from what {@link EdgeSeed} wrote.
+     */
+    private RequestPostProcessor member(UUID orgId, String subject) {
+        return jwt().jwt(token -> token.claim("iss", EdgeSeed.ISSUER).subject(subject)
+                .claim("organization", orgClaim(orgId)));
+    }
+
+    /** The alias-keyed {@code organization} claim Keycloak mints, rebuilt from the seeded link. */
+    private Map<String, Object> orgClaim(UUID orgId) {
+        Map<String, Object> link = jdbc.queryForMap(
+                "select external_org_id, external_alias from external_organization where organization_id = ?",
+                orgId);
+        return Map.of(String.valueOf(link.get("external_alias")),
+                Map.of("id", String.valueOf(link.get("external_org_id"))));
     }
 }

@@ -18,6 +18,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
 import ug.co.smsone.integration.Integrations;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
+import ug.co.smsone.testsupport.EdgeSeed;
 
 /**
  * The hub resolves an org's override over the platform default, decrypts secrets for the in-JVM
@@ -38,8 +39,8 @@ class IntegrationHubTest extends AbstractIntegrationTest {
 
     @Test
     void anOrgOverrideWinsOverThePlatformDefaultAndSecretsAreEncrypted() throws Exception {
-        UUID orgId = UUID.randomUUID();
-        seedMember(orgId, "integrator", "ORG_READ", "ORG_UPDATE");
+        UUID orgId = seedOrg();
+        String subject = seedMember(orgId, "integrator", "ORG_READ", "ORG_UPDATE");
 
         // Platform default SMS provider (admin).
         mockMvc.perform(put("/api/v1/admin/integrations")
@@ -60,7 +61,7 @@ class IntegrationHubTest extends AbstractIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"kind\":\"SMS_PROVIDER\",\"provider\":\"twilio\","
                                 + "\"settings\":{\"apiKey\":\"ORG-SECRET\",\"authToken\":\"tok\"}}")
-                        .with(member(orgId, "integrator")))
+                        .with(member(orgId, subject)))
                 .andExpect(status().isOk());
 
         // Resolve returns the override for this org, with the secret DECRYPTED for the in-JVM caller.
@@ -70,7 +71,7 @@ class IntegrationHubTest extends AbstractIntegrationTest {
         assertThat(resolved.settings().get("apiKey")).isEqualTo("ORG-SECRET");
 
         // ...but the REST read still masks it, and the ciphertext is what sits in the column.
-        mockMvc.perform(get("/api/v1/orgs/{orgId}/integrations", orgId).with(member(orgId, "integrator")))
+        mockMvc.perform(get("/api/v1/orgs/{orgId}/integrations", orgId).with(member(orgId, subject)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].attributes.settings.apiKey").value("••••••"));
         String stored = jdbc.queryForObject(
@@ -81,12 +82,12 @@ class IntegrationHubTest extends AbstractIntegrationTest {
 
     @Test
     void kindIsValidatedAndTestReportsCompleteness() throws Exception {
-        UUID orgId = UUID.randomUUID();
-        seedMember(orgId, "integrator-2", "ORG_READ", "ORG_UPDATE");
+        UUID orgId = seedOrg();
+        String subject = seedMember(orgId, "integrator-2", "ORG_READ", "ORG_UPDATE");
         mockMvc.perform(put("/api/v1/orgs/{orgId}/integrations", orgId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"kind\":\"CARRIER_PIGEON\",\"provider\":\"x\"}")
-                        .with(member(orgId, "integrator-2")))
+                        .with(member(orgId, subject)))
                 .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.errors[0].source.pointer").value("/data/attributes/kind"));
     }
@@ -96,24 +97,44 @@ class IntegrationHubTest extends AbstractIntegrationTest {
                 .authorities(new SimpleGrantedAuthority("ROLE_platform-admin"));
     }
 
+    /**
+     * A token for {@code subject}, scoped to {@code orgId}. The {@code organization} claim is rebuilt
+     * from the seeded link rather than spelled by hand: it is alias-keyed and carries the PROVIDER's
+     * org id, and {@code organization.id} — which the path variable uses — never appears in it. The
+     * {@code iss} is not decoration either: {@code external_identity} and {@code external_organization}
+     * are both keyed on it, so a token without it resolves to neither person nor tenant.
+     */
     private org.springframework.test.web.servlet.request.RequestPostProcessor member(UUID orgId, String subject) {
-        return jwt().jwt(token -> token.subject(subject)
-                .claim("organization", Map.of("acme", Map.of("id", orgId.toString()))));
+        Map<String, Object> link = jdbc.queryForMap(
+                "select external_org_id, external_alias from external_organization where organization_id = ?",
+                orgId);
+        return jwt().jwt(token -> token.subject(subject).claim("iss", EdgeSeed.ISSUER)
+                .claim("organization", Map.of(String.valueOf(link.get("external_alias")),
+                        Map.of("id", String.valueOf(link.get("external_org_id"))))));
     }
 
-    private void seedMember(UUID orgId, String subject, String... permissions) {
-        jdbc.update("insert into organization (id, kc_org_id, alias, name, status, version, created_at) "
-                        + "values (?, ?, ?, ?, 'ACTIVE', 0, now()) "
-                        + "on conflict (kc_org_id) where deleted_at is null do nothing",
-                UUID.randomUUID(), orgId, "org-" + orgId.toString().substring(0, 13), "Org " + orgId);
+    /** A tenant the edge can resolve: an organization plus the provider link its claim names. */
+    private UUID seedOrg() {
+        return EdgeSeed.organization(jdbc, "kc-org-" + UUID.randomUUID(), "acme-" + UUID.randomUUID());
+    }
+
+    /**
+     * An ACTIVE member of {@code orgId} holding {@code permissions}, and the token subject that
+     * resolves to them. The person and its {@code external_identity} link come from {@link EdgeSeed};
+     * the membership keys on {@code person_id} now, so the subject never reaches this table.
+     */
+    private String seedMember(UUID orgId, String label, String... permissions) {
+        String subject = label + "-" + UUID.randomUUID();
+        UUID personId = EdgeSeed.person(jdbc, subject);
         UUID roleId = UUID.randomUUID();
         jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
                 + "values (?, ?, ?, 'IntRole', false, 0, now())", roleId, orgId,
-                "INT_" + subject.toUpperCase().replace('-', '_'));
+                "INT_" + label.toUpperCase().replace('-', '_'));
         for (String permission : permissions) {
             jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleId, permission);
         }
-        jdbc.update("insert into membership (id, org_id, user_subject, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, subject, roleId);
+        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
+                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+        return subject;
     }
 }

@@ -3,8 +3,7 @@
 |Base package
 |`ug.co.smsone.apikeys`
 |Bean references
-|* `u.c.s.s.security.OrgAuthorization` (in Shared Kernel)
-* `u.c.s.s.security.CurrentUserProvider` (in Shared Kernel)
+|* `u.c.s.s.security.CurrentUserProvider` (in Shared Kernel)
 * `u.c.s.s.audit.AuditLog` (in Shared Kernel)
 * `u.c.s.s.security.ApiKeyAuthenticator` (in Shared Kernel)
 * `u.c.s.s.security.GatewaySecretVerifier` (in Shared Kernel)

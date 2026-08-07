@@ -22,6 +22,7 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
+import ug.co.smsone.testsupport.EdgeSeed;
 
 /**
  * The curated analytics report surface (admin-only): a fixed catalog, and each report materialized
@@ -55,7 +56,7 @@ class AnalyticsApiTest extends AbstractIntegrationTest {
     @Test
     void runningAReportMaterializesAndAggregates() throws Exception {
         // Guarantee at least one row so the mart aggregation is non-empty regardless of suite order.
-        seedUser();
+        seedPerson();
 
         mockMvc.perform(get("/api/v1/analytics/reports/users-by-status").with(ADMIN))
                 .andExpect(status().isOk())
@@ -87,11 +88,11 @@ class AnalyticsApiTest extends AbstractIntegrationTest {
      */
     @Test
     void softDeletedUsersAreExcludedFromTheReport() throws Exception {
-        seedUser();
-        seedDeletedUser();
+        seedPerson();
+        seedDeletedPerson();
 
-        // The report materializes app_user at one instant and liveUserCount reads it at another;
-        // an async app_user writer from a sibling test context sharing this container can land a
+        // The report materializes person at one instant and livePersonCount reads it at another;
+        // an async person writer from a sibling test context sharing this container can land a
         // row between them and skew a GLOBAL count by ±1. Awaitility distinguishes that transient
         // skew (self-heals) from a real leak of soft-deleted rows (a STABLE divergence that never
         // converges, so this still fails). The guarantee under test — deleted rows don't leak — is
@@ -102,29 +103,29 @@ class AnalyticsApiTest extends AbstractIntegrationTest {
                     .andReturn().getResponse().getContentAsString();
             long reported = JsonPath.<List<Number>>read(body, "$.data.attributes.rows[*].total").stream()
                     .mapToLong(Number::longValue).sum();
-            assertThat(reported).isEqualTo(liveUserCount());
+            assertThat(reported).isEqualTo(livePersonCount());
         });
     }
 
-    private void seedUser() {
-        insertUser(null);
+    /**
+     * The report counts {@code person} rows now — the identity is the person, and {@code status} moved
+     * with it. Seeded through {@code EdgeSeed} so the row carries the provider link a provisioned person
+     * really has; the subject and e-mail that used to sit on the row are its own tables' business, and
+     * the report reads neither.
+     */
+    private void seedPerson() {
+        EdgeSeed.person(jdbc, "analytics-" + UUID.randomUUID());
     }
 
-    private void seedDeletedUser() {
-        insertUser(Timestamp.from(Instant.now()));
+    /** The same person, then soft-deleted — {@code deleted_at} is the one thing a live seed never sets. */
+    private void seedDeletedPerson() {
+        UUID personId = EdgeSeed.person(jdbc, "analytics-deleted-" + UUID.randomUUID());
+        jdbc.update("update person set deleted_at = ? where id = ?", Timestamp.from(Instant.now()), personId);
     }
 
-    private void insertUser(Timestamp deletedAt) {
-        String subject = "kc-" + UUID.randomUUID();
-        jdbc.update("""
-                insert into app_user (id, subject, email, status, provisioned_at, version, created_at, deleted_at)
-                values (?, ?, ?, 'INVITED', now(), 0, now(), ?)
-                """, UUID.randomUUID(), subject, subject + "@smsone.co.ug", deletedAt);
-    }
-
-    private long liveUserCount() {
+    private long livePersonCount() {
         Long count = jdbc.queryForObject(
-                "select count(*) from app_user where deleted_at is null", Long.class);
+                "select count(*) from person where deleted_at is null", Long.class);
         return count == null ? 0 : count;
     }
 }

@@ -11,11 +11,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import ug.co.smsone.shared.persistence.SoftDeletableEntity;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
+import ug.co.smsone.testsupport.EdgeSeed;
 
 /**
  * The purge is invisible to JPA by construction ({@code @SQLRestriction} hides every row it touches),
@@ -46,7 +48,19 @@ class SoftDeletePurgeJobIntegrationTest extends AbstractIntegrationTest {
     /** Insertion order; unwound in reverse so children go before the parents they reference. */
     private final List<Seeded> seeded = new ArrayList<>();
 
-    private final UUID orgId = UUID.randomUUID();
+    /**
+     * The tenant the probe rows hang off, and a REAL {@code organization} row rather than a loose uuid:
+     * {@code org_role.org_id} and {@code membership.org_id} are true foreign keys to it. Seeded live, so
+     * the purge never treats it as a candidate; tracked first, so the reverse unwind drops it last.
+     */
+    private UUID orgId;
+
+    @BeforeEach
+    void seedTenant() {
+        UUID externalOrgId = UUID.randomUUID();
+        orgId = track("organization",
+                EdgeSeed.organization(jdbc, externalOrgId.toString(), "purge-tenant-" + suffix(externalOrgId)));
+    }
 
     /**
      * ShedLock's advisor intercepts direct calls as well as cron ones, and {@code lockAtLeastFor} holds
@@ -74,7 +88,7 @@ class SoftDeletePurgeJobIntegrationTest extends AbstractIntegrationTest {
         UUID role = insertRole(AGED);
         UUID membership = insertMembership(role, AGED);
         UUID organization = insertOrganization(AGED);
-        UUID user = insertUser(AGED);
+        UUID person = insertPerson(AGED);
         UUID subscription = insertSubscription(AGED);
         UUID delivery = insertDelivery(subscription);
         UUID setting = insertSetting(AGED);
@@ -82,11 +96,12 @@ class SoftDeletePurgeJobIntegrationTest extends AbstractIntegrationTest {
 
         runPurge();
 
-        // All seven soft-deletable tables: a table missing from the purge order leaks rows forever.
+        // Seven of the soft-deletable tables: one missing from the purge order leaks rows forever
+        // (that the list is COMPLETE is what purgeOrderCoversEverySoftDeletableEntity proves).
         assertThat(exists("membership", membership)).isFalse();
         assertThat(exists("org_role", role)).isFalse();
         assertThat(exists("organization", organization)).isFalse();
-        assertThat(exists("app_user", user)).isFalse();
+        assertThat(exists("person", person)).isFalse();
         assertThat(exists("webhook_subscription", subscription)).isFalse();
         assertThat(exists("setting", setting)).isFalse();
         assertThat(exists("feature_flag", flag)).isFalse();
@@ -119,15 +134,15 @@ class SoftDeletePurgeJobIntegrationTest extends AbstractIntegrationTest {
      * The pathological FK the purge ORDER cannot help with: a LIVE membership pinning a role that has
      * aged out. Unlike the both-aged case above there is no ordering that resolves it, and the row does
      * not go away on its own — so an unguarded {@code delete from org_role} raises the same constraint
-     * violation every night. {@code org_role} is SECOND in the order, which is what makes this
-     * expensive: the four tables after it, {@code app_user} among them, would never purge again while
+     * violation every night. {@code org_role} is THIRD in the order, which is what makes this
+     * expensive: every table after it, {@code person} among them, would never purge again while
      * the retention window kept promising erasure.
      */
     @Test
     void aLiveMembershipPinningAnAgedRoleDoesNotStarveTheTablesBehindIt() {
         UUID pinnedRole = insertRole(AGED);
         UUID liveMembership = insertMembership(pinnedRole, null);
-        UUID user = insertUser(AGED);       // every one of these sits AFTER org_role in PURGE_ORDER
+        UUID person = insertPerson(AGED);   // every one of these sits AFTER org_role in PURGE_ORDER
         UUID setting = insertSetting(AGED);
         UUID flag = insertFlag(AGED);
 
@@ -135,7 +150,7 @@ class SoftDeletePurgeJobIntegrationTest extends AbstractIntegrationTest {
 
         assertThat(exists("org_role", pinnedRole)).as("skipped, not deleted — the referrer is live").isTrue();
         assertThat(exists("membership", liveMembership)).isTrue();
-        assertThat(exists("app_user", user)).isFalse();
+        assertThat(exists("person", person)).isFalse();
         assertThat(exists("setting", setting)).isFalse();
         assertThat(exists("feature_flag", flag)).isFalse();
     }
@@ -192,32 +207,47 @@ class SoftDeletePurgeJobIntegrationTest extends AbstractIntegrationTest {
         return track("org_role", id);
     }
 
+    /**
+     * {@code person_id}, a uuid — the member is a person now, not a Keycloak subject string. It is a
+     * soft ref (no FK), so a probe membership does not need a person row behind it; {@code org_id} and
+     * {@code role_id} are the two that are enforced.
+     */
     private UUID insertMembership(UUID roleId, Instant deletedAt) {
         UUID id = UUID.randomUUID();
         jdbc.update("""
-                insert into membership (id, org_id, user_subject, role_id, status, version, created_at, deleted_at)
+                insert into membership (id, org_id, person_id, role_id, status, version, created_at, deleted_at)
                 values (?, ?, ?, ?, 'ACTIVE', 0, now(), ?)
-                """, id, orgId, UUID.randomUUID().toString(), roleId, timestamp(deletedAt));
+                """, id, orgId, UUID.randomUUID(), roleId, timestamp(deletedAt));
         return track("membership", id);
     }
 
+    /**
+     * No {@code kc_org_id}: the provider's id moved to {@code external_organization} and this row mints
+     * its own key. Deliberately WITHOUT that link — an aged tenant with no provider row still has to
+     * purge, and the linked case is the tenant seeded in {@link #seedTenant()}.
+     */
     private UUID insertOrganization(Instant deletedAt) {
         UUID id = UUID.randomUUID();
         jdbc.update("""
-                insert into organization (id, kc_org_id, alias, name, status, version, created_at, deleted_at)
-                values (?, ?, ?, 'Purge probe', 'ACTIVE', 0, now(), ?)
-                """, id, UUID.randomUUID(), "purge-" + suffix(id), timestamp(deletedAt));
+                insert into organization (id, alias, name, status, version, created_at, deleted_at)
+                values (?, ?, 'Purge probe', 'ACTIVE', 0, now(), ?)
+                """, id, "purge-" + suffix(id), timestamp(deletedAt));
         return track("organization", id);
     }
 
-    private UUID insertUser(Instant deletedAt) {
+    /**
+     * The identity row itself. Seeded bare rather than through {@code EdgeSeed}: the probe needs a
+     * {@code deleted_at} no live seed writes, and the subject/e-mail that used to sit on this row are
+     * now separate tables the purge reaches on their own. {@code invited_at} (V10's rename) plus
+     * {@code activated_at}, because ACTIVE with no activation instant is a state nothing produces.
+     */
+    private UUID insertPerson(Instant deletedAt) {
         UUID id = UUID.randomUUID();
         jdbc.update("""
-                insert into app_user (id, subject, email, status, provisioned_at, version, created_at, deleted_at)
-                values (?, ?, ?, 'ACTIVE', now(), 0, now(), ?)
-                """, id, UUID.randomUUID().toString(), "purge-" + suffix(id) + "@example.test",
-                timestamp(deletedAt));
-        return track("app_user", id);
+                insert into person (id, status, invited_at, activated_at, version, created_at, deleted_at)
+                values (?, 'ACTIVE', now(), now(), 0, now(), ?)
+                """, id, timestamp(deletedAt));
+        return track("person", id);
     }
 
     private UUID insertSubscription(Instant deletedAt) {

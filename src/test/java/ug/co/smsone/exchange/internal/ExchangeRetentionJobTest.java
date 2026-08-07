@@ -39,6 +39,11 @@ class ExchangeRetentionJobTest extends AbstractIntegrationTest {
         UUID youngCompleted = insert(orgId, "COMPLETED", "1 day");
         jdbc.update("insert into exchange_job_error (job_id, row_num, error) values (?, 1, 'x')", oldCompleted);
 
+        // purgeExpiredJobs() is @SchedulerLock'd and the advice fires on a direct call too, so a
+        // sibling test that already ran the purge in this context would still hold the 30-minute
+        // lease and this call would silently do nothing. Release it first, as the override test does.
+        jdbc.update("update shedlock set lock_until = timestamp '1970-01-01 00:00:00' where name = ?",
+                "exchange-job-retention");
         job.purgeExpiredJobs();
 
         assertThat(exists(oldCompleted)).as("terminal past retention goes").isFalse();
@@ -51,12 +56,17 @@ class ExchangeRetentionJobTest extends AbstractIntegrationTest {
         assertThat(purged()).isEqualTo(purgedBefore + 2);
     }
 
+    /**
+     * The requester is a {@code person.id} now, not the subject string it used to be — the column is
+     * {@code requester_person_id uuid}. The purge never reads it and there is no FK to {@code person},
+     * so a bare id is enough; it only has to be a UUID and non-null.
+     */
     private UUID insert(UUID orgId, String status, String age) {
         UUID id = UUID.randomUUID();
-        jdbc.update("insert into exchange_job (id, org_id, requester, job_type, handler, "
+        jdbc.update("insert into exchange_job (id, org_id, requester_person_id, job_type, handler, "
                 + "handler_version, format, status, created_at) "
-                + "values (?, ?, 'r', 'IMPORT', 'test-counter', 1, 'CSV', ?, now() - interval '" + age + "')",
-                id, orgId, status);
+                + "values (?, ?, ?, 'IMPORT', 'test-counter', 1, 'CSV', ?, now() - interval '" + age + "')",
+                id, orgId, UUID.randomUUID(), status);
         return id;
     }
 

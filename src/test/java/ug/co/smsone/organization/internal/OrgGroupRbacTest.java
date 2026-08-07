@@ -19,6 +19,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import ug.co.smsone.shared.security.OrgAuthorization;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
+import ug.co.smsone.testsupport.EdgeSeed;
 
 /**
  * Groups union their role into a member's effective permissions: a direct MEMBER who joins an
@@ -41,8 +42,8 @@ class OrgGroupRbacTest extends AbstractIntegrationTest {
     @Test
     void aGroupUnionsItsRoleIntoEveryMembersPermissions() throws Exception {
         UUID orgId = seedOrg();
-        UUID manager = UUID.randomUUID();
-        UUID worker = UUID.randomUUID();
+        UUID manager = seedPerson();
+        UUID worker = seedPerson();
         // The manager holds member:read + member:role:assign + audit:read (so it can grant AUDITOR).
         UUID managerRole = seedRole(orgId, "MANAGER", "ORG_READ", "MEMBER_READ", "MEMBER_ROLE_ASSIGN", "AUDIT_READ");
         seedRole(orgId, "AUDITOR", "AUDIT_READ");
@@ -82,7 +83,7 @@ class OrgGroupRbacTest extends AbstractIntegrationTest {
     @Test
     void creatingAGroupYouCannotStaffIsRefusedAndNonMembersCannotBeGrouped() throws Exception {
         UUID orgId = seedOrg();
-        UUID manager = UUID.randomUUID();
+        UUID manager = seedPerson();
         // This manager can assign roles but does NOT hold member:remove.
         UUID managerRole = seedRole(orgId, "MGR", "ORG_READ", "MEMBER_READ", "MEMBER_ROLE_ASSIGN");
         seedRole(orgId, "SWEEPER", "MEMBER_REMOVE");
@@ -111,18 +112,43 @@ class OrgGroupRbacTest extends AbstractIntegrationTest {
                 .andExpect(status().isNotFound());
     }
 
+    /**
+     * A token the edge can actually resolve. Both halves matter and both were missing: without
+     * {@code iss} the ({@code iss}, {@code sub}) pair never reaches {@code external_identity}, so the
+     * caller is nobody; and the {@code organization} claim carries the PROVIDER's org id keyed by the
+     * PROVIDER's alias, not {@code organization.id} keyed by a hard-coded "acme" — resolution goes
+     * through {@code external_organization}, so the claim is rebuilt from the row {@link #seedOrg}
+     * seeded. A caller who resolves to neither person nor tenant holds no permissions, which is why
+     * every request in this class was answered with the generic 403 rather than by the rule under test.
+     */
     private org.springframework.test.web.servlet.request.RequestPostProcessor member(UUID orgId, UUID personId) {
-        return jwt().jwt(token -> token.subject(personId.toString())
-                .claim("organization", Map.of("acme", Map.of("id", orgId.toString()))));
+        Map<String, Object> link = jdbc.queryForMap(
+                "select external_org_id, external_alias from external_organization where organization_id = ?",
+                orgId);
+        return jwt().jwt(token -> token.subject(subjectOf(personId))
+                .claim("iss", EdgeSeed.ISSUER)
+                .claim("organization", Map.of(String.valueOf(link.get("external_alias")),
+                        Map.of("id", String.valueOf(link.get("external_org_id"))))));
     }
 
-    /** organization.id is the tenant key and the row mints it — there is no provider id to seed. */
+    /**
+     * {@code organization.id} is the tenant key and the row mints it, but the token names the tenant by
+     * the provider's id — so the {@code external_organization} link has to exist too, and
+     * {@code org_role.org_id} / {@code membership.org_id} are real FKs to {@code organization(id)} now.
+     */
     private UUID seedOrg() {
-        UUID orgId = UUID.randomUUID();
-        jdbc.update("insert into organization (id, alias, name, status, version, created_at) "
-                        + "values (?, ?, ?, 'ACTIVE', 0, now())",
-                orgId, "org-" + orgId.toString().substring(0, 13), "Org " + orgId);
-        return orgId;
+        return EdgeSeed.organization(jdbc, "kc-org-" + UUID.randomUUID(), "groups-" + UUID.randomUUID());
+    }
+
+    /** A person the edge can resolve a token to; {@code membership.person_id} is that person's id. */
+    private UUID seedPerson() {
+        return EdgeSeed.person(jdbc, "kc-" + UUID.randomUUID());
+    }
+
+    /** The subject {@link #seedPerson} linked this person by — unique per (provider, issuer, subject). */
+    private String subjectOf(UUID personId) {
+        return jdbc.queryForObject(
+                "select external_subject from external_identity where person_id = ?", String.class, personId);
     }
 
     private UUID seedRole(UUID orgId, String code, String... permissions) {

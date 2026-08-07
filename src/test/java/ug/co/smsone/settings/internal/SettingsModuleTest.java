@@ -36,7 +36,12 @@ class SettingsModuleTest {
         var saved = settingService.put("audit.probe", "v1", null);
         assertThat(saved.getId()).isNotNull();
         assertThat(saved.getCreatedAt()).isNotNull();
-        assertThat(saved.getCreatedBy()).isEqualTo("system");
+        // created_by is a uuid holding person.id, and NULL is the schema's way of saying "no person did
+        // this write" — a job, a startup task, a slice test off a request thread (JpaAuditingConfig).
+        // The "system" sentinel this once asserted was deleted rather than translated: there is no system
+        // person row to point at. The attributed case is pinned by SubjectAttributionTest, which drives
+        // this same service over HTTP and asserts created_by equals the caller's person.id.
+        assertThat(saved.getCreatedBy()).as("no authenticated person behind a slice-test write").isNull();
 
         var updated = settingService.put("audit.probe", "v2", null);
         assertThat(updated.getValue()).isEqualTo("v2");

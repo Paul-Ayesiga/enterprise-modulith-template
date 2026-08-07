@@ -42,21 +42,30 @@ class AuditApiTest extends AbstractIntegrationTest {
     private OrgAuthorization orgAuthorization;
 
     private void seed(UUID orgId, String action, String target) {
-        // actor_person_id, not actor: V13 made the acting party a person id, and NULL is its spelling
-        // for a non-person actor — which a seed row written by no one is.
+        seed(orgId, action, target, UUID.randomUUID());
+    }
+
+    /**
+     * {@code actor_person_id}, not {@code actor}: V13 made the acting party a {@code person.id}. The
+     * actor is a parameter rather than minted per row because the wire assertion below reads
+     * {@code $.data[0]} out of a two-row page whose rows sort by {@code occurred_at} — seeding both with
+     * the same actor makes the assertion independent of which of the two lands first.
+     */
+    private void seed(UUID orgId, String action, String target, UUID actorPersonId) {
         jdbc.update("""
                 insert into audit_log
                     (id, org_id, action, actor_person_id, target, from_state, to_state, occurred_at,
                      version, created_at)
                 values (?, ?, ?, ?, ?, ?, ?, now(), 0, now())
-                """, UUID.randomUUID(), orgId, action, UUID.randomUUID(), target, "before", "after");
+                """, UUID.randomUUID(), orgId, action, actorPersonId, target, "before", "after");
     }
 
     @Test
     void platformAdminListsAndFiltersByAction() throws Exception {
         String action = "test.seed-" + UUID.randomUUID();
-        seed(null, action, "a");
-        seed(null, action, "b");
+        UUID actor = UUID.randomUUID();
+        seed(null, action, "a", actor);
+        seed(null, action, "b", actor);
         seed(null, "test.other-" + UUID.randomUUID(), "c");
 
         mockMvc.perform(get("/api/v1/audit").param("action", action)
@@ -65,7 +74,9 @@ class AuditApiTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.data.length()").value(2))
                 .andExpect(jsonPath("$.data[0].type").value("audit-entry"))
                 .andExpect(jsonPath("$.data[0].attributes.action").value(action))
-                .andExpect(jsonPath("$.data[0].attributes.actor").value("admin-seed"))
+                // The who is a person id now, rendered as a string like every other id on this wire —
+                // V13 replaced the free-text `actor` attribute with the typed `actorPersonId`.
+                .andExpect(jsonPath("$.data[0].attributes.actorPersonId").value(actor.toString()))
                 .andExpect(jsonPath("$.data[0].attributes.fromState").value("before"))
                 .andExpect(jsonPath("$.data[0].attributes.toState").value("after"));
     }
@@ -138,10 +149,13 @@ class AuditApiTest extends AbstractIntegrationTest {
     @Test
     void orgScopedViewDeniesWithoutTheAuditPermission() throws Exception {
         UUID orgId = seedOrg();
-        // OrgAuthorization is stubbed only for the permitted person above, so this one resolves to empty —
-        // which is the branch the name promises, and the one the no-active-org case never reaches.
-        mockMvc.perform(get("/api/v1/orgs/{orgId}/audit", orgId)
-                        .with(orgToken("outsider-" + UUID.randomUUID(), orgId)))
+        // The outsider is a REAL person with a real link: the edge must resolve them and their tenant, or
+        // the refusal below would be "this token names nobody" rather than the branch the name promises.
+        // OrgAuthorization is stubbed only for the permitted person above, so this one resolves to an
+        // empty permission set — the branch the no-active-org case never reaches.
+        String subject = "outsider-" + UUID.randomUUID();
+        EdgeSeed.person(jdbc, subject);
+        mockMvc.perform(get("/api/v1/orgs/{orgId}/audit", orgId).with(orgToken(subject, orgId)))
                 .andExpect(status().isForbidden());
     }
 
@@ -158,12 +172,19 @@ class AuditApiTest extends AbstractIntegrationTest {
         return EdgeSeed.organization(jdbc, "kc-org-" + UUID.randomUUID(), "acme-" + UUID.randomUUID());
     }
 
-    /** The alias-keyed {@code organization} claim Keycloak mints, rebuilt from the seeded link. */
+    /**
+     * The alias-keyed {@code organization} claim Keycloak mints, rebuilt from the seeded link — plus the
+     * {@code iss} both halves of the edge resolve through. {@code CurrentUserProvider} takes the issuer
+     * from the TOKEN and keys {@code external_identity} and {@code external_organization} on it, so a
+     * token without {@code iss} resolves to no person AND no tenant, and every org-scoped call 403s for a
+     * reason that has nothing to do with the rule under test.
+     */
     private RequestPostProcessor orgToken(String subject, UUID orgId) {
         Map<String, Object> link = jdbc.queryForMap(
                 "select external_org_id, external_alias from external_organization where organization_id = ?",
                 orgId);
         return jwt().jwt(builder -> builder.subject(subject)
+                .claim("iss", EdgeSeed.ISSUER)
                 .claim("organization", Map.of(String.valueOf(link.get("external_alias")),
                         Map.of("id", String.valueOf(link.get("external_org_id"))))));
     }

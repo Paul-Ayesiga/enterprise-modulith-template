@@ -28,15 +28,15 @@ These fail the build or the review. They are not preferences.
 | Collections paginate by **cursor**; no `page[number]`, no totals, no `COUNT` | ADR 0002, `Cursors` / `CursorPageRequest`, `WindowedResult`, `CursorPaginationContractTest` | contract test failure |
 | A soft-deletable entity declares its **own** `@SQLDelete` (with `and version = ?` **and** `version = version + 1`) and `@SQLRestriction` | `ArchitectureTests.softDeletableEntitiesDeclareTheirOwnHibernateAnnotations` | ArchUnit failure |
 | `SoftDeletePurgeJob.PURGE_ORDER` covers every soft-deletable entity, children before parents | `SoftDeletePurgeJobIntegrationTest.purgeOrderCoversEverySoftDeletableEntity` | test failure |
-| No cross-module foreign keys — cross-module links are soft refs (`membership.user_subject varchar`) | migration review | review rejection |
+| No cross-module foreign keys — cross-module links are soft refs (`membership.person_id uuid`, `created_by`/`updated_by` uuid) | migration review | review rejection |
 | No JIT provisioning: a valid JWT is **not** access | `identity.internal.ProvisioningGateFilter` | review rejection |
 | Platform roles and org permissions are **disjoint** axes; no role bypasses a permission check | `ApiPermissionEvaluator` (no role branch), `PlatformRoleHierarchyTest`, `OrgRbacApiTest` | review rejection |
 | Impersonation is the only bridge between the axes, and it carries **no** authority — the swapped principal's authority collection is empty | `ImpersonatedAuthenticationToken`, `ImpersonationReachTest.supportReachesTenantDataThroughASessionAndTheAdminSurfaceOnlyOutsideOne` | test failure |
-| Inside a session `audit_log.actor` is the **operator**; the worn identity moves to `on_behalf_of` | `AuditLogImpl.attribution()`, `ImpersonationReachTest.anAuditRowFromInsideASessionNamesTheOperatorAndTheIdentityTheyWore` | test failure |
+| Inside a session `audit_log.actor_person_id` is the **operator**; the worn identity moves to `on_behalf_of_person_id` | `AuditLogImpl.attribution()`, `ImpersonationReachTest.anAuditRowFromInsideASessionNamesTheOperatorAndTheIdentityTheyWore` | test failure |
 | A session is re-authorized on **every** request — ending it, its expiry, or revoking either account denies the very next one | `ImpersonationLookupImpl`, `ImpersonationReachTest.endingASessionDeniesTheVeryNextRequest`, `.anExpiredSessionDeniesWithoutAnySweepJobHavingRun`, `.anOperatorWhoLosesTheirPlatformTierLosesTheSessionTheyHold` | test failure |
 | `ImpersonationFilter` restores the previous `SecurityContext` in a `finally` — a pooled request thread never inherits someone else's identity | `ImpersonationFilterTest.theContextIsSwappedForTheChainAndRestoredAfterwards` (the restore) and `.aChainThatThrowsStillLeavesTheOperatorsOwnContextOnTheThread` (the `finally` specifically), `ImpersonationReachTest.theRequestAfterAnImpersonatedOneSeesItsOwnIdentity` | test failure |
 | A session never writes to the account it wears — no lazy `INVITED → ACTIVE` on someone else's read | `ProvisioningGateFilter.decide`, `ImpersonationProvisioningGateTest.aSessionNeverActivatesTheTargetItWears` | test failure |
-| Anything durable keys on the token **subject**, never `preferred_username` | `CurrentUserProvider.currentSubject()`, `SubjectAttributionTest` | review rejection |
+| Anything durable keys on **`person.id`**, never the token subject and never `preferred_username`. The provider's subject is one row in `external_identity`, not an identifier other modules hold | `CurrentUserProvider`, `PersonResolver`, `SubjectAttributionTest` | review rejection |
 | `audit_log` is append-only; it is never soft-deletable and never mutated. `impersonation_session` is the same rule one step sharper: end-only, never deleted | `AuditEntry extends BaseEntity`, `V17__soft_delete.sql` header; `ImpersonationSession extends BaseEntity`, `V18__impersonation_session.sql` header | review rejection |
 | No stack trace, framework message, or internal detail reaches the wire | `GlobalExceptionHandler`, `server.error.include-*: never` | contract test failure |
 | No Lombok. Records + constructor injection | ADR 0001 | review rejection |
@@ -368,13 +368,14 @@ audited, time-boxed and reason-bearing; a role that silently widened is none of 
 **subject**:
 
 ```java
-currentUserProvider.currentSubject()   // audit attribution, idempotency scoping, rate-limit buckets,
-                                       // created_by/updated_by, membership.user_subject
+currentUser.personId()                 // audit attribution, idempotency scoping, rate-limit buckets,
+                                       // created_by/updated_by, membership.person_id
 ```
 
-`CurrentUser.username()` is for display only. `JpaAuditingConfig.auditorProvider` writes the subject
-(with the `"system"` sentinel outside a request), which is what makes `created_by` join-compatible
-with `audit_log.actor` and `membership.user_subject`.
+`CurrentUser.username()` is for display only. `JpaAuditingConfig.auditorProvider` writes
+`person.id` (NULL outside a request — a uuid column has no room for a `"system"` sentinel), which is
+what makes `created_by` join-compatible with `audit_log.actor_person_id` and `membership.person_id`.
+None of those joins is an FK, deliberately: this modulith is destined to split into services.
 
 ### 5.3 No JIT provisioning
 
@@ -407,7 +408,7 @@ on no business module, and it is not optional.
 | Invariant | Where it lives | Why it is the invariant |
 |---|---|---|
 | The impersonated principal's authorities are **empty** | `ImpersonatedAuthenticationToken` (`super(List.of())`) | That emptiness *is* the mechanism, both ways at once: org permissions still resolve from the database for the target, so tenant endpoints work — and every `hasRole('platform-*')` fails, so `/admin/**` (including the endpoint that mints sessions) is unreachable from inside one. Granting one authority here undoes both halves |
-| `audit_log.actor` stays the **accountable human** | `AuditLogImpl.attribution()` | The one place in the system where attribution deliberately differs from the request's effective subject. `created_by`, `updated_by`, the rate-limit bucket and the idempotency key all record the *target* — this row records who made the account look that way |
+| `audit_log.actor_person_id` stays the **accountable human** | `AuditLogImpl.attribution()` | The one place in the system where attribution deliberately differs from the request's effective subject. `created_by`, `updated_by`, the rate-limit bucket and the idempotency key all record the *target* — this row records who made the account look that way |
 | Every gate is re-decided **per request**, never trusted from open time | `ImpersonationFilter` (actor's tier, mode vs method), `ImpersonationLookupImpl` (expiry, both accounts' provisioning state) | A session outlives its authorization by up to its whole TTL. A revocation that only stopped the *next* open would leave the reach it already granted running to the clock |
 | The previous `SecurityContext` is restored in a `finally` | `ImpersonationFilter` | Request threads are pooled. A leaked context hands the next request somebody else's identity — the worst failure this codebase can produce |
 | A session **reads** the account it wears; it never writes to it | `ProvisioningGateFilter.decide` (`peek`, not `authorize`) | Lazy `INVITED → ACTIVE` means "the person finally showed up", and an operator wearing them is not them showing up |
@@ -709,7 +710,7 @@ Run top to bottom on every change.
 **Impersonation** (§5.5 — skip only if the change touches none of the filter, the port, `CurrentUser`,
 `AuditLogImpl` or the session module)
 - [ ] The impersonated principal still holds **zero** authorities; no code path grants one.
-- [ ] `audit_log.actor` is still `accountableSubject()`, and nothing else on the request switched to it.
+- [ ] `audit_log.actor_person_id` is still the accountable person, and nothing else on the request switched to it.
 - [ ] Anything a session may reach is re-decided per request, not read from the row at open time.
 - [ ] `ImpersonationFilter` is still `@Order(-2)` and still restores the context in a `finally`.
 - [ ] No new write on the target's behalf (the gate uses `peek`, never `authorize`, under a session).

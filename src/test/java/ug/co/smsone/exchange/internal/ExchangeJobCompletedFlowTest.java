@@ -45,6 +45,7 @@ class ExchangeJobCompletedFlowTest extends AbstractIntegrationTest {
     @Test
     void aTerminalJobNotifiesItsRequesterInApp() {
         UUID orgId = UUID.randomUUID();
+        // The requester is a person.id now, and JobCompleted carries it as requesterPersonId.
         UUID requester = UUID.randomUUID();
         String key = "exch/o/" + orgId + "/test/source.csv";
         storage.objects.put(key, "key,value\nk1,v1\nk2,v2\n".getBytes(StandardCharsets.UTF_8));
@@ -56,11 +57,14 @@ class ExchangeJobCompletedFlowTest extends AbstractIntegrationTest {
 
         // The delivery worker is off in tests; the durable QUEUE row is the consumer's observable
         // effect — an IN_APP delivery addressed to the requester, carrying the job id.
+        // notification_delivery.recipient is text across all five channels (an address for four of
+        // them), so the in-app address is the person id RENDERED — binding the raw UUID would ask
+        // Postgres for a text = uuid operator that does not exist.
         await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
             Integer queued = jdbc.queryForObject(
                     "select count(*) from notification_delivery "
                             + "where channel = 'IN_APP' and recipient = ? and body like ?",
-                    Integer.class, requester, "%" + jobId + "%");
+                    Integer.class, requester.toString(), "%" + jobId + "%");
             assertThat(queued).as("the requester's completion notification is queued").isEqualTo(1);
         });
     }

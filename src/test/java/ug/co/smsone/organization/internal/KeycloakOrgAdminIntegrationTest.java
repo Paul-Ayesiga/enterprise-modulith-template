@@ -137,12 +137,20 @@ class KeycloakOrgAdminIntegrationTest extends AbstractIntegrationTest {
                 .exchange((request, res) -> res.getStatusCode().is2xxSuccessful());
     }
 
-    /** A person carrying this Keycloak subject — what {@code ProviderOrgMembership} translates back. */
+    /**
+     * A person carrying this Keycloak subject — what {@code ProviderOrgMembership} translates back.
+     *
+     * <p>Seeded by hand rather than through {@code EdgeSeed}, and it has to stay that way: this class
+     * repoints the issuer at the container above, so the link must be stamped with the injected
+     * {@code issuer} and not the helper's fixed constant. {@code PersonResolver} looks up by
+     * (provider, issuer, subject) — a link written under the wrong issuer resolves to nobody and the
+     * attach below silently no-ops.
+     */
     private UUID linkedPerson(String subject) {
         UUID personId = UUID.randomUUID();
         jdbc.update("""
-                insert into person (id, status, provisioned_at, version, created_at)
-                values (?, 'ACTIVE', now(), 0, now())
+                insert into person (id, status, invited_at, activated_at, version, created_at)
+                values (?, 'ACTIVE', now(), now(), 0, now())
                 """, personId);
         jdbc.update("""
                 insert into external_identity (id, person_id, provider, issuer, external_subject,

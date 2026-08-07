@@ -36,6 +36,7 @@ import ug.co.smsone.identity.ProvisionedPerson;
 import ug.co.smsone.identity.ProviderOrgMembership;
 import ug.co.smsone.organization.Permission;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
+import ug.co.smsone.testsupport.EdgeSeed;
 
 /**
  * The org RBAC surface end-to-end over HTTP: {@code hasPermission(#orgId, ...)} allow/deny per role,
@@ -83,12 +84,24 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
 
     @BeforeEach
     void seed() {
-        // organization.id is Hibernate-assigned and IS the tenant key — read it back off the saved row.
-        orgId = organizations.save(Organization.register("acme-" + UUID.randomUUID(), "Acme")).getId();
+        // organization.id is the tenant key, but a token names the tenant by the PROVIDER's org id, so
+        // the external_organization link has to exist beside the row — EdgeSeed writes both and returns
+        // organization.id. The register()/save() pair left the link out, which meant no token could
+        // resolve this tenant and the invite path's requireProviderOrgId had nothing to hand Keycloak.
+        orgId = EdgeSeed.organization(jdbc, "kc-org-" + UUID.randomUUID(), "acme-" + UUID.randomUUID());
         roleSeeder.seedSystemRoles(orgId); // seeds OWNER, and only OWNER
-        owner = attachToSeededOwner(UUID.randomUUID());
-        manager = attachToNewRole(UUID.randomUUID(), "MANAGER", MANAGER_PERMISSIONS);
-        viewer = attachToNewRole(UUID.randomUUID(), "VIEWER", VIEWER_PERMISSIONS);
+        owner = attachToSeededOwner(newPerson());
+        manager = attachToNewRole(newPerson(), "MANAGER", MANAGER_PERMISSIONS);
+        viewer = attachToNewRole(newPerson(), "VIEWER", VIEWER_PERMISSIONS);
+    }
+
+    /**
+     * A person row plus its {@code external_identity} link. {@code membership.person_id} is a person id
+     * now, not a subject string, and the edge will only resolve a token whose subject is linked — so a
+     * bare {@code UUID.randomUUID()} member is one nobody can authenticate as.
+     */
+    private UUID newPerson() {
+        return EdgeSeed.person(jdbc, "kc-" + UUID.randomUUID());
     }
 
     private UUID attachToSeededOwner(UUID personId) {
@@ -99,11 +112,30 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
         return OrgRbacFixtures.attachToNewRole(roles, memberships, orgId, personId, code, permissions);
     }
 
-    /** A JWT scoped to {@code activeOrg} (alias-keyed 'organization' claim) for the given person. */
+    /**
+     * A JWT the edge resolves to this person in this tenant. Three things have to line up and none of
+     * them is the person id: {@code iss} (without it {@code CurrentUserProvider} never consults
+     * {@code external_identity} at all and the caller is nobody), the subject the person was LINKED by,
+     * and an {@code organization} claim carrying the provider's org id under the provider's alias —
+     * both read back from the row {@link EdgeSeed#organization} seeded, since resolution runs through
+     * {@code external_organization} and matching the local slug would be a tenant crossing.
+     */
     private JwtRequestPostProcessor token(UUID personId, UUID activeOrg) {
-        return jwt().jwt(jwt -> jwt.subject(personId.toString())
+        String subject = subjectOf(personId);
+        Map<String, Object> link = jdbc.queryForMap(
+                "select external_org_id, external_alias from external_organization where organization_id = ?",
+                activeOrg);
+        return jwt().jwt(jwt -> jwt.subject(subject)
+                .claim("iss", EdgeSeed.ISSUER)
                 .claim("email", personId + "@smsone.co.ug")
-                .claim("organization", Map.of("acme", Map.of("id", activeOrg.toString()))));
+                .claim("organization", Map.of(String.valueOf(link.get("external_alias")),
+                        Map.of("id", String.valueOf(link.get("external_org_id"))))));
+    }
+
+    /** The subject {@link #newPerson} linked this person by — unique per (provider, issuer, subject). */
+    private String subjectOf(UUID personId) {
+        return jdbc.queryForObject(
+                "select external_subject from external_identity where person_id = ?", String.class, personId);
     }
 
     @Test
@@ -257,7 +289,7 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
     void aCustomRoleCarryingMemberInviteCanInvite() throws Exception {
         Set<Permission> recruiterPermissions = EnumSet.copyOf(VIEWER_PERMISSIONS);
         recruiterPermissions.add(Permission.MEMBER_INVITE);
-        UUID recruiter = attachToNewRole(UUID.randomUUID(), "RECRUITER", recruiterPermissions);
+        UUID recruiter = attachToNewRole(newPerson(), "RECRUITER", recruiterPermissions);
         given(personProvisioning.provision(any(ProvisionRequest.class)))
                 .willReturn(new ProvisionedPerson(UUID.randomUUID(), "hire@smsone.co.ug", false));
 
@@ -323,10 +355,16 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
                 .andExpect(status().isForbidden());
     }
 
+    /**
+     * A fully resolvable person — {@code iss} and their linked subject are both present — carrying no
+     * {@code organization} claim. The token is denied for naming no tenant, which is the only reason
+     * this test is allowed to be about: a token missing {@code iss} would 403 for being nobody, and
+     * would pass while saying nothing about the org scoping.
+     */
     @Test
     void tokenWithNoActiveOrgIsDenied() throws Exception {
         mockMvc.perform(get("/api/v1/orgs/{orgId}/members", orgId)
-                        .with(jwt().jwt(jwt -> jwt.subject(owner.toString()))))
+                        .with(jwt().jwt(jwt -> jwt.subject(subjectOf(owner)).claim("iss", EdgeSeed.ISSUER))))
                 .andExpect(status().isForbidden());
     }
 
@@ -413,7 +451,7 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.data.attributes.status").value("SUSPENDED"));
 
         // Fresh subject: nothing cached, so the resolver's org-status check applies immediately.
-        UUID lateJoiner = attachToSeededOwner(UUID.randomUUID());
+        UUID lateJoiner = attachToSeededOwner(newPerson());
         mockMvc.perform(get("/api/v1/orgs/{orgId}/members", orgId).with(token(lateJoiner, orgId)))
                 .andExpect(status().isForbidden());
 

@@ -231,16 +231,24 @@ class SubjectAttributionTest extends AbstractIntegrationTest {
 
     /**
      * The new half of the rule, and the one the rename to {@code person.id} exists for: TWO credentials
-     * that resolve to one person share everything durable. A second identity provider, or a Keycloak
-     * account re-created after a realm rebuild, is a second {@code external_identity} row — not a second
-     * human, and not a second idempotency namespace.
+     * that resolve to one person share everything durable. The credential a request signed in with is
+     * not the unit anything is scoped by — the human is.
+     *
+     * <p><b>The two credentials are sequential, not simultaneous, and that is the schema's rule rather
+     * than a convenience here.</b> V10's {@code uq_external_identity_person_issuer_live} allows ONE live
+     * link per (person, provider, issuer) precisely so the resolver never has to choose between two
+     * accounts at one issuer, and {@code PersonResolver.providerOf} resolves exactly one issuer — this
+     * deployment's — so a second live link could not be reached even if the index permitted it. The
+     * realizable shape of "a second {@code external_identity} row for the same human" is therefore the
+     * one V10 names: a Keycloak account re-created after a realm rebuild. The old link is retired, a new
+     * subject is linked to the SAME person, and the assertion is unchanged — the second credential
+     * replays the first's stored response, because the namespace is the person's.
      */
     @Test
     void twoCredentialsForOnePersonShareTheirIdempotencyNamespace() throws Exception {
         String firstSubject = "sub-a-" + UUID.randomUUID();
         String secondSubject = "sub-b-" + UUID.randomUUID();
         UUID personId = person(firstSubject);
-        EdgeSeed.link(jdbc, personId, secondSubject); // same human, second credential
         String idempotencyKey = "two-creds-" + UUID.randomUUID();
         String settingKey = "attribution.twocreds." + UUID.randomUUID();
 
@@ -252,6 +260,11 @@ class SubjectAttributionTest extends AbstractIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(header().doesNotExist(IdempotencyFilter.REPLAYED_HEADER));
 
+        // The realm is rebuilt: the old subject stops existing over there and the same human comes back
+        // under a new one. Retiring the old link is what frees the partial unique index for the new one.
+        retireLink(firstSubject);
+        EdgeSeed.link(jdbc, personId, secondSubject); // same human, second credential
+
         mockMvc.perform(put("/api/v1/settings/{key}", settingKey)
                         .with(caller(secondSubject, "ada"))
                         .header(IdempotencyFilter.KEY_HEADER, idempotencyKey)
@@ -259,5 +272,17 @@ class SubjectAttributionTest extends AbstractIntegrationTest {
                         .content(settingBody("once")))
                 .andExpect(status().isOk())
                 .andExpect(header().string(IdempotencyFilter.REPLAYED_HEADER, "true"));
+    }
+
+    /**
+     * Soft-delete a link, exactly as erasure and re-provisioning leave one — the row stays for history
+     * and drops out of {@code uq_external_identity_subject_live}, which is partial on
+     * {@code deleted_at is null}. Raw SQL for the same reason {@link EdgeSeed} uses it: this table
+     * belongs to {@code identity.internal} and its entity is not reachable from here.
+     */
+    private void retireLink(String subject) {
+        int retired = jdbc.update(
+                "update external_identity set deleted_at = now() where external_subject = ?", subject);
+        assertThat(retired).as("the link to retire must exist").isEqualTo(1);
     }
 }

@@ -16,9 +16,13 @@ import ug.co.smsone.support.SupportDesk;
 
 /**
  * Support tools — the tenant side of the desk: open a ticket, read the conversation, reply.
- * {@code ticket:read} gates the reads and {@code ticket:write} the writes, mirroring REST; the
- * opener/author recorded is the caller's durable subject ({@code key:<id>} for agents), so
- * attribution stays honest.
+ * {@code ticket:read} gates the reads and {@code ticket:write} the writes, mirroring REST.
+ *
+ * <p>The writes additionally need a PERSON, which the reads do not. {@code ticket.opener_person_id}
+ * and {@code ticket_message.author_person_id} are not-null references to a real human (V36), and an
+ * API key acts for nobody — so {@link #requirePerson} refuses a machine caller outright rather than
+ * inventing a synthetic identity for it. An agent holding {@code ticket:write} can therefore still
+ * read the desk and not write to it; that is the intended answer, not a gap.
  */
 @Component
 class SupportToolManifest implements ToolManifest {

@@ -124,21 +124,28 @@ class ExchangeScheduleTest extends AbstractIntegrationTest {
         return EdgeSeed.organization(jdbc, "kc-org-" + UUID.randomUUID(), "acme-" + UUID.randomUUID());
     }
 
-    /** A token that resolves to {@code personId} and to {@code orgId} — both through the link tables. */
+    /**
+     * A token that resolves to {@code personId} and to {@code orgId} — both through the link tables.
+     * The {@code iss} claim carries as much as the subject does: {@code external_identity} is keyed on
+     * the pair, so a token from another issuer resolves to no person at all.
+     */
     private org.springframework.test.web.servlet.request.RequestPostProcessor member(UUID orgId, UUID personId) {
         Map<String, Object> link = jdbc.queryForMap(
                 "select external_org_id, external_alias from external_organization where organization_id = ?",
                 orgId);
         return jwt().jwt(token -> token.subject(EdgeSeed.subjectFor(personId))
+                .claim("iss", EdgeSeed.ISSUER)
                 .claim("organization", Map.of(String.valueOf(link.get("external_alias")),
                         Map.of("id", String.valueOf(link.get("external_org_id"))))));
     }
 
     private UUID seedMember(UUID orgId, UUID personId, String... permissions) {
         // The person first: external_identity has a REAL foreign key to it (V10), so the link cannot
-        // precede the row it points at.
-        jdbc.update("insert into person (id, status, provisioned_at, version, created_at) "
-                + "values (?, 'ACTIVE', now(), 0, now())", personId);
+        // precede the row it points at. ACTIVE means both instants are set — invited_at is the column
+        // that used to be provisioned_at, and an ACTIVE person with no activated_at is a state the
+        // provisioning path never produces.
+        jdbc.update("insert into person (id, status, invited_at, activated_at, version, created_at) "
+                + "values (?, 'ACTIVE', now(), now(), 0, now())", personId);
         EdgeSeed.link(jdbc, personId, EdgeSeed.subjectFor(personId));
         UUID roleId = UUID.randomUUID();
         jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "

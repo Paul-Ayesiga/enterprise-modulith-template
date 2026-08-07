@@ -63,15 +63,19 @@ class ImpersonationFilterTest extends AbstractIntegrationTest {
 
     private UUID operator;
     private UUID target;
+    private String operatorSubject;
     private Authentication operatorToken;
 
     @BeforeEach
     void seed() {
         // Both sides are real people now: the session row holds person ids, and the filter refuses a
-        // caller with no person id before it looks at their platform tier.
-        operator = provisionedPerson();
-        target = provisionedPerson();
-        operatorToken = tokenFor(operator);
+        // caller with no person id before it looks at their platform tier. EdgeSeed writes the person
+        // AND the external_identity link the edge resolves (iss, sub) through — a person without that
+        // link authenticates as nobody.
+        operatorSubject = "operator-" + UUID.randomUUID();
+        operator = EdgeSeed.person(jdbc, operatorSubject);
+        target = EdgeSeed.person(jdbc, "target-" + UUID.randomUUID());
+        operatorToken = tokenFor(operatorSubject);
         // The filter reads the actor from the context, exactly as it would after the security chain ran.
         SecurityContextHolder.getContext().setAuthentication(operatorToken);
     }
@@ -209,7 +213,7 @@ class ImpersonationFilterTest extends AbstractIntegrationTest {
         String body = "{\"targetPersonId\":\"" + target + "\",\"reason\":\"ticket 4711 refund missing\","
                 + "\"mode\":\"" + mode + "\"}";
         String response = mockMvc.perform(post("/api/v1/admin/impersonations")
-                        .with(jwt().jwt(token -> token.subject(subjectOf(operator))
+                        .with(jwt().jwt(token -> token.subject(operatorSubject)
                                         .claim("iss", EdgeSeed.ISSUER))
                                 .authorities(new SimpleGrantedAuthority("ROLE_" + PlatformRole.SUPERADMIN)))
                         .contentType(MediaType.APPLICATION_JSON).content(body))
@@ -225,34 +229,11 @@ class ImpersonationFilterTest extends AbstractIntegrationTest {
      * token without it resolves to no person and the filter would refuse before doing anything the test
      * is about.
      */
-    private static Authentication tokenFor(UUID personId) {
-        Jwt jwt = Jwt.withTokenValue("t").header("alg", "none").subject(subjectOf(personId))
+    private static Authentication tokenFor(String subject) {
+        Jwt jwt = Jwt.withTokenValue("t").header("alg", "none").subject(subject)
                 .claim("iss", EdgeSeed.ISSUER)
                 .issuedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(300)).build();
         return new JwtAuthenticationToken(jwt,
                 List.of(new SimpleGrantedAuthority("ROLE_" + PlatformRole.SUPERADMIN)));
-    }
-
-    private static String subjectOf(UUID personId) {
-        return "kc-" + personId;
-    }
-
-    /**
-     * {@code person} and {@code external_identity} live in another module's internals, so this seeds
-     * them as SQL rather than importing identity — the same trade this class already made, and the
-     * reason it does not share {@code identity.internal.ImpersonationFixtures}.
-     */
-    private UUID provisionedPerson() {
-        UUID personId = UUID.randomUUID();
-        jdbc.update("""
-                insert into person (id, status, provisioned_at, version, created_at)
-                values (?, 'ACTIVE', now(), 0, now())
-                """, personId);
-        jdbc.update("""
-                insert into external_identity (id, person_id, provider, issuer, external_subject,
-                                               linked_at, version, created_at)
-                values (?, ?, 'KEYCLOAK', ?, ?, now(), 0, now())
-                """, UUID.randomUUID(), personId, EdgeSeed.ISSUER, subjectOf(personId));
-        return personId;
     }
 }

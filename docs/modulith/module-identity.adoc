@@ -5,8 +5,12 @@
 |Spring components
 |_Services_
 
-* `u.c.s.i.UserDirectory` (via `u.c.s.i.internal.UserDirectoryService`)
-* `u.c.s.i.UserProvisioning` (via `u.c.s.i.internal.UserProvisioningService`)
+* `u.c.s.i.PersonDirectory` (via `u.c.s.i.internal.PersonDirectoryService`)
+* `u.c.s.i.PersonProvisioning` (via `u.c.s.i.internal.PersonProvisioningService`)
+
+_Others_
+
+* `u.c.s.i.ProviderOrgMembership` (via `u.c.s.i.internal.ProviderOrgMembershipImpl`)
 |Bean references
 |* `u.c.s.s.audit.AuditLog` (in Shared Kernel)
 * `u.c.s.s.security.CurrentUserProvider` (in Shared Kernel)

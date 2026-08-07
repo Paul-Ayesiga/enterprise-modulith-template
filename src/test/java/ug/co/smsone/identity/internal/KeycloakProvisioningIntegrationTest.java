@@ -29,7 +29,7 @@ import ug.co.smsone.testsupport.AbstractIntegrationTest;
  * Pins the identity provisioning wire end-to-end against a REAL Keycloak (26.7.0 importing the
  * committed smsone realm) with a REAL SMTP sink (Mailpit). Verifies the audit's execute-actions-email
  * invite path that {@link IdentityProvisioningTest} only exercises with the gateway mocked: provisioning
- * a fresh user creates the Keycloak account, records the local {@code app_user} as INVITED, and the
+ * a fresh user creates the Keycloak account, records the local {@code person} as INVITED, and the
  * invite e-mail actually reaches the mailbox — proving the create-user, credentials-check and
  * execute-actions-email calls and the realm SMTP config all line up. Keycloak reaches Mailpit over a
  * shared Docker network by the alias the committed realm points at ({@code mailpit:1025}).

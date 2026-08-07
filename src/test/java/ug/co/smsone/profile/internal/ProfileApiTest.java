@@ -158,10 +158,15 @@ class ProfileApiTest extends AbstractIntegrationTest {
         return EdgeSeed.person(jdbc, "kc-" + UUID.randomUUID());
     }
 
+    /**
+     * A token that resolves to {@code personId}. The {@code iss} claim is load-bearing:
+     * {@code external_identity} is keyed on (issuer, subject), so a token without it reaches no person
+     * — every {@code /me} endpoint then answers 403 and {@code /me/organizations} an empty list.
+     */
     private org.springframework.test.web.servlet.request.RequestPostProcessor tokenFor(UUID personId) {
         String subject = jdbc.queryForObject(
                 "select external_subject from external_identity where person_id = ?", String.class, personId);
-        return jwt().jwt(t -> t.subject(subject));
+        return jwt().jwt(t -> t.subject(subject).claim("iss", EdgeSeed.ISSUER));
     }
 
     private UUID seedOrgWithMember(UUID personId, String alias, String roleCode) {

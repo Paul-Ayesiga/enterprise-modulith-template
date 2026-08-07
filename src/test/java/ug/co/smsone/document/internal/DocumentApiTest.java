@@ -25,11 +25,13 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.JwtRequestPostProcessor;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import ug.co.smsone.files.FileStorageProvider;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
+import ug.co.smsone.testsupport.EdgeSeed;
 
 /**
  * The catalog's contract: org scoping via the new document permissions, the personal surface's
@@ -54,33 +56,33 @@ class DocumentApiTest extends AbstractIntegrationTest {
 
     @Test
     void orgUploadListDownloadDeleteRoundTrip() throws Exception {
-        UUID orgId = UUID.randomUUID();
-        seedMember(orgId, "doc-manager", true);
+        UUID orgId = seedOrg();
+        String manager = seedMember(orgId, "doc-manager", true);
         given(storage.exists(anyString())).willReturn(true); // download's dead-URL guard
         given(storage.presignGet(anyString(), any())).willReturn(URI.create("http://storage.local/signed").toURL());
 
         MvcResult created = mockMvc.perform(multipart("/api/v1/orgs/{orgId}/documents", orgId)
                         .file(pdf("board report.pdf"))
-                        .with(member(orgId, "doc-manager")))
+                        .with(member(orgId, manager)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.attributes.name").value("board_report.pdf"))
                 .andExpect(jsonPath("$.data.attributes.source").value("UPLOAD"))
                 .andReturn();
         String id = JsonPath.read(created.getResponse().getContentAsString(), "$.data.id");
 
-        mockMvc.perform(get("/api/v1/orgs/{orgId}/documents", orgId).with(member(orgId, "doc-manager")))
+        mockMvc.perform(get("/api/v1/orgs/{orgId}/documents", orgId).with(member(orgId, manager)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(1));
 
         mockMvc.perform(get("/api/v1/orgs/{orgId}/documents/{id}", orgId, id)
-                        .with(member(orgId, "doc-manager")))
+                        .with(member(orgId, manager)))
                 .andExpect(status().isFound())
                 .andExpect(header().string("Location", "http://storage.local/signed"));
 
         assertThat(searchRows(id)).as("registered title is searchable").isEqualTo(1);
 
         mockMvc.perform(delete("/api/v1/orgs/{orgId}/documents/{id}", orgId, id)
-                        .with(member(orgId, "doc-manager")))
+                        .with(member(orgId, manager)))
                 .andExpect(status().isNoContent());
 
         ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
@@ -98,30 +100,30 @@ class DocumentApiTest extends AbstractIntegrationTest {
 
     @Test
     void anotherOrgsDocumentIsNotFoundNotForbidden() throws Exception {
-        UUID orgA = UUID.randomUUID();
-        UUID orgB = UUID.randomUUID();
-        seedMember(orgA, "a-manager", true);
-        seedMember(orgB, "b-manager", true);
+        UUID orgA = seedOrg();
+        UUID orgB = seedOrg();
+        String aManager = seedMember(orgA, "a-manager", true);
+        String bManager = seedMember(orgB, "b-manager", true);
         MvcResult created = mockMvc.perform(multipart("/api/v1/orgs/{orgId}/documents", orgA)
-                        .file(pdf("a.pdf")).with(member(orgA, "a-manager")))
+                        .file(pdf("a.pdf")).with(member(orgA, aManager)))
                 .andExpect(status().isCreated()).andReturn();
         String id = JsonPath.read(created.getResponse().getContentAsString(), "$.data.id");
 
         mockMvc.perform(get("/api/v1/orgs/{orgId}/documents/{id}", orgB, id)
-                        .with(member(orgB, "b-manager")))
+                        .with(member(orgB, bManager)))
                 .andExpect(status().isNotFound());
     }
 
     @Test
     void aReaderCannotUploadOrDelete() throws Exception {
-        UUID orgId = UUID.randomUUID();
-        seedMember(orgId, "doc-reader", false);
+        UUID orgId = seedOrg();
+        String reader = seedMember(orgId, "doc-reader", false);
         mockMvc.perform(multipart("/api/v1/orgs/{orgId}/documents", orgId)
-                        .file(pdf("nope.pdf")).with(member(orgId, "doc-reader")))
+                        .file(pdf("nope.pdf")).with(member(orgId, reader)))
                 .andExpect(status().isForbidden());
         // Both halves of the name: delete is gated at @PreAuthorize, before any lookup.
         mockMvc.perform(delete("/api/v1/orgs/{orgId}/documents/{id}", orgId, UUID.randomUUID())
-                        .with(member(orgId, "doc-reader")))
+                        .with(member(orgId, reader)))
                 .andExpect(status().isForbidden());
     }
 
@@ -129,32 +131,55 @@ class DocumentApiTest extends AbstractIntegrationTest {
     void personalDocumentsTierByBlastRadius() throws Exception {
         given(storage.exists(anyString())).willReturn(true); // download's dead-URL guard
         given(storage.presignGet(anyString(), any())).willReturn(URI.create("http://storage.local/p").toURL());
+        // Every caller here is a REAL person: a personal document is owned by one
+        // (document.owner_person_id is NOT NULL), and the intruder's 404 only proves the no-oracle rule
+        // if it comes from a person who simply isn't the owner — a token that resolves to nobody would
+        // be refused a step earlier and prove nothing.
+        String owner = seedPerson("owner");
+        String intruder = seedPerson("intruder");
+        String support = seedPerson("support");
+        String admin = seedPerson("admin");
         MvcResult created = mockMvc.perform(multipart("/api/v1/documents")
                         .file(pdf("mine.pdf"))
-                        .with(jwt().jwt(token -> token.subject("owner-1"))))
+                        .with(person(owner)))
                 .andExpect(status().isCreated()).andReturn();
         String id = JsonPath.read(created.getResponse().getContentAsString(), "$.data.id");
 
         // 404, not 403: a foreign personal id must answer exactly like an unknown one (no oracle).
-        mockMvc.perform(get("/api/v1/documents/{id}", id).with(jwt().jwt(t -> t.subject("intruder"))))
+        mockMvc.perform(get("/api/v1/documents/{id}", id).with(person(intruder)))
                 .andExpect(status().isNotFound());
         mockMvc.perform(get("/api/v1/documents/{id}", id)
-                        .with(jwt().jwt(t -> t.subject("support-1"))
+                        .with(person(support)
                                 .authorities(new SimpleGrantedAuthority("ROLE_platform-support"))))
                 .andExpect(status().isFound());
         mockMvc.perform(delete("/api/v1/documents/{id}", id)
-                        .with(jwt().jwt(t -> t.subject("support-1"))
+                        .with(person(support)
                                 .authorities(new SimpleGrantedAuthority("ROLE_platform-support"))))
                 .andExpect(status().isForbidden());
         mockMvc.perform(delete("/api/v1/documents/{id}", id)
-                        .with(jwt().jwt(t -> t.subject("admin-1"))
+                        .with(person(admin)
                                 .authorities(new SimpleGrantedAuthority("ROLE_platform-admin"))))
                 .andExpect(status().isNoContent());
     }
 
-    private org.springframework.test.web.servlet.request.RequestPostProcessor member(UUID orgId, String subject) {
+    /**
+     * A token that resolves to the person behind {@code subject} and to {@code orgId} — both through the
+     * link tables. The {@code iss} claim is load-bearing: {@code external_identity} is keyed on
+     * (issuer, subject), so a token from another issuer resolves to no person and holds nothing.
+     */
+    private JwtRequestPostProcessor member(UUID orgId, String subject) {
+        Map<String, Object> link = jdbc.queryForMap(
+                "select external_org_id, external_alias from external_organization where organization_id = ?",
+                orgId);
         return jwt().jwt(token -> token.subject(subject)
-                .claim("organization", Map.of("acme", Map.of("id", orgId.toString()))));
+                .claim("iss", EdgeSeed.ISSUER)
+                .claim("organization", Map.of(String.valueOf(link.get("external_alias")),
+                        Map.of("id", String.valueOf(link.get("external_org_id"))))));
+    }
+
+    /** The same, with no tenant: the personal surface is scoped to a person and to nothing else. */
+    private JwtRequestPostProcessor person(String subject) {
+        return jwt().jwt(token -> token.subject(subject).claim("iss", EdgeSeed.ISSUER));
     }
 
     private int searchRows(String documentId) {
@@ -164,19 +189,36 @@ class DocumentApiTest extends AbstractIntegrationTest {
         return n == null ? 0 : n;
     }
 
-    private void seedMember(UUID orgId, String subject, boolean manager) {
-        jdbc.update("insert into organization (id, kc_org_id, alias, name, status, version, created_at) "
-                        + "values (?, ?, ?, ?, 'ACTIVE', 0, now()) "
-                        + "on conflict (kc_org_id) where deleted_at is null do nothing", // partial unique (V17)
-                UUID.randomUUID(), orgId, "org-" + orgId.toString().substring(0, 13), "Org " + orgId);
+    /** A tenant: the {@code organization} row whose id IS the tenant key, plus its provider link. */
+    private UUID seedOrg() {
+        return EdgeSeed.organization(jdbc, "kc-org-" + UUID.randomUUID(), "acme-" + UUID.randomUUID());
+    }
+
+    /**
+     * A person and their Keycloak link; returns the token subject that resolves to them. UUID-suffixed
+     * because one Postgres serves the whole suite and {@code external_identity} holds one row per
+     * (provider, issuer, subject).
+     */
+    private String seedPerson(String label) {
+        String subject = label + "-" + UUID.randomUUID();
+        EdgeSeed.person(jdbc, subject);
+        return subject;
+    }
+
+    /** That person, plus an ACTIVE membership in {@code orgId} holding the document permissions. */
+    private String seedMember(UUID orgId, String label, boolean manager) {
+        String subject = label + "-" + UUID.randomUUID();
+        UUID personId = EdgeSeed.person(jdbc, subject);
         UUID roleId = UUID.randomUUID();
         jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
-                + "values (?, ?, ?, 'DocRole', false, 0, now())", roleId, orgId, "DOCS_" + subject.toUpperCase());
+                + "values (?, ?, ?, 'DocRole', false, 0, now())", roleId, orgId,
+                "DOCS_" + label.toUpperCase().replace('-', '_'));
         jdbc.update("insert into role_permission (role_id, permission) values (?, 'DOCUMENT_READ')", roleId);
         if (manager) {
             jdbc.update("insert into role_permission (role_id, permission) values (?, 'DOCUMENT_MANAGE')", roleId);
         }
-        jdbc.update("insert into membership (id, org_id, user_subject, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, subject, roleId);
+        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
+                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+        return subject;
     }
 }

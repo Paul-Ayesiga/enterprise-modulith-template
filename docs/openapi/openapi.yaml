@@ -756,7 +756,7 @@ paths:
                 \ ULID)."
               schema:
                 type: string
-  /api/v1/orgs/{orgId}/members/{subject}/role:
+  /api/v1/orgs/{orgId}/members/{personId}/role:
     put:
       tags:
       - Organization · Members
@@ -774,11 +774,12 @@ paths:
         schema:
           type: string
           format: uuid
-      - name: subject
+      - name: personId
         in: path
         required: true
         schema:
           type: string
+          format: uuid
       - name: X-Impersonate
         in: header
         description: "Run this request as the target of an impersonation session (its\
@@ -1069,7 +1070,8 @@ paths:
       tags:
       - Shared · My profile
       summary: Read your profile
-      description: "A user who never saved one still HAS one — empty fields, no 404."
+      description: "A person who never saved one still HAS one — empty fields, no\
+        \ 404."
       operationId: profile
       parameters:
       - name: user
@@ -1104,8 +1106,8 @@ paths:
       tags:
       - Shared · My profile
       summary: Update your profile
-      description: Whole-document upsert; `contacts` replaces the contact list (kind
-        EMAIL | PHONE | OTHER).
+      description: "Whole-document upsert of the display fields. E-mail and phone\
+        \ are contacts, not profile fields — they live with the person."
       operationId: update_2
       parameters:
       - name: user
@@ -1878,11 +1880,11 @@ paths:
       tags:
       - Platform · Organizations
       summary: Create an organization and its first owner
-      description: "Creates the Keycloak organization, provisions the named owner\
-        \ (Keycloak account plus temporary credentials e-mailed to `ownerEmail`),\
-        \ seeds the org's roles and writes the local projection — there is no separate\
-        \ step to add the first member. An alias already in use, locally or in Keycloak,\
-        \ is a 409: an existing organization is never adopted."
+      description: "Creates the tenant and its identity-provider organization, provisions\
+        \ the named owner (account plus temporary credentials e-mailed to `ownerEmail`),\
+        \ seeds the org's roles and records the OWNER membership — there is no separate\
+        \ step to add the first member. An alias already in use, locally or at the\
+        \ provider, is a 409: an existing organization is never adopted."
       operationId: create
       parameters:
       - name: X-Impersonate
@@ -2630,13 +2632,14 @@ paths:
       tags:
       - Organization · Members
       summary: Invite a member to the organization
-      description: "One call does three things: it provisions the identity (creating\
-        \ the Keycloak account and e-mailing temporary credentials if the person is\
-        \ new), links them to the Keycloak organization, and records the membership.\
+      description: "One call does three things: it provisions the person (creating\
+        \ their account and e-mailing temporary credentials if they are new), attaches\
+        \ them to the organization at the identity provider, and records the membership.\
         \ Re-inviting an existing member is idempotent and returns the current membership\
         \ unchanged — it does not re-role them. Handing over a role is granting its\
         \ permissions, so the caller must already hold every permission `roleCode`\
-        \ carries."
+        \ carries. `givenName` and `familyName` are both optional: a mononym is an\
+        \ ordinary name."
       operationId: invite
       parameters:
       - name: orgId
@@ -2819,7 +2822,7 @@ paths:
       tags:
       - Organization · Groups
       summary: Add a member to the group
-      description: The subject must already be an organization member.
+      description: The person must already be an organization member.
       operationId: addMember
       parameters:
       - name: orgId
@@ -3940,7 +3943,7 @@ paths:
       - Shared · Files
       summary: Upload a file
       description: "Sent as `multipart/form-data` under the field name `file`. The\
-        \ object key is minted server-side under the caller's own namespace (`u/<subject>/…\
+        \ object key is minted server-side under the caller's own namespace (`u/<person-id>/…\
         `) — the caller never chooses it, so an upload can never overwrite an existing\
         \ object. The returned `key` is what every later download, presign and delete\
         \ addresses."
@@ -4199,6 +4202,8 @@ paths:
       tags:
       - Platform · Support queue
       summary: Assign the ticket
+      description: "Body `assigneePersonId` is the operator's person id (the id `/api/v1/admin/users`\
+        \ lists), not a name or a login."
       operationId: assign_1
       parameters:
       - name: id
@@ -4459,7 +4464,7 @@ paths:
       - Platform · Users & impersonation
       summary: List an operator's impersonation sessions
       description: "The caller's own sessions, live and historical, newest first.\
-        \ `actor=<subject>` names another operator's instead and requires platform-admin.\
+        \ `actor=<personId>` names another operator's instead and requires platform-admin.\
         \ `active` is computed when the row is read, so a lapsed session reports inactive\
         \ with no sweep job involved."
       operationId: list_14
@@ -4469,6 +4474,7 @@ paths:
         required: false
         schema:
           type: string
+          format: uuid
       - name: "page[size]"
         in: query
         description: "Items per page, 1–100. Defaults to 20."
@@ -4533,9 +4539,10 @@ paths:
     post:
       tags:
       - Platform · Compliance
-      summary: Place a legal hold on a subject
-      description: "While active, the subject's data cannot be purged or erased."
-      operationId: holdSubject
+      summary: Place a legal hold on a person
+      description: "While active, the person's data cannot be purged or erased. `personId`\
+        \ is a person id — an account's id from the admin users surface."
+      operationId: holdPerson
       parameters:
       - name: user
         in: query
@@ -4546,7 +4553,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SubjectHoldRequest"
+              $ref: "#/components/schemas/PersonHoldRequest"
         required: true
       responses:
         "201":
@@ -4596,8 +4603,8 @@ paths:
     post:
       tags:
       - Platform · Compliance
-      summary: Execute an erasure on a subject's behalf
-      description: REFUSED while a legal hold is in force for the subject.
+      summary: Execute an erasure on a person's behalf
+      description: REFUSED while a legal hold is in force for the person.
       operationId: erase
       parameters:
       - name: user
@@ -5656,8 +5663,9 @@ paths:
       - Organization · Audit
       summary: Search one organization's audit trail
       description: "Newest first, narrowed by `action` and an ISO-8601 `from`/`to`\
-        \ instant window. For a row written inside an impersonation session `actor`\
-        \ is the accountable operator and `onBehalfOf` is the identity they wore."
+        \ instant window. For a row written inside an impersonation session `actorPersonId`\
+        \ is the accountable operator and `onBehalfOfPersonId` is the identity they\
+        \ wore."
       operationId: forOrg
       parameters:
       - name: orgId
@@ -5772,7 +5780,7 @@ paths:
     get:
       tags:
       - Shared · Me & notifications
-      summary: Get the current user's profile and access
+      summary: Get the current user's identity and access
       description: "The one path reachable before provisioning completes, so a freshly\
         \ invited account can render onboarding — every other `/api/**` path answers\
         \ `ACCOUNT_NOT_PROVISIONED` until then. A disabled account is refused here\
@@ -5808,8 +5816,9 @@ paths:
       - Shared · Me & notifications
       summary: List the organizations you belong to
       description: "One row per ACTIVE membership, with your role there. Switching\
-        \ = requesting a token scoped to the chosen organization (the Keycloak `organization`\
-        \ claim); the current token's active org keeps governing until you do."
+        \ = requesting a token scoped to the chosen organization (the identity provider's\
+        \ `organization` claim); the current token's active org keeps governing until\
+        \ you do."
       operationId: myOrganizations
       parameters:
       - name: user
@@ -5847,8 +5856,8 @@ paths:
       tags:
       - Shared · My profile
       summary: List your linked identity providers
-      description: "Read-only Keycloak federated identities; linking happens in the\
-        \ IdP's own account console, never through this API."
+      description: "Read-only: linking happens in the provider's own account console,\
+        \ never through this API."
       operationId: linkedAccounts
       parameters:
       - name: user
@@ -6203,8 +6212,8 @@ paths:
       summary: Search the platform-wide audit trail
       description: "Newest first, narrowed by any combination of `org`, `action` and\
         \ an ISO-8601 `from`/`to` instant window. For a row written inside an impersonation\
-        \ session `actor` is the accountable operator and `onBehalfOf` is the identity\
-        \ they wore."
+        \ session `actorPersonId` is the accountable operator and `onBehalfOfPersonId`\
+        \ is the identity they wore."
       operationId: platform
       parameters:
       - name: org
@@ -6341,7 +6350,7 @@ paths:
   /api/v1/admin/users:
     get:
       tags:
-      - Platform · Users & impersonation
+      - Platform · Ops
       summary: List provisioned users across the platform
       operationId: list_26
       parameters:
@@ -6375,18 +6384,19 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/WindowedResultResourceObject"
-  /api/v1/admin/users/{subject}/profile:
+  /api/v1/admin/users/{personId}/profile:
     get:
       tags:
       - Platform · Users & impersonation
-      summary: Read a user's profile as the platform
+      summary: Read a person's profile as the platform
       operationId: profile_1
       parameters:
-      - name: subject
+      - name: personId
         in: path
         required: true
         schema:
           type: string
+          format: uuid
       responses:
         "200":
           description: OK
@@ -6400,18 +6410,19 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/ResourceObject"
-  /api/v1/admin/users/{subject}/devices:
+  /api/v1/admin/users/{personId}/devices:
     get:
       tags:
       - Platform · Users & impersonation
       summary: List a user's devices as the platform
       operationId: list_27
       parameters:
-      - name: subject
+      - name: personId
         in: path
         required: true
         schema:
           type: string
+          format: uuid
       - name: "page[size]"
         in: query
         description: "Items per page, 1–100. Defaults to 20."
@@ -6641,8 +6652,8 @@ paths:
       summary: Delete an organization
       description: "Terminal lifecycle step, `platform-admin`, and only from SUSPENDED\
         \ (409 otherwise) — suspension is the reversible step that already cut access.\
-        \ The row soft-deletes and is restorable until the retention purge; the Keycloak\
-        \ organization is kept (see the lifecycle doc)."
+        \ The row soft-deletes and is restorable until the retention purge; the identity\
+        \ provider's organization is kept (see the lifecycle doc)."
       operationId: delete_7
       parameters:
       - name: orgId
@@ -6723,7 +6734,7 @@ paths:
       tags:
       - Platform · Organizations
       summary: List an organization's members as the platform
-      description: "The support view of a tenant's roster — subjects and role codes,\
+      description: "The support view of a tenant's roster — person ids and role codes,\
         \ read-only. Managing members stays a tenant action (or an impersonation session's)."
       operationId: listMembers
       parameters:
@@ -6872,13 +6883,13 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ResourceObject"
-  /api/v1/orgs/{orgId}/members/{subject}:
+  /api/v1/orgs/{orgId}/members/{personId}:
     delete:
       tags:
       - Organization · Members
       summary: Remove a member from the organization
-      description: "Unlinks the membership and the Keycloak organization link only\
-        \ — the person's Keycloak account is never deleted, so they keep their identity\
+      description: "Unlinks the membership and the identity provider's organization\
+        \ link only — the person's account is never deleted, so they keep their identity\
         \ and any membership of other organizations. Removing the last OWNER is a\
         \ 409."
       operationId: remove
@@ -6889,11 +6900,12 @@ paths:
         schema:
           type: string
           format: uuid
-      - name: subject
+      - name: personId
         in: path
         required: true
         schema:
           type: string
+          format: uuid
       - name: X-Impersonate
         in: header
         description: "Run this request as the target of an impersonation session (its\
@@ -6951,7 +6963,7 @@ paths:
                 \ ULID)."
               schema:
                 type: string
-  /api/v1/orgs/{orgId}/groups/{id}/members/{subject}:
+  /api/v1/orgs/{orgId}/groups/{id}/members/{personId}:
     delete:
       tags:
       - Organization · Groups
@@ -6970,11 +6982,12 @@ paths:
         schema:
           type: string
           format: uuid
-      - name: subject
+      - name: personId
         in: path
         required: true
         schema:
           type: string
+          format: uuid
       - name: X-Impersonate
         in: header
         description: "Run this request as the target of an impersonation session (its\
@@ -7389,54 +7402,45 @@ components:
       properties:
         roleCode:
           type: string
-    ContactPayload:
-      type: object
-      properties:
-        kind:
-          type: string
-        value:
-          type: string
-        label:
-          type: string
-        primary:
-          type: boolean
     ProfilePayload:
       type: object
       properties:
         displayName:
           type: string
-        phone:
-          type: string
         timezone:
           type: string
         locale:
           type: string
-        contacts:
-          type: array
-          items:
-            $ref: "#/components/schemas/ContactPayload"
     CurrentUser:
       type: object
       properties:
-        subject:
+        personId:
           type: string
-        username:
+          format: uuid
+        organizationId:
           type: string
-        email:
-          type: string
+          format: uuid
         roles:
           uniqueItems: true
           type: array
           items:
             type: string
-        activeOrgAlias:
+        permissions:
+          uniqueItems: true
+          type: array
+          items:
+            type: string
+        authenticationMethod:
           type: string
-        activeOrgId:
-          type: string
-          format: uuid
+          enum:
+          - OIDC
+          - API_KEY
+          - IMPERSONATION
         impersonation:
           $ref: "#/components/schemas/Impersonation"
         impersonated:
+          type: boolean
+        machine:
           type: boolean
     Impersonation:
       type: object
@@ -7444,8 +7448,9 @@ components:
         sessionId:
           type: string
           format: uuid
-        actorSubject:
+        actorPersonId:
           type: string
+          format: uuid
     ToggleFeatureFlagRequest:
       required:
       - enabled
@@ -7521,9 +7526,9 @@ components:
         email:
           minLength: 1
           type: string
-        firstName:
+        givenName:
           type: string
-        lastName:
+        familyName:
           type: string
     VerifyBody:
       required:
@@ -7553,9 +7558,9 @@ components:
           minLength: 1
           type: string
           format: email
-        ownerFirstName:
+        ownerGivenName:
           type: string
-        ownerLastName:
+        ownerFamilyName:
           type: string
     CreateWebhookRequest:
       required:
@@ -7600,7 +7605,7 @@ components:
     TrustRequest:
       type: object
       properties:
-        subject:
+        personId:
           type: string
         deviceId:
           type: string
@@ -7661,9 +7666,9 @@ components:
           minLength: 1
           type: string
           format: email
-        firstName:
+        givenName:
           type: string
-        lastName:
+        familyName:
           type: string
         roleCode:
           minLength: 1
@@ -7678,8 +7683,9 @@ components:
     MemberRequest:
       type: object
       properties:
-        subject:
+        personId:
           type: string
+          format: uuid
     StampRequest:
       type: object
       properties:
@@ -7814,12 +7820,12 @@ components:
     OpenImpersonationRequest:
       required:
       - reason
-      - targetSubject
+      - targetPersonId
       type: object
       properties:
-        targetSubject:
-          minLength: 1
+        targetPersonId:
           type: string
+          format: uuid
         orgId:
           type: string
           format: uuid
@@ -7830,11 +7836,12 @@ components:
           type: string
         ttl:
           type: string
-    SubjectHoldRequest:
+    PersonHoldRequest:
       type: object
       properties:
-        subject:
+        personId:
           type: string
+          format: uuid
         reason:
           type: string
     OrgHoldRequest:
@@ -7842,13 +7849,15 @@ components:
       properties:
         orgId:
           type: string
+          format: uuid
         reason:
           type: string
     ErasureRequestBody:
       type: object
       properties:
-        subject:
+        personId:
           type: string
+          format: uuid
     UpdateOrganizationRequest:
       required:
       - name

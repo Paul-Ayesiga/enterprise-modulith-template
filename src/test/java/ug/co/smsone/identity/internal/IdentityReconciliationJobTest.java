@@ -65,22 +65,33 @@ class IdentityReconciliationJobTest extends AbstractIntegrationTest {
         seeded = new HashMap<>();
     }
 
-    /** Provisioned two hours ago, so it is past the one-hour grace period by default. */
+    /** Invited two hours ago, so it is past the one-hour grace period by default. */
     private UUID seed(String suffix, ProvisioningStatus status) {
         UUID personId = seedAged(suffix, Duration.ofHours(2));
         if (status != ProvisioningStatus.INVITED) {
-            jdbc.update("update person set status = ? where id = ?", status.name(), personId);
+            // Anything past INVITED went through activation, so activated_at is set too: a person who is
+            // ACTIVE with a null activated_at is a row the real provisioning path never writes, and the
+            // job's own disable() is the thing that stamps disabled_at.
+            jdbc.update("update person set status = ?, activated_at = invited_at where id = ?",
+                    status.name(), personId);
+        }
+        if (status == ProvisioningStatus.DISABLED) {
+            jdbc.update("update person set disabled_at = now() where id = ?", personId);
         }
         return personId;
     }
 
-    /** A linked person whose {@code provisioned_at} is aged directly — the column is not updatable. */
+    /**
+     * A linked person whose {@code invited_at} is aged directly in SQL — that is the column the job's
+     * candidate scan filters and orders on ({@code idx_person_scan}), and the entity maps it
+     * {@code updatable = false}.
+     */
     private UUID seedAged(String suffix, Duration age) {
         UUID personId = persons.save(Person.invited(PersonName.ofParts(null, null),
                 Instant.now().minus(age))).getId();
         identities.save(ExternalIdentity.link(personId, IdentityProvider.KEYCLOAK, resolver.keycloakIssuer(),
                 "kc-" + personId, null, Instant.now()));
-        jdbc.update("update person set provisioned_at = now() - make_interval(secs => ?) where id = ?",
+        jdbc.update("update person set invited_at = now() - make_interval(secs => ?) where id = ?",
                 (double) age.toSeconds(), personId);
         seeded.put(suffix, personId);
         return personId;

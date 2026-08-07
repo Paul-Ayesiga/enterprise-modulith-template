@@ -46,11 +46,15 @@ class McpAccountToolsIntegrationTest extends AbstractIntegrationTest {
             Map<String, Object> renamed = structured(client, "org_update", Map.of("name", "Acme Group"));
             assertThat(renamed).containsEntry("name", "Acme Group");
 
-            // The dispatcher audits every mutation under the caller's key subject.
+            // The dispatcher audits every mutation. Attribution is a person.id now (V13's
+            // actor_person_id), and a machine key is answerable to NOBODY — so the row exists and
+            // its actor is NULL. Asserting the null is the point: a fabricated uuid here would be a
+            // synthetic human in the one table whose job is to say who acted.
             Integer audited = jdbc.queryForObject("""
                     select count(*) from audit_log
-                    where action = 'mcp.tool_invoked' and org_id = ? and target = 'org_update' and actor = ?
-                    """, Integer.class, orgId, "key:" + key.keyId());
+                    where action = 'mcp.tool_invoked' and org_id = ? and target = 'org_update'
+                      and actor_person_id is null
+                    """, Integer.class, orgId);
             assertThat(audited).isEqualTo(1);
         }
     }

@@ -3,6 +3,6 @@
 |Base package
 |`ug.co.smsone.profile`
 |Bean references
-|* `u.c.s.i.UserDirectory` (in Identity)
+|* `u.c.s.i.PersonDirectory` (in Identity)
 * `u.c.s.f.FileStorageProvider` (in Files)
 |===
