@@ -179,6 +179,33 @@ tasks.bootBuildImage {
     if (imageBase.isPresent && imageTag.isPresent) {
         imageName.set("${imageBase.get()}/modulith:${imageTag.get()}")
     }
+    // Pin the buildpack caches to STABLE volume names. Paketo does not name these after the project, it
+    // names them after the IMAGE: pack-cache-<sha256(name:tag)[0..12]>.{build,launch} (Lifecycle
+    // .createVolumeCache -> VolumeName.basedOn, and the tag is part of the digest input). CI tags with
+    // ${GIT_COMMIT} — so every commit hashed to a brand-new pair of volumes, and that trap cut both ways:
+    //   - the cache could never HIT. The restorer met an empty build cache and the analyzer an empty
+    //     launch cache on every single run. The dind PVC's stated job of persisting the buildpack caches
+    //     "including the JRE" was only ever true of the builder/run images; the caches never once hit.
+    //   - the cache could never SHRINK. Lifecycle.close() deletes only the random pack-layers-*/pack-app-*
+    //     workspace volumes. The pack-cache-* pair is deliberately kept — that is what makes it a cache.
+    //     Give a cache a name that never repeats and "persistent" quietly becomes "immortal": four more
+    //     volumes abandoned per build, none of them ever read again.
+    // That is the disk half of the CI outage. dind's cache reached 8.9G against a PVC declaring 6Gi that
+    // local-path does not enforce, the node's image filesystem hit 88%, and the kubelet's image garbage
+    // collector responded by deleting smsone/modulith:dev — which is ctr-imported and runs with
+    // imagePullPolicy: Never, so nothing in-cluster could re-fetch it and the platform stayed down until
+    // the image was rebuilt on the Mac and re-streamed in. Note the failure was disk, NOT memory: the run
+    // that proved it built no images at all and still evicted pods, at 53% of RAM.
+    // Named, the volume count is bounded at four in total rather than four per build, and because the
+    // caches finally hit, the Build stage also gets faster and its peak footprint smaller.
+    // The gateway MUST use different names. Sharing a launch cache between two different applications is
+    // exactly the corruption recorded in the Jenkinsfile from when one unqualified task name built both
+    // images under a single --imageName: "caching layer ... /launch-cache/staging/...tar: no such file or
+    // directory". Same volume, two sets of layers, whichever finishes second loses.
+    // Deliberately NOT naming buildWorkspace: left unset its layers/app volumes are random per build AND
+    // deleted in close(), so they were never the leak — naming them would only create volumes to keep.
+    buildCache { volume { name.set("smsone-modulith-build") } }
+    launchCache { volume { name.set("smsone-modulith-launch") } }
     docker {
         publishRegistry {
             username.set(providers.environmentVariable("GHCR_USER").getOrElse(""))

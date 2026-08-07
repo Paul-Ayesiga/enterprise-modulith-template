@@ -110,6 +110,19 @@ tasks.bootBuildImage {
     if (imageBase.isPresent && imageTag.isPresent) {
         imageName.set("${imageBase.get()}/gateway:${imageTag.get()}")
     }
+    // Stable buildpack cache volumes; see the root build for the full account. In short: Paketo names
+    // these volumes after the IMAGE, not the project — pack-cache-<sha256(name:tag)[0..12]>.{build,launch}
+    // — and CI tags with ${GIT_COMMIT}, so before this the cache could neither hit (a fresh empty pair
+    // every commit) nor shrink (nothing deletes a pack-cache-* volume, by design). Each build simply
+    // abandoned another pair, until dind filled the node's disk and the kubelet's image GC started
+    // deleting the platform's own imagePullPolicy: Never images.
+    // These names MUST NOT match the modulith's. The two are different applications with different
+    // layers, and one shared launch cache is the exact corruption the Jenkinsfile records from the build
+    // where an unqualified task name produced both images under one --imageName. gradle.properties sets
+    // org.gradle.parallel=true, so absent the CI stage's --no-parallel these two tasks can also run at the
+    // same time — distinct names are what makes that safe rather than a race.
+    buildCache { volume { name.set("smsone-gateway-build") } }
+    launchCache { volume { name.set("smsone-gateway-launch") } }
     docker {
         publishRegistry {
             username.set(providers.environmentVariable("GHCR_USER").getOrElse(""))

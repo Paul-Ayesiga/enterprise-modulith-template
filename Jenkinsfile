@@ -7,16 +7,40 @@
 //   - 'ghcr'     : username + PAT (write:packages) to push images to GHCR
 //   - 'git-push' : an SSH private key allowed to PUSH to main (writes the GitOps image-tag bump)
 //
-// RAM: this pod is sized to survive an 8 GB VM that is already running the platform, Argo and the Jenkins
-// controller — a build with the full test suite took the node NotReady and knocked every service offline.
-// THREE things keep it inside its budget, and they were learned in this order, each one moving the
-// ceiling to whatever was next-heaviest:
+// THIS NODE HAS TWO CEILINGS, NOT ONE — 8 GB of RAM and 27 GB of disk. Both have taken the cluster
+// down, they fail identically from the outside (pods evicted, build aborted), and they need different
+// fixes. Memory is the intuitive explanation and this file used to give it for both; the correction is
+// below, written out rather than quietly swapped, because the wrong answer is the one a reader will
+// reach for again.
+//
+// CEILING 1 — MEMORY (8 GB), shared with the platform, Argo and the Jenkins controller. A build with
+// the full test suite took the node NotReady and knocked every service offline. Two things hold it:
 //   1. the build JVM's heap is capped, so Gradle stops sizing itself off the node;
-//   2. TEST_TASKS defaults to the gateway suite only (no Keycloak/Postgres/SeaweedFS inside dind);
-//   3. BUILD_IMAGES defaults to OFF — with tests narrowed, the Paketo lifecycle became the heaviest
-//      thing left, and build #41 aborted there and evicted Keycloak, this controller and eleven
-//      argocd-repo-server replicas.
-// All three are reversible on a bigger host. The full story: docs/runbooks/ci-jenkins.md.
+//   2. TEST_TASKS defaults to the gateway suite only (no Keycloak/Postgres/SeaweedFS inside dind).
+//
+// CEILING 2 — DISK (27 GB), and this is the one that actually hurt.
+// CORRECTION: builds #41 and #42 aborted in `Build & push images`, and that was recorded here as
+// memory pressure. It was NOT. Build #43 settled it — BUILD_IMAGES was already false so it built no
+// images at all, node memory peaked at 3949Mi (53%, nowhere near pressure), and pods were STILL
+// evicted. The kubelet names the real cause:
+//   Warning FreeDiskSpaceFailed node/gopher — Insufficient free disk space on the node's image
+//   filesystem (88% of 26.4 GiB used). Failed to free sufficient space by deleting unused images.
+// At failure: 22G of 27G used, 3.5G free, of which 8.9G was this pipeline's own jenkins-dind-cache
+// PVC — declared 6Gi, but local-path enforces no quota, so the declaration is documentation only.
+//
+// THE CASCADE is why disk outranks memory here. With the image filesystem full the kubelet's image
+// garbage collector ran and deleted `smsone/modulith:dev`. That image is ctr-imported into containerd
+// and the deployment runs it with imagePullPolicy: Never, so nothing in-cluster could re-fetch it: the
+// modulith went ErrImageNeverPull and stayed down until the image was rebuilt on the Mac and
+// re-streamed in (scripts/k3s-images.sh, ~9 minutes). Disk exhaustion does not merely stall CI on this
+// cluster — it destroys the platform's own images. The gateway survived on luck of GC ordering. That
+// hazard belongs to the ctr-import/Never combination and outlives anything this file can do.
+// So, third:
+//   3. BUILD_IMAGES defaults to OFF. It is the heaviest stage AND the one that fills the disk.
+// This file now defends the disk in three places: Preflight refuses to start when the filesystem is
+// already close to the eviction line, the image stage deletes what it created instead of pruning only
+// what was already dangling, and every disk reading is printed so a passing build still shows how
+// close it came. All of it is reversible on a bigger host. Full story: docs/runbooks/ci-jenkins.md.
 pipeline {
   agent {
     kubernetes {
@@ -71,8 +95,16 @@ spec:
         requests: { memory: "512Mi" }
         limits:   { memory: "1800Mi" }
       volumeMounts:
-        # Persists the Paketo builder/run images and the buildpack cache volumes (including the JRE)
-        # across builds, instead of re-pulling ~1 GB every run over a link that has dropped it before.
+        # Persists the Paketo builder/run images across builds, instead of re-pulling ~1 GB every run
+        # over a link that has dropped it before. CORRECTION: this comment also used to claim it
+        # persisted "the buildpack cache volumes (including the JRE)". It did not, and that is the
+        # 8.9 G. Paketo derives cache volume names from the image name, which carries the per-commit
+        # tag, so every build minted a fresh pack-cache-<digest>.{build,launch} pair, restored from
+        # nothing, and left the old pair behind forever — caches are deliberately never deleted, which
+        # is correct only when the name repeats. Persistent plus never-repeating equals immortal.
+        # Whatever the build files do about that, the post block below deletes every volume Paketo
+        # names for ITSELF, so what this PVC keeps is the builder/run images plus any cache the build
+        # files name explicitly — a bounded set either way.
         - { name: dind-cache, mountPath: /var/lib/docker }
   volumes:
     # Survives the pod, so dependencies are downloaded once rather than every build. Declared in
@@ -100,24 +132,37 @@ spec:
     // Full context and the incident this came from: docs/runbooks/ci-jenkins.md.
     string(name: 'TEST_TASKS', defaultValue: ':gateway:app:test',
            description: 'Gradle test tasks to run. Default is narrowed for the local VM.')
-    // Off by default for the same reason TEST_TASKS is narrowed, one step further along. Narrowing the
-    // tests worked — build #41's Test stage passed in 1min 57s — and simply moved the ceiling to the
-    // next-heaviest thing, which is this: the Paketo lifecycle runs inside dind and builds TWO images,
-    // on an 8 GB node that already hosts the platform, Keycloak, Argo CD and the Jenkins controller.
-    // #41 aborted here after 2min 3s and took Keycloak, the Jenkins controller and ELEVEN
-    // argocd-repo-server replicas with it (they were evicted; the node recovered on its own in ~17
-    // minutes, with the platform pods themselves never going down).
-    //
-    // So the default proves the CODE on every push and stops there. Turn this on where there is RAM to
-    // spare, or build images elsewhere — Argo CD deploys whatever tag is committed either way, so the
-    // GitOps half of the pipeline is unaffected by leaving it off.
+    // Off by default, and this note used to say why in terms of RAM: "the next-heaviest thing", the
+    // stage that "exhausts the node". Build #43 disproved that reading — no images built, memory at
+    // 53%, pods evicted anyway (see the correction in the file header). The stage keeps the default
+    // OFF regardless, for two reasons that are worth keeping apart because only one of them was true
+    // as written:
+    //   - STILL TRUE, and it is about weight: narrowing the tests worked (#41's Test stage passed in
+    //     1min 57s) and simply moved the ceiling here. The Paketo lifecycle runs inside dind and
+    //     builds TWO images on a node already hosting the platform, Keycloak, Argo CD and this
+    //     controller. #41 and #42 both aborted in this stage, 2min 3s in. It is genuinely the heaviest
+    //     work the pipeline does, and the first place a squeezed node gives way.
+    //   - THE PART THAT WAS MISSING, and it is the failure that actually hurt: on this node this stage
+    //     is also the thing that FILLS THE DISK. Every run leaves per-commit tagged images and Paketo
+    //     cache volumes in a PVC that local-path never bounds; ~16 such builds put the image
+    //     filesystem at 88%, evicted Keycloak, this controller and ELEVEN argocd-repo-server replicas,
+    //     and cost the modulith its ctr-imported :dev image. The evictions cleared on their own in
+    //     ~17 minutes and the platform pods stayed up — the deleted image did not clear on its own.
+    // The stage now cleans up after itself and Preflight refuses to start on a nearly-full disk, but
+    // neither makes it cheap: those bound the damage, they do not shrink the build. Turn this on where
+    // there is room on BOTH axes, or build images elsewhere — Argo CD deploys whatever tag is
+    // committed either way, so the GitOps half is unaffected by leaving it off.
     booleanParam(name: 'BUILD_IMAGES', defaultValue: false,
                  description: 'Build and push the container images, then bump the GitOps tag. '
-                            + 'Leave OFF on the 8 GB k3s VM — it is what exhausts the node. '
-                            + 'See docs/runbooks/ci-jenkins.md.')
+                            + 'Leave OFF on the 8 GB / 27 GB k3s VM: it is the heaviest stage in the '
+                            + 'pipeline (#41 and #42 aborted here) and it is what fills the node disk, '
+                            + 'which is what the evictions were — #43 built no images, sat at 53% '
+                            + 'memory, and was evicted anyway. See docs/runbooks/ci-jenkins.md.')
   }
   environment {
     IMAGE_BASE = 'ghcr.io/paul-ayesiga/enterprise-modulith-template'
+    // Percent-used at which Preflight refuses to start (see the guard for why this number).
+    DISK_GUARD_MAX_PCT = '75'
     // gradle.properties pins `org.gradle.jvmargs=-Xmx2g`, sized for a laptop. GRADLE_OPTS does NOT
     // override it: even under --no-daemon Gradle forks a single-use daemon with those args, so build #3
     // ran a 2 GB heap inside a 1.6 GB container and was OOMKilled mid-test. This is the override that
@@ -151,6 +196,53 @@ spec:
             echo "HEAD author=${author} subject=${subject} -> selfTriggered=${env.SELF_TRIGGERED}"
             if (env.SELF_TRIGGERED == 'true') {
               echo 'HEAD is this pipeline\'s own GitOps bump — skipping every stage so the loop ends here.'
+            }
+          }
+        }
+        // DISK GUARD — the other half of Preflight, and it exists because the alternative to failing
+        // here is failing the cluster. This VM has ONE disk and everything shares it: containerd's
+        // image store, every local-path PVC, the platform's own data. dind's /var/lib/docker IS a
+        // local-path directory on the node, so `df` in this container reads the very filesystem the
+        // kubelet watches and evicts on. It is `df` and not `docker system df` deliberately — no
+        // docker daemon is required, so the check is valid even while dockerd is still coming up.
+        //
+        // WHY 75%. The kubelet's hard eviction is imagefs.available<15%, i.e. 85% used; the 88% in the
+        // header is what that looks like from the other side. One BUILD_IMAGES run adds on the order
+        // of a gigabyte of images and cache volumes, so ten points of headroom is about two builds'
+        // worth of slack — enough to refuse the build BEFORE the one that crosses the line instead of
+        // diagnosing it afterwards. Raise it only alongside a bigger disk.
+        //
+        // The numbers are printed on every run, pass or fail, so a green build still records how close
+        // it came — the 88% build did not announce itself either.
+        container('dind') {
+          script {
+            // Exit 9, not 1, so "over threshold" is distinguishable from "df could not read the path"
+            // — df also exits 1, and a broken meter must not be reported to the user as a full disk.
+            int guard = sh(returnStatus: true, script: '''
+              df -h /var/lib/docker || true
+              # Field indices are counted from the END so a wrapped long device name cannot shift them:
+              # NF = mountpoint, NF-1 = Use%, NF-2 = available KiB.
+              df -k /var/lib/docker | awk -v max="$DISK_GUARD_MAX_PCT" 'END {
+                pct = $(NF-1); sub(/%/, "", pct); pct = pct + 0
+                printf "disk guard: node image filesystem %d%% used, %.1f GiB free — this build fails at %d%%, the kubelet evicts at 85%%\\n", pct, $(NF-2) / 1048576, max
+                if (pct >= max) { exit 9 }
+              }'
+            ''')
+            if (guard == 9 && env.SELF_TRIGGERED == 'false') {
+              error("DISK GUARD: the node's image filesystem is at or above ${env.DISK_GUARD_MAX_PCT}% used "
+                  + '(exact figures on the line above). Refusing to start work that would push it into the '
+                  + "kubelet's eviction range (imagefs.available<15%). At 88% used this cost more than a "
+                  + 'build: Keycloak, the Jenkins controller and eleven argocd-repo-server replicas were '
+                  + 'evicted, and the image garbage collector deleted the ctr-imported smsone/modulith:dev '
+                  + '— which, running under imagePullPolicy: Never, nothing in-cluster can re-fetch. '
+                  + 'Reclaim space before rerunning; the breakdown and the recovery are in '
+                  + 'docs/runbooks/ci-jenkins.md.')
+            } else if (guard == 9) {
+              echo('Disk is over the guard, but HEAD is this pipeline\'s own GitOps bump and every stage '
+                 + 'is skipped anyway — recorded, not failed. The next real commit will stop here.')
+            } else if (guard != 0) {
+              echo("Disk guard could not read /var/lib/docker (exit ${guard}) — continuing without it. A "
+                 + 'broken meter should not block every build, but this build is running unguarded.')
             }
           }
         }
@@ -199,12 +291,52 @@ spec:
       }
       post {
         always {
-          // The dind cache PVC is persistent AND unenforced by local-path, so left alone it would grow
-          // until it filled the VM disk. Dangling (untagged) layers are the part that accumulates;
-          // pruning them keeps the builder and run images, which are tagged and are the whole point of
-          // caching. Never fail the build over housekeeping.
+          // Housekeeping, rewritten. The PVC is persistent AND unenforced by local-path, so left alone
+          // it grows until it fills the VM disk — that part was right. What was wrong is the claim that
+          // "dangling (untagged) layers are the part that accumulates". Nothing this stage produces is
+          // ever dangling: the app images carry $GIT_COMMIT, Paketo's ephemeral builder is tagged
+          // pack.local/builder/<rand>:latest, and the cache volumes are not images at all — `docker
+          // image prune` cannot touch a volume. So the one line that used to live here reclaimed almost
+          // nothing while the PVC grew to 8.9 G. Remove things BY NAME instead.
+          // Never fail the build over housekeeping: every line is `|| true`, and the df at the end
+          // leaves the outcome in the log whatever happened above it.
           container('dind') {
-            sh 'docker image prune -f || true; df -h /var/lib/docker | tail -1'
+            sh '''
+              # 1. The two images this build just published. They are in GHCR, which is the point of
+              #    pushing them; the local copies buy nothing, because k3s-local runs smsone/*:dev via
+              #    ctr import, not these. Tagged, therefore invisible to any prune.
+              docker image rm -f "$IMAGE_BASE/modulith:$GIT_COMMIT" "$IMAGE_BASE/gateway:$GIT_COMMIT" || true
+
+              # 2. Everything Paketo names for ITSELF — and that is exactly the disposable set. The
+              #    lifecycle's pack-layers-*/pack-app-* volumes are deleted on a clean exit but not by a
+              #    killed JVM, and #41/#42 were aborts. The pack-cache-*.{build,launch} pair is
+              #    deliberately never deleted, which is correct for a cache whose name repeats and fatal
+              #    for one keyed on the per-commit image tag. A cache the build files name explicitly
+              #    does NOT match `pack-` and is left alone — that is the whole reason to match on the
+              #    prefix rather than enumerate: whatever is reusable is named, whatever is named
+              #    survives, and only Paketo's own throwaways are collected. Today that means the four
+              #    smsone-{modulith,gateway}-{build,launch} volumes pinned in the build files live and
+              #    everything else here dies; the rule holds without editing this line if those change.
+              for v in $(docker volume ls -q | grep '^pack-' || true); do docker volume rm -f "$v" || true; done
+              # ...and the ephemeral builder image, tagged and so likewise prune-immune. Normally removed
+              # in a `finally`, which an aborted build never reaches.
+              for i in $(docker image ls -q 'pack.local/builder/*' || true); do docker image rm -f "$i" || true; done
+
+              # 3. Keep the prune. It was never the mechanism behind the growth, but it is cheap and it
+              #    does reclaim one real thing: the task pulls the builder with PullPolicy.ALWAYS, so
+              #    when builder-noble-java-tiny:latest moves upstream the superseded image goes dangling.
+              #    Same idea for the layer build cache.
+              docker image prune -f || true
+              docker builder prune -f || true
+
+              # NOT `docker system prune -af --volumes`, however tempting after an incident like this.
+              # `-a` removes every image not used by a RUNNING container, and between builds nothing runs
+              # in dind — so it would take the Paketo builder and run images, the ~1 GB this PVC exists to
+              # avoid re-pulling over a link that has already timed builds out ("Read timed out", #10 and
+              # #15). `--volumes` would then delete the named caches that make the next build fast. It
+              # turns the cache into a no-op with extra steps.
+              df -h /var/lib/docker | tail -1
+            '''
           }
         }
       }

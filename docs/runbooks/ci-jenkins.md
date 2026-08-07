@@ -1,8 +1,9 @@
 # Runbook — self-hosted Jenkins on local k3s
 
-**Scope** — signing in, the two CI credentials, and the capacity limit that will take the whole cluster
-down if you ignore it. Not alert-driven: this is the operator's page for the controller installed by
-`make k3s-jenkins` (manifests in `deploy/k3s-local/jenkins/`, pipeline in the root `Jenkinsfile`).
+**Scope** — signing in, the two CI credentials, and the two capacity limits that have each taken the
+whole cluster down: memory, and disk. Not alert-driven: this is the operator's page for the controller
+installed by `make k3s-jenkins` (manifests in `deploy/k3s-local/jenkins/`, pipeline in the root
+`Jenkinsfile`).
 
 **There is no setup wizard.** Plugins come from `plugins.txt` and the entire controller config — admin
 user, Kubernetes cloud, credentials, the multibranch job — comes from `jcasc.yaml`, applied at boot by
@@ -64,9 +65,52 @@ JCasC only reads the Secret at boot, so the credential does not change until the
 Patch the Secret rather than deleting and re-running `make k3s-jenkins` — deleting it regenerates the
 admin password too (unless you pass `JENKINS_ADMIN_PASSWORD=…`).
 
-## Capacity — the build agent does not fit on this VM
+## Two outages, and how to tell them apart
 
-**This is the important section.** A build has already taken the entire cluster down once.
+A build has taken this cluster down twice, for two unrelated reasons, and the second was misdiagnosed
+as a recurrence of the first because from the outside they are the same event.
+
+**What both look like.** Pods evicted across the node. Jenkins and Keycloak unreachable —
+`ERR_CONNECTION_REFUSED` in the browser. The build ends **ABORTED**, not FAILED. Nobody touches
+anything and the node goes `Ready` again on its own inside ~17 minutes, which is long enough to
+convince you that whatever you did in minute 12 was the fix.
+
+**What separates them, in one command each.**
+
+| | Outage 1 — memory | Outage 2 — disk |
+|---|---|---|
+| `kubectl top node` | >90% | **53%** (3949Mi) — the tell |
+| `df -h /` | unremarkable | **22G of 27G, 3.5G free** |
+| Node condition | `MemoryPressure` → `NodeNotReady` | `DiskPressure` → `FreeDiskSpaceFailed` |
+| Trigger | any build; the agent hits ~1.7 GB during Gradle's task graph | any build — **or none**: #43 built no images and still evicted |
+| Recovers fully on its own | yes | **no** — it deletes images that cannot be re-pulled |
+
+The single most useful habit: **`kubectl top node` is not the answer, it is half the answer.** A node at
+53% memory that is evicting pods is telling you to go look at the disk.
+
+### First five minutes
+
+From the VM — the Mac's `kubectl` often cannot reach `:6443` while the node is under pressure:
+
+    ssh gopher@192.168.64.5
+
+    kubectl get nodes                                            # Ready / NotReady
+    kubectl describe node gopher | grep -A6 '^Conditions'        # MemoryPressure vs DiskPressure
+    kubectl top node                                             # >90% = outage 1. ~50% = keep going.
+    df -h /                                                      # >85% = outage 2. Check this every time.
+    kubectl get events -A --sort-by=.lastTimestamp | tail -30    # NodeNotReady vs FreeDiskSpaceFailed
+    kubectl -n smsone get pods                                   # ErrImageNeverPull = image GC ate an image
+
+`ErrImageNeverPull` on a platform pod means you are in outage 2 and it will not self-heal — go straight
+to *Recovery — the disk path*, because the image has to be rebuilt on the Mac before anything else
+matters.
+
+## Outage 1, memory — the build agent does not fit on this VM
+
+**This is the important section.** A build has already taken the entire cluster down once through memory
+alone. Everything below is accurate for *that* failure. It is not the whole story any more — the second
+outage, in the next section, produced the same symptoms with memory at 53% — so read both before you
+decide which one you are in.
 
 The agent pod is the Jenkinsfile's `build` container (1.4 GB request / 2 GB limit) plus a `dind`
 sidecar (0.5 GB / 1 GB). Against an 8 GB VM that already runs the platform, Argo CD and the Jenkins
@@ -115,8 +159,218 @@ can collect them. Any test failures printed just before it are suspect: a JVM be
 timing-sensitive tests (cache TTLs, blocklist windows) that pass cleanly with headroom. Fix the memory
 first, then judge the tests.
 
-The image-build stage remains the heaviest part of the pipeline. If a build wedges the node again, that
-is the stage to suspect, and the fix is to build one image rather than both — or to build elsewhere.
+The image-build stage remains the heaviest part of the pipeline, and it is still the stage to suspect
+first. But **do not assume memory.** "Build one image rather than both" is the fix for *this* section
+only; it does nothing for the disk failure, which is triggered by the same stage and looks the same from
+the outside. Run `df -h /` before you act on that instinct.
+
+## Outage 2, disk — the dind cache filled the node and the kubelet ate our images
+
+**This one is worse than outage 1**, because memory pressure ends when the process dies and disk
+pressure ends by destroying things you cannot get back in-cluster.
+
+What was measured, in order:
+
+- **#41** — Test stage **passed** in 1min 57s, then the build aborted in *Build & push images* after
+  2min 3s. Keycloak, the Jenkins controller and **eleven** `argocd-repo-server` replicas evicted.
+- **#42** — aborted the same way. At this point it reads exactly like outage 1 recurring.
+- **#43** — run after `BUILD_IMAGES` was defaulted to `false`, so it **built no images at all**. Node
+  memory peaked at **3949Mi = 53%**, nowhere near pressure, and pods were **still evicted**.
+
+Build #43 is the proof. There is no memory story that explains a node evicting pods at 53% while
+building nothing. The kubelet had already named the real cause:
+
+    Warning  FreeDiskSpaceFailed  node/gopher
+      Insufficient free disk space on the node's image filesystem (88% of 26.4 GiB used).
+      Failed to free sufficient space by deleting unused images (freed 385820817 bytes).
+
+Disk at failure: **22G of 27G used, 3.5G free.** All of it in one place:
+
+    8.9G  jenkins-dind-cache      <-- declared 6Gi
+    747M  jenkins-gradle-cache
+    403M  jenkins-home
+     79M  postgres-data
+    284K  seaweedfs-data
+          (/var/lib/rancher/k3s/storage)
+
+### Why a 6Gi PVC was 8.9G
+
+**`local-path` does not enforce quotas.** The `storage: 6Gi` in
+`deploy/k3s-local/jenkins/jenkins.yaml` is documentation, not a limit — the volume is a directory on
+the node, so dind writes until the *node* is full, and then everything on the node pays. That caution is
+written into the manifest itself; #41 is what it looks like when it comes true.
+
+The only housekeeping the pipeline had **at the time** was `docker image prune -f`, and it was aimed at
+the wrong object class. Two things it cannot reach:
+
+- **The per-commit app images.** `Jenkinsfile` passes `-PimageTag="${GIT_COMMIT}"` — the full 40-char
+  SHA — so each build produces `…/modulith:<sha>` and `…/gateway:<sha>`. `--publishImage` does *not*
+  keep them out of the local daemon: the Paketo exporter runs with `-daemon`, writes into
+  `/var/lib/docker`, and the push reads *from* there. Tagged images are never dangling, so `prune`
+  skips them forever.
+- **Volumes. Which is where the mass actually is.** `prune` operates on images; there is no
+  `docker volume` command anywhere in the repo. Spring Boot 4.1.0 names its buildpack cache volumes
+  `pack-cache-<sha256(image name)[0:12]>.{build,launch}`, and the image name it hashes **includes the
+  tag** — which is the commit SHA. So every commit gets four brand-new cache volumes, and
+  `Lifecycle.close()` deliberately never deletes `pack-cache-*` (that is what makes it a cache). Give a
+  cache a name that never repeats and "persistent" becomes "immortal". The `.launch` volume is a full
+  independent copy of that build's launch layers; the images at least share base layers.
+
+  The second half of that bug is that the dind PVC never delivered what it was added for. Its stated
+  job is to persist "the buildpack cache volumes (including the JRE) across builds" — the builder and
+  run images were reused, the caches were **not, not once**. Every build restored from empty.
+
+Window: the dind PVC landed in `4cdebae` (2026-08-06), image builds became opt-in in `8adc4ea`
+(2026-08-07). ~16 image-building builds between them — builds ≈#28–#42 — so roughly 64 permanent cache
+volumes. Aborted builds leave more: `pack-layers-*` / `pack-app-*` orphans and a `pack.local/builder/*`
+image that a hard-killed JVM never got to clean up.
+
+The `Jenkinsfile` now sweeps all of that in a `post` block that survives an aborted stage — the per-SHA
+images, every `pack-*` volume, the ephemeral builders — and logs `df -h /var/lib/docker` on the way out.
+That sweep is safe *because* of the pinning below: the live caches are named `smsone-*`, so a blanket
+`grep '^pack-'` can never eat one.
+
+**What bounds it** — pinning the cache names so they stop varying with the commit. This is in
+`build.gradle.kts` now:
+
+    tasks.bootBuildImage {
+        buildCache  { volume { name.set("smsone-modulith-build")  } }
+        launchCache { volume { name.set("smsone-modulith-launch") } }
+    }
+
+and the same block in `gateway/app/build.gradle.kts` with `smsone-gateway-build` /
+`smsone-gateway-launch`. Four volumes total instead of four per build — and the restorer finally hits,
+so the stage gets faster and its peak footprint drops. If you ever see `pack-cache-*` volumes reappear
+in dind, that pinning has been lost.
+
+**The two projects must use different names.** Sharing one launch cache between modulith and gateway is
+a failure this repo has already had, recorded in the comment above the image-build stage: the two builds
+raced one `/launch-cache` and died on `caching layer … no such file or directory`. Even serialised they
+would evict each other's layers on every run.
+
+**Do not "fix" this with `docker system prune -af --volumes`.** Between builds nothing is running in
+dind, so `-a` deletes `paketobuildpacks/builder-noble-java-tiny:latest` and its run image — ~1 GB
+re-fetched on every build, over the same uplink that already killed builds #10 and #15 with
+"Read timed out" — and `--volumes` deletes the caches you just made worth keeping.
+
+*Not yet measured:* the per-build volume **count** is proven from the Boot 4.1.0 sources, but nobody has
+seen the **sizes** inside dind — the PVC was deleted during recovery, so that evidence is gone. Run this
+in the dind container after each of the next three image builds; the sizes should plateau, not climb:
+
+    docker system df -v | grep pack-cache
+
+### The cascade — what makes this unrecoverable in-cluster
+
+With the image filesystem full, the kubelet's **image garbage collector** ran, and it does not know
+which images are precious. It deleted **`smsone/modulith:dev`**.
+
+That image was never pulled from anywhere. `scripts/k3s-images.sh` builds it on the Mac and streams it
+into containerd via `k3s ctr images import`, and the chart runs it with `imagePullPolicy: Never`
+(`values-local.yaml`). So once GC removes it, **nothing in the cluster can put it back.** The modulith
+went `ErrImageNeverPull` and stayed down — not until pressure cleared, but until the image was rebuilt
+on the Mac and re-streamed in, about 9 minutes. The gateway survived purely on GC ordering; there is no
+mechanism protecting it.
+
+This is the part to remember at 2am: **disk exhaustion here does not just stall CI, it deletes the
+platform's own images.** Outage 1 self-heals completely. Outage 2 leaves the node healthy and the
+platform still broken, which is exactly the state that makes you think the disk was never the problem.
+
+### Recovery — the disk path
+
+**1. Confirm it is disk, and find it.**
+
+    df -h /
+    sudo du -sh /var/lib/rancher/k3s/storage/* | sort -h
+
+**2. Delete the dind cache PVC.** It is a cache; there is nothing in it worth keeping. Kill the agent
+first or the delete hangs on the volume's finalizer:
+
+    kubectl -n jenkins delete pod -l jenkins=slave --wait=false
+    kubectl -n jenkins delete pvc jenkins-dind-cache
+    df -h /
+
+Measured: **87% → 52%, 13G free.** Keycloak and the Jenkins controller reschedule themselves from here
+and the platform pods never went down — so if you stop at this step everything *looks* fixed.
+
+**Recreate the claim before the next build**, or the agent pod sits `Pending` on an unbound volume —
+the Jenkinsfile's pod template mounts it by `claimName: jenkins-dind-cache`:
+
+    kubectl apply -f deploy/k3s-local/jenkins/jenkins.yaml
+
+The first build after this is cold: the Paketo builder and run images are re-pulled, ~1 GB. Expect it to
+be slow, and expect it to be the build most likely to hit the "Read timed out" failure from #10/#15.
+
+**3. Find out what the image GC ate.** This is the step that gets skipped:
+
+    kubectl -n smsone get pods                       # ErrImageNeverPull?
+    sudo k3s ctr images ls -q | grep smsone          # expect smsone/{modulith,gateway}:dev
+
+**4. Rebuild and re-import from the Mac** — *not* from the VM. ~9 minutes, ~1.6 GB over SSH:
+
+    make k3s-images                       # or: scripts/k3s-images.sh
+    SKIP_BUILD=1 scripts/k3s-images.sh    # re-import only, if smsone-*:local are still current
+
+There is no per-image path; it does both. Then re-check `k3s ctr images ls`.
+
+**5. Restart the deployment.**
+
+    kubectl -n smsone rollout restart deploy/modulith
+    kubectl -n smsone rollout status deploy/modulith --timeout=300s
+
+**The label trap.** If you reach for `delete pod -l` instead, the selector is
+`app.kubernetes.io/name=modulith`, **not** `app=modulith`:
+
+    kubectl -n smsone delete pod -l app=modulith                      # "No resources found" — did nothing
+    kubectl -n smsone delete pod -l app.kubernetes.io/name=modulith   # correct
+
+Both exit 0. The wrong one prints a line that reads like success and you move on believing you restarted
+something. The cluster genuinely uses both conventions: chart-managed workloads (modulith, gateway,
+keycloak, the portals) are `app.kubernetes.io/name=`, while the hand-written manifests under
+`deploy/k3s-local/` — postgres, valkey, seaweedfs, and Jenkins itself — are `app=`. Check the manifest,
+do not guess.
+
+**6. Sweep the evicted pod records.** The eleven `argocd-repo-server` entries are corpses, not running
+replicas; they hold no resources but they will make `get pods` unreadable for the next incident:
+
+    kubectl delete pod -A --field-selector status.phase=Failed
+
+Do **not** re-enable `BUILD_IMAGES` as part of this recovery. Build #41 was reported with memory
+symptoms and build #43 proved disk; those are two different ceilings, and clearing one says nothing
+about the other.
+
+## Flyway checksum mismatch — surfaced during recovery, unrelated to it
+
+**This was not part of the outage.** It has nothing to do with disk, memory or Jenkins. It is recorded
+here only because it is what you hit *next* if you bring this cluster back with a database that predates
+the identity refactor, and at 2am it will look like more fallout.
+
+That refactor rewrote **39 migrations in place** — deliberately, pre-production — so every checksum
+changed. Flyway refuses to start:
+
+    Migration checksum mismatch for migration version 3, 5, 6, 8, 9...
+
+The modulith will not boot. `flyway repair` is the wrong tool here: the migrations did not just change
+checksum, they changed content, so a repaired history would describe a schema that was never applied.
+
+**Verify the database is empty first.** This cluster's was — 0 organizations, 0 users:
+
+    kubectl -n smsone exec deploy/postgres -- psql -U modulith -d modulith \
+      -c 'select (select count(*) from organization) orgs, (select count(*) from person) people;'
+
+If that errors with `relation "person" does not exist`, you are on a schema old enough to predate the
+rename — which confirms the diagnosis rather than contradicting it. Fall back to
+`\dt` and count whatever the tenant and user tables were called then.
+
+Both zero, and only then:
+
+    kubectl -n smsone exec deploy/postgres -- psql -U modulith -d modulith \
+      -c 'drop schema public cascade; create schema public;'
+    kubectl -n smsone rollout restart deploy/modulith
+
+Flyway then applies all **51** migrations cleanly from scratch. This touches only the `modulith`
+database — Keycloak's is a separate database on the same server and is not affected, so realm config
+and users survive. If either count is non-zero, stop and get a real migration; you are looking at data
+loss, not a reset.
 
 ## A test that passes locally and fails only in CI
 
@@ -142,11 +396,17 @@ file precisely because nothing else does.
 Run these from the VM (`ssh gopher@192.168.64.5`); the Mac's `kubectl` sometimes cannot reach `:6443`
 while the node is under pressure.
 
-1. Confirm the shape of it — a node problem, not a Jenkins problem:
+1. Confirm the shape of it — a node problem, not a Jenkins problem — and settle memory vs disk before
+   you touch anything else:
 
        kubectl get nodes
        kubectl get pods -A | grep -vE 'Running|Completed'
        kubectl top node
+       df -h /
+
+   If memory is high, continue here. If memory is ~50% and the disk is over 85%, this is outage 2 —
+   go to *Recovery — the disk path*. The steps below will make the node look healthy and leave the
+   modulith down on `ErrImageNeverPull`.
 
 2. Kill the agent, which is almost always what is still eating the node. Aborting the build in the UI
    is not enough — it returns 302 and leaves the pod running:
@@ -165,10 +425,16 @@ while the node is under pressure.
 
    Expect 200, 200, 200; `api.smsone.local/api/v1/me` answers 401 without a token, which is correct.
 
+   "Self-heals" holds for memory pressure only. After disk pressure the HTTP checks can all come back
+   green while `smsone/modulith:dev` is gone from containerd — the ingress answers, the pod does not
+   start. Check `kubectl -n smsone get pods` too, not just the curls.
+
 ## Re-enabling the job
 
     curl -s -u admin:$PW -H "Jenkins-Crumb: $CRUMB" -X POST \
       http://jenkins.smsone.local/job/enterprise-modulith-template/enable
 
 Or the **Enable** button on the job page. It scans `main` every 5 minutes and builds on a change, so
-re-enabling it with the capacity problem unfixed will reproduce the outage.
+re-enabling it with either capacity problem unfixed will reproduce the matching outage. Before you do,
+check both ceilings: `kubectl top node` for memory, and `df -h /` on the VM for disk. Fixing one does
+not buy you the other.
