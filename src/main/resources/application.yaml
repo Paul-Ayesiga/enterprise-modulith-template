@@ -298,6 +298,13 @@ app:
       # Opt-in — only prices when the KB catalog defines the unit for the org's plan.
       enabled: ${BILLING_USAGE_EXPORT:false}
       unit: ${BILLING_USAGE_UNIT:api-requests}
+      # How far back a run reaches. Days an org can never export (FREE has no KB subscription) are
+      # skipped nightly and nothing purges them, so the unexported set grows forever and its OLDEST
+      # rows are exactly the stuck ones — a plain `limit` would eventually return nothing else and
+      # starve every real export. This window is the bound instead; what falls out of it is counted
+      # and logged, never dropped silently. Longer than a monthly cycle plus slack, because a day
+      # Kill Bill has already invoiced past will not price anyway.
+      max-backlog-days: ${BILLING_USAGE_MAX_BACKLOG_DAYS:45}
     currency: ${BILLING_CURRENCY:USD}
     # OUR plan code -> Kill Bill catalog plan name. FREE is deliberately unmapped (no money, no KB
     # subscription). Production maps to its uploaded catalog.
@@ -366,6 +373,12 @@ app:
     snapshot-dir: ${ANALYTICS_SNAPSHOT_DIR:data/snapshots}
     threads: ${ANALYTICS_THREADS:2}
     memory-limit: ${ANALYTICS_MEMORY_LIMIT:512MB}
+    # How stale a curated report's mart may be before the next call rebuilds it. A rebuild copies the
+    # report's whole source table out of Postgres under an open read transaction, so this is not a
+    # cache-size knob: it decides how often a connection sits idle-in-transaction pinning the vacuum
+    # horizon, and how often a report request costs seconds instead of milliseconds. 0 restores a
+    # rebuild on every call (what the surface did before it had a budget).
+    mart-ttl: ${ANALYTICS_MART_TTL:15m}
   persistence:
     soft-delete:
       # Nightly retention purge for soft-deleted aggregates (the seven AggregateRoot tables). Past this

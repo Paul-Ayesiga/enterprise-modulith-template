@@ -1,6 +1,7 @@
 package ug.co.smsone.geo.internal;
 
 import io.swagger.v3.oas.annotations.Operation;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -38,6 +39,11 @@ import ug.co.smsone.shared.web.WindowedResult;
 class GeoController {
 
     private static final String RESOURCE_TYPE = "geo-stamp";
+    private static final BigDecimal LAT_LIMIT = new BigDecimal("90");
+    private static final BigDecimal LNG_LIMIT = new BigDecimal("180");
+    // Comfortably past the 53 fractional digits a double's exact decimal expansion can reach, and far
+    // inside what Postgres numeric can represent. See corner() for why an unbounded scale is a hazard.
+    private static final int MAX_CORNER_SCALE = 100;
 
     private final GeoStamps geoStamps;
     private final GeoQueryService query;
@@ -97,26 +103,55 @@ class GeoController {
         return auth != null && permissionEvaluator.hasPermission(auth, orgId, "organization", "geo:read_precise");
     }
 
+    /**
+     * Parses {@code bbox} STRAIGHT to {@link BigDecimal} — never via {@code double}. The bounds are
+     * compared against a {@code numeric(9,6)} column, and a FLOAT8 bind makes Postgres cast the COLUMN
+     * rather than the literal, which puts {@code geo_stamp_bbox_idx} out of reach (see
+     * {@link GeoSearch.Query}). Routing the text through {@code Double.parseDouble} and converting back
+     * would be worse than useless: {@code new BigDecimal(1.9d)} is 1.8999999999999999111…, so the box
+     * edge quietly moves and a stamp sitting exactly on the boundary drops out of the result.
+     */
     private static GeoSearch.Query buildQuery(UUID orgId, String subjectType, String subjectId, String bbox) {
-        Double minLat = null;
-        Double minLng = null;
-        Double maxLat = null;
-        Double maxLng = null;
+        BigDecimal minLat = null;
+        BigDecimal minLng = null;
+        BigDecimal maxLat = null;
+        BigDecimal maxLng = null;
         if (bbox != null && !bbox.isBlank()) {
             String[] parts = bbox.split(",");
             if (parts.length != 4) {
                 throw new ValidationException("bbox must be 'minLat,minLng,maxLat,maxLng'.", ApiSource.parameter("bbox"));
             }
-            try {
-                minLat = Double.parseDouble(parts[0].trim());
-                minLng = Double.parseDouble(parts[1].trim());
-                maxLat = Double.parseDouble(parts[2].trim());
-                maxLng = Double.parseDouble(parts[3].trim());
-            } catch (NumberFormatException ex) {
-                throw new ValidationException("bbox coordinates must be numbers.", ApiSource.parameter("bbox"));
-            }
+            minLat = corner(parts[0], LAT_LIMIT);
+            minLng = corner(parts[1], LNG_LIMIT);
+            maxLat = corner(parts[2], LAT_LIMIT);
+            maxLng = corner(parts[3], LNG_LIMIT);
         }
         return new GeoSearch.Query(orgId, subjectType, subjectId, minLat, minLng, maxLat, maxLng);
+    }
+
+    /**
+     * One bbox corner as an exact decimal, bounded to what a coordinate can be. The bounds check is not
+     * decoration: {@code BigDecimal} parses "1E+999999999" and "1E-999999999" happily, and a NUMERIC
+     * bind of either makes <em>Postgres</em> fail the statement with "value overflows numeric format" —
+     * a 500 for what is plainly bad input. Magnitude alone does not cover it (1E-999999999 is tiny and
+     * still unrepresentable), hence the scale check; both comparisons are cheap, because
+     * {@code compareTo} settles differing scales on adjusted exponents without expanding anything.
+     * The accepted range is the one the capture path already enforces (GeoFix.hasValidCoordinates), so
+     * a box can only be built from coordinates a stamp could have been taken at.
+     */
+    private static BigDecimal corner(String text, BigDecimal limit) {
+        BigDecimal value;
+        try {
+            value = new BigDecimal(text.trim());
+        } catch (NumberFormatException ex) {
+            throw new ValidationException("bbox coordinates must be numbers.", ApiSource.parameter("bbox"));
+        }
+        if (value.abs().compareTo(limit) > 0 || value.scale() > MAX_CORNER_SCALE) {
+            throw new ValidationException(
+                    "bbox latitudes must be within [-90, 90] and longitudes within [-180, 180].",
+                    ApiSource.parameter("bbox"));
+        }
+        return value;
     }
 
     private static ResourceObject toResource(GeoStamp stamp) {

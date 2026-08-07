@@ -94,9 +94,6 @@ class McpToolDispatcher {
         Timer.Sample sample = Timer.start(meters);
         try {
             Object payload = callOnCallerContext(tool, context, request);
-            if (tool.kind().mutates()) {
-                auditLog.record("mcp.tool_invoked", context.orgId(), tool.name());
-            }
             return outcome(tool, context, "ok", result(payload, context));
         } catch (ApiException ex) {
             return outcome(tool, context, "error", error(ex.errorCode(), ex.detail(), context));
@@ -118,6 +115,12 @@ class McpToolDispatcher {
      * context and MDC. Install the caller's context for the duration and restore in a finally: a
      * pooled thread must never inherit someone else's identity (the {@code ImpersonationFilter}
      * rule, applied to the one other place this codebase swaps a context).
+     *
+     * <p>The mutation audit is written INSIDE that window, not after the call returns, for exactly the
+     * same reason: {@link #auditMutation}'s person branch resolves the actor from this thread, and one
+     * line later the finally below has already handed the thread back to whoever owned it. Auditing
+     * outside the window is only harmless while the SDK happens to run handlers on the servlet thread —
+     * the moment it doesn't, a human's mutation is recorded as nobody's.
      */
     private Object callOnCallerContext(ToolDefinition tool, ToolContext context,
             McpSchema.CallToolRequest request) {
@@ -129,7 +132,11 @@ class McpToolDispatcher {
                 MDC.put(RequestIdFilter.MDC_KEY, context.requestId());
             }
             Map<String, Object> arguments = request.arguments() == null ? Map.of() : request.arguments();
-            return tool.handler().apply(context, arguments);
+            Object payload = tool.handler().apply(context, arguments);
+            if (tool.kind().mutates()) {
+                auditMutation(tool, context);
+            }
+            return payload;
         } finally {
             SecurityContextHolder.setContext(previous);
             if (previousRequestId != null) {
@@ -137,6 +144,38 @@ class McpToolDispatcher {
             } else {
                 MDC.remove(RequestIdFilter.MDC_KEY);
             }
+        }
+    }
+
+    /**
+     * Attribute the mutation. Both branches write the same row for the same action; what differs is
+     * where the actor comes from, and the rule is that the actor is a PARAMETER only where no person
+     * acted at all — see {@link AuditLog#recordExternal}.
+     *
+     * <p>A person-backed caller (an OAuth connector) keeps {@link AuditLog#record}: the security
+     * context is the authority on who acted, and it knows what no argument here could — that a write
+     * made inside an impersonation session is answerable to the OPERATOR, not to the person the request
+     * runs as. Handing {@code personId()} over as a parameter would silently overwrite that with the
+     * wrong human, in the one table whose whole job is to say who acted.
+     *
+     * <p>A machine key has NO person, so {@code record()} resolves it to {@code Attribution.NOBODY} and
+     * the row states only that SOMETHING mutated the tenant — every key in an org indistinguishable
+     * from every other, which is not an audit trail. Nothing is on the thread here for a parameter to
+     * misstate, so {@code recordExternal} takes the principal key: {@code actor_person_id} stays NULL
+     * (still the truthful answer — no human is answerable for a robot) while
+     * {@code edgePrincipal=key:<uuid>} rides {@code to_state} and names the credential.
+     *
+     * <p>The trap: {@code principalKey()} is documented as a diagnostic label that is never stored, and
+     * this respects that. It lands in free text beside the outcome it describes, never in the typed
+     * column that means "who" and never compared to a {@code person.id} — the same non-identity use the
+     * gateway edge-audit path already makes of the very same shape.
+     */
+    private void auditMutation(ToolDefinition tool, ToolContext context) {
+        if (context.personId() != null) {
+            auditLog.record("mcp.tool_invoked", context.orgId(), tool.name());
+        } else {
+            auditLog.recordExternal("mcp.tool_invoked", context.orgId(), context.principalKey(),
+                    tool.name(), null, null);
         }
     }
 

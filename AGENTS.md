@@ -300,8 +300,8 @@ step by step; copy that reasoning, not just the shape.
 
 ### 4.5 Migrations
 
-- `src/main/resources/db/migration/V<n>__<snake_name>.sql`. **V48 is taken (permission-vocabulary
-  backfill); the next free number is V49.** Never edit an applied migration; never renumber.
+- `src/main/resources/db/migration/V<n>__<snake_name>.sql`. **V51 is taken (per-org device trust);
+  the next free number is V52.** Never edit an applied migration; never renumber.
 - `ddl-auto: validate`. The schema is the migration's job, always.
 - Head the file with a comment explaining the *decision*, not the statements — `V17__soft_delete.sql`
   and `V11__organization_rbac.sql` are the reference voice.
@@ -331,9 +331,17 @@ Production deploys are rolling: for a window, the **previous** application versi
 - Forbidden in a single release: rename column/table used by live code; add `not null` without
   default to a written table; change a column's type in place; drop anything the previous version
   still selects. Each of these is fine as the *contract* half a release later.
-- Locks: `create index concurrently` cannot run inside Flyway's transaction — index-only migrations
-  on hot tables set `-- flyway:executeInTransaction=false` in the header. Adding a FK to a big
-  table uses `not valid` + `validate constraint` (two statements, short locks).
+- Locks: `create index concurrently` cannot run inside Flyway's transaction. **A
+  `-- flyway:executeInTransaction=false` comment in the SQL header does NOT work on the flyway-core
+  this build resolves (12.4.0)** — verified against its sources: script metadata is read only from a
+  sidecar file, `SqlScriptMetadata.getMetadataResource` looks solely for `<script>.sql.conf`, and the
+  string `flyway:` appears nowhere in the parser. The header comment is inert SQL, the transaction
+  stays, and every `CONCURRENTLY` statement then aborts with "cannot run inside a transaction block".
+  To opt a migration out, add the sidecar `V<n>__<name>.sql.conf` containing
+  `executeInTransaction=false`. Weigh it: plain DDL keeps a drop-and-recreate of the same index name
+  atomic, which `CONCURRENTLY` cannot, so it is the better choice until a table is large enough that
+  the lock hurts (V50 records this trade-off with timings). Adding a FK to a big table uses
+  `not valid` + `validate constraint` (two statements, short locks).
 - The safety net is real, not aspirational: this is why the http-5xx runbook can say "roll back
   first, diagnose second" — the previous image always runs against the current schema.
 
@@ -381,8 +389,9 @@ None of those joins is an FK, deliberately: this modulith is destined to split i
 
 A valid Keycloak JWT is not access. `ProvisioningGateFilter` rejects an authenticated but
 unprovisioned subject with `ACCOUNT_NOT_PROVISIONED`; `GET /api/v1/me` is the single lenient path
-(onboarding) and is still a hard stop for `DISABLED`. Never add a code path that creates an
-`app_user` from a token.
+(onboarding) and is still a hard stop for `DISABLED`. Never add a code path that creates a `person`
+or an `external_identity` link from a token — the token proves who authenticated, never that they
+were admitted here, and the whole point of `external_identity` is that admission is ours to grant.
 
 ### 5.4 Privilege escalation
 

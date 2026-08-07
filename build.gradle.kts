@@ -16,6 +16,13 @@ repositories {
     mavenCentral()
 }
 
+// Not a dependency — an agent handed to the test JVM (see the Test task below for why). Declared
+// before `dependencies` because the Kotlin DSL delegate must exist before that block references it.
+val mockitoAgent: Configuration by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+}
+
 dependencies {
     implementation(platform(libs.boot.bom))
     implementation(platform(libs.spring.modulith.bom))
@@ -95,6 +102,10 @@ dependencies {
     testImplementation(libs.testcontainers.junit)
     testImplementation(libs.modulith.test)
     testImplementation(libs.archunit)
+
+    // Just the jar, no transitives: handed to the test JVM as an agent, not put on the classpath.
+    mockitoAgent(platform(libs.boot.bom)) // version stays the BOM's, not a second one to bump
+    mockitoAgent("org.mockito:mockito-core") { isTransitive = false }
 }
 
 tasks.register<Test>("exportModulithDocs") {
@@ -116,8 +127,29 @@ tasks.register<Test>("exportOpenApi") {
     outputs.upToDateWhen { false }
 }
 
+/**
+ * Mockito's inline mock maker rewrites bytecode, which needs a ByteBuddy agent inside the test JVM.
+ * Left to itself it SELF-ATTACHES on first use: fine on a laptop, refused inside the CI agent
+ * container, where a process may not attach to itself. It surfaces as MockitoInitializationException
+ * with no failing assertion to point at, so it reads like a broken test rather than a missing JVM flag.
+ * Handing the agent over at JVM start removes the attach step entirely — and self-attachment is
+ * deprecated in Mockito 5.14+ anyway, so this is where it was going regardless.
+ *
+ * 26 test classes here use Mockito. The gateway build carries the identical block for the same reason;
+ * it failed there first only because CI runs the gateway suite by default (see Jenkinsfile TEST_TASKS).
+ * Reproduce the container's restriction locally with `-PblockDynamicAgents`.
+ */
 tasks.withType<Test> {
     useJUnitPlatform()
+    // A FileCollection, resolved lazily at execution — a bare `singleFile` here would be read at
+    // configuration time and cost the configuration cache.
+    val agent: FileCollection = mockitoAgent
+    jvmArgumentProviders.add(CommandLineArgumentProvider {
+        listOf("-javaagent:${agent.singleFile.absolutePath}")
+    })
+    if (providers.gradleProperty("blockDynamicAgents").isPresent) {
+        jvmArgs("-XX:-EnableDynamicAgentLoading")
+    }
     // The suite keeps many Spring contexts cached in one worker (each distinct @TestPropertySource or
     // webEnvironment forks another), and the default 512m heap runs out partway through — surfacing as
     // "Test process encountered an unexpected problem" or an EOFException from the worker, AFTER every

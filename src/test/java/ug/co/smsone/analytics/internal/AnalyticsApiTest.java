@@ -28,11 +28,18 @@ import ug.co.smsone.testsupport.EdgeSeed;
  * The curated analytics report surface (admin-only): a fixed catalog, and each report materialized
  * from Postgres into DuckDB then aggregated. Uses a private DuckDB file so it never contends with
  * {@code AnalyticsIntegrationTest} for the single-writer database lock.
+ *
+ * <p>The mart staleness budget is pinned to zero here, which is what the surface did before it had
+ * one: these tests seed a row and then assert the report counts it, so they are read-your-writes
+ * assertions about the endpoint, not about the refresh policy. The policy has its own test
+ * ({@code AnalyticsMartTtlTest}) — leaving the default 15 minutes in place here would make these pass
+ * or fail on suite ORDER, since a sibling test's earlier call would already have built the mart.
  */
 @AutoConfigureMockMvc
 @TestPropertySource(properties = {
         "app.analytics.database-path=build/test-analytics/analytics-api.duckdb",
-        "app.analytics.snapshot-dir=build/test-analytics/snapshots-api"
+        "app.analytics.snapshot-dir=build/test-analytics/snapshots-api",
+        "app.analytics.mart-ttl=0s"
 })
 class AnalyticsApiTest extends AbstractIntegrationTest {
 

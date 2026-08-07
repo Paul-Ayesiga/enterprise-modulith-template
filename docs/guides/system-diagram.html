@@ -112,12 +112,12 @@
     <p class="eyebrow">System Architecture · Reference</p>
     <h1>SMSOne <span class="thin">— a Spring Modulith behind a reactive edge</span></h1>
     <p class="lede">
-      A multi-tenant platform: 23 domain modules inside one deployable, fronted by a stateless reactive API
+      A multi-tenant platform: 26 domain modules inside one deployable, fronted by a stateless reactive API
       gateway that owns the edge. This page is the detail map — every filter in order, every limiter with its
       algorithm, every store with what actually lives in it, top to bottom.
     </p>
     <div class="meta">
-      <span><b>23</b> modulith modules</span>
+      <span><b>26</b> modulith modules</span>
       <span><b>7</b> gateway phases shipped</span>
       <span>edge <b>:28090</b> · gw-admin <b>:29090</b> · api <b>:28080</b> · idp <b>:28081</b></span>
       <span>hexagonal · ports &amp; adapters</span>
@@ -129,8 +129,9 @@
     <div class="sec-head"><span class="sec-num">01</span><h2>The whole system, top to bottom</h2></div>
     <p class="sec-sub">Clients enter through the gateway; the gateway shapes traffic and proxies
       <code>/api/v1/**</code> to the modulith over a load-balanced connection plus three secret-authed seams;
-      the modulith commits state and an event outbox in one transaction; async consumers fan out; every
-      layer shares the stores at the bottom.</p>
+      the modulith turns the provider's token into <em>its own</em> identity once, then commits state and an
+      event outbox in one transaction; async consumers fan out; every layer shares the stores at the bottom.
+      Keycloak sits outside the box on purpose — it authenticates, it is not the user directory.</p>
     <div class="diagram">
       <pre class="mermaid">
 flowchart TB
@@ -143,7 +144,7 @@ flowchart TB
 
   agents["AI agents — MCP clients"]
 
-  kc["KEYCLOAK :28081<br/>realm smsone · KC organizations · JWKS<br/>login+email theme · BRAND_NAME"]
+  kc["KEYCLOAK :28081 — one auth adapter<br/>realm smsone · provider organizations · JWKS<br/>login+email theme · BRAND_NAME"]
 
   subgraph EDGE["API GATEWAY — reactive :28090 · admin :29090"]
     direction TB
@@ -156,11 +157,12 @@ flowchart TB
 
   subgraph CORE["SPRING MODULITH :28080 — servlet + JDBC"]
     direction TB
-    chain["filter chain −100…5: security → impersonation → MDC →<br/>rate limit → idempotency → provisioning gate → org policy →<br/>maintenance → subscription access"]
+    chain["filter chain −100…5: security → impersonation →<br/>identity resolve + MDC → rate limit → idempotency →<br/>provisioning gate → org policy → maintenance →<br/>subscription access"]
+    ident["identity resolution (once per request)<br/>(iss,sub) → external_identity → person.id<br/>organization claim → external_organization → organization.id"]
     modules["26 modules · ArchUnit-enforced boundaries · shared kernel ports"]
     outbox["event publication registry (outbox, same TX)"]
     mcp["/mcp — MCP stateless streamable HTTP<br/>35 tools · permission-filtered"]
-    chain --> modules --> outbox
+    chain --> ident --> modules --> outbox
     mcp --> modules
   end
 
@@ -333,15 +335,16 @@ flowchart TB
   <section>
     <div class="sec-head"><span class="sec-num">04</span><h2>Inside the modulith — the request chain, exact order</h2></div>
     <p class="sec-sub">The gateway already authenticated the token; the modulith re-validates it (defense in
-      depth) and then runs its own ordered servlet chain — each filter one concern, each with a named
-      refusal.</p>
+      depth), turns it into <em>its own</em> identity once at −1, and then runs the rest of its ordered servlet
+      chain — each filter one concern, each with a named refusal. Everything from −1 down keys on a
+      <code>person.id</code> and an <code>organization.id</code>, never on an issuer's subject.</p>
     <div class="chain">
       <div class="stagebox core"><span class="ord">MAX_PREC</span>
         <span class="what"><b>RequestId</b> — adopts the gateway's <code>gw-…</code> id (or mints one); it becomes <code>meta.requestId</code> in every envelope.</span>
         <span class="fail"><span class="pill">headers</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox core"><span class="ord">−100</span>
-        <span class="what"><b>Security chain</b> — JWT resource server (Keycloak issuer, audience <code>smsone-api</code>); identity keys on the <b>subject</b>, never the username; realm roles expand through the hierarchy (superadmin → admin → support).</span>
+        <span class="what"><b>Security chain</b> — JWT resource server (Keycloak issuer, audience <code>smsone-api</code>); the credential is <em>validated</em> here and nothing more — who the caller IS is decided one stage down. Realm roles expand through the hierarchy (superadmin → admin → support); client roles stay namespaced by client id so a future client cannot mint a <code>platform-admin</code>.</span>
         <span class="fail"><span class="pill bad">401</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox core"><span class="ord">−2</span>
@@ -349,7 +352,11 @@ flowchart TB
         <span class="fail"><span class="pill bad">403</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox core"><span class="ord">−1</span>
-        <span class="what"><b>Org MDC</b> — stamps the <em>effective</em> org/tenant into the log context, so even a 429 two steps later is attributed.</span>
+        <span class="what"><b>Identity resolution</b> — the one place a provider fact becomes a platform fact, and the reason Keycloak is swappable. <code>(iss, sub)</code> → <code>external_identity</code> → <code>person.id</code> (<code>PersonLookup</code>); the <code>organization</code> claim → <code>external_organization</code> → <code>organization.id</code> (<code>OrgLookup</code>); the membership's role → a permission set (<code>OrgAuthorization</code>). Below this line no module ever sees an issuer or a subject again. Every port is optional and every absence <b>default-DENIES</b> — <code>shared</code> must not compile-depend on the modules owning those tables, and an unanswerable question is not a yes.</span>
+        <span class="fail"><span class="pill">3 DB reads</span><span class="pill">memoized/request</span></span></div>
+      <div class="connector">│▼ resolved BEFORE anything reads it</div>
+      <div class="stagebox core"><span class="ord">−1</span>
+        <span class="what"><b>Org MDC</b> — stamps the <em>effective</em> org/tenant into the log context, so even a 429 two steps later is attributed. Shares the order with resolution and the tie is deliberately irrelevant: this filter only READS through the same provider, so whichever runs first performs the single resolution and the other is served the memo.</span>
         <span class="fail"><span class="pill">logging</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox core"><span class="ord">0</span>
@@ -357,11 +364,11 @@ flowchart TB
         <span class="fail"><span class="pill bad">429</span><span class="pill store">Valkey</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox core"><span class="ord">1</span>
-        <span class="what"><b>Idempotency</b> — <code>Idempotency-Key</code> replays the stored response for same principal+key+body (24 h); same key, different body refuses. Claim-first with a takeover lease (fenced on the claim time), stored per authenticated subject. A replay still spends a rate-limit token (order 0 first) on purpose.</span>
+        <span class="what"><b>Idempotency</b> — <code>Idempotency-Key</code> replays the stored response for same principal+key+body (24 h); same key, different body refuses. Claim-first with a takeover lease (fenced on the claim time). Keys are scoped per authenticated principal — <code>person:&lt;uuid&gt;</code> for a human, <code>key:&lt;uuid&gt;</code> for an API key, two id spaces that are never merged; an anonymous caller has no principal to scope by, so a <code>permitAll</code> route is simply not idempotent rather than sharing one bucket with every attacker. A replay still spends a rate-limit token (order 0 first) on purpose.</span>
         <span class="fail"><span class="pill bad">409</span><span class="pill store">Postgres</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox core"><span class="ord">2</span>
-        <span class="what"><b>Provisioning gate</b> — no-JIT: a valid JWT alone is not access; the subject needs an <code>app_user</code> row. <code>GET /api/v1/me</code> is the one exception so onboarding is visible.</span>
+        <span class="what"><b>Provisioning gate</b> — no-JIT: a valid JWT alone is not access; its subject must resolve to a provisioned <code>person</code> (<code>INVITED</code> is lazily activated to <code>ACTIVE</code> on the first real API hit). <code>GET /api/v1/me</code> is the one exception so onboarding is visible — method-scoped, and never lenient for a <code>DISABLED</code> account. Under an impersonation session it judges the TARGET, because the swap already happened at −2 — and does not activate them.</span>
         <span class="fail"><span class="pill bad">403 NOT_PROVISIONED</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox core"><span class="ord">3</span>
@@ -388,18 +395,21 @@ flowchart TB
     <p class="sec-sub">One deployable, hard internal boundaries: <code>internal</code> packages are
       inaccessible across modules (ArchUnit + ModularityTests fail the build), cross-module calls go through
       shared-kernel <b>ports</b> (<code>Entitlements</code>, <code>OrgAuthorization</code>, <code>LegalHolds</code>,
-      <code>PlatformAdmins</code>, <code>Subscriptions</code>, <code>AuditLog</code>, <code>GeoStamps</code>, <code>UserProvisioning</code>…)
-      or <b>events</b>.</p>
+      <code>PlatformAdmins</code>, <code>Subscriptions</code>, <code>AuditLog</code>, <code>GeoStamps</code>,
+      <code>PersonLookup</code>, <code>OrgLookup</code>, <code>PersonProvisioning</code>, <code>PersonDirectory</code>,
+      <code>ProviderOrgMembership</code>…) or <b>events</b>. The two <b>link tables</b> are drawn on the modules that own
+      them: they are the only tables in the schema allowed to hold an identifier minted somewhere else, which is what
+      confines a provider swap to two modules.</p>
     <div class="diagram">
       <pre class="mermaid">
 flowchart TB
   subgraph IAM["Identity &amp; Access"]
     direction LR
-    identity; access; apikeys; profile
+    identity["identity<br/>person · person_contact<br/>external_identity (link)"]; access; apikeys; profile
   end
   subgraph TEN["Tenancy &amp; Commercial"]
     direction LR
-    organization; signup; subscription; billing; payments; support; maintenance
+    organization["organization<br/>organization · membership<br/>external_organization (link)"]; signup; subscription; billing; payments; support; maintenance
   end
   subgraph DATA["Content &amp; Data movement"]
     direction LR
@@ -413,8 +423,12 @@ flowchart TB
     direction LR
     audit; compliance; settings; integration; analytics; scheduler; geo
   end
-  shared["shared kernel — envelope · errors · security context · cursor paging · idempotency · rate limit · two-level cache · ports"]
-  IAM --- TEN --- DATA --- COMM --- GOV --- shared
+  subgraph AGENT["Agent surface"]
+    direction LR
+    mcp["mcp — a second protocol over the same ports"]
+  end
+  shared["shared kernel — envelope · errors · identity resolution · cursor paging · idempotency · rate limit · two-level cache · ports"]
+  IAM --- TEN --- DATA --- COMM --- GOV --- AGENT --- shared
       </pre>
     </div>
     <div class="grid" style="margin-top:12px">
@@ -422,7 +436,8 @@ flowchart TB
         <li>Module boundaries — <b>ArchUnit + ModularityTests</b></li>
         <li>Envelope + <code>meta.requestId</code> on every response</li>
         <li>Keyset cursor paging only — no offsets, no totals</li>
-        <li>Subject-not-username identity; constructor injection; no Lombok</li>
+        <li><code>person.id</code> identity — no provider subject below the edge; no JIT provisioning</li>
+        <li>Constructor injection; no Lombok</li>
       </ul></div>
       <div class="card c-core"><h3>Gateway ⇢ platform seams</h3><span class="tag">@Hidden · GATEWAY_SECRET</span><ul>
         <li><code>/internal/gateway/api-key/introspect</code> → ApiKeyAuthenticator</li>
@@ -674,7 +689,7 @@ sequenceDiagram
     <div class="diagram">
       <pre class="mermaid">
 stateDiagram-v2
-  [*] --> ACTIVE : POST /admin/impersonations — platform-support floor,\nreason ≥ 8 chars (audited), WRITE mode needs platform-admin
+  [*] --> ACTIVE : POST /admin/impersonations — targetPersonId names a PERSON,\nnot a provider subject; platform-support floor, reason ≥ 8 chars (audited),\nWRITE mode needs platform-admin
   ACTIVE --> ACTIVE : each tenant request with X-Impersonate <id>\n→ filter @Order(−2) swaps the principal,\nsession re-validated against the store
   ACTIVE --> ENDED : DELETE (operator or admin cuts it off)
   ACTIVE --> EXPIRED : clock hits expiresAt — default TTL 15 min, hard cap 30 min
@@ -692,9 +707,9 @@ stateDiagram-v2
         </table></div>
       <div class="card c-client"><h3>The audit shape</h3><span class="tag">who did what, as whom</span>
         <table class="kv">
-          <tr><td>actor</td><td>always the <b>operator's</b> subject — never the worn identity</td></tr>
-          <tr><td>onBehalfOf</td><td>the target subject rides every audit row written during the session — the one place actor and effective identity deliberately differ</td></tr>
-          <tr><td>mint record</td><td>who, whom, org scope, reason, mode, TTL — queryable via the sessions list</td></tr>
+          <tr><td><code>actorPersonId</code></td><td>always the <b>operator's</b> person — never the worn identity</td></tr>
+          <tr><td><code>onBehalfOfPersonId</code></td><td>the target person rides every audit row written during the session, alongside <code>impersonationId</code> — the one place actor and effective identity deliberately differ</td></tr>
+          <tr><td>mint record</td><td>who, whom, org scope, reason, mode, TTL — queryable via the sessions list; <code>targetDisplay</code> is the label frozen at mint, because the row is usually read about an account that is already gone</td></tr>
         </table></div>
     </div>
   </section>
@@ -744,7 +759,8 @@ flowchart TB
     <p class="sec-sub">Five stores, each with one job — plus a two-level cache in front of the hot reads.</p>
     <div class="grid">
       <div class="card c-infra"><h3>Postgres 18</h3><span class="tag">system of record</span><ul>
-        <li>Every module's tenant data (Flyway-migrated, one schema)</li>
+        <li>Every module's tenant data — <b>54 tables</b>, 50 Flyway migrations, one schema</li>
+        <li><code>person</code> + <code>person_contact</code> — the canonical identity; <code>external_identity</code> / <code>external_organization</code> are the only tables holding an id minted by a provider</li>
         <li><code>event_publication</code> — the transactional outbox</li>
         <li>Full-text search: <code>websearch_to_tsquery</code> + <code>pg_trgm</code> typo fallback (p95 ~35ms @ 100k docs)</li>
         <li>Soft deletes + nightly purge at retention (legal holds skip)</li>
@@ -770,12 +786,15 @@ flowchart TB
       </ul></div>
       <div class="card c-infra"><h3>DuckDB (embedded)</h3><span class="tag">analytics mart</span><ul>
         <li>In-process OLAP — a durable mart file shared by all in-process connections</li>
+        <li><b>Rebuilt on a TTL</b>, not per call: a mart older than <code>app.analytics.mart-ttl</code> (15 min) is re-materialized on the next read, so a report may lag Postgres by up to that interval. One refresh per report is ever in flight; callers arriving during it wait rather than read the mart it is replacing</li>
+        <li>Staging table + atomic swap: a failed refresh leaves the previous mart serving, and the built-at stamp is written only after the swap</li>
         <li>Long refreshes run on their own connection so KPI reads never block</li>
         <li>Curated report catalog surfaced at <code>/api/v1/analytics/reports</code></li>
       </ul></div>
-      <div class="card c-infra"><h3>Keycloak 26 (its own store)</h3><span class="tag">identity data</span><ul>
+      <div class="card c-infra"><h3>Keycloak 26 (its own store)</h3><span class="tag">one provider's data</span><ul>
         <li>Realm <code>smsone</code> imported at boot (displayName ← <code>BRAND_NAME</code>)</li>
-        <li>Users (pinned platform admin), KC <b>Organizations</b> per tenant, realm roles</li>
+        <li>Its users (pinned platform admin), its <b>Organizations</b> per tenant, realm roles</li>
+        <li><b>Not the user directory.</b> <code>person</code> in Postgres is; this store holds one provider's accounts, and <code>external_identity</code>/<code>external_organization</code> are the only two tables over there that reference anything in here</li>
         <li>Dev-mode store lives in-container — a recreate re-imports the realm</li>
       </ul></div>
     </div>
@@ -817,12 +836,63 @@ flowchart TB
   <!-- ============================================================ 14 -->
   <section>
     <div class="sec-head"><span class="sec-num">14</span><h2>Identity plane &amp; the two authority axes</h2></div>
-    <div class="grid">
-      <div class="card c-client"><h3>Keycloak :28081</h3><span class="tag">the idp</span><ul>
+    <p class="sec-sub"><code>person</code> is the canonical identity of a human here, and
+      <code>organization.id</code> is the tenant key — on the wire and in every table. An identity provider's
+      identifiers do not appear in either: they live in two link tables, and every request crosses from one id space
+      to the other exactly once. Keycloak is one row shape in <code>external_identity</code>, not the reason that
+      table exists — which is the whole point: a second provider is rows, not a refactor.</p>
+    <div class="diagram">
+      <pre class="mermaid">
+flowchart LR
+  subgraph PROV["PROVIDER-MINTED — stops at the link tables"]
+    direction TB
+    tok["validated token<br/>iss · sub · organization claim"]
+    kcu["Keycloak user id<br/>(only KeycloakUserAdminGateway sees it)"]
+  end
+
+  subgraph LINK["LINK TABLES — the only place a foreign id is stored"]
+    direction TB
+    ei[("external_identity<br/>(provider, issuer, external_subject)<br/>unique among live rows")]
+    eo[("external_organization<br/>(provider, issuer, external_org_id)<br/>+ (provider, issuer, external_alias)")]
+  end
+
+  subgraph OWN["THIS PLATFORM'S ID SPACE — everything downstream"]
+    direction TB
+    per[("person.id — the canonical identity<br/>status INVITED → ACTIVE → DISABLED<br/>invited_at · activated_at")]
+    pc[("person_contact<br/>EMAIL · is_primary · verified_at")]
+    org[("organization.id<br/>THE tenant key")]
+    mem[("membership<br/>person_id + role_id")]
+    perms["permission set<br/>role ∪ groups"]
+  end
+
+  tok -->|"PersonLookup(iss, sub)"| ei
+  ei --> per
+  tok -->|"OrgLookup(iss, extOrgId, alias)"| eo
+  eo --> org
+  per --- pc
+  per --> mem
+  org --> mem
+  mem --> perms
+  per -. "ProviderOrgMembership.attach" .-> kcu
+  kcu -. "provider org join" .-> eo
+      </pre>
+    </div>
+    <div class="grid" style="margin-top:12px">
+      <div class="card c-core"><h3>What the indirection buys</h3><span class="tag">why person, not subject</span>
+        <table class="kv">
+          <tr><td>swappable idp</td><td>adding or replacing a provider is rows in two link tables plus one adapter — no other module changes, because no other module ever held an issuer or a subject</td></tr>
+          <tr><td>one human, many logins</td><td>a person can hold several <code>external_identity</code> rows (a work SSO and a personal login) and remain one account, one membership, one audit trail</td></tr>
+          <tr><td>issuer is part of the key</td><td>uniqueness is (<code>provider</code>, <code>issuer</code>, <code>external_subject</code>), not the subject alone: a staging realm and a production realm both say <code>KEYCLOAK</code> over disjoint subject spaces</td></tr>
+          <tr><td>alias is never an id</td><td>the org claim resolves through the link table in both directions — matching an alias against <code>organization.alias</code> would let a token scoped to one tenant address another whose slug collides</td></tr>
+          <tr><td>e-mail left the person row</td><td>it lives in <code>person_contact</code> with <code>verified_at</code>: a <b>proven</b> address is globally unique per kind, a claimed one is not, and a person can be reachable at several</td></tr>
+          <tr><td>audit outlives accounts</td><td><code>created_by</code>/<code>updated_by</code> and every actor column are uuids with <b>no FK</b> — deliberate, because this modulith is destined to split into services. Outside a request they are NULL: a uuid column has no room for a "system" sentinel, and NULL means a job or a machine credential, not a missing value</td></tr>
+        </table></div>
+      <div class="card c-client"><h3>Keycloak :28081</h3><span class="tag">one authentication adapter</span><ul>
         <li>Realm <code>smsone</code>; two-column <code>smsone</code> login + email theme; product name env-driven (<code>BRAND_NAME</code>)</li>
         <li><code>smsone-web</code> — public client, <b>PKCE required</b>, localhost:* redirects, post-logout registered</li>
         <li><code>smsone-admin</code> — service account (<code>manage-users</code> + <code>view-realm</code>) used by provisioning</li>
-        <li>KC <b>Organizations</b>: one per tenant → the token's <code>organization</code>/tenant claim</li>
+        <li>Provider <b>Organizations</b>: one per tenant, linked through <code>external_organization</code> → the token's <code>organization</code> claim, which the edge resolves to an <code>organization.id</code></li>
+        <li>Its <code>firstName</code>/<code>lastName</code> vocabulary stops at <code>KeycloakUserAdminGateway</code>: the platform's own bodies say <code>givenName</code>/<code>familyName</code> and store the display name whole</li>
         <li>Self-service <b>signup</b> (opt-in, enumeration-safe 202): verified e-mail token → org + first OWNER; a require-MFA org's invites add <code>CONFIGURE_TOTP</code> to the first-login action link</li>
         <li>JWKS consumed twice: gateway (edge validation) and modulith (defense in depth)</li>
       </ul></div>
@@ -831,6 +901,7 @@ flowchart TB
         <li><b>Organization</b>: per-tenant permissions (<code>member:invite</code>…), role ∪ groups, escalation guard (grant only what you hold)</li>
         <li>A platform role grants <b>zero</b> org permissions — crossing is impersonation, audited, TTL-bound</li>
         <li>Machine access: org API keys = a <b>subset</b> of the minter's permissions, SHA-256 stored, prefix+secret shown once, rotation</li>
+        <li>A key acts for <b>no person</b>: attribution is NULL and any write whose table demands an accountable human (the support desk) refuses it rather than invent one</li>
       </ul></div>
       <div class="card c-client"><h3>Portal sessions</h3><span class="tag">:3001 / :3002</span><ul>
         <li>Edge middleware gate → OIDC code + PKCE → tokens in <b>httpOnly</b> cookies</li>
@@ -915,7 +986,7 @@ flowchart LR
         <span class="fail"><span class="pill bad">401 / 429</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox core"><span class="ord">identity</span>
-        <span class="what"><b>Request id + key auth</b> — adopts/mints the request id, then resolves the org API key: <code>X-Api-Key: sk_…</code> or <code>Authorization: Bearer sk_…</code> (both tiers understand the bearer spelling). OAuth connectors ride the JWT path instead — but <code>/mcp</code> admits a JWT only when its <code>aud</code> carries <code>smsone-mcp</code> (the consented <code>mcp</code> scope stamps it); a web login token is refused there.</span>
+        <span class="what"><b>Request id + key auth</b> — adopts/mints the request id, then resolves the org API key: <code>X-Api-Key: sk_…</code> or <code>Authorization: Bearer sk_…</code> (both tiers understand the bearer spelling). OAuth connectors ride the JWT path instead — but <code>/mcp</code> admits a JWT only when its <code>aud</code> carries <code>smsone-mcp</code> (the consented <code>mcp</code> scope stamps it); a web login token is refused there. Either way the caller is resolved <b>once, on the servlet thread</b>, into a <code>ToolContext</code> — org id, <code>person.id</code> (NULL for a key, permanently and correctly) and a diagnostic principal label — because handlers run on a thread the SDK owns and nothing may be re-read from a thread-local there.</span>
         <span class="fail"><span class="pill bad">401</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox core"><span class="ord">limit</span>

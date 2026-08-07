@@ -36,9 +36,6 @@ class UserDevice extends SoftDeletableEntity {
     @Column(name = "push_token", length = 300)
     private String pushToken;
 
-    @Column(nullable = false)
-    private boolean trusted;
-
     @Column(name = "last_seen_at")
     private Instant lastSeenAt;
 
@@ -61,9 +58,6 @@ class UserDevice extends SoftDeletableEntity {
         this.pushToken = pushToken;
     }
 
-    void setTrusted(boolean trusted) {
-        this.trusted = trusted;
-    }
 
     UUID getPersonId() {
         return personId;
@@ -85,9 +79,6 @@ class UserDevice extends SoftDeletableEntity {
         return pushToken;
     }
 
-    boolean isTrusted() {
-        return trusted;
-    }
 
     Instant getLastSeenAt() {
         return lastSeenAt;

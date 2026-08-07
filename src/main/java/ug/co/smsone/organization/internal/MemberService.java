@@ -179,6 +179,7 @@ class MemberService {
         return saved;
     }
 
+
     void remove(UUID orgId, UUID personId) {
         // Local delete commits first (with the last-owner guard's row locks released at commit);
         // the provider unlink runs AFTER, outside the transaction — a remote round-trip must never

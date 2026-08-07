@@ -51,8 +51,12 @@ class AnalyticsReportController {
     @GetMapping("/{code}")
     @Operation(summary = "Run an analytics report",
             description = """
-                    The report's mart is refreshed from Postgres on every call before it is queried, \
-                    so rows are always current and the response time scales with the source data.""")
+                    Rows come from a DuckDB mart that is rebuilt from Postgres only once it is older \
+                    than the configured refresh interval (app.analytics.mart-ttl, 15 minutes by \
+                    default), so a report can lag its source by up to that interval. The first call \
+                    after the interval expires pays for the rebuild and its response time scales with \
+                    the source data; the calls in between are answered from the mart. An interval of \
+                    zero restores a rebuild on every call.""")
     @PreAuthorize("hasRole('platform-support')")
     ResourceObject run(@PathVariable String code) {
         AnalyticsReport report = AnalyticsReport.fromCode(code)

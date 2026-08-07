@@ -23,9 +23,17 @@ class AdminDeviceController {
     }
 
     @GetMapping("/users/{personId}/devices")
-    @Operation(summary = "List a user's devices as the platform")
+    @Operation(summary = "List a user's devices as the platform",
+            description = "`trusted` here means trusted by AT LEAST ONE organization. This view has no "
+                    + "organization in context, unlike the tenant-facing listing where the flag is "
+                    + "answered for one org; since V51 trust is granted per organization, so there is "
+                    + "no single device-wide answer to report.")
     @PreAuthorize("hasRole('platform-support')")
     WindowedResult<ResourceObject> list(@PathVariable UUID personId, CursorPageRequest page) {
-        return WindowedResult.of(devices.listForPerson(personId, page), page, DeviceResources::toResource);
+        var window = devices.listForPerson(personId, page);
+        var trusted = devices.trustedByAnyOrgAmong(
+                window.getContent().stream().map(UserDevice::getId).toList());
+        return WindowedResult.of(window, page,
+                device -> DeviceResources.toResource(device, trusted.contains(device.getId())));
     }
 }

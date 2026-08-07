@@ -17,9 +17,11 @@ class DeviceService {
     private static final List<String> KINDS = List.of("BROWSER", "MOBILE", "CLI");
 
     private final UserDeviceRepository devices;
+    private final UserDeviceTrustRepository deviceTrust;
 
-    DeviceService(UserDeviceRepository devices) {
+    DeviceService(UserDeviceRepository devices, UserDeviceTrustRepository deviceTrust) {
         this.devices = devices;
+        this.deviceTrust = deviceTrust;
     }
 
     @Transactional
@@ -63,8 +65,29 @@ class DeviceService {
         return devices.pageByPersonId(personId, page);
     }
 
-    boolean isTrusted(UUID personId, String fingerprint) {
-        return devices.isTrusted(personId, fingerprint);
+    /**
+     * Does THIS organization trust this person's device? Org-scoped since V51: trust used to be one
+     * global boolean on the device row while {@code require_trusted_device} is per-org, so a device
+     * blessed inside any org satisfied every org's policy for that person.
+     */
+    /** The subset of {@code deviceIds} this org trusts — one query, for rendering a page of devices. */
+    @Transactional(readOnly = true)
+    java.util.Set<UUID> trustedAmong(UUID orgId, java.util.Collection<UUID> deviceIds) {
+        if (orgId == null || deviceIds == null || deviceIds.isEmpty()) {
+            return java.util.Set.of();
+        }
+        return deviceTrust.trustedAmong(orgId, deviceIds);
+    }
+
+    /** Platform-support only: trusted by ANY org. See the repository method for why it is separate. */
+    @Transactional(readOnly = true)
+    java.util.Set<UUID> trustedByAnyOrgAmong(java.util.Collection<UUID> deviceIds) {
+        return deviceIds == null || deviceIds.isEmpty()
+                ? java.util.Set.of() : deviceTrust.trustedByAnyOrgAmong(deviceIds);
+    }
+
+    boolean isTrusted(UUID orgId, UUID personId, String fingerprint) {
+        return orgId != null && deviceTrust.isTrusted(orgId, personId, fingerprint);
     }
 
     /** Own transaction: the enforcement filter (not transactional) calls this off the request path. */

@@ -96,7 +96,7 @@ Slice A of [archive/PLATFORM_RBAC_IMPERSONATION_PLAN.md](archive/PLATFORM_RBAC_I
 - [x] 9 `@PreAuthorize` sites retiered (support: `/admin/users`, `/audit`, `/scheduler/locks`,
       `/analytics/reports`; admin: `PUT /settings|/feature-flags`, `POST /orgs`, suspend/reactivate)
 - [x] `FileController` cross-namespace access split by blast radius — support reads, admin deletes
-      (presign-PUT always mints under the caller's own subject, so there was no write path to tier)
+      (presign-PUT always mints under the caller's own namespace, so there was no write path to tier)
 - [x] **Gate:** `PlatformRoleHierarchyTest` — each tier granted exactly ONE authority, asserting
       what it reaches *and* that the ladder does not run downwards
 - [x] **Gate:** real Keycloak token — paul holds only `platform-superadmin` yet reaches a
@@ -121,18 +121,31 @@ Slice B of [archive/PLATFORM_RBAC_IMPERSONATION_PLAN.md](archive/PLATFORM_RBAC_I
       `OrgRbacApiTest.aRoleNamedAdminIsJustAnotherCustomRole`, `.aCustomRoleCarryingMemberInviteCanInvite`
 - [x] **Gate:** full `./gradlew build` green
 
-## Durable identity is the subject, not the username ✅ (2026-07-31)
+## Durable identity is never the username ✅ (2026-07-31, restated 2026-08-07)
 
-- [x] `CurrentUserProvider.currentSubject()` — one answer to "who is the caller, durably"
-- [x] `created_by`/`updated_by` record the subject (`JpaAuditingConfig`), not the mutable
-      `preferred_username`; `system` sentinel for writes outside a request
-- [x] Idempotency keys scope per subject — a recycled username could previously replay the previous
-      holder's stored responses (cross-account disclosure, not just bad attribution)
-- [x] Rate-limit buckets key by subject — the key type always said `sub` and now means it; a rename
+The gate below was written when the durable key was the token subject. The identity decoupling moved
+it one step further — to `person.id` — for the reason the subject half of the rule always implied: a
+subject is one provider's name for someone, so two credentials for one human (a second identity
+provider, or a Keycloak account re-created after a realm rebuild) addressed two different records.
+The invariant and its gate are unchanged in state; only what "durable" resolves to has moved.
+
+- [x] `CurrentUserProvider` resolves the caller to a `person.id` — one answer to "who is the caller,
+      durably" — via the `PersonLookup` port; `CurrentUser` carries no subject at all
+- [x] `created_by`/`updated_by` record `person.id` (`JpaAuditingConfig`), not the mutable
+      `preferred_username` and not the subject. They are uuid with **no FK** (this modulith is built
+      to split), and NULL outside a request: a uuid column has no room for the old `system` sentinel,
+      and a synthetic person to hold it would be eligible for memberships, audit and erasure
+- [x] Idempotency keys scope per person — a recycled username could previously replay the previous
+      holder's stored responses (cross-account disclosure, not just bad attribution), and two
+      credentials for one person now share one namespace rather than splitting it
+- [x] Rate-limit buckets key by the durable principal (`person:<uuid>` | `key:<uuid>`); a rename
       no longer hands out a fresh quota
 - [x] **Gate:** `SubjectAttributionTest` builds authentication through the REAL
       `KeycloakJwtAuthenticationConverter` — the `jwt()` mock defaults the principal name to the
-      subject, which is exactly why the whole suite passed while the bug was live
+      subject, which is exactly why the whole suite passed while the username bug was live —
+      and now also pins that a token resolves to a person carrying no provider strings, that an
+      unlinked token resolves to no person and no principal key, and that two credentials for one
+      person share their idempotency namespace
 
 ## Soft delete ✅ (2026-07-31)
 
@@ -161,16 +174,18 @@ sanctioned path from the platform axis to tenant data, and the only one that lea
 - [x] `ImpersonationFilter` at `@Order(-2)` — after authentication, before rate limiting, idempotency
       and the provisioning gate, so the whole request sees ONE effective principal; the previous
       `SecurityContext` is restored in a `finally`
-- [x] `CurrentUser` gains a nested `Impersonation(sessionId, actorSubject)` and
-      `accountableSubject()`; `CurrentUserProvider` resolves both token types
-- [x] **V18** `impersonation_session` — `BaseEntity`, **not** soft-deletable: the person a delete
-      would serve is the operator whose reach the row records. Sessions *end*, they are never removed
-- [x] **V19** `audit_log.on_behalf_of` + `impersonation_id`. Attribution inverts inside a session —
-      `actor` is the operator, the worn identity moves to `on_behalf_of` — filled from the security
-      context in `AuditLogImpl`, so the `AuditLog` port signature is unchanged and no call site can
-      forget it
+- [x] `CurrentUser` gains a nested `Impersonation(sessionId, actorPersonId)` and
+      `accountablePersonId()`; `CurrentUserProvider` resolves both token types
+- [x] **V18** `impersonation_session` (`actor_person_id` / `target_person_id`) — `BaseEntity`,
+      **not** soft-deletable: the person a delete would serve is the operator whose reach the row
+      records. Sessions *end*, they are never removed
+- [x] **V19** `audit_log.on_behalf_of_person_id` + `impersonation_id`. Attribution inverts inside a
+      session — `actor_person_id` is the operator, the worn identity moves to
+      `on_behalf_of_person_id` — filled from the security context in `AuditLogImpl`, so the
+      `AuditLog` port signature is unchanged and no call site can forget it
 - [x] `POST`/`GET`/`DELETE /api/v1/admin/impersonations` (floor `platform-support`; `mode=WRITE`
-      needs `platform-admin`; `?actor=` on the listing needs `platform-admin`), cursor-paginated
+      needs `platform-admin`; `?actor=<personId>` on the listing needs `platform-admin`),
+      cursor-paginated
 - [x] Guardrails in `ImpersonationService`: target exists, not `DISABLED`, not soft-deleted (404 and
       409 stay distinct); a platform-role holder needs `platform-superadmin`; `reason` ≥ 8 chars;
       TTL default 15 min / cap 30, over-cap **rejected** not clamped; one live session per
@@ -210,14 +225,15 @@ sanctioned path from the platform axis to tenant data, and the only one that lea
 
 ## Identity reconciliation ✅ (2026-07-31)
 
-Keycloak is the system of record for identity and `app_user` is a projection of it, but nothing pushes
-a deletion from there to here — so without a pull the projection only grows and a deleted account
-lingers as an `ACTIVE`-looking row. Access is never at risk from the lag (no-JIT provisioning, and a
+Keycloak authenticates and this platform authorizes, but nothing pushes a deletion from there to here —
+so without a pull the `external_identity` link only ever accumulates and a deleted account lingers
+behind an `ACTIVE`-looking person. Access is never at risk from the lag (no-JIT provisioning, and a
 deleted account cannot mint a token), so this corrects the **record**, it does not close a hole.
 
 - [x] `IdentityReconciliationJob` — `@Scheduled` + `@SchedulerLock("identity-reconciliation")`, daily at
       02:00 (`app.scheduler.identity-reconciliation-cron`). Lives in `identity`, not `scheduler`,
-      because it needs `KeycloakUserAdminGateway` and `UserRepository`, both module-internal
+      because it needs `KeycloakUserAdminGateway`, `PersonRepository` and `PersonResolver`, all
+      module-internal
 - [x] `KeycloakUserAdminGateway.accountPresence` is **tri-state** — `PRESENT` / `ABSENT` / `UNKNOWN`;
       a lookup that failed can never be read as a deletion
 - [x] `IdentityReconciliationProperties`: `action` (ships as `REPORT`), `grace-period` PT1H,
@@ -225,8 +241,8 @@ deleted account cannot mint a token), so this corrects the **record**, it does n
       `app.identity.reconciliation.enabled` via `@ConditionalOnProperty`
 - [x] One transaction per row (`TransactionTemplate`, not a self-invoked `@Transactional`): the status
       change and the audit row that explains it commit together
-- [x] Audit action `identity.user_disabled_by_reconciliation`, with `actor` null — nobody did this, a
-      scheduled comparison did
+- [x] Audit action `identity.user_disabled_by_reconciliation`, with `actor_person_id` null — nobody
+      did this, a scheduled comparison did
 - [x] **Gate:** a deleted Keycloak account is disabled and audited —
       `IdentityReconciliationJobTest.anAccountDeletedInKeycloakIsDisabledAndAudited`
 - [x] **Gate:** an inconclusive lookup revokes nobody, and a mass disappearance is treated as
@@ -304,7 +320,7 @@ Slice 2 of [NEXT_MODULES_PLAN.md](plans/NEXT_MODULES_PLAN.md).
 - [x] **V22** `pg_trgm` + `search_document` — a rebuildable projection (deliberately NOT
       soft-deletable, the header argues it), GENERATED `tsv`, GIN on `tsv`, trigram GIN on titles
 - [x] `SearchIndex` port (idempotent `(entity_type, entity_id)` upsert) + inbox-guarded listeners on
-      `OrganizationRegistered` and `UserProvisioned`
+      `OrganizationRegistered` and `PersonProvisioned`
 - [x] FTS-then-trigram strategy (`websearch_to_tsquery` → `word_similarity` fallback); the cursor
       carries the mode so later pages never re-decide; ranks travel as float8 (the float4 text
       round-trip parses into a DIFFERENT double and would repeat page 1 — pinned in a why-comment)
@@ -422,12 +438,17 @@ existing job (the purge must honor holds).
       NONE soft-deletable (compliance records, like audit_log)
 - [x] `shared.compliance.LegalHolds` kernel port (default-FALSE when compliance absent → fail-open;
       a missing module never freezes all purging). `LegalHoldsImpl` = indexed existence check
-- [x] **SoftDeletePurgeJob now honors holds**: a per-table owner-column guard (subject-owned:
-      app_user/user_profile/user_device; org-owned by org_id, kc_org_id for organization) excludes
-      rows under an active hold from hard-deletion, however far past retention
-- [x] Erasure: soft-deletes the subject's owned rows now (invisible immediately), hard-erase at
+- [x] **SoftDeletePurgeJob now honors holds**: a per-table owner-column guard (person-owned by
+      `person_id`, and `person` itself by its own `id`; org-owned by `org_id`, and `organization`
+      itself by its own `id`) excludes rows under an active hold from hard-deletion, however far past
+      retention. Both sides of that comparison moved in the identity decoupling, and the failure mode
+      is silent — a mismatch matches nothing and the nightly job quietly resumes deleting data a
+      court said to keep — so the owner column per table is a constant map in the job, never a string
+      inherited from what a column used to mean
+- [x] Erasure: soft-deletes the person's owned rows now (invisible immediately), hard-erase at
       retention; REFUSED while a hold is in force. Consent append-only (withdrawal = new row).
-      Self-service data export (portability)
+      Self-service data export (portability). `legal_hold.scope` still stores the word `SUBJECT` for
+      a person-scoped hold — rows already say so, and the column is data, not a name we may rename
 - [x] Surfaces: /me/consents, /me/data-export, /me/erasure-request; admin legal-holds place/release
       + erasure execution (platform-admin) / list (platform-support). All audited
 - [x] **Gate:** consent append-only + erasure soft-deletes (ComplianceTest); a HELD subject survives
@@ -457,7 +478,7 @@ Slice 5 of [PLATFORM_EXPANSION_PLAN.md](plans/PLATFORM_EXPANSION_PLAN.md).
 Slice 4 of [PLATFORM_EXPANSION_PLAN.md](plans/PLATFORM_EXPANSION_PLAN.md); one `access` module (the
 trusted-device gate is a policy that reads devices, so they live together).
 
-- [x] **V31** `user_device` (soft-deletable, 16th) — self-service, idempotent per (subject,
+- [x] **V31** `user_device` (soft-deletable, 16th) — self-service, idempotent per (`person_id`,
       fingerprint = X-Device-Id); push_token forward-looking; last_seen_at stamped throttled
 - [x] **V32** `org_security_policy` (soft-deletable, 17th; one live row per org) — IP allowlist
       (CidrMatcher, v4+v6), require-trusted-device, session-max-age; every field TIGHTENS access
@@ -479,7 +500,7 @@ organization module.
 
 - [x] **V30** `org_group` (soft-deletable, FIFTEENTH; purged FIRST in PURGE_ORDER) + `org_group_member`
       element rows (eighth intra-module FK)
-- [x] `PermissionResolver` UNIONS the direct membership role with every group role the subject is in,
+- [x] `PermissionResolver` UNIONS the direct membership role with every group role the person is in,
       inside the same org-status-gated cached value — a group extends a member, never a way in
       (non-member add 404s; a group role without an active membership grants nothing)
 - [x] Escalation guard on create/re-role/staff (a group can't confer more than its creator holds);
@@ -522,11 +543,12 @@ Slice 2 of [PLATFORM_EXPANSION_PLAN.md](plans/PLATFORM_EXPANSION_PLAN.md).
 - [x] **docs/plans/PLATFORM_EXPANSION_PLAN.md** — the strategy for the ten remaining workstreams
       (P1 profile → P2 api-keys → P3 groups → P4 devices+policies → P5 integration hub →
       P6 compliance → P7 maintenance → P8 support), models + endpoints + gates + V-numbers
-- [x] **P1 shipped — profile module (V28)**: `user_profile` (soft-deletable, THIRTEENTH) +
-      contacts as element rows + `user_preference` composite-PK pairs; get-or-default profile,
+- [x] **P1 shipped — profile module (V28)**: `person_profile` (soft-deletable, THIRTEENTH) +
+      contacts as element rows + `person_preference` composite-PK pairs; get-or-default profile,
       additive preferences (null deletes), avatar via the files port (image/* 2 MB,
-      old-object-deleted-last), read-only linked accounts (`UserDirectory.linkedAccounts` over
-      Keycloak federated identities), `GET /api/v1/me/organizations` in the ORGANIZATION module
+      old-object-deleted-last), read-only linked accounts (`PersonDirectory.linkedAccounts` — a
+      local select over `external_identity` now, not an HTTP call to Keycloak per render),
+      `GET /api/v1/me/organizations` in the ORGANIZATION module
       (dual-member switch list; the switch is a token act), support profile read.
       OpenApiConfig: `Shared · My profile` tag + three map entries (flagged) —
       `ProfileApiTest` (4 tests)
@@ -682,10 +704,11 @@ have closed the cycle `document → search → organization → exchange`, and `
       up to `max-attempts`, then `FAILED`
 - [x] Two-layer authorization: programmatic submit gate on the handler's per-direction permission
       (mirrors `ApiPermissionEvaluator`'s active-org strictness); per-record escalation resolves the
-      REQUESTER at processing time (`PermissionEscalationGuard.requireSubjectHolds`,
-      `MemberService.inviteAs`); artifacts download to the requester or permission holders only
+      REQUESTER at processing time (`exchange_job.requester_person_id`,
+      `PermissionEscalationGuard.requirePersonHolds`, `MemberService.inviteAs`); artifacts download
+      to the requester or permission holders only
 - [x] Reference `org-members` handler in `organization.internal` driving the same `MemberService`
-      as REST; export re-importable (emails via `UserDirectory.emailsBySubjects` batch lookup)
+      as REST; export re-importable (emails via `PersonDirectory.emailsByPersonIds` batch lookup)
 - [x] All artifacts (source, report, result) registered as `EXCHANGE` documents via the port
 - [x] **Gate — the scale contract:** 100k-row CSV import crashed mid-run at record 30,050 resumes
       from the committed offset 30,000 — 2 attempts, `processed=100000`, 100,050 handler calls
@@ -704,7 +727,7 @@ have closed the cycle `document → search → organization → exchange`, and `
 ## Audit remediation — phases 3 & 4 ✅ (2026-08-01)
 
 - [x] **M15** controllers are thin again: `AuditQueryService` (readOnly) behind `AuditController`;
-      `UserAccessService` owns the identity module's reads for `/me` and `/admin/users`;
+      `PersonAccessService` owns the identity module's reads for `/me` and `/admin/users`;
       `MemberService.roleCodes` (id→code projection) behind the member listing;
       `SchedulerController`'s inline framework-table read carries its why
 - [x] **M16** role + webhook-subscription listings cursor-paginated (additive: `meta.page` appears,
@@ -821,7 +844,9 @@ Plan: [plans/MCP_PLAN.md](plans/MCP_PLAN.md) · ADR 0009 · guide: [guides/mcp-g
 - [x] **Phase 2 — webhooks** (8 tools) incl. NEW fenced redelivery of FAILED deliveries, with REST
       parity (`POST …/deliveries/{deliveryId}/redeliver`, 202/409 — `WebhookApiTest`)
       (`WebhookAdmin`; `McpWebhookToolsIntegrationTest` — secret-shown-once, SSRF refusal, log survives delete)
-- [x] **Phase 3 — support + documents** (9 tools): tickets open/converse (key subject attributed),
+- [x] **Phase 3 — support + documents** (9 tools): tickets open/converse (attributed to the person
+      behind the call — `opener_person_id`/`author_person_id` are NOT NULL, so a key acting for
+      nobody is refused with a named 403 rather than opening an unanswerable ticket),
       documents metadata/presigned URL/delete (`SupportDesk`, `DocumentDirectory`;
       `McpSupportDocumentToolsIntegrationTest`)
 - [x] **Phase 4 — exchange + search** (8 tools): handlers/submit/poll/cancel/artifact URLs under each

@@ -2,6 +2,7 @@ package ug.co.smsone.billing.internal;
 
 import java.math.BigDecimal;
 import java.net.URI;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -48,6 +49,10 @@ class KillBillGateway {
     record KbPaymentMethod(UUID paymentMethodId, String pluginName, boolean isDefault) {
     }
 
+    /** One metered day for a subscription: the ledger row's date and the amount counted on it. */
+    record UsageDay(LocalDate date, long amount) {
+    }
+
     /**
      * Idempotent: an existing externalKey resolves to the existing account, never a duplicate.
      *
@@ -81,11 +86,24 @@ class KillBillGateway {
     }
 
     /**
-     * Push one day's metered usage onto a KB subscription. {@code trackingId} is the idempotency
-     * key — Kill Bill silently ignores a duplicate, so a re-exported day can never double-bill.
-     * The subscription's plan must define {@code unitType} in its catalog for rating to price it.
+     * Push a subscription's metered days onto Kill Bill in ONE request. {@code /1.0/kb/usages} takes a
+     * LIST of {@code usageRecords} under a single {@code unitUsageRecord} — that list is the whole
+     * reason a backlog costs one call per subscription rather than one call per day. The subscription's
+     * plan must define {@code unitType} in its catalog for rating to price any of it.
+     *
+     * <p><b>{@code trackingId} is the idempotency key for the WHOLE request, not for each record in
+     * it.</b> Kill Bill silently drops a request whose trackingId it has already stored against the
+     * subscription — it drops it entirely, it does not merge the new records into what it kept. So the
+     * caller must derive the id from the exact set of days it is sending: reuse an id with a different
+     * set and the difference is discarded without a word. {@code UsageExportJob.trackingId} is that
+     * derivation and explains the failure modes on both sides of it.
      */
-    void recordUsage(UUID subscriptionId, String unitType, java.time.LocalDate date, long amount, String trackingId) {
+    void recordUsage(UUID subscriptionId, String unitType, List<UsageDay> days, String trackingId) {
+        List<Map<String, Object>> usageRecords = days.stream()
+                .map(day -> Map.<String, Object>of(
+                        "recordDate", day.date().toString(),
+                        "amount", day.amount()))
+                .toList();
         killBill.post()
                 .uri("/1.0/kb/usages")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -94,9 +112,7 @@ class KillBillGateway {
                         "trackingId", trackingId,
                         "unitUsageRecords", List.of(Map.of(
                                 "unitType", unitType,
-                                "usageRecords", List.of(Map.of(
-                                        "recordDate", date.toString(),
-                                        "amount", amount))))))
+                                "usageRecords", usageRecords))))
                 .retrieve()
                 .toBodilessEntity();
     }

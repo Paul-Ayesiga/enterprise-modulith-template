@@ -27,15 +27,31 @@ public interface AuditLog {
     }
 
     /**
-     * Record an event whose actor was resolved OUTSIDE this process — by the edge/gateway — and so
-     * arrives explicitly, rather than from this thread's security context. This is the one path where
-     * the actor is a parameter: the accountable identity genuinely lives in another process (the
-     * gateway authenticated it; this is a machine-to-machine call with no user on the thread). For edge
-     * audit events only; every in-process call site must keep using {@link #record} so it can never
-     * misstate who acted.
+     * Record an event NO PERSON performed, naming the acting principal as an explicit parameter.
      *
-     * @param actor the edge principal the gateway resolved — a user subject, {@code key:<id>}, or
-     *              {@code service:<name>}; null if the gateway could not resolve one
+     * <p>The rule is <strong>the actor is a parameter ONLY where no person acted at all</strong> — so
+     * there is nothing for the security context to misstate. It is NOT "edge events only", which is how
+     * this was first written and which forbids the second case it is exactly right for. Wherever a
+     * person IS on the thread, {@link #record} is the only correct choice and stays mandatory: it alone
+     * knows that a write inside an impersonation session is answerable to the operator rather than to
+     * the identity the request runs as, and an actor every call site has to remember to pass is an
+     * actor some call site will pass wrongly.
+     *
+     * <p>The two legitimate callers:
+     * <ul>
+     *   <li>{@code audit.GatewayAuditController} — the gateway resolved the principal in ANOTHER
+     *       process and posts the decision here; this thread has no security context to consult.</li>
+     *   <li>{@code mcp.McpToolDispatcher} — an MCP mutation made by a machine credential. A security
+     *       context exists but holds no person (a robot is not one), so {@code record} would resolve to
+     *       NOBODY and the row would say only that something changed the tenant.</li>
+     * </ul>
+     *
+     * <p>Either way {@code actor_person_id} stays NULL — the truthful answer for a non-person actor,
+     * not a gap — and the principal travels as text prefixed {@code edgePrincipal=} on {@code toState}.
+     * The impl says why a uuid is never minted to fill the column instead.
+     *
+     * @param actor the principal that acted where no person did — a token subject, {@code key:<id>},
+     *              or {@code service:<name>}; null if none could be resolved
      */
     void recordExternal(String action, UUID orgId, String actor, String target, String fromState, String toState);
 }

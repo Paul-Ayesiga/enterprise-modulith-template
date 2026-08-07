@@ -46,6 +46,7 @@ class OrgMembersImpl implements OrgMembers {
         members.remove(orgId, personId);
     }
 
+
     private static MemberView toView(Membership membership, Map<UUID, String> roleCodes) {
         return new MemberView(membership.getPersonId(),
                 roleCodes.getOrDefault(membership.getRoleId(), membership.getRoleId().toString()),

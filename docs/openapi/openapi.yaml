@@ -3662,6 +3662,8 @@ paths:
       tags:
       - Shared · My devices
       summary: List your devices
+      description: '`trusted` is answered for the organization your token is scoped
+        to — the same device can be trusted in one of your organizations and not another.'
       operationId: list_11
       parameters:
       - name: user
@@ -6314,9 +6316,12 @@ paths:
       tags:
       - Platform · Ops
       summary: Run an analytics report
-      description: "The report's mart is refreshed from Postgres on every call before\
-        \ it is queried, so rows are always current and the response time scales with\
-        \ the source data."
+      description: "Rows come from a DuckDB mart that is rebuilt from Postgres only\
+        \ once it is older than the configured refresh interval (app.analytics.mart-ttl,\
+        \ 15 minutes by default), so a report can lag its source by up to that interval.\
+        \ The first call after the interval expires pays for the rebuild and its response\
+        \ time scales with the source data; the calls in between are answered from\
+        \ the mart. An interval of zero restores a rebuild on every call."
       operationId: run
       parameters:
       - name: code
@@ -6415,6 +6420,10 @@ paths:
       tags:
       - Platform · Users & impersonation
       summary: List a user's devices as the platform
+      description: "`trusted` here means trusted by AT LEAST ONE organization. This\
+        \ view has no organization in context, unlike the tenant-facing listing where\
+        \ the flag is answered for one org; since V51 trust is granted per organization,\
+        \ so there is no single device-wide answer to report."
       operationId: list_27
       parameters:
       - name: personId

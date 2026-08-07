@@ -185,8 +185,9 @@
   how you get rate-limited, and how to make writes safely retryable.</p></div>
 
 <h2 id="auth">A1 · Authentication &amp; the two axes</h2>
-<p>Every call carries a Keycloak bearer token minted <em>for this API</em> (audience <code>smsone-api</code>).
-Dev shortcut: <code>make token</code> or <code>scripts/api.sh</code> (which also encodes <code>page[...]</code> for you).</p>
+<p>Every call carries a bearer token from the platform's identity provider (Keycloak in this deployment), minted
+<em>for this API</em> (audience <code>smsone-api</code>). Dev shortcut: <code>make token</code> or
+<code>scripts/api.sh</code> (which also encodes <code>page[...]</code> for you).</p>
 <pre><code># raw password grant (dev realm) → an access token
 curl -s $BASE/realms/smsone/protocol/openid-connect/token \
   -d grant_type=password -d client_id=smsone-web \
@@ -197,12 +198,24 @@ curl $BASE/api/v1/me -H "Authorization: Bearer $TOKEN"</code></pre>
 <div class="card tip"><strong>Machine access</strong> uses <code>X-Api-Key: &lt;prefix&gt;.&lt;secret&gt;</code> instead of a bearer
 (see <a href="#orgkeys">Org API keys</a>). <strong>Impersonation</strong> adds <code>X-Impersonate: &lt;sessionId&gt;</code> to a
 tenant call (see <a href="#users">Users &amp; impersonation</a>). Never combine axes in one credential.</div>
-<div class="card"><strong>Org-scoped tokens.</strong> Tenant calls need the token's Keycloak <code>organization</code> claim to
-name the org in the path — a token scoped to org A gets <code>403</code> on org B even if you belong to both. Switching
-orgs = requesting a new token scoped to the other; the server never trusts a client-asserted active org.</div>
-<p><strong>No-JIT:</strong> a valid JWT alone is not access — the subject also needs a provisioned <code>app_user</code>
-row, or you get <code>403 ACCOUNT_NOT_PROVISIONED</code>. <code>GET /api/v1/me</code> is the one gate exception (so you can
-see your own onboarding status).</p>
+<div class="card"><strong>The token says who an issuer thinks you are; it is not your identity here.</strong>
+Keycloak is one <em>authentication</em> adapter, not this platform's user directory. Every request resolves the token's
+<code>(iss, sub)</code> pair through the <code>external_identity</code> link table to a <code>person.id</code>, and the
+token's <code>organization</code> claim through <code>external_organization</code> to an <code>organization.id</code> —
+once, before any controller runs. Past that point every id you see on the wire is in this platform's own id space, and
+no provider identifier appears in a path or a body anywhere in this guide. That is the point of the indirection: adding
+or swapping an identity provider is rows in those two tables, not a new API.</div>
+<div class="card"><strong>Org-scoped tokens.</strong> Tenant calls need the token's <code>organization</code> claim to
+resolve to the org named in the path — and the path carries <strong><code>organization.id</code></strong>, the
+platform's own tenant key. A token scoped to org A gets <code>403</code> on org B even if you belong to both. Switching
+orgs = requesting a new token scoped to the other; the server never trusts a client-asserted active org. An org
+<em>alias</em> is never an org id: resolution runs through the link table in both directions, so a token scoped to one
+tenant cannot address another whose slug happens to collide.</div>
+<p><strong>No-JIT:</strong> a valid JWT alone is not access — the subject it carries must already be linked to a
+provisioned <code>person</code>, or you get <code>403 ACCOUNT_NOT_PROVISIONED</code>. A token that validates perfectly
+and resolves to nobody is exactly the case this refuses: proving who an issuer thinks you are has never been permission
+to create an account here. <code>GET /api/v1/me</code> is the one gate exception (so you can see your own onboarding
+status).</p>
 
 <h2 id="envelope">A2 · The response envelope &amp; errors</h2>
 <p>Every JSON response is one envelope — <code>data</code> <em>xor</em> <code>errors</code>, always <code>meta.requestId</code>
@@ -287,10 +300,19 @@ stored response replays; same key with a <em>different</em> body ⇒ <code>409</
   <div class="ep-body"><p>Your identity, effective roles (already tier-expanded), active org, and provisioning status. The one call
   that works while <code>INVITED</code> — so you can see your own onboarding.</p>
   <pre><code>{ "data": { "id":"5862…", "type":"user", "attributes": {
-    "email":"you@acme.test", "roles":["platform-admin","USER","platform-support","platform-superadmin"],
-    "activeOrgId":"6a1f…", "activeOrgAlias":"acme", "provisioningStatus":"ACTIVE" } } }</code></pre>
+    "personId":"5862…", "email":"you@acme.test",
+    "roles":["platform-admin","USER","platform-support","platform-superadmin"],
+    "activeOrgId":"6a1f…", "provisioningStatus":"ACTIVE" } } }</code></pre>
   <p class="mut">Four roles from two grants: <code>platform-superadmin</code> + <code>USER</code> — the hierarchy expands
-  superadmin → admin → support. It shows your <em>effective</em> tiers, not four separate grants.</p></div></div>
+  superadmin → admin → support. It shows your <em>effective</em> tiers, not four separate grants.</p>
+  <p class="mut">The resource id is your <code>person.id</code>; <code>personId</code> repeats it as a typed field and is
+  <code>null</code> exactly while <code>provisioningStatus</code> is <code>UNPROVISIONED</code> — those are the two states
+  onboarding branches on, so a client should not have to infer one from the resource id. Before provisioning there is no
+  person to name and the id falls back to your own token subject. <code>email</code> comes from your
+  <code>person_contact</code> row, not from the token: the address <em>this</em> platform can reach you at, which need not
+  be the one your provider put in the JWT. There is no <code>activeOrgAlias</code> any more — the alias belongs to the
+  organization resource that <code>activeOrgId</code> now names directly, so
+  <code>GET /api/v1/orgs/{activeOrgId}</code> is the honest way to get it.</p></div></div>
 
 <h2 id="profile">B2 · Profile, preferences &amp; notifications</h2>
 <div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/me/profile</span><span class="perm any">any caller</span></div>
@@ -344,15 +366,22 @@ GET  /api/v1/me/consents                                            # full histo
 
 <h2 id="tenants">C1 · Tenants — the org lifecycle</h2>
 <div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs</span><span class="perm plat">platform-admin</span></div>
-  <div class="ep-body"><p>Create a tenant + provision its Keycloak org and first <code>OWNER</code> (invite email lands in Mailpit).</p>
+  <div class="ep-body"><p>Create a tenant and its first <code>OWNER</code>: an <code>organization</code> row, a
+  <code>person</code> for the owner, and the provider-side links that let the identity provider issue them a token scoped
+  to it (invite email lands in Mailpit). The <code>id</code> you get back <strong>is</strong> the tenant key — it is what
+  goes in <code>{orgId}</code> everywhere below.</p>
   <table class="params"><tr><th>Field</th><th>Type</th><th>Req</th><th>Description</th></tr>
-    <tr><td>alias</td><td>string</td><td>yes</td><td>URL-safe short name, unique. Duplicate ⇒ <code>409</code>.</td></tr>
+    <tr><td>alias</td><td>string</td><td>yes</td><td>URL-safe short name, unique. Duplicate ⇒ <code>409</code>. A label, never an id.</td></tr>
     <tr><td>name</td><td>string</td><td>yes</td><td>Display name.</td></tr>
     <tr><td>ownerEmail</td><td>string</td><td>yes</td><td>First owner — invited + emailed credentials.</td></tr>
-    <tr><td>ownerFirstName / ownerLastName</td><td>string</td><td>no</td><td>Owner's name on the invite.</td></tr></table>
+    <tr><td>ownerGivenName / ownerFamilyName</td><td>string</td><td>no</td><td>Owner's name on the invite. Both optional — a mononym is an ordinary name.</td></tr></table>
   <pre><code>curl -X POST $BASE/api/v1/orgs -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"alias":"acme","name":"Acme Ltd","ownerEmail":"owner@acme.test","ownerFirstName":"Ada"}'
-# → 201 {"data":{"id":"6a1f22b0-…","type":"organization","attributes":{"alias":"acme","status":"ACTIVE"}}}</code></pre></div></div>
+  -d '{"alias":"acme","name":"Acme Ltd","ownerEmail":"owner@acme.test","ownerGivenName":"Ada"}'
+# → 201 {"data":{"id":"6a1f22b0-…","type":"organization","attributes":{"alias":"acme","status":"ACTIVE"}}}</code></pre>
+  <p class="mut">The name fields are <code>given</code>/<code>family</code>, not <code>first</code>/<code>last</code>,
+  on every people-shaped body in this API. "First" and "last" encode one culture's writing order; given and family name
+  say which name is which without claiming an order, and the display name is stored whole rather than assembled from the
+  parts. One provider's <code>firstName</code>/<code>lastName</code> vocabulary stops at that provider's adapter.</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/signup</span><span class="perm any">no auth (off by default)</span></div>
   <div class="ep-body"><p>The <b>other</b> way an org comes to exist: self-service. Enabled with <code>SIGNUP_ENABLED=true</code>
   (off ⇒ <code>403</code> naming the flag). Always answers <code>202</code> with the same message whether the email is known or
@@ -360,8 +389,8 @@ GET  /api/v1/me/consents                                            # full histo
   <table class="params"><tr><th>Field</th><th>Type</th><th>Req</th><th>Description</th></tr>
     <tr><td>organizationName</td><td>string</td><td>yes</td><td>Display name; the alias is derived (slugged, suffixed on collision).</td></tr>
     <tr><td>email</td><td>string</td><td>yes</td><td>Becomes the first <code>OWNER</code>, invited with temp credentials.</td></tr>
-    <tr><td>firstName / lastName</td><td>string</td><td>no</td><td>On the owner's invite.</td></tr></table>
-  <pre><code>POST /api/v1/signup {"organizationName":"Acme Rockets","email":"ada@acme.test","firstName":"Ada"}
+    <tr><td>givenName / familyName</td><td>string</td><td>no</td><td>On the owner's invite.</td></tr></table>
+  <pre><code>POST /api/v1/signup {"organizationName":"Acme Rockets","email":"ada@acme.test","givenName":"Ada"}
 # → 202 (always). Then, from the email:
 POST /api/v1/signup/verify {"token":"…from the link…"}
 # → 201 {"attributes":{"organizationId":"6a1f…","alias":"acme-rockets"}}   (invalid/used token ⇒ 422, generic)</code></pre>
@@ -369,7 +398,8 @@ POST /api/v1/signup/verify {"token":"…from the link…"}
   same entitlement trial as <code>POST …/subscription/trial</code>.</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/admin/orgs</span><span class="perm plat">platform-support</span></div>
   <div class="ep-body"><p>Observe the fleet. <code>?status=active</code> filters; <code>…/{orgId}</code> reads one; <code>…/{orgId}/members</code> is the
-  read-only roster (subjects + role codes).</p></div></div>
+  read-only roster (<code>personId</code> + role codes). Managing members stays a tenant action, or an impersonation
+  session's.</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/suspend</span> · <span class="path">/reactivate</span><span class="perm plat">platform-admin</span></div>
   <div class="ep-body"><p>Reversible. Suspending kills every member's access immediately (zero permissions resolve while suspended).</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method DELETE">DELETE</span><span class="path">/api/v1/admin/orgs/{orgId}</span><span class="perm plat">platform-admin</span></div>
@@ -377,22 +407,34 @@ POST /api/v1/signup/verify {"token":"…from the link…"}
 
 <h2 id="users">C2 · Users &amp; impersonation</h2>
 <div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/admin/users</span><span class="perm plat">platform-support</span></div>
-  <div class="ep-body"><p>Every identity across every tenant (cursor-paginated); <code>…/{subject}/profile</code> reads one. Note email is
-  <strong>not</strong> unique here — identity keys on the Keycloak <em>subject</em>, so two accounts can share an email.</p></div></div>
+  <div class="ep-body"><p>Every person on the platform, across every tenant (cursor-paginated). <code>…/{personId}/profile</code> reads one,
+  <code>…/{personId}/devices</code> lists their registered devices. Rows carry <code>personId</code>,
+  <code>formattedName</code>, <code>email</code> and <code>status</code>
+  (<code>INVITED</code> → <code>ACTIVE</code> → <code>DISABLED</code>).</p>
+  <p class="mut">The path and the <code>user</code> resource type are unchanged on purpose — "user" is this API's word
+  for a human with an account — but the payload no longer carries a provider subject, because it was never something an
+  operator could act on. The id is a <code>person.id</code>, and that id is what every other admin surface here takes.
+  <code>formattedName</code> is rendered as the provider gave it and may be <code>null</code>; a UI that falls back to the
+  email is right where one that prints <code>given + " " + family</code> would show some people their name backwards.
+  On email: a <em>verified</em> address is unique platform-wide (per kind, case-insensitively, among live rows), so two
+  live accounts cannot both prove the same one — an unverified claim is not held to that.</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/admin/impersonations</span><span class="perm plat">platform-support</span></div>
   <div class="ep-body"><p>The <strong>only</strong> sanctioned bridge from an operator to tenant data — and it's audited. Open a session, then
   repeat your <em>own</em> tenant call with <code>X-Impersonate: &lt;id&gt;</code>. <code>mode:WRITE</code> needs <code>platform-admin</code>.</p>
   <table class="params"><tr><th>Field</th><th>Type</th><th>Req</th><th>Description</th></tr>
-    <tr><td>targetSubject</td><td>string</td><td>yes</td><td>The account to wear.</td></tr>
+    <tr><td>targetPersonId</td><td>uuid</td><td>yes</td><td>The person to wear — an id from <code>GET /api/v1/admin/users</code>.</td></tr>
     <tr><td>orgId</td><td>uuid</td><td>no</td><td>Scope the session to one org.</td></tr>
     <tr><td>reason</td><td>string</td><td>yes</td><td>≥8 chars — written to the audit trail.</td></tr>
     <tr><td>mode</td><td>enum</td><td>no</td><td><code>READ</code> (default) or <code>WRITE</code> (needs platform-admin).</td></tr>
     <tr><td>ttl</td><td>duration</td><td>no</td><td>e.g. <code>PT15M</code>; hard cap 30 min.</td></tr></table>
-  <pre><code>POST /api/v1/admin/impersonations {"targetSubject":"kc-7d2e…","orgId":"6a1f…","reason":"Ticket 4812 — cannot see docs"}
+  <pre><code>POST /api/v1/admin/impersonations {"targetPersonId":"5862…","orgId":"6a1f…","reason":"Ticket 4812 — cannot see docs"}
 GET  /api/v1/orgs/6a1f…/documents        with header  X-Impersonate: 3e7a…    # now their permissions
 DELETE /api/v1/admin/impersonations/3e7a…                                     # end early (expiry also ends it)</code></pre>
   <p class="mut">A session carries <strong>no</strong> authority of its own — platform routes 403 while impersonating, and audit
-  rows name the <em>operator</em> as actor with <code>onBehalfOf</code> = the worn identity. Re-checked every request.</p></div></div>
+  rows name the <em>operator</em> in <code>actorPersonId</code> with <code>onBehalfOfPersonId</code> = the worn person.
+  Re-checked every request. The session resource reports both ids the same way, plus a <code>targetDisplay</code> label
+  frozen when the session opened — this listing is read most often about accounts that are already gone, and a person id
+  that resolves to nothing is exactly what that column spares an auditor.</p></div></div>
 
 <h2 id="plans">C3 · Plans, entitlements, trials &amp; billing</h2>
 <div class="card"><strong>How Kill Bill fits — the mental model.</strong> Kill Bill is a <em>separate</em> billing engine
@@ -458,9 +500,14 @@ usage (tracking-id-deduped) for usage-based plans.</div>
   (<code>…/{id}/messages</code>), set status (<code>PUT …/{id}/status</code>). SLA breaches auto-escalate + fire
   <code>org.ticket.escalated</code>. Per-priority SLA overrides live at <code>…/admin/orgs/{orgId}/sla/{P1..P4}</code>.</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/admin/compliance/legal-holds/subject</span><span class="perm plat">platform-admin</span></div>
-  <div class="ep-body"><p>A legal hold BLOCKS the purge and any erasure of the held subject/org until released
-  (<code>DELETE …/legal-holds/{id}</code>). <code>POST …/compliance/erasure {"subject":"…"}</code> erases on behalf of a subject —
-  <code>REFUSED</code> under a hold or for the last super-admin.</p></div></div>
+  <div class="ep-body"><p>A legal hold BLOCKS the purge and any erasure of the held person/org until released
+  (<code>DELETE …/legal-holds/{id}</code>). The body is <code>{"personId":"…","reason":"…"}</code> — a
+  <code>person.id</code>, the id <code>/api/v1/admin/users</code> lists; the org twin is
+  <code>…/legal-holds/org {"orgId":"…"}</code>. <code>POST …/compliance/erasure {"personId":"…"}</code> erases on that
+  person's behalf — <code>REFUSED</code> under a hold or for the last super-admin.</p>
+  <p class="mut">The word <code>subject</code> stays in the <em>path</em> deliberately: here it means the GDPR
+  <em>data subject</em> — a human with rights — not a token's <code>sub</code>, and the stored scope discriminator agrees.
+  Only the payload changed.</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method PUT">PUT</span><span class="path">/api/v1/admin/orgs/{orgId}/retention/{scope}</span><span class="perm plat">platform-admin</span></div>
   <div class="ep-body"><p>Keep one org's log rows on a different schedule than the default. <code>{scope}</code> ∈
   <code>webhook-delivery</code>, <code>exchange-job</code> (the only org-scoped logs). <code>{"days":365}</code>; <code>DELETE</code> reverts to default.</p></div></div>
@@ -496,7 +543,13 @@ GET /api/v1/feature-flags/beta.exports/orgs/{orgId}   # → {"type":"feature-fla
   <pre><code>POST /api/v1/admin/maintenance {"mode":"RESTRICT","message":"DB upgrade","startsAt":"…","endsAt":"…"}</code></pre></div></div>
 <div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/admin/scheduler/locks</span> · <span class="path">/api/v1/analytics/reports</span><span class="perm plat">platform-support</span></div>
   <div class="ep-body"><p>Ops observability — clustered-job lock rows, and the curated analytics report catalog (run one:
-  <code>…/reports/{code}</code>). Platform API keys (support-tier, read-only) live at <code>/api/v1/admin/api-keys</code>.</p></div></div>
+  <code>…/reports/{code}</code>). Platform API keys (support-tier, read-only) live at <code>/api/v1/admin/api-keys</code>.</p>
+  <p class="mut"><b>Report rows are not live.</b> They come from a DuckDB mart that is rebuilt from Postgres only once it
+  is older than <code>app.analytics.mart-ttl</code> (15 minutes by default), so a report can lag its source by up to that
+  interval. The first call after the interval expires pays for the rebuild and its response time scales with the source
+  data; the calls in between are answered from the mart and are cheap. A TTL of <code>0</code> restores a rebuild on every
+  call — which is what this endpoint used to do unconditionally, and why a report over a large table could take as long
+  as it did. Treat the numbers as a recent snapshot, not as a read of the transactional tables.</p></div></div>
 
 <!-- ============================ PART D ============================ -->
 <div class="part" id="org"><h2>D · Inside an organization</h2>
@@ -505,19 +558,32 @@ GET /api/v1/feature-flags/beta.exports/orgs/{orgId}   # → {"type":"feature-fla
 
 <h2 id="members">D1 · Members, roles &amp; groups</h2>
 <div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/members</span><span class="perm org">member:invite</span></div>
-  <div class="ep-body"><p>Invite someone (provisions identity + temp creds, emailed). Idempotent re-invites return the existing membership.</p>
+  <div class="ep-body"><p>One call does three things: provisions the <code>person</code> (creating the account and emailing temporary
+  credentials if they are new), attaches them to the organization at the identity provider so its tokens carry the
+  <code>organization</code> claim, and records the membership. Idempotent re-invites return the existing membership
+  unchanged — they do <em>not</em> re-role anyone.</p>
   <table class="params"><tr><th>Field</th><th>Type</th><th>Req</th><th>Description</th></tr>
-    <tr><td>email</td><td>string</td><td>yes</td><td>Invitee. Reused if a Keycloak account already has it.</td></tr>
-    <tr><td>firstName / lastName</td><td>string</td><td>no</td><td>On the invite.</td></tr>
+    <tr><td>email</td><td>string</td><td>yes</td><td>Invitee. An existing person who has proven this address is reused, whichever provider they sign in with.</td></tr>
+    <tr><td>givenName / familyName</td><td>string</td><td>no</td><td>On the invite. Both optional — a mononym is an ordinary name.</td></tr>
     <tr><td>roleCode</td><td>string</td><td>yes</td><td>A role that exists in this org (mint it first — unknown ⇒ <code>404</code>).</td></tr></table>
-  <pre><code>POST /api/v1/orgs/{orgId}/members {"email":"jo@acme.test","firstName":"Jo","roleCode":"MEMBER"}</code></pre></div></div>
+  <pre><code>POST /api/v1/orgs/{orgId}/members {"email":"jo@acme.test","givenName":"Jo","roleCode":"MEMBER"}
+# → 201 {"data":{"id":"5862…","type":"member",
+#                "attributes":{"personId":"5862…","roleId":"…","roleCode":"MEMBER","status":"ACTIVE"}}}</code></pre>
+  <p class="mut">A member is addressed by <code>personId</code> — this platform's own identifier for a human, stable
+  across every identity provider they ever sign in with. It used to be their Keycloak subject, which is a value one
+  provider minted and no second one could ever reproduce. That id is the member resource's id, and it is what the two
+  paths below take.</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/roles</span><span class="perm org">role:create</span></div>
   <div class="ep-body"><p>A custom role; <code>permissions</code> are exact names from <a href="#myfiles">the catalog</a>. Reassign a member with
-  <code>PUT …/members/{subject}/role</code>; remove with <code>DELETE …/members/{subject}</code> (last-owner protected ⇒ <code>409</code>).</p>
+  <code>PUT …/members/{personId}/role</code> <code>{"roleCode":"…"}</code>; remove with
+  <code>DELETE …/members/{personId}</code> (last-owner protected ⇒ <code>409</code>). Removing a member unlinks the
+  membership and the provider's org link only — the person's account is never deleted, so they keep their identity and
+  any membership of other orgs.</p>
   <pre><code>POST /api/v1/orgs/{orgId}/roles {"code":"AUDITOR","name":"Auditor","permissions":["org:read","audit:read"]}</code></pre></div></div>
 <div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/groups</span><span class="perm org">member:role:assign</span></div>
   <div class="ep-body"><p>A group confers ITS role to every member on top of their own (permissions UNION); add members
-  (<code>…/{id}/members {"subject":"…"}</code>), remove to drop the conferred permissions. Effect is immediate.</p></div></div>
+  (<code>POST …/{id}/members {"personId":"…"}</code>), remove with <code>DELETE …/{id}/members/{personId}</code> to drop
+  the conferred permissions. Effect is immediate.</p></div></div>
 <div class="card warn"><strong>The escalation guard.</strong> You can only grant permissions you hold. Inviting into a role
 carrying <code>member:remove</code> when you lack it ⇒ <code>403 "You cannot grant permissions you do not hold: member:remove"</code>.
 The same rule guards exchange imports, evaluated against the <em>requester</em> at processing time.</div>
@@ -614,7 +680,7 @@ GET  /api/v1/orgs/{orgId}/exchange/jobs/{jobId}/result   # 302 → the output fi
   lock yourself out of <code>/security-policy</code> itself.</p>
   <pre><code>PUT …/security-policy {"ipAllowlist":"203.0.113.0/24","requireTrustedDevice":true,
                        "sessionMaxAgeSeconds":3600,"requireMfa":true}
-POST …/security-policy/trusted-devices {"subject":"kc-7d2e…","deviceId":"…","trusted":true}   # trust is the org's grant</code></pre>
+POST …/security-policy/trusted-devices {"personId":"5862…","deviceId":"…","trusted":true}   # trust is the org's grant</code></pre>
   <p class="mut"><code>ipAllowlist</code> judges the <b>real client</b>, not the proxy in front: the platform declares its
   proxy depth (<code>TRUSTED_PROXY_HOPS</code> — 0 direct, 1 behind the gateway, 2 behind ingress + gateway) and only the
   proxy-vouched <code>X-Forwarded-For</code> entry is believed; a caller-forged entry buys nothing. Platform-wide IP
@@ -644,14 +710,21 @@ POST …/security-policy/trusted-devices {"subject":"kc-7d2e…","deviceId":"…
   <div class="ep-body"><p>Open + converse on your support tickets (<code>…/{id}/messages</code> — public messages only; internal notes hidden).
   The platform side is C4.</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/orgs/{orgId}/audit</span><span class="perm org">audit:read</span></div>
-  <div class="ep-body"><p>Your tenant's own trail; filter <code>action</code>/<code>from</code>/<code>to</code>. Rows written during an impersonation name the
-  <em>operator</em> as actor with <code>onBehalfOf</code>. Read the maintenance banner at <code>GET …/maintenance?active=true</code>.</p></div></div>
+  <div class="ep-body"><p>Your tenant's own trail; filter <code>action</code>/<code>from</code>/<code>to</code>. Every row carries
+  <code>actorPersonId</code> — the accountable human, and <code>null</code> when there is none (a scheduled job, or a
+  machine key: that is an answer, not a missing value). Rows written during an impersonation put the <em>operator</em>
+  in <code>actorPersonId</code> and the worn person in <code>onBehalfOfPersonId</code>, with
+  <code>impersonationId</code> pointing at the session that carries the stated reason. <code>target</code> stays free
+  text — it is polymorphic, so what it holds (a person id, a role code, a setting key) is read through
+  <code>action</code>. Read the maintenance banner at <code>GET …/maintenance?active=true</code>.</p></div></div>
 
 <h2 id="geo">D8 · Geolocation</h2>
 <div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/geo/stamps</span><span class="perm org">geo:capture</span></div>
   <div class="ep-body"><p>Attach a device location to any record via a polymorphic subject (<code>subjectType</code>+<code>subjectId</code> — a soft
-  reference, no FK). Validated against the record-type's <em>capture policy</em>: coordinate range, minimum accuracy, freshness,
-  and allowed source. Coordinates are plain lat/lng (no PostGIS); who captured it is filled from the token, like the audit log.</p></div></div>
+  reference, no FK). <em>Subject</em> here is the stamped <b>record</b>, not an identity — it holds a person id only on
+  person-shaped rows. Validated against the record-type's <em>capture policy</em>: coordinate range, minimum accuracy,
+  freshness, and allowed source. Coordinates are plain lat/lng (no PostGIS); who captured it is resolved from the caller
+  into <code>capturedByPersonId</code>, like the audit log — <code>null</code> for a machine or unauthenticated capture.</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/orgs/{orgId}/geo/stamps</span><span class="perm org">geo:read</span></div>
   <div class="ep-body"><p>Stamps newest first, filtered by subject (<code>subjectType</code>+<code>subjectId</code>) or a
   <code>bbox=minLat,minLng,maxLat,maxLng</code>. Exact coordinates need <code>geo:read_precise</code>; <code>geo:read</code> alone
@@ -699,9 +772,9 @@ if a product built from it requires one.</p>
   <tr><td>PostgreSQL</td><td>System of record — every module's tenant data, the transactional outbox, full-text search, soft-delete and retention, and the durable-queue tables.</td></tr>
   <tr><td>Valkey</td><td>Shared fast state — the L2 cache with pub/sub invalidation, rate-limit windows, idempotency snapshots (24&nbsp;h), and the durable IP-block and route stores.</td></tr>
   <tr><td>SeaweedFS (S3)</td><td>File and document bytes, and exchange artifacts. Reads hand out short-lived presigned URLs, so bytes never proxy through the application.</td></tr>
-  <tr><td>DuckDB (embedded)</td><td>Analytics marts behind <code>/api/v1/analytics/reports</code> — in-process OLAP, kept off the transactional path.</td></tr>
+  <tr><td>DuckDB (embedded)</td><td>Analytics marts behind <code>/api/v1/analytics/reports</code> — in-process OLAP, kept off the transactional path. Each mart is rebuilt on a TTL (<code>app.analytics.mart-ttl</code>, 15&nbsp;min), so reads are cheap and may lag Postgres by up to that interval.</td></tr>
   <tr><td>Kill Bill → MariaDB</td><td>The billing engine's own store (invoices, subscriptions, payments), reconciled one-way into entitlements.</td></tr>
-  <tr><td>Keycloak → Postgres</td><td>The identity provider's own store (users, organizations, realm roles).</td></tr>
+  <tr><td>Keycloak → Postgres</td><td>One <em>authentication</em> provider's own store (its users, its organizations, realm roles). Not this platform's user directory: <code>person</code> is, in the Postgres above, and <code>external_identity</code> / <code>external_organization</code> are the only two tables permitted to hold an identifier minted over here.</td></tr>
 </table>
 <div class="card tip"><strong>PostgreSQL-first, by design.</strong> The system of record is PostgreSQL, and the schema uses
 Postgres for genuine capability — soft-delete <em>partial indexes</em>, lock-free <code>SKIP&nbsp;LOCKED</code> queue
@@ -751,7 +824,7 @@ tool is never renamed; a breaking change bumps its version instead.</p>
 <table class="params">
   <tr><th>Tool</th><th>Kind</th><th>Permission</th><th>What it does</th></tr>
   <tr><td colspan="4"><b>Foundation</b></td></tr>
-  <tr><td>whoami</td><td>READ</td><td>any authenticated</td><td>Caller identity, org, held permissions.</td></tr>
+  <tr><td>whoami</td><td>READ</td><td>any authenticated</td><td>Caller identity, org, held permissions. <code>personId</code> is <code>null</code> for an API key — a robot is not a person, and the key's <code>keyId</code> lives in a different id space that is never merged with it.</td></tr>
   <tr><td colspan="4"><b>Organization</b></td></tr>
   <tr><td>org_get</td><td>READ</td><td>org:read</td><td>Org profile.</td></tr>
   <tr><td>org_update</td><td>WRITE</td><td>org:update</td><td>Rename the display name.</td></tr>
@@ -775,9 +848,9 @@ tool is never renamed; a breaking change bumps its version instead.</p>
   <tr><td colspan="4"><b>Support</b></td></tr>
   <tr><td>tickets_list</td><td>READ</td><td>ticket:read</td><td>Tickets (priority P1–P4), paged.</td></tr>
   <tr><td>ticket_get</td><td>READ</td><td>ticket:read</td><td>One ticket.</td></tr>
-  <tr><td>ticket_create</td><td>WRITE</td><td>ticket:write</td><td>Open a ticket; opener = the key's subject.</td></tr>
+  <tr><td>ticket_create</td><td>WRITE</td><td>ticket:write</td><td>Open a ticket. The opener recorded is the <b>person</b> behind the call — an API key acts for nobody and is refused, because a ticket exists to be answered.</td></tr>
   <tr><td>ticket_messages</td><td>READ</td><td>ticket:read</td><td>The tenant-visible conversation.</td></tr>
-  <tr><td>ticket_reply</td><td>WRITE</td><td>ticket:write</td><td>A tenant reply.</td></tr>
+  <tr><td>ticket_reply</td><td>WRITE</td><td>ticket:write</td><td>A tenant reply — same person requirement as <code>ticket_create</code>.</td></tr>
   <tr><td colspan="4"><b>Documents</b></td></tr>
   <tr><td>documents_list</td><td>READ</td><td>document:read</td><td>Catalog metadata, paged.</td></tr>
   <tr><td>document_get</td><td>READ</td><td>document:read</td><td>One document's metadata.</td></tr>
@@ -806,6 +879,10 @@ tool is never renamed; a breaking change bumps its version instead.</p>
       return the next cursor: the same keyset model as A3, spelled tool-argument style.</li>
   <li><strong>Write guard</strong> — WRITE/DESTRUCTIVE tools refuse during a <code>RESTRICT</code> maintenance window
       (<code>SERVICE_UNAVAILABLE</code>) and while the subscription is paused (<code>SUBSCRIPTION_PAUSED</code>); READ tools pass.</li>
+  <li><strong>Attribution is a person, or nobody</strong> — the org comes from the key, but a <em>person</em> does not:
+      an API key acts for no human, so <code>whoami</code> reports <code>personId: null</code> and the tools whose table
+      demands an accountable human (the support desk) refuse the key outright rather than invent a synthetic identity.
+      An OAuth-connected agent runs as a real <code>person.id</code> and passes. This is the intended answer, not a gap.</li>
   <li><strong>Org security policy applies</strong> — the org's IP allowlist (D6) judges MCP calls too.</li>
   <li><strong>Secrets shown once</strong> — <code>webhook_create</code> / <code>webhook_rotate_secret</code> return the
       signing secret in that result only, exactly like the REST endpoints.</li>

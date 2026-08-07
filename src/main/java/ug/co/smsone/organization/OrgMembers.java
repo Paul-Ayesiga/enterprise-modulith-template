@@ -19,6 +19,7 @@ public interface OrgMembers {
 
     WindowedResult<MemberView> list(UUID orgId, CursorPageRequest page);
 
+
     /** Provision + link + record, idempotent on re-invite — see {@code MemberService.invite}. */
     MemberView invite(UUID orgId, String email, String givenName, String familyName, String roleCode);
 

@@ -16,6 +16,13 @@ repositories {
     mavenCentral()
 }
 
+// Not a dependency — an agent handed to the test JVM. Declared before `dependencies` because the
+// Kotlin DSL delegate must exist before that block references it.
+val mockitoAgent: Configuration by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+}
+
 dependencies {
     implementation(platform(libs.boot.bom))
     implementation(platform(libs.spring.cloud.bom))
@@ -50,11 +57,41 @@ dependencies {
     testImplementation("io.projectreactor:reactor-test")
     testImplementation("org.springframework.security:spring-security-oauth2-jose") // brings Nimbus JOSE — mint JWTs + JWKS in SecurityTest
     testRuntimeOnly("org.junit.platform:junit-platform-launcher") // Gradle 9 + JUnit 5 needs it explicit
+
+    // Just the jar, no transitives: this is not a dependency, it is an agent handed to the test JVM.
+    mockitoAgent(platform(libs.boot.bom)) // so the version stays the BOM's, not a second one to bump
+    mockitoAgent("org.mockito:mockito-core") { isTransitive = false }
 }
 
+/**
+ * Mockito's inline mock maker rewrites bytecode, which needs a ByteBuddy agent inside the test JVM.
+ * Left to itself it SELF-ATTACHES on first use — which succeeds on a developer laptop and fails inside
+ * the CI agent container, where attaching to your own process is not permitted. It surfaces as
+ * MockitoInitializationException with no failing assertion to point at, so it reads like a broken test
+ * rather than a missing JVM flag; `QuotaFilterChainTest` mocks the concrete ReactiveStringRedisTemplate,
+ * so it is the whole gateway suite's exposure to this.
+ *
+ * Passing the agent at JVM start removes the attach step entirely, rather than trying to re-permit it
+ * (-XX:+EnableDynamicAgentLoading would only paper over it, and self-attachment is deprecated in
+ * Mockito 5.14+ and slated to stop working outright in a future JDK).
+ *
+ * Reproduce the CI restriction locally with `-PblockDynamicAgents` (below): it denies self-attachment
+ * exactly as the container does, so the guard can be re-proved without waiting on a pipeline run.
+ */
 tasks.withType<Test> {
     useJUnitPlatform()
     maxHeapSize = "1g"
+    // A FileCollection, resolved lazily at execution: keeps the configuration cache usable, which a
+    // bare `mockitoAgent.singleFile` at configuration time would not.
+    val agent: FileCollection = mockitoAgent
+    jvmArgumentProviders.add(CommandLineArgumentProvider {
+        listOf("-javaagent:${agent.singleFile.absolutePath}")
+    })
+    // Denies self-attachment the way the CI container does, so the line above can be proved to be
+    // load-bearing without pushing a commit to find out.
+    if (providers.gradleProperty("blockDynamicAgents").isPresent) {
+        jvmArgs("-XX:-EnableDynamicAgentLoading")
+    }
     // Testcontainers 2.x + VM-based Docker (Colima, Docker Desktop): Ryuk must mount the VM-internal
     // socket, not the host-side proxy path. Mirrors the modulith build.
     if (System.getenv("TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE") == null) {

@@ -195,15 +195,41 @@ platform-superadmin  →  platform-admin  →  platform-support
 
 | Tier | Reaches | Examples |
 |---|---|---|
-| `platform-support` | read-only platform views | `/admin/users`, `/audit`, `/scheduler/locks`, `/analytics/reports`, reading any user's file |
-| `platform-admin` | + changes platform behaviour | `PUT /settings/{key}`, `PUT /feature-flags/{key}`, `POST /orgs`, suspend/reactivate, deleting any user's file |
+| `platform-support` | read-only platform views | `/admin/users`, `/audit`, `/scheduler/locks`, `/analytics/reports`, reading any person's file |
+| `platform-admin` | + changes platform behaviour | `PUT /settings/{key}`, `PUT /feature-flags/{key}`, `POST /orgs`, suspend/reactivate, deleting any person's file |
 | `platform-superadmin` | + escalation | impersonating a platform-role holder |
 
 A platform role grants **no** organization permission — the two axes are disjoint by design; reaching
-tenant data as an operator is impersonation's job (audited), not a role's. Because access is **no-JIT**, a
-valid JWT alone is not access: the subject also needs a local `app_user` row. `make run`/`make seed` set
-`IDENTITY_DEV_BOOTSTRAP_ENABLED=true`, which projects that row for the realm account matching
-`app.identity.dev-bootstrap.email` (default `ayesigapo@gmail.com`).
+tenant data as an operator is impersonation's job (audited), not a role's.
+
+### A valid JWT is not access — what the edge does with your token
+
+Authentication is Keycloak's job. Deciding who you *are here* is this platform's, and the two are
+deliberately separate tables away from each other:
+
+1. The resource server validates the token and takes its `iss` and `sub` — Keycloak's name for you.
+2. The edge looks that pair up in **`external_identity`**, which maps `(provider, issuer,
+   external_subject)` to a **`person.id`**. No row, no person. There is **no JIT provisioning**: a
+   validated token proves who an issuer thinks you are, and that has never been permission to create
+   an account here. An administrator admits people, and `403 ACCOUNT_NOT_PROVISIONED` is what an
+   unadmitted one gets on every `/api/**` path except `GET /api/v1/me`, which stays reachable so a
+   freshly invited account can render onboarding.
+3. The token's `organization` claim gets the same treatment through **`external_organization`**,
+   resolving to an **`organization.id`**. That is your *active org*, and org-scoped endpoints compare
+   it to the `{orgId}` in the URL by strict id equality.
+
+From there down, nothing in the platform ever sees a Keycloak identifier: every module speaks
+`person.id` and `organization.id`. That is the whole point of the two link tables — a second identity
+provider (Google, SAML, a passkey) is a new row shape in `external_identity`, not a change to any
+module that happens to need to know who is calling. Keycloak is one authentication adapter, not the
+user directory.
+
+`make run`/`make seed` set `IDENTITY_DEV_BOOTSTRAP_ENABLED=true`, which creates the `person` and its
+Keycloak link for the realm account matching `app.identity.dev-bootstrap.email` (default
+`ayesigapo@gmail.com`) — so paul can call `/api/v1/admin/**` out of the box without owning an
+organization. It resolves an *existing* Keycloak account and never creates one, so enabling it
+somewhere it does not belong cannot mint a superadmin. The person starts `INVITED`; the gate flips it
+`ACTIVE` on the first API call, exactly like an admin-provisioned human.
 
 ## API endpoints
 
@@ -219,20 +245,20 @@ valid JWT alone is not access: the subject also needs a local `app_user` row. `m
 | `DELETE` | `/api/v1/translations/{locale}/{key}` | **platform-admin** | Resolution falls back down the chain afterwards |
 | `GET` | `/api/v1/notifications` | USER | Current user's in-app notifications (cursor-paginated) |
 | `POST` | `/api/v1/notifications/{id}/read` | USER | Mark an in-app notification read |
-| `GET` | `/api/v1/me` | USER | Self + roles + active org + provisioning status (allowed while `INVITED`) |
-| `GET` | `/api/v1/admin/users` | **platform-support** | Platform user list (cursor-paginated) |
-| `POST` | `/api/v1/admin/impersonations` | **platform-support** | Open a session. Body `{"targetSubject","orgId?","reason","mode?","ttl?"}`. `mode=WRITE` needs **platform-admin** |
-| `GET` | `/api/v1/admin/impersonations` | **platform-support** | Your own sessions, live + history. `?actor=<sub>` for someone else's needs **platform-admin** |
+| `GET` | `/api/v1/me` | USER | Your `personId`, e-mail, roles, active org + provisioning status (allowed while `INVITED`; `personId` is null exactly while unprovisioned) |
+| `GET` | `/api/v1/admin/users` | **platform-support** | People known to the platform, cursor-paginated; the resource id is `person.id` |
+| `POST` | `/api/v1/admin/impersonations` | **platform-support** | Open a session. Body `{"targetPersonId","orgId?","reason","mode?","ttl?"}`. `mode=WRITE` needs **platform-admin** |
+| `GET` | `/api/v1/admin/impersonations` | **platform-support** | Your own sessions, live + history. `?actor=<personId>` for someone else's needs **platform-admin** |
 | `DELETE` | `/api/v1/admin/impersonations/{id}` | opener, or **platform-admin** | End a session now — the next request carrying its id is refused |
 | `GET` | `/api/v1/permissions` | USER | The fixed permission catalog |
-| `POST` | `/api/v1/orgs` | **platform-admin** | Create org + first owner. Body `{"alias","name","ownerEmail","ownerFirstName?","ownerLastName?"}` |
+| `POST` | `/api/v1/orgs` | **platform-admin** | Create org + first owner. Body `{"alias","name","ownerEmail","ownerGivenName?","ownerFamilyName?"}` |
 | `GET`/`PATCH` | `/api/v1/orgs/{orgId}` | `org:read` / `org:update` | Read / rename an org |
 | `POST` | `/api/v1/orgs/{orgId}/suspend` · `/reactivate` | **platform-admin** | Suspend a tenant (zero permissions resolve while suspended) / lift it |
-| `GET`/`POST` | `/api/v1/orgs/{orgId}/members` | `member:read` / `member:invite` | List / invite (provisions identity + temp creds) |
-| `PUT` | `/api/v1/orgs/{orgId}/members/{subject}/role` | `member:role:assign` | Reassign role (last-owner protected) |
-| `DELETE` | `/api/v1/orgs/{orgId}/members/{subject}` | `member:remove` | Remove member (keeps the Keycloak user) |
+| `GET`/`POST` | `/api/v1/orgs/{orgId}/members` | `member:read` / `member:invite` | List / invite (creates the person, e-mails temp creds, attaches them at the identity provider, records the membership) |
+| `PUT` | `/api/v1/orgs/{orgId}/members/{personId}/role` | `member:role:assign` | Reassign role (last-owner protected) |
+| `DELETE` | `/api/v1/orgs/{orgId}/members/{personId}` | `member:remove` | Remove member (keeps the person and their account) |
 | `GET`/`POST`/`PUT`/`DELETE` | `/api/v1/orgs/{orgId}/roles[/{roleId}]` | `role:*` | Custom-role CRUD (system roles immutable) |
-| `POST` | `/api/v1/files` | USER | Multipart upload (`file`); key namespaced under `u/<sub>/…` |
+| `POST` | `/api/v1/files` | USER | Multipart upload (`file`); key namespaced under `u/<person-id>/…` (an API key has no person, so it is refused the personal namespace) |
 | `GET`/`DELETE` | `/api/v1/files/{key}` | USER (owner) / **platform-support**·**admin** | 302 → presigned download / delete an object |
 | `POST` | `/api/v1/files/presign` | USER (owner) or **platform-support** | Presigned `PUT`/`GET` URL |
 | `GET`/`POST` | `/api/v1/orgs/{orgId}/documents` | `document:read` / `document:manage` | Org document catalog |
@@ -240,7 +266,7 @@ valid JWT alone is not access: the subject also needs a local `app_user` row. `m
 | `GET` | `/api/v1/orgs/{orgId}/search` · `/api/v1/admin/search` | `org:read` / **platform-support** | Ranked FTS (org-scoped / platform-wide) |
 | `GET` | `/api/v1/audit` · `/api/v1/orgs/{orgId}/audit` | **platform-support** / `audit:read` | Audit trail (all orgs / that org); filter `action`/`from`/`to` |
 | `GET`/`POST`/`PUT`/`DELETE` | `/api/v1/orgs/{orgId}/webhooks[/{id}]` | `webhook:manage` | Outbound webhook subscriptions (secret shown once); `/{id}/deliveries` = delivery log; `POST …/deliveries/{deliveryId}/redeliver` re-queues a FAILED one (202) |
-| `POST`/`GET` | `/api/v1/orgs/{orgId}/geo/stamps` | `geo:capture` / `geo:read` | Attach a location; query by subject or `bbox` (exact coords need `geo:read_precise`) |
+| `POST`/`GET` | `/api/v1/orgs/{orgId}/geo/stamps` | `geo:capture` / `geo:read` | Attach a location; query by the stamped record (`subjectType`+`subjectId`) or `bbox` (exact coords need `geo:read_precise`) |
 | `GET`/`PUT` | `/api/v1/orgs/{orgId}/geo/policies/{subjectType}` | `geo:policy:manage` | Per-record-type capture policy (OFF/OPTIONAL/REQUIRED) |
 | `GET` | `/api/v1/scheduler/locks` | **platform-support** | ShedLock rows (clustered-job observability) |
 | `GET` | `/api/v1/analytics/reports[/{code}]` | **platform-support** | Report catalog / run a report (Postgres → DuckDB → aggregate) |
@@ -248,7 +274,10 @@ valid JWT alone is not access: the subject also needs a local `app_user` row. `m
 ### Organizations & org-scoped RBAC (no-JIT)
 
 Org endpoints need the token's **active org** to match `{orgId}` — `scripts/token.sh` (and
-`scripts/k3s-token.sh`) request the `organization` scope so paul's token carries it. Seed a demo org `acme`
+`scripts/k3s-token.sh`) request the `organization` scope so paul's token carries the claim. `{orgId}` is
+`organization.id`, this platform's own tenant key: the claim's Keycloak org id and alias are resolved
+through `external_organization` at the edge and never travel further. A token scoped to anything other
+than exactly one org has no active org, and every org-scoped check then denies. Seed a demo org `acme`
 with paul as OWNER via `make seed` (Compose) or `POST /orgs`.
 
 ```bash
@@ -259,8 +288,12 @@ scripts/api.sh GET  "/api/v1/orgs/$ORG/members"            # owner: 200; unscope
 # an unknown roleCode is a 404, not a silent default.
 scripts/api.sh POST "/api/v1/orgs/$ORG/roles" \
   -d '{"code":"AUDITOR","name":"Auditor","permissions":["org:read","member:read"]}'
+# givenName/familyName, not first/last: name ORDER is cultural, so "first" names a position in one
+# rendering rather than the part itself. Both are optional — a mononym is an ordinary name.
 scripts/api.sh POST "/api/v1/orgs/$ORG/members" \
-  -d '{"email":"newbie@smsone.co.ug","firstName":"New","roleCode":"AUDITOR"}'   # invites + emails creds
+  -d '{"email":"newbie@smsone.co.ug","givenName":"New","roleCode":"AUDITOR"}'   # invites + emails creds
+# Both the invite response and the listing carry data.attributes.personId — the identifier the
+# re-role, remove and impersonation endpoints all take. There is no subject on the wire anywhere.
 ```
 
 ### Impersonation
@@ -271,8 +304,11 @@ operator, one extra header.
 
 ```bash
 # 1. Open a session against a member of that org. reason is required and must be >= 8 characters.
+#    targetPersonId is a person.id — the one GET /admin/users and the member listing both return.
+#    An operator picks a human out of a list this platform showed them; they never handle a
+#    Keycloak subject, and nothing in the API would accept one.
 SESSION=$(scripts/api.sh POST /api/v1/admin/impersonations \
-  -d '{"targetSubject":"<their-keycloak-sub>","orgId":"'"$ORG"'","reason":"ticket 4711 refund missing"}' \
+  -d '{"targetPersonId":"<their-person-id>","orgId":"'"$ORG"'","reason":"ticket 4711 refund missing"}' \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])')
 
 # 2. Same call, twice. Without the header you are the operator; with it you are the member.
@@ -291,7 +327,7 @@ scripts/api.sh DELETE "/api/v1/admin/impersonations/$SESSION"                 # 
 | The session expires on its own | default 15 min, hard cap 30. `"ttl":"PT5M"` asks for less; asking for more is a 422 |
 | The tier does not travel into the session | `/api/v1/admin/**` 403s while impersonating — including the endpoint that opens sessions |
 | The id is not a bearer token | it only works for the operator it was issued to |
-| Everything is attributed to **you** | `audit_log.actor` is your subject, `on_behalf_of` is theirs, `impersonation_id` links the reason |
+| Everything is attributed to **you** | `audit_log.actor_person_id` is your person id, `on_behalf_of_person_id` is theirs, `impersonation_id` links the reason |
 | Turn it off entirely | `IMPERSONATION_ENABLED=false` — the routes and the header both **403**, naming the switch |
 
 ### Response envelope (every response)
@@ -329,6 +365,18 @@ localhost-only, which is the posture the integration test pins.
 For headless agents, auth is an **org API key** — mint one with
 `POST /api/v1/orgs/{orgId}/api-keys` (permissions capped to what you hold), then either header works:
 `X-Api-Key: sk_…` or `Authorization: Bearer sk_…`.
+
+A key is **not a person** and does not need one: the no-JIT gate above asks whether an administrator
+has admitted this *human*, and minting the key was that act. So a key skips that gate entirely — its
+reach is bounded by its own permission subset instead — and it costs the edge no lookups at all,
+because the key row already names its tenant and carries its authority.
+
+The consequence worth knowing before you debug it: `sk_` callers have **no person id**, so anything
+that must name a human refuses them rather than inventing one. Opening or replying to a support ticket
+is a 403 naming the reason (`opener_person_id` is NOT NULL — a ticket exists to be answered, and an
+agent acting for nobody leaves the desk nobody to answer), and the personal file namespace `u/<person-id>/`
+has no address for a key. Use the OAuth connector route above when the agent should act as *you*: that
+one logs in as a person and carries your memberships.
 
 - **Claude Code**: the repo ships `.mcp.json` — `export SMSONE_API_KEY=sk_…` and the `smsone-local`
   server appears with the tools your key allows (`tools/list` is permission-filtered).

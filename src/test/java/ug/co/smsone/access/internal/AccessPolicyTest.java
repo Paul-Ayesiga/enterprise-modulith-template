@@ -146,6 +146,104 @@ class AccessPolicyTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.data.attributes.requireMfa").value(true));
     }
 
+    /**
+     * An organization may only bless the devices of its OWN members.
+     *
+     * <p>{@code setDeviceTrust} takes the {@code orgId} from the path — which the permission check
+     * gates — and the {@code personId} from the request BODY, which nothing checked against it:
+     * {@code ApiPermissionEvaluator} only ever compares {@code #orgId} and never sees the person you
+     * named. So an {@code org:update} holder anywhere could flip trust on any person's device.
+     *
+     * <p>The refusal is a 404 and not a 403 on purpose: an org with no business touching this person
+     * must not be able to tell a non-member from a person who does not exist.
+     */
+    @Test
+    void anOrgCannotBlessADeviceBelongingToSomeoneElsesMember() throws Exception {
+        UUID attackerOrg = seedOrg();
+        Member attacker = seedMember(attackerOrg, "attacker", "ORG_READ", "ORG_UPDATE");
+
+        UUID victimOrg = seedOrg();
+        Member victim = seedMember(victimOrg, "victim", "ORG_READ");
+        UUID victimDevice = registerDevice(victim, "victim-fp");
+
+        mockMvc.perform(post("/api/v1/orgs/{orgId}/security-policy/trusted-devices", attackerOrg)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"personId\":\"" + victim.personId() + "\",\"deviceId\":\""
+                                + victimDevice + "\",\"trusted\":true}")
+                        .with(attacker.token()))
+                .andExpect(status().isNotFound());
+
+        assertThat(jdbc.queryForObject("select count(*) from user_device_trust where device_id = ?",
+                Integer.class, victimDevice))
+                .as("no grant may be written for a person who is not the acting org's member")
+                .isZero();
+    }
+
+    /**
+     * Trust granted by one organization must not satisfy another's {@code require_trusted_device}.
+     *
+     * <p>V31 recorded this as a known modelling bug and deferred it: {@code user_device.trusted} was a
+     * single global boolean while the policy that reads it is per-org. Combined with open self-signup —
+     * where a new org's creator is OWNER with every permission — the bypass needed no guessed
+     * identifiers at all: make your own org, bless your own device with your own ids, and walk through
+     * a different tenant's device policy. V51 moves the grant onto {@code (device, org)}.
+     */
+    @Test
+    void aDeviceTrustedInOneOrgDoesNotSatisfyAnothersPolicy() throws Exception {
+        // One person, two orgs — the only shape in which the old global flag could leak.
+        UUID orgA = seedOrg();
+        Member inA = seedMember(orgA, "dual", "ORG_READ", "ORG_UPDATE");
+        UUID orgB = seedOrg();
+        UUID roleB = UUID.randomUUID();
+        jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
+                + "values (?, ?, 'POLB', 'PolRole', false, 0, now())", roleB, orgB);
+        for (String permission : new String[] {"ORG_READ", "ORG_UPDATE", "SUBSCRIPTION_READ"}) {
+            jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleB, permission);
+        }
+        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
+                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgB, inA.personId(), roleB);
+
+        UUID device = registerDevice(inA, "dual-fp");
+
+        // Org A blesses it — legitimately, for org A.
+        mockMvc.perform(post("/api/v1/orgs/{orgId}/security-policy/trusted-devices", orgA)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"personId\":\"" + inA.personId() + "\",\"deviceId\":\"" + device
+                                + "\",\"trusted\":true}")
+                        .with(inA.token()))
+                .andExpect(status().isOk());
+
+        // Org B requires trusted devices and never blessed anything.
+        setPolicy(orgB, new Member(inA.personId(), inA.subject(), member(orgB, inA.subject())),
+                "{\"requireTrustedDevice\":true}");
+
+        // Asserted on a NORMAL endpoint: /security-policy is deliberately exempt from the device rule
+        // (the same exemption the MFA test relies on) so an org cannot lock itself out of its own policy.
+        mockMvc.perform(get("/api/v1/orgs/{orgId}/subscription", orgB)
+                        .header("X-Device-Id", "dual-fp").with(member(orgB, inA.subject())))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errors[0].detail",
+                        org.hamcrest.Matchers.containsString("trusted-device")));
+
+        assertThat(jdbc.queryForObject(
+                "select count(*) from user_device_trust where device_id = ? and org_id = ?",
+                Integer.class, device, orgA))
+                .as("org A's own grant is untouched — this is isolation, not revocation")
+                .isEqualTo(1);
+    }
+
+    /** Registers a device for this member and returns its id. */
+    private UUID registerDevice(Member member, String fingerprint) throws Exception {
+        MvcResult result = mockMvc.perform(post("/api/v1/me/devices").with(member.token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Phone\",\"kind\":\"MOBILE\",\"fingerprint\":\""
+                                + fingerprint + "\"}"))
+                .andExpect(status().isCreated())
+                .andReturn();
+        return UUID.fromString(com.jayway.jsonpath.JsonPath.read(
+                result.getResponse().getContentAsString(), "$.data.id"));
+    }
+
     private void setPolicy(UUID orgId, Member member, String body) throws Exception {
         mockMvc.perform(put("/api/v1/orgs/{orgId}/security-policy", orgId)
                         .contentType(MediaType.APPLICATION_JSON).content(body)

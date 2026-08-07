@@ -31,6 +31,9 @@ class McpAccountToolsIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private JdbcTemplate jdbc;
 
+    // Name kept deliberately: docs/SRS.md FR-MCP-6 traces to this method by name. The name is not the
+    // claim anyway — the assertions are, and they now hold the trail to naming WHICH credential renamed
+    // the organization, not merely that the row exists.
     @Test
     void orgGetReadsAndOrgUpdateRenamesWithAnAuditTrail() {
         UUID orgId = UUID.randomUUID();
@@ -46,16 +49,23 @@ class McpAccountToolsIntegrationTest extends AbstractIntegrationTest {
             Map<String, Object> renamed = structured(client, "org_update", Map.of("name", "Acme Group"));
             assertThat(renamed).containsEntry("name", "Acme Group");
 
-            // The dispatcher audits every mutation. Attribution is a person.id now (V13's
-            // actor_person_id), and a machine key is answerable to NOBODY — so the row exists and
-            // its actor is NULL. Asserting the null is the point: a fabricated uuid here would be a
-            // synthetic human in the one table whose job is to say who acted.
-            Integer audited = jdbc.queryForObject("""
-                    select count(*) from audit_log
+            // The dispatcher audits every mutation, and the row has to survive BOTH halves of the
+            // question a tenant asks it. queryForMap throws unless exactly one row matched, so the
+            // lookup itself is the "audited exactly once" claim; the two assertions are the rest.
+            Map<String, Object> audited = jdbc.queryForMap("""
+                    select actor_person_id, to_state from audit_log
                     where action = 'mcp.tool_invoked' and org_id = ? and target = 'org_update'
-                      and actor_person_id is null
-                    """, Integer.class, orgId);
-            assertThat(audited).isEqualTo(1);
+                    """, orgId);
+            // Attribution is a person.id now (V13's actor_person_id) and a machine key is answerable
+            // to NOBODY, so it is NULL: a fabricated uuid here would be a synthetic human in the one
+            // table whose job is to say who acted.
+            assertThat(audited.get("actor_person_id")).isNull();
+            // But NULL alone is not a trail — it says something renamed the org, not which credential
+            // did, and every key in the tenant reads identically. The dispatcher takes the second,
+            // person-less branch (recordExternal) so the key that acted is named in text beside the
+            // outcome. Asserting the exact string, not a `contains`: this is the whole attribution.
+            assertThat(String.valueOf(audited.get("to_state")))
+                    .isEqualTo("edgePrincipal=key:" + key.keyId());
         }
     }
 

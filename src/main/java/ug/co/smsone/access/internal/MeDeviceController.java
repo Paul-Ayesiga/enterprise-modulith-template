@@ -40,14 +40,22 @@ class MeDeviceController {
             description = "Idempotent per `fingerprint` — the same device re-registers rather than duplicating.")
     @ResponseStatus(HttpStatus.CREATED)
     ResourceObject register(@RequestBody RegisterRequest request, CurrentUser user) {
+        // A freshly registered device is trusted by nobody: trust is a grant an ORG makes (V51), and
+        // registering is the person asserting the device exists, not the org vouching for it.
         return DeviceResources.toResource(devices.register(requirePerson(user), request.name(),
-                request.kind(), request.fingerprint(), request.pushToken()));
+                request.kind(), request.fingerprint(), request.pushToken()), false);
     }
 
     @GetMapping
-    @Operation(summary = "List your devices")
+    @Operation(summary = "List your devices",
+            description = "`trusted` is answered for the organization your token is scoped to — the "
+                    + "same device can be trusted in one of your organizations and not another.")
     WindowedResult<ResourceObject> list(CurrentUser user, CursorPageRequest page) {
-        return WindowedResult.of(devices.list(requirePerson(user), page), page, DeviceResources::toResource);
+        var window = devices.list(requirePerson(user), page);
+        var trusted = devices.trustedAmong(user.organizationId(),
+                window.getContent().stream().map(UserDevice::getId).toList());
+        return WindowedResult.of(window, page,
+                device -> DeviceResources.toResource(device, trusted.contains(device.getId())));
     }
 
     @DeleteMapping("/{id}")

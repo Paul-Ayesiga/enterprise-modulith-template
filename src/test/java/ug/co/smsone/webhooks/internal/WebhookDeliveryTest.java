@@ -213,6 +213,116 @@ class WebhookDeliveryTest extends AbstractIntegrationTest {
         }
     }
 
+    /**
+     * A paused subscription must not be able to starve everyone else's deliveries.
+     *
+     * <p>The claim used to apply the subscription-liveness filter in its OUTER join, after an inner
+     * {@code order by next_attempt_at limit <batchSize>} that knew nothing about it. So a paused
+     * subscription holding the oldest {@code batchSize} rows filled every claim slot with rows the outer
+     * filter then discarded: every poll claimed zero, and — because the stuck rows are never claimed,
+     * never rescheduled and never dead-lettered — webhook delivery stopped for the ENTIRE PLATFORM,
+     * permanently, not just for that tenant.
+     *
+     * <p>{@code disablingASubscriptionPausesQueuedDeliveriesUntilReenabled} above asserts the pause
+     * itself and passed throughout, because it queues ONE delivery and one row can never fill the LIMIT
+     * window. That is precisely why this shipped, so this test's whole point is the VOLUME: it queues
+     * more than {@code batchSize} paused rows and then asserts a healthy tenant behind them still gets
+     * delivered.
+     */
+    @Test
+    void aPausedSubscriptionCannotStarveEveryOtherTenantsDeliveries() throws Exception {
+        int batchSize = 50; // app.webhooks.batch-size default; the window that used to be filled
+        AtomicInteger healthyHits = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/healthy", exchange -> {
+            healthyHits.incrementAndGet();
+            exchange.sendResponseHeaders(200, -1);
+            exchange.close();
+        });
+        server.start();
+        try {
+            UUID pausedOrg = UUID.randomUUID();
+            WebhookSubscription paused = subscriptions.create(pausedOrg,
+                    "http://127.0.0.1:" + server.getAddress().getPort() + "/never",
+                    Set.of("org.member.added")).subscription();
+            for (int i = 0; i < batchSize + 10; i++) {
+                dispatcher.dispatch("starve-" + UUID.randomUUID(), pausedOrg, "org.member.added",
+                        WebhookPayload.of("org.member.added", pausedOrg, Instant.now()));
+            }
+            jdbc.update("update webhook_subscription set status = 'DISABLED' where id = ?", paused.getId());
+            // Age them so they sort to the head of the queue — the position that did the damage.
+            jdbc.update("update webhook_delivery set next_attempt_at = now() - interval '1 day' "
+                    + "where subscription_id = ?", paused.getId());
+
+            UUID healthyOrg = UUID.randomUUID();
+            WebhookSubscription healthy = subscriptions.create(healthyOrg,
+                    "http://127.0.0.1:" + server.getAddress().getPort() + "/healthy",
+                    Set.of("org.member.added")).subscription();
+            dispatcher.dispatch("healthy-" + UUID.randomUUID(), healthyOrg, "org.member.added",
+                    WebhookPayload.of("org.member.added", healthyOrg, Instant.now()));
+
+            worker.drainOnce();
+
+            assertThat(healthyHits.get())
+                    .as("a paused tenant's backlog must not block a healthy tenant's delivery")
+                    .isEqualTo(1);
+            assertThat(deliveryStatus(healthy.getId())).isEqualTo("DELIVERED");
+            assertThat(jdbc.queryForObject(
+                    "select count(*) from webhook_delivery where subscription_id = ? and status <> 'PENDING'",
+                    Integer.class, paused.getId()))
+                    .as("the paused subscription's rows stay PENDING — paused, not consumed")
+                    .isZero();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    /**
+     * The other half of the same claim, and the failure mode a naive fix introduces: splitting the claim
+     * into "PENDING first, stale only if that came up short" means a permanent PENDING backlog stops
+     * crashed PROCESSING rows ever being reclaimed — trading a performance bug for a lost delivery. The
+     * two arms each carry their own LIMIT so neither can crowd the other out.
+     */
+    @Test
+    void aStaleInFlightDeliveryIsReclaimedEvenBehindADeepPendingBacklog() throws Exception {
+        AtomicInteger hits = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/stale", exchange -> {
+            hits.incrementAndGet();
+            exchange.sendResponseHeaders(200, -1);
+            exchange.close();
+        });
+        server.start();
+        try {
+            UUID orgId = UUID.randomUUID();
+            WebhookSubscription subscription = subscriptions.create(orgId,
+                    "http://127.0.0.1:" + server.getAddress().getPort() + "/stale",
+                    Set.of("org.member.added")).subscription();
+
+            // One delivery that a crashed instance left holding the lock.
+            dispatcher.dispatch("stale-" + UUID.randomUUID(), orgId, "org.member.added",
+                    WebhookPayload.of("org.member.added", orgId, Instant.now()));
+            jdbc.update("update webhook_delivery set status = 'PROCESSING', "
+                    + "locked_at = now() - interval '1 hour' where subscription_id = ?", subscription.getId());
+
+            // A deep PENDING backlog in front of it, all newer.
+            for (int i = 0; i < 60; i++) {
+                dispatcher.dispatch("backlog-" + UUID.randomUUID(), orgId, "org.member.added",
+                        WebhookPayload.of("org.member.added", orgId, Instant.now()));
+            }
+
+            worker.drainOnce();
+
+            assertThat(jdbc.queryForObject(
+                    "select count(*) from webhook_delivery where subscription_id = ? and status = 'PROCESSING' "
+                            + "and locked_at < now() - interval '30 minutes'", Integer.class, subscription.getId()))
+                    .as("the stale in-flight row must be reclaimed, not stranded behind the backlog")
+                    .isZero();
+        } finally {
+            server.stop(0);
+        }
+    }
+
     private String deliveryStatus(UUID subscriptionId) {
         return jdbc.queryForObject(
                 "select status from webhook_delivery where subscription_id = ? order by created_at desc limit 1",

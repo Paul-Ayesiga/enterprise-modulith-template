@@ -1,6 +1,7 @@
 # Software Requirements Specification — `enterprise-modulith-template`
 
-**Status:** current as of the working tree (2026-07-31). **Authority:** the code. Where an older
+**Status:** current as of the working tree (2026-08-07, after the identity decoupling). **Authority:**
+the code. Where an older
 document in `docs/` disagrees with a statement here, the file cited here is the one that was read.
 Every requirement names the file that implements it and the test that verifies it; where no
 automated verification exists, the requirement says so explicitly.
@@ -34,8 +35,8 @@ is verified, so that:
 
 | Capability | Module package |
 |---|---|
-| Admin-provisioned identity over Keycloak (no just-in-time access) | `ug.co.smsone.identity` |
-| Multi-tenant organizations projected from Keycloak Organizations, with permission-based org RBAC | `ug.co.smsone.organization` |
+| Admin-provisioned identity — `person` as the canonical human, external providers linked (no just-in-time access) | `ug.co.smsone.identity` |
+| Multi-tenant organizations keyed on `organization.id`, with permission-based org RBAC | `ug.co.smsone.organization` |
 | Hierarchical platform administration roles | `ug.co.smsone.shared.security` |
 | Platform settings and feature flags | `ug.co.smsone.settings` |
 | Object storage with presigned access and namespace isolation | `ug.co.smsone.files` |
@@ -52,9 +53,9 @@ is verified, so that:
   (FR-IMP-1..25). Listed here only because earlier revisions of this document called it planned.
 - **Any user-facing delete of a setting or a feature flag** — the service methods exist
   (`SettingService.delete`, `FeatureFlagService.delete`), no HTTP route does. See §3.5 and §9.2.
-- **Any delete of an organization or a user account at all** — neither a service method nor a route
+- **Any delete of an organization or a person account at all** — neither a service method nor a route
   exists. `OrganizationService` has no `delete`, and no `.delete(`/`.deleteById(` call is made on
-  `UserRepository` or `OrganizationRepository` anywhere in `src/main`. See §3.13 and §6.5.
+  `PersonRepository` or `OrganizationRepository` anywhere in `src/main`. See §3.13 and §6.5.
 - **CORS** — no `CorsConfigurationSource`, no `.cors(...)` in the filter chain, no `@CrossOrigin`
   anywhere in `src/main`. A browser SPA on a different origin must add it.
 - **Kubernetes manifests and a container image** — there is no `Dockerfile` and no `deploy/`
@@ -80,20 +81,22 @@ Terms are defined as the code uses them, not generically.
 
 | Term | Definition in this system |
 |---|---|
-| **Tenant** | An organization. There is no other tenancy axis. The tenant key on the wire and in every table is the **Keycloak organization id** (`kc_org_id`), never the local surrogate primary key. |
-| **Org** | The local projection of a Keycloak 26 Organization: `organization` table, `Organization` entity. Carries `kc_org_id`, `alias`, `name`, `status` (`ACTIVE` \| `SUSPENDED`). |
-| **Subject** | The Keycloak user id — the JWT `sub` claim. The system's only durable identity. It is what `created_by`/`updated_by`, `audit_log.actor`, `membership.user_subject`, `in_app_notification.recipient`, idempotency principals and rate-limit buckets all key on. It is **never** `preferred_username`, which Keycloak allows to be renamed and, once freed, reassigned. |
-| **Username** | `preferred_username`, exposed as `CurrentUser.username()` and used as the Spring principal name. Display only. Nothing durable may key on it (`AGENTS.md` §1). |
+| **Person** | The canonical identity of a human on this platform: the `person` table, the `Person` entity, addressed by `person.id`. It is what `created_by`/`updated_by`, `audit_log.actor_person_id`, `membership.person_id`, `in_app_notification.person_id`, `document.owner_person_id`, `exchange_job.requester_person_id`, idempotency principals, rate-limit buckets and file namespaces all key on. A person exists before any provider account is linked to them, and survives every one being unlinked. |
+| **Tenant** | An organization. There is no other tenancy axis. The tenant key on the wire and in every table is **`organization.id`**, this platform's own surrogate primary key. There is no second identifier: `kc_org_id` no longer exists, and the provider's id lives in `external_organization` where only the edge reads it. |
+| **Org** | A tenant in its own right, not a projection of one: `organization` table, `Organization` entity. Carries `id` (the tenant key), `alias`, `name`, `status` (`ACTIVE` \| `SUSPENDED`). Identifiers other systems know it by are rows in `external_organization`. |
+| **External identity** | One login a person holds at one provider: `external_identity`, unique among live rows on (`provider`, `issuer`, `external_subject`) → `person.id`. Keycloak is **one row shape in this table, not its reason to exist** — `provider` also admits `GOOGLE`, `MICROSOFT`, `APPLE`, `PASSKEY`, `SAML`, `LDAP`, `INTERNAL`. `external_organization` is the org-side twin. |
+| **Subject** | A provider's identifier for a human — the JWT `sub` claim — meaningful only together with the `iss` that minted it. It is **not** an identity in this system: it is translated to a `person.id` at the edge (§3.1) and never travels further. Nothing durable stores one except `external_identity.external_subject`. It is likewise never `preferred_username`, which Keycloak allows to be renamed and, once freed, reassigned. |
+| **Username** | `preferred_username`, used as the Spring principal name. Display only. Nothing durable may key on it (`AGENTS.md` §1). |
 | **Platform role** | One of three hierarchical Keycloak **realm** roles — `platform-superadmin` > `platform-admin` > `platform-support` — declared as constants in `shared/security/PlatformRole.java`. Grants platform-wide authority. Grants **zero** organization permissions. |
 | **Permission** | One of 29 fixed codes in the `organization.Permission` enum (`org:read` … `search:query`), including the per-area codes `ticket:read`/`ticket:write`, `exchange:read`/`exchange:submit`, `search:query`, `subscription:read` and `usage:read` (added with `V48`, which backfills them onto every role holding `ORG_READ`). The organization authorization vocabulary. Roles are DB-editable bundles of permissions; every org-scoped authorization decision is made on a permission, never on a role code. |
 | **Org role** | A named, DB-editable bundle of permissions inside one organization (`org_role` + `role_permission`). Exactly one role is seeded — `OWNER`, holding `EnumSet.allOf(Permission.class)`. All others are created by an owner. |
-| **Provisioning** | The admin-driven creation of access: a Keycloak account (created if absent), a baseline realm role, temporary credentials delivered by Keycloak action-email, and a local `app_user` row in status `INVITED`. There is **no** just-in-time provisioning — a valid JWT is not access. |
+| **Provisioning** | The admin-driven creation of access, in this order: a `person` row in status `INVITED`, the e-mail we reach them at in `person_contact`, then the provider account that will authenticate them (created in Keycloak if absent, granted a baseline realm role, invited by action-email) recorded as an `external_identity` link. **The person is created first** — provisioning used to call Keycloak first and adopt whatever id came back as the identity of the human, which made a second identity provider a migration rather than an insert. There is **no** just-in-time provisioning: a valid JWT is not access. |
 | **Envelope** | The single JSON response shape: `{data, errors, meta, links}` with `data` XOR `errors`, `meta.requestId` always present. Applied by `shared/web/EnvelopeResponseBodyAdvice.java`; never hand-built in a controller. |
 | **Cursor** | An opaque, base64url-encoded keyset position (`shared/web/Cursors.java`) encoding the sort keys of the last row of a page. Wire parameters are **`page[size]`** and **`page[after]`**. There are no offsets, no totals and no `COUNT` (ADR 0002). |
-| **Idempotency key** | A client-supplied `Idempotency-Key` header on `POST`/`PUT`/`PATCH` under `/api/`. Claimed before the handler runs, scoped to `(principal, key)` where principal is the **subject**, and replayed verbatim on a duplicate (ADR 0005). |
+| **Idempotency key** | A client-supplied `Idempotency-Key` header on `POST`/`PUT`/`PATCH` under `/api/`. Claimed before the handler runs, scoped to `(principal, key)` and replayed verbatim on a duplicate (ADR 0005). The principal is a namespaced bucket key, `person:<uuid>` for a human and `key:<uuid>` for a machine credential — namespaced because the two id spaces are unrelated and, without the prefix, a person and an API key could collide in one namespace. It is a KEY, not an identity: it namespaces buckets and idempotency claims (`idempotency_key.principal`) and must never be recorded as attribution, compared to a `person.id`, or put on the wire. |
 | **Outbox** | The Spring Modulith JDBC event-publication registry (`event_publication`, `V2`). One row per *(event, registered listener)*; incomplete rows are republished on restart, giving at-least-once delivery. |
 | **Inbox** | `event_inbox` (`V7`) + `shared/events/EventInbox.java`. A consumer-side dedupe table: `recordIfNew(listenerId, messageId)` is an `insert … on conflict do nothing` that returns whether this listener has seen this message. Turns at-least-once into effectively-once for the consumers that use it. |
-| **Soft delete** | Deletion recorded, not executed. Seven aggregate tables carry `deleted_at` (`V17`); each entity declares `@SQLDelete` + `@SQLRestriction("deleted_at is null")`; every unique constraint on those tables became a **partial** unique index over live rows. A deleted row is invisible to every JPA read path and reachable only through `shared/persistence/SoftDeleteRecovery.java`. |
+| **Soft delete** | Deletion recorded, not executed. Twenty-four tables carry `deleted_at` — `V17` retrofitted the first batch, and every soft-deletable table authored since declares it at creation; each entity declares `@SQLDelete` + `@SQLRestriction("deleted_at is null")`; every unique constraint on those tables is a **partial** unique index over live rows. A deleted row is invisible to every JPA read path and reachable only through `shared/persistence/SoftDeleteRecovery.java`. |
 | **Purge** | The irreversible hard delete of soft-deleted rows past `app.persistence.soft-delete.retention` (default `P30D`), performed nightly by `scheduler/internal/SoftDeletePurgeJob.java`. |
 
 ### 1.5 References
@@ -114,7 +117,7 @@ Terms are defined as the code uses them, not generically.
 | Document | Relationship to this SRS |
 |---|---|
 | `AGENTS.md` | The engineering standard. §1 is the enforced-rule table; §14 the pre-merge checklist. Accurate; used here as a statement of intent, with every fact re-verified against source. |
-| `docs/ARCHITECTURE.md` | Narrative overview: module map, the filter-ordered request path, and the cross-cutting-contract table. All ten modules are present; `docs/modulith/components.puml` (generated) remains the authority. |
+| `docs/ARCHITECTURE.md` | Narrative overview: module map, identity resolution at the edge, the filter-ordered request path, and the cross-cutting-contract table. All twenty-seven modules are present; `docs/modulith/components.puml` (generated) remains the authority. |
 | `docs/EVENTS.md` | Event catalogue. Accurate on payloads and triggers; see §3.12 for three omissions found against source. |
 | `docs/openapi/openapi.{json,yaml}` | The exported OpenAPI 3.1.0 spec, refreshed by `./gradlew exportOpenApi` and also by the ordinary build. See §4.8 for its known divergences from the running contract. |
 | `docs/modulith/` | Generated module canvases and PlantUML diagrams (`./gradlew exportModulithDocs`). Authoritative for the module list. |
@@ -122,7 +125,7 @@ Terms are defined as the code uses them, not generically.
 | `docs/NEXT_TASKS.md` | **Retired 2026-08-01** (deleted). Its live entries — CI verification, the Kubernetes migration, event externalization, and the deferred rate-limit/notification hardening — currently have no backlog home. |
 | `docs/CHECKLIST.md` | Gate ledger, one slice per shipped deliverable with the test that proves each gate. |
 | `docs/LOCAL_ACCESS.md` | Local access guide. Documents the author's gitignored port overrides, not the defaults — that is its one remaining caveat. Its worked example now mints `AUDITOR` before inviting into it (the `"roleCode":"MEMBER"` version was stale after V16), and it carries the three impersonation routes, the `X-Impersonate` header and a worked session (§3.14). |
-| `docs/DATA_MODEL.md` | The data-model reference: storage topology, entity hierarchy, per-module table-and-column tables for all 17 tables, the soft-delete mechanism, migration history and retention. Written against the same working tree as this SRS. §6.1 points at it rather than restating it. |
+| `docs/DATA_MODEL.md` | The data-model reference: per-module table-and-column tables for all **54** tables, the column conventions (`created_by`/`updated_by`, soft refs, partial unique indexes) and the relationships. Written against the same working tree as this SRS and rewritten with it for the identity decoupling. §6.1 points at it rather than restating it. |
 
 ---
 
@@ -139,39 +142,44 @@ step — *which is exactly why the logical boundaries are enforced now*.
 
 ### 2.2 Module map
 
-Twenty-three modules. Verified from the `package-info.java` files and `docs/modulith/components.puml`.
+Twenty-seven modules. Verified from the `package-info.java` files and `docs/modulith/components.puml`.
 
 | Module | Display name | Owns (tables) | Public API package contains |
 |---|---|---|---|
-| `shared` | Shared Kernel — **the only `ApplicationModule.Type.OPEN` module** | `idempotency_key`, `event_inbox` | envelope + error types, security (`CurrentUser`, `PlatformRole`, the `OrgAuthorization` and `ImpersonationLookup` ports, `ImpersonatedPrincipal`), persistence bases, `AuditLog` port, `Documents` port (+ `NewDocument`), `EventInbox`, cache, rate limiting, `SafeOutboundUrl` |
-| `identity` | Identity | `app_user`, `impersonation_session` | `UserProvisioning`, `UserDirectory`, `ProvisioningStatus` |
-| `organization` | Organization | `organization`, `org_role`, `role_permission`, `membership`, `org_group`, `org_group_member` | `Permission`, `OrganizationRegistered`, `OrganizationStatusChanged`, `MembershipCreated`, `MembershipRoleChanged`, `MemberRemoved`, `RolePermissionsChanged` |
-| `settings` | Settings | `setting`, `feature_flag` | `SettingChanged`, `FeatureFlagChanged` |
+| `shared` | Shared Kernel — **the only `ApplicationModule.Type.OPEN` module** | `idempotency_key`, `event_inbox` | envelope + error types, security (`CurrentUser`, `PlatformRole`, the `PersonLookup`, `OrgLookup`, `OrgAuthorization` and `ImpersonationLookup` ports, `ImpersonatedPrincipal`, `ApiKeyAuthenticator`), persistence bases, `AuditLog` port, `Documents` port (+ `NewDocument`), `LegalHolds` port, `EventInbox`, cache, rate limiting, `SafeOutboundUrl` |
+| `identity` | Identity | `person`, `person_contact`, `external_identity`, `impersonation_session` | `PersonProvisioning`, `PersonDirectory`, `ProviderOrgMembership`, `ProvisionRequest`, `ProvisionedPerson`, `ProvisioningStatus`, `PersonProvisioned`, `PersonActivated` |
+| `organization` | Organization | `organization`, `external_organization`, `org_role`, `role_permission`, `membership`, `org_group`, `org_group_member` | `Permission`, `Organizations`, `OrgDirectory`, `OrgMembers`, `OrgRoles`, `OrgContacts`, `ProvisionedOrganization`, `OrganizationRegistered`, `OrganizationStatusChanged`, `OrganizationDeleted`, `MembershipCreated`, `MembershipRoleChanged`, `MemberRemoved`, `RolePermissionsChanged` |
+| `settings` | Settings | `setting`, `feature_flag`, `feature_flag_org_override` | `SettingChanged`, `FeatureFlagChanged` |
 | `localization` | Localization | `translation` | `Messages` port, `TranslationChanged` |
 | `search` | Search | `search_document` | `SearchIndex` port, `SearchDoc` |
 | `document` | Document | `document` | `DocumentRegistered` (the `Documents` port + `NewDocument` live in `shared.document` — the `AuditLog` pattern, implemented here, so producers like `exchange` need no compile edge into this module) |
-| `subscription` | Subscription | `plan`, `plan_entitlement`, `org_subscription` | `Entitlements` + `Subscriptions` ports, `EntitlementKeys`, `SubscriptionChanged` |
-| `billing` | Billing | `billing_account` | (none — Kill Bill integration; drives the `Subscriptions` port) |
-| `profile` | Profile | `user_profile`, `user_contact`, `user_preference` | (none — self-service surface) |
-| `apikeys` | API Keys | `api_key` | `ApiKeyAuthenticator` port impl; drives no events |
+| `subscription` | Subscription | `plan`, `plan_entitlement`, `org_subscription` | `Entitlements` + `Subscriptions` ports, `SubscriptionGate`, `SubscriptionOverview`, `EntitlementKeys`, `SubscriptionChanged` |
+| `billing` | Billing | `billing_account`, `api_usage_daily` | `UsageSummaries` (Kill Bill integration; drives the `Subscriptions` port) |
+| `payments` | Payments | `payment` | (none — PSP collections behind org-selected gateway adapters) |
+| `signup` | Signup | `signup_request` | (none — self-service org creation, opt-in; drives the `Organizations` port) |
+| `profile` | Profile | `person_profile`, `person_preference` | (none — self-service surface over `PersonDirectory`) |
+| `apikeys` | API Keys | `api_key` | (none — the `ApiKeyAuthenticator` port lives in `shared.security`; `ApiKeyAuthenticatorImpl` is internal here) |
 | `access` | Access | `user_device`, `org_security_policy` | (none — devices + org security policy enforcement) |
 | `integration` | Integration Hub | `integration`, `integration_setting` | `Integrations` resolution port; drives no events |
-| `compliance` | Compliance | `consent_record`, `legal_hold`, `erasure_request` | `LegalHolds` port impl; drives no events |
-| `maintenance` | Maintenance | `maintenance_window` | (none — announced/restrict windows via a filter) |
-| `support` | Support | `ticket`, `ticket_message`, `sla_policy` | `TicketEscalated` |
-| `exchange` | Exchange | `exchange_job`, `exchange_job_error`, `exchange_schedule` | `ExchangeHandler` (SPI), `ExchangeContext`, `ImportOutcome`, `InvalidRecordException`, `RecordWriter` |
+| `compliance` | Compliance | `consent_record`, `legal_hold`, `erasure_request` | (none — the `LegalHolds` port lives in `shared.compliance`; the impl is internal here) |
+| `maintenance` | Maintenance | `maintenance_window` | (none — announce/restrict windows via a filter) |
+| `support` | Support | `ticket`, `ticket_message`, `sla_policy`, `org_sla_override` | `TicketEscalated` |
+| `geo` | Geolocation | `geo_stamp`, `geo_capture_policy` | `Geocoder` (SPI), `ResolvedPlace`, `GeoStampRecorded`, `GeoPolicyChanged` — the `GeoStamps` port itself lives in `shared.geo`, the `AuditLog` pattern again |
+| `mcp` | MCP | none | (none — the agent surface at `/mcp`, built entirely over other modules' ports) |
+| `exchange` | Exchange | `exchange_job`, `exchange_job_error`, `exchange_schedule` | `ExchangeHandler` (SPI), `ExchangeContext`, `ExchangeJobs`, `ImportOutcome`, `InvalidRecordException`, `RecordWriter`, `JobCompleted` |
 | `audit` | Audit | `audit_log` | (none — consumed through the `shared.audit.AuditLog` port) |
 | `notification` | Notification | `in_app_notification`, `notification_delivery` | `Notifications`, `NotificationChannelSender` (SPI), `NotificationChannel`, `NotificationMessage`, `NotificationRequest`, `Recipient` |
 | `webhooks` | Webhooks | `webhook_subscription`, `webhook_delivery` | (none — the module is a pure consumer + REST surface) |
 | `files` | Files | none (S3 object storage) | `FileStorageProvider`, `FileStorageException`, `FileNotFoundException` |
 | `analytics` | Analytics | none in Postgres (DuckDB marts + Parquet) | `AnalyticsEngine`, `AnalyticsException` |
-| `scheduler` | Scheduler | none (consumes `shedlock`) | (none) |
+| `scheduler` | Scheduler | `org_retention_override` (consumes `shedlock`) | (none — the `RetentionOverrides` port it implements lives in `shared.retention`) |
 
-Forty-two of the schema's forty-five tables appear above. The remaining three are **framework-owned and
-belong to no module**: `event_publication` (Spring Modulith's JDBC registry, `V2`), `shedlock`
-(ShedLock, `V4`) and `flyway_schema_history` (created by Flyway itself, in no migration). They are
-read and written by libraries, not by application code, and `V17` deliberately leaves all three out of
-soft delete. The full table→column inventory is in `docs/DATA_MODEL.md` §4; §6.1 summarises it.
+Fifty-two of the schema's fifty-four tables appear above. The remaining two are **framework-owned and
+belong to no module**: `event_publication` (Spring Modulith's JDBC registry, `V2`) and `shedlock`
+(ShedLock, `V4`). A third, `flyway_schema_history`, is created by Flyway itself, is declared in no
+migration and is not counted at all. They are read and written by libraries, not by application code,
+and `V17` deliberately leaves all three out of soft delete. The full table→column inventory is
+`docs/DATA_MODEL.md`; §6.1 defers to it rather than restating it.
 
 **Dependency direction** (`AGENTS.md` §2.2, enforced by `ModularityTests`):
 
@@ -182,45 +190,73 @@ shared          ──► nothing in a business module (compile time)
 ```
 
 Where `shared` needs behaviour a business module owns, it declares a **port** and default-denies or
-no-ops when no implementation is present. Three such ports exist:
+no-ops when no implementation is present. The kernel ports are:
 
+- `shared.security.PersonLookup` → `identity.internal.PersonLookupImpl`. Turns the token's
+  `(iss, sub)` into a `person.id`. The edge holds the only `iss`/`sub` pair in the system and needs a
+  person; the table that maps one to the other (`external_identity`) lives in `identity`. Absent, every
+  token resolves to no person — which holds no org permission and is refused by the provisioning gate.
+- `shared.security.OrgLookup` → `organization.internal.OrgLookupImpl`. Turns the token's
+  `organization` claim into an `organization.id`. This is what makes `CurrentUser.organizationId()` a
+  tenant key of ours rather than a provider's. Absent, no caller has an active organization and every
+  org-scoped check denies.
 - `shared.security.OrgAuthorization` → `organization.internal.OrgAuthorizationImpl`. Resolved through
-  an `ObjectProvider`; `ApiPermissionEvaluator.hasPermission` returns `false` when it is absent
-  (`shared/security/ApiPermissionEvaluator.java:41-44`).
+  an `ObjectProvider`; `ApiPermissionEvaluator.hasPermission` returns `false` when it is absent.
 - `shared.security.ImpersonationLookup` → `identity.internal.ImpersonationLookupImpl`. Same
   `ObjectProvider` shape; `ImpersonationFilter` **denies** the header when no implementation is
-  present rather than ignoring it (`shared/security/ImpersonationFilter.java:103-107`). This is the
-  port that lets the enforcing filter live in `shared` while the session table lives in `identity`
-  (§3.14).
+  present rather than ignoring it. This is the port that lets the enforcing filter live in `shared`
+  while the session table lives in `identity` (§3.14).
 - `shared.audit.AuditLog` → `audit.internal.AuditLogImpl` (`@Primary`), with a `@ConditionalOnMissingBean`
   no-op fallback in `shared/audit/AuditLogConfiguration.java` so modules that audit still boot inside
   single-module Modulith slice tests.
+- `shared.document.Documents`, `shared.compliance.LegalHolds`, `shared.retention.RetentionOverrides`
+  and `shared.geo.GeoStamps` follow the identical pattern for `document`, `compliance`, `scheduler`
+  and `geo`.
 
-**Integration style.** Modules talk over domain events (§3.12) and ports. There are exactly three
-foreign keys in the whole schema, all intra-module: `role_permission.role_id → org_role(id)`
-(cascade), `membership.role_id → org_role(id)` (no cascade), `webhook_delivery.subscription_id →
-webhook_subscription(id)` (cascade). Every cross-module link — `org_id`, `user_subject`, `actor`,
-`recipient`, `created_by` — is a bare column holding a Keycloak identifier, deliberately (`AGENTS.md`
-§1, §2.4.3).
+The first two are the identity decoupling in one sentence: **provider identifiers stop at the edge.**
+`PersonLookup` and `OrgLookup` are the only two places in the system that see an `iss`, a `sub` or a
+provider org id, and what they return — `person.id`, `organization.id` — is all any module below them
+is given. A second identity provider is therefore a row in `external_identity`, not an edit to a
+module that merely needed to know who was calling.
+
+**Integration style.** Modules talk over domain events (§3.12) and ports. There are sixteen foreign
+keys in the schema and **every one is intra-module**, including the two the refactor added
+(`external_identity.person_id → person(id)` and `person_contact.person_id → person(id)`, both cascade,
+so a hard-purged person takes their logins and contact addresses with them). Every cross-module
+link — `org_id`, `membership.person_id`, `audit_log.actor_person_id`, `document.owner_person_id`,
+`created_by`/`updated_by` — is a bare `uuid` column with **no** foreign key, deliberately (`AGENTS.md`
+§1, §2.4.3): this modulith is destined to split into services, and a column that a future service
+boundary must be able to cut cannot be one the database enforces.
 
 ### 2.3 User classes and characteristics
 
-Six classes. The first three sit on the **platform** axis, the next two on the **organization** axis;
-the axes are disjoint (§5.1.1).
+Eight classes. The first three sit on the **platform** axis, the next two on the **organization** axis;
+the axes are disjoint (§5.1.1). The last three are not authority tiers at all — they are the shapes a
+caller can have that is not (yet) a person.
 
 | Class | Credential shape | What it can reach | What it cannot reach |
 |---|---|---|---|
 | **Platform superadmin** (`platform-superadmin`) | Keycloak realm role | Everything `platform-admin` can, by hierarchy | **No organization permission whatsoever.** Today it has **no exclusive endpoint** — `hasRole('platform-superadmin')` appears nowhere in `src/main`. Its one reserved power is live: only this tier may open an impersonation session against an account that itself holds a platform realm role (§3.14, FR-IMP-14). |
 | **Platform admin** (`platform-admin`) | Keycloak realm role | Org lifecycle (create / suspend / reactivate), settings and feature-flag writes, cross-namespace file delete, plus everything support can | No organization permission |
-| **Platform support** (`platform-support`) | Keycloak realm role | Platform user listing, platform audit trail, scheduler locks, analytics reports, cross-namespace file **read** | No writes to platform state; no organization permission |
+| **Platform support** (`platform-support`) | Keycloak realm role | Platform person listing, platform audit trail, scheduler locks, analytics reports, cross-namespace file **read** | No writes to platform state; no organization permission |
 | **Org owner** | Membership on the seeded `OWNER` role | Every permission in the catalog, inside **one** organization — the org its token is scoped to | Anything platform-tier; anything in another organization |
 | **Org member on a custom role** | Membership on an owner-created role | Exactly the permissions in that role's bundle, inside its own organization. The role's **code is inert**: no request path branches on it (the only code the application names is `OWNER`, and only for the last-owner guard and first-owner attachment) | Any permission not in its bundle; may not grant a permission it does not itself hold (§3.2, FR-ORG-19) |
-| **Unprovisioned subject** | A valid Keycloak JWT with no `app_user` row | `GET /api/v1/me` only, which reports `provisioningStatus: "UNPROVISIONED"` | Every other `/api/**` path → **403 `ACCOUNT_NOT_PROVISIONED`** |
+| **Unlinked subject** | A valid Keycloak JWT whose `(iss, sub)` matches no live `external_identity` row | `GET /api/v1/me` only, which reports `provisioningStatus: "UNPROVISIONED"` | Every other `/api/**` path → **403 `ACCOUNT_NOT_PROVISIONED`** |
+| **Machine credential** | `X-Api-Key: sk_<prefix>.<secret>` | Its own org (or platform tier) and the permission subset minted into the key. No person is behind it and none is missing, so the provisioning gate has nothing to say about it and short-circuits | Anything outside the minted subset; any org other than the key's |
 | **Service account** | `smsone-admin` client-credentials token | Nothing in this API. The client deliberately lacks the `smsone-api-audience` client scope, so its token fails audience validation. It exists solely so the application can call the Keycloak Admin API as a client, not so it can call itself | The whole API surface |
 
-A **disabled** subject (`app_user.status = DISABLED`, or a soft-deleted `app_user` row) is denied on
+A **disabled** person (`person.status = DISABLED`, or a soft-deleted `person` row) is denied on
 every path including `/api/v1/me` → **403 `ACCOUNT_DISABLED`**
-(`identity/internal/UserAccessService.java:50-67`).
+(`main:identity/internal/PersonAccessService.java` — `authorize`/`peek`).
+
+**Two absences that must not be confused, and are not.** A token the edge cannot resolve to a person
+is either a subject nobody has provisioned yet (`NOT_PROVISIONED` — lenient, so `/me` can render
+onboarding) or a subject whose link was **erased** (`DISABLED` — a hard stop). Only `identity` can tell
+those apart, so `ProvisioningGateFilter` hands the raw subject to
+`PersonAccessService.explainAbsence`, which probes the soft-deleted link natively; the shared
+`PersonLookup` port deliberately does not answer it, because that is a provisioning policy and the edge
+must not acquire one. Answering `NOT_PROVISIONED` for an erased account would be the one place in the
+system where a deletion reads as an invitation.
 
 ### 2.4 Operating environment
 
@@ -230,7 +266,7 @@ every path including `/api/v1/me` → **403 `ACCOUNT_DISABLED`**
 | Spring Boot | 4.1.0 | framework | — |
 | Spring Modulith | 2.1.0 | module verification, event registry, docs | — |
 | PostgreSQL | 18 (`postgres:18.4-alpine`) | system of record; Flyway-owned schema | Compose `postgres` |
-| Keycloak | 26.7.0 | OIDC issuer, user + organization store, Admin API | Compose `keycloak`, realm `smsone` imported from `docker/keycloak/realm-smsone.json` |
+| Keycloak | 26.7.0 | **One** authentication adapter: OIDC issuer, credential store, Admin API. Not the user directory — `person` is (§1.4) | Compose `keycloak`, realm `smsone` imported from `docker/keycloak/realm-smsone.json` |
 | Valkey | 8 (`valkey/valkey:8-alpine`) | cache L2, cache-invalidation pub/sub, rate-limit buckets | Compose `valkey` |
 | SeaweedFS | 4.40 | S3-compatible object storage | Compose `seaweedfs` |
 | SMTP | Mailpit v1.30.2 locally | email channel | Compose `mailpit` |
@@ -248,8 +284,8 @@ as they start.
 | Constraint | Source | Consequence |
 |---|---|---|
 | Flyway owns the schema; `spring.jpa.hibernate.ddl-auto: validate` | `application.yaml:27-29` | No DDL outside `db/migration`. There is no `schema.sql` and no test-only DDL anywhere. |
-| Migrations are forward-only and numbered; **V1–V39 exist, next free is V40** | `db/migration/`, `AGENTS.md` §4.5 | V21–V24 are localization/search/document/exchange; V25 completes the exchange guidelines (templates, schedules, org_id tightened NOT NULL); V26 is subscriptions; V27 the Kill Bill billing linkage; V28 user profiles; V29 API keys; V30 org user groups; V31 devices; V32 org security policies; V33 the integration hub; V34 compliance; V35 maintenance windows; V36 customer support; V37 the subscription trial + pause-to-read-only; V38 per-org SLA overrides; V39 per-org retention overrides. Any plan citing an old "next free" number is stale — `AGENTS.md` §4.5 is kept current. |
-| No cross-module foreign keys | `AGENTS.md` §1 | Referential integrity across modules is an application concern; `SoftDeletePurgeJob` states the consequence for purge ordering (`SoftDeletePurgeJob.java:49-53`). |
+| Migrations are forward-only and numbered; **V1–V51 exist, next free is V52** | `db/migration/`, `AGENTS.md` §4.5 | V21–V24 are localization/search/document/exchange; V25 completes the exchange guidelines; V26 subscriptions; V27 the Kill Bill billing linkage; V28 profiles; V29 API keys; V30 org user groups; V31 devices; V32 org security policies; V33 the integration hub; V34 compliance; V35 maintenance windows; V36 customer support; V37 the subscription trial + pause-to-read-only; V38 per-org SLA overrides; V39 per-org retention overrides; V40 payments; V41 notification-delivery org scoping; V42 signup; V43 payment VAT; V44 API usage; V45 feature-flag targeting; V46 require-MFA policy; V47 geolocation; V48 the permission-vocabulary areas; V49–V50 hot-path indexes. **V10 and V11 were rewritten in place for the identity decoupling** — they now create `person`/`person_contact`/`external_identity` and `organization`/`external_organization` respectively; there is no `app_user` and no `kc_org_id` anywhere in the schema. Any plan citing an old "next free" number is stale — `AGENTS.md` §4.5 is kept current. |
+| No cross-module foreign keys | `AGENTS.md` §1 | Referential integrity across modules is an application concern, because the modulith is meant to be splittable into services; `SoftDeletePurgeJob` states the consequence for purge ordering. |
 | `spring.jpa.open-in-view: false` | `application.yaml:30` | No lazy loading past the service boundary. |
 | No Lombok; records + constructor injection | ADR 0001, `ArchitectureTests.noFieldInjection` | Enforced by ArchUnit. |
 | Every infra-touching test uses a real container | ADR 0003 | The suite requires Docker. |
@@ -259,16 +295,25 @@ as they start.
 
 ### 2.6 Assumptions and dependencies
 
-1. **Keycloak is the sole identity authority.** The application stores no credential, no password
-   hash and no refresh token. Account existence, authentication and organization membership at the
-   IdP are Keycloak's; the application keeps a local projection and its own authorization data.
+1. **Keycloak is the authentication authority; it is not the identity authority.** The application
+   stores no credential, no password hash and no refresh token — proving *who is at the keyboard* is
+   Keycloak's job and stays Keycloak's. But *who that person is here* is `person`, and the link
+   between the two is one row in `external_identity`. The platform can add or swap providers without
+   touching any module other than `identity`, which is the whole point of the arrangement: nothing
+   downstream of `CurrentUserProvider` knows a provider exists.
 2. **Tokens are minted for this API.** `spring.security.oauth2.resourceserver.jwt.audiences` is set
    (`smsone-api`), and the `smsone-web` client carries the `smsone-api-audience` client scope that
    satisfies it. Without this, any realm token — including the `smsone-admin` service account's,
    which holds `realm-management` roles — would authenticate here.
-3. **A token is scoped to at most one organization.** `CurrentUserProvider.resolveActiveOrg`
-   (`:74-89`) returns no active org unless the Keycloak `organization` claim has **exactly one**
-   entry. A zero- or multi-org token holds no org permission.
+3. **A token is scoped to at most one organization.** `CurrentUserProvider.organizationId` returns no
+   active org unless the Keycloak `organization` claim has **exactly one** entry — guessing which of
+   several was meant is how a request ends up authorized against a tenant the caller never asked for.
+   A zero- or multi-org token holds no org permission. The claim is a map KEYED BY ALIAS
+   (`{"acme":{"id":"…"}}`), and both halves are handed to `OrgLookup`: the provider's id is stable, the
+   alias survives a claim that carries no id at all, and `external_organization` indexes both so
+   neither is a scan. **An alias is never trusted as an organization id** — resolution goes through the
+   link table in both directions, or a token scoped to one tenant could address another whose local
+   slug happens to collide.
 4. **The Keycloak realm export ships the built-in client scopes.** A realm export that declares
    `clientScopes` *replaces* the built-ins; dropping `basic`/`roles` would mint tokens with no `sub`
    and no `realm_access` — accepted by the resource server, then authorizing as nobody.
@@ -292,17 +337,32 @@ and `src/test/java/ug/co/smsone/` are elided as `main:` and `test:`. A verificat
 
 ### 3.1 Request pipeline and API contract (FR-HTTP)
 
-Every `/api/**` request passes five gates before a handler runs. Order is taken from the `@Order`
+Every `/api/**` request passes the gates below before a handler runs. Order is taken from the `@Order`
 annotations; Spring Security's chain is registered by Boot at −100.
 
 | Order | Component | Effect |
 |---|---|---|
 | `HIGHEST_PRECEDENCE` | `RequestIdFilter` | MDC + `X-Request-Id` response header |
-| −100 | Spring Security chain | `anyRequest().authenticated()` → 401 |
+| −100 | Spring Security chain | API-key filter, then bearer; `anyRequest().authenticated()` → 401 |
 | −2 | `ImpersonationFilter` | only when `X-Impersonate` is present: swaps the principal to the session's target, or 403 `FORBIDDEN`. First after authentication so the whole request downstream sees ONE effective principal |
-| −1 | `RateLimitFilter` | 429 `RATE_LIMITED` + `Retry-After` |
-| 0 | `IdempotencyFilter` | only when `Idempotency-Key` is present |
-| 1 | `ProvisioningGateFilter` | 403 `ACCOUNT_NOT_PROVISIONED` / `ACCOUNT_DISABLED`. Under impersonation it evaluates the target and does **not** lazily activate them |
+| −1 | `CurrentUserFilter` | **resolves the caller once**: `(iss, sub)` → `person.id` through `PersonLookup`, the `organization` claim → `organization.id` through `OrgLookup`, then that pair → permissions through `OrgAuthorization`. Memoized on the thread against the exact `Authentication` it was built from, and cleared in a `finally` |
+| −1 | `OrgMdcFilter` | puts the EFFECTIVE tenant in the MDC, so every later log line and every 429 carries it. Shares the order with `CurrentUserFilter` and the tie is deliberately irrelevant — it only reads through the same provider, so whichever runs first performs the one resolution |
+| 0 | `RateLimitFilter` | 429 `RATE_LIMITED` + `Retry-After` |
+| 1 | `IdempotencyFilter` | only when `Idempotency-Key` is present |
+| 2 | `ProvisioningGateFilter` | 403 `ACCOUNT_NOT_PROVISIONED` / `ACCOUNT_DISABLED`, on a **live** read of `person.status`. Short-circuits for a machine credential — no-JIT asks a question about humans, and an administrator minting a key already answered it. Under impersonation it evaluates the target and does **not** lazily activate them |
+| 3 | `OrgPolicyEnforcementFilter` | per-org IP allowlist / trusted device / session max age (§3.23) |
+| 4 | `MaintenanceFilter` | 503 on org-scoped writes inside a RESTRICT window (§3.26) |
+| 5 | `SubscriptionAccessFilter` | paused-subscription read-only enforcement (§3.19) |
+
+**Why resolution is a filter and not lazy.** Resolution reads the database, and one of its callers is
+the JPA auditor, which runs inside a Hibernate flush; issuing a query from inside a flush yields an
+action-queue assertion instead of a saved row. Resolving on the request thread before any controller
+can be reached means the auditor always reads a memo that is already there. Off a request thread
+(jobs, listeners, startup) there is no authentication at all, so `created_by`/`updated_by` take NULL —
+which is the schema's own answer, not a missing value. Anything that installs a `SecurityContext` on a
+thread of its own (`McpToolDispatcher` does, because the MCP SDK owns scheduling) carries the same
+obligation: one `currentUser()` call immediately after the context is installed, before any
+transaction opens.
 
 | ID | The system SHALL … | Implementation | Verification |
 |---|---|---|---|
@@ -325,13 +385,13 @@ annotations; Spring Security's chain is registered by Boot at −100.
 | FR-HTTP-17 | apply idempotency **only** to `POST`/`PUT`/`PATCH` requests under `/api/` that carry an `Idempotency-Key` header — per-request opt-in, no annotation and no allow-list; `DELETE` is excluded | `main:shared/idempotency/IdempotencyFilter.java:43,62-67` | `test:shared/idempotency/IdempotencyIntegrationTest.distinctKeysExecuteIndependently` |
 | FR-HTTP-18 | reject an `Idempotency-Key` not matching `^[A-Za-z0-9_-]{1,128}$` with 422 and `source.header = "Idempotency-Key"` | `main:shared/idempotency/IdempotencyFilter.java` | `test:shared/idempotency/IdempotencyIntegrationTest.malformedKeyIsRejected` |
 | FR-HTTP-19 | reject a request body larger than `app.idempotency.max-body-bytes` (default 262144) with **413 `PAYLOAD_TOO_LARGE`** without buffering it | `main:shared/idempotency/IdempotencyFilter.java:54` | `test:shared/idempotency/IdempotencyIntegrationTest.oversizedBodyIsRejectedNotBuffered` |
-| FR-HTTP-20 | scope idempotency keys to `(principal, key)` where **principal is the token subject** (`"anonymous"` off-request), so no user can replay or squat another's key | `main:shared/idempotency/IdempotencyFilter.java:156-165`; `V5__idempotency_key.sql` | `test:shared/idempotency/IdempotencyIntegrationTest.keysAreScopedPerPrincipal`; `test:shared/security/SubjectAttributionTest.twoAccountsSharingAUsernameDoNotShareIdempotencyKeys`, `.oneAccountKeepsItsIdempotencyKeysAcrossARename` |
+| FR-HTTP-20 | scope idempotency keys to `(principal, key)` where **principal is the namespaced caller key** — `person:<uuid>` for a human, `key:<uuid>` for a machine credential — so no caller can replay or squat another's key. The two id spaces are unrelated, so the prefix is load-bearing: without it a person and an API key could collide in one namespace. A machine is scoped per KEY rather than per org, because two keys in one tenant hold different permission subsets and a shared namespace would let the narrower key replay a response to a request it could never have made | `main:shared/idempotency/IdempotencyFilter.java`; `main:shared/security/CurrentUserProvider.currentPrincipalKey`; `V5__idempotency_key.sql` | `test:shared/idempotency/IdempotencyIntegrationTest.keysAreScopedPerPrincipal`; `test:shared/security/SubjectAttributionTest.twoAccountsSharingAUsernameDoNotShareIdempotencyKeys`, `.oneAccountKeepsItsIdempotencyKeysAcrossARename` |
 | FR-HTTP-21 | claim the key **before** invoking the handler, replay the stored status/content-type/body with `Idempotency-Replayed: true` on a duplicate, and never re-execute | `main:shared/idempotency/IdempotencyFilter.java`; `main:shared/idempotency/IdempotencyStore.java` | `test:shared/idempotency/IdempotencyIntegrationTest.duplicateRequestIsReplayedWithoutReexecuting` |
 | FR-HTTP-22 | reject a reused key whose request fingerprint (SHA-256 of method + URI + body) differs, with 409 `CONFLICT` | `main:shared/idempotency/IdempotencyFilter.java:122-146,167` | `test:shared/idempotency/IdempotencyIntegrationTest.sameKeyDifferentPayloadConflicts` |
 | FR-HTTP-23 | store only responses with status `< 400`, releasing the key on any 4xx/5xx or thrown exception so errors stay retryable | `main:shared/idempotency/IdempotencyFilter.java:106-113` | `test:shared/idempotency/IdempotencyIntegrationTest.errorResponsesAreNotStored` |
 | FR-HTTP-24 | allow an in-progress claim older than `app.idempotency.in-progress-lease` (default PT5M) to be taken over, while a completed row is never taken over | `main:shared/idempotency/IdempotencyStore.java` (`on conflict … where response_status is null and created_at < ?`) | none (lease expiry is not exercised) |
 | FR-HTTP-25 | rate-limit `/api` and `/api/**` on every method except `OPTIONS`, matching the first configured tier by path and method and falling through to the default tier | `main:shared/ratelimit/RateLimitFilter.java:28,49`; `main:shared/ratelimit/RateLimitProperties.java:42-49` | `test:shared/ratelimit/RateLimitIntegrationTest.edgeFilterReturns429WithEnvelopeAndHeaders` |
-| FR-HTTP-26 | offer exactly three bucket scopes — **`IP`, `PRINCIPAL`, `TENANT`** (`main:shared/ratelimit/RateLimitScope.java:8-10`) — and degrade along a fixed chain: TENANT keys on the caller's **active organization id**, falling back to a configured flat tenant claim, then the **subject**, then the client IP; PRINCIPAL keys on the subject, falling back to IP; IP keys on the client IP directly. Never the username. Only TENANT and PRINCIPAL appear among the shipped tiers; `IP` is settable on any custom `app.rate-limit.tiers[].scope` and is implemented — a tier whose scope is neither TENANT nor PRINCIPAL falls straight through to a pure per-IP bucket | `main:shared/ratelimit/RateLimitKeyResolver.java:32-52`; `main:shared/ratelimit/RateLimitScope.java` | `test:shared/ratelimit/RateLimitIntegrationTest.edgeFilterKeysByActiveOrgFromTheOrganizationClaim`, `.principalFallbackKeysBySubjectNotUsername`; the `IP` scope itself has **no test** |
+| FR-HTTP-26 | offer exactly three bucket scopes — **`IP`, `PRINCIPAL`, `TENANT`** (`main:shared/ratelimit/RateLimitScope.java:8-10`) — and degrade along a fixed chain: TENANT keys on the caller's **`organization.id`** (resolved at the edge, never the provider's org id), falling back to a configured flat tenant claim, then the **namespaced principal key**, then the client IP; PRINCIPAL keys on the principal key, falling back to IP; IP keys on the client IP directly. Never the username — a username-keyed bucket is escapable (rename for a fresh quota) and inheritable (a recycled username lands in the previous holder's bucket). Only TENANT and PRINCIPAL appear among the shipped tiers; `IP` is settable on any custom `app.rate-limit.tiers[].scope` and is implemented — a tier whose scope is neither TENANT nor PRINCIPAL falls straight through to a pure per-IP bucket | `main:shared/ratelimit/RateLimitKeyResolver.java:36-58`; `main:shared/ratelimit/RateLimitScope.java` | `test:shared/ratelimit/RateLimitIntegrationTest.edgeFilterKeysByActiveOrgFromTheOrganizationClaim`, `.principalFallbackKeysBySubjectNotUsername`; the `IP` scope itself has **no test** |
 | FR-HTTP-27 | consult `X-Forwarded-For` only when `app.rate-limit.trust-forwarded-for` is true (default **false**) and then take the **rightmost** hop, capped at 45 characters | `main:shared/ratelimit/RateLimitKeyResolver.java:87-101` | none |
 | FR-HTTP-28 | set `RateLimit-Policy`, `RateLimit` and legacy `X-RateLimit-Limit`/`-Remaining`/`-Reset` on every rate-limited response, allowed or denied, and add `Retry-After` on denial | `main:shared/ratelimit/RateLimitFilter.java:76-84` | `test:shared/ratelimit/RateLimitIntegrationTest.edgeFilterReturns429WithEnvelopeAndHeaders` |
 | FR-HTTP-29 | deny with **429 `RATE_LIMITED`** in the envelope, naming the tier, once a bucket is exhausted | `main:shared/ratelimit/RateLimitFilter.java` | `test:shared/ratelimit/RateLimitIntegrationTest.distributedBucketAllowsUpToCapacityThenDeniesPerKey` |
@@ -341,40 +401,58 @@ annotations; Spring Security's chain is registered by Boot at −100.
 
 ### 3.2 Identity and provisioning (FR-IDN)
 
-The governing rule is **no just-in-time provisioning**: a valid Keycloak JWT is not access.
+Two governing rules. **`person` is the identity**: a `person.id` is what every other module means when
+it says "a human", it exists before any provider account is linked, and it survives every link being
+removed. **No just-in-time provisioning**: a valid Keycloak JWT is not access — it proves who an issuer
+thinks you are, which has never been permission to create an account here.
+
+Keycloak sits behind this module as one authentication adapter. The translation from a provider's
+`(iss, sub)` to a `person.id` happens in exactly one class, `PersonResolver`, over exactly one table,
+`external_identity` — which is what makes "nothing below the edge sees a Keycloak subject" checkable
+rather than aspirational.
 
 | ID | The system SHALL … | Implementation | Verification |
 |---|---|---|---|
-| FR-IDN-1 | reject an authenticated request to `/api/**` from a subject with no `app_user` row with **403 `ACCOUNT_NOT_PROVISIONED`** | `main:identity/internal/ProvisioningGateFilter.java:78-84` | `test:identity/internal/ImpersonationProvisioningGateTest.anUnprovisionedSubjectIsRefusedByTheGateInThisContext` — the **only** HTTP-level assertion of the gate in the suite, and it exists because §3.14's tests are the only ones that re-enable `app.provisioning.gate-enabled`. `test:identity/internal/IdentityProvisioningTest.gateDeniesUnprovisionedThenActivatesInvitedOnFirstHit` covers the `UserAccessService` decision underneath it |
-| FR-IDN-2 | exempt **only** `GET /api/v1/me` from the provisioning gate, matching on method **and** exact path, and treat `NOT_PROVISIONED` as allowed there | `main:identity/internal/ProvisioningGateFilter.java:34,62-66,87-89` | **none** — no test references `/api/v1/me` at all, and no test instantiates `ProvisioningGateFilter` (§7.5) |
-| FR-IDN-3 | deny a `DISABLED` account on **every** path including `/api/v1/me`, with **403 `ACCOUNT_DISABLED`** | `main:identity/internal/ProvisioningGateFilter.java:82-83`; `main:identity/internal/UserAccessService.java:34,55` | **decision level only** — `test:identity/internal/IdentityProvisioningTest.disabledUserIsDeniedByBothAuthorizeAndPeek` asserts both `authorize` and `peek` return `DISABLED`; the HTTP 403 and its code are **unverified** (§7.5) |
-| FR-IDN-4 | treat a **soft-deleted** `app_user` as `DISABLED`, not as unprovisioned, so a deletion never reads as an invitation | `main:identity/internal/UserAccessService.java:58-67`; `main:identity/internal/UserRepository.java:21-23` (native `existsDeletedBySubject`, because `@SQLRestriction` hides the row) | `test:analytics/internal/AnalyticsApiTest.softDeletedUsersAreExcludedFromTheReport` covers the read side; the gate branch itself has **no test** |
-| FR-IDN-5 | provision a user by creating the Keycloak account if absent, granting the configured baseline realm role, issuing temporary credentials via Keycloak's `execute-actions-email` (`UPDATE_PASSWORD`, `VERIFY_EMAIL`) when the account has none, and recording a local `app_user` in status `INVITED` | `main:identity/internal/UserProvisioningService.java:41-65`; `main:identity/internal/KeycloakUserAdminGateway.java` | `test:identity/internal/IdentityProvisioningTest.provisionsKeycloakUserAndRecordsInvitedRow`; `test:identity/internal/KeycloakProvisioningIntegrationTest.provisioningANewUserInvitesThemAndTheEmailReachesTheMailbox` (real Keycloak + real Mailpit) |
-| FR-IDN-6 | **never** issue or store a password itself — the action-email is the only credential path, and no credential value is ever visible to the application or to the inviting admin | `main:identity/internal/KeycloakUserAdminGateway.java:110-114` | `test:identity/internal/KeycloakProvisioningIntegrationTest.provisioningANewUserInvitesThemAndTheEmailReachesTheMailbox` |
+| FR-IDN-1 | reject an authenticated request to `/api/**` from a token whose `(iss, sub)` resolves to no `person` with **403 `ACCOUNT_NOT_PROVISIONED`** | `main:identity/internal/ProvisioningGateFilter.java` (`decideForPerson`) | `test:identity/internal/ImpersonationProvisioningGateTest.anUnprovisionedSubjectIsRefusedByTheGateInThisContext` — the **only** HTTP-level assertion of the gate in the suite, and it exists because §3.14's tests are the only ones that re-enable `app.provisioning.gate-enabled`. `test:identity/internal/IdentityProvisioningTest.gateDeniesUnprovisionedThenActivatesInvitedOnFirstHit` covers the `PersonAccessService` decision underneath it |
+| FR-IDN-2 | exempt **only** `GET /api/v1/me` from the provisioning gate, matching on method **and** exact path, and treat `NOT_PROVISIONED` as allowed there | `main:identity/internal/ProvisioningGateFilter.java` (`isOnboardingRead`, `decide`) | **none** — no test references `/api/v1/me` at all, and no test instantiates `ProvisioningGateFilter` (§7.5) |
+| FR-IDN-3 | deny a `DISABLED` person on **every** path including `/api/v1/me`, with **403 `ACCOUNT_DISABLED`** | `main:identity/internal/ProvisioningGateFilter.java`; `main:identity/internal/PersonAccessService.java` (`authorize`, `peek`) | **decision level only** — `test:identity/internal/IdentityProvisioningTest.disabledUserIsDeniedByBothAuthorizeAndPeek` asserts both `authorize` and `peek` return `DISABLED`; the HTTP 403 and its code are **unverified** (§7.5) |
+| FR-IDN-4 | treat an **erased** identity as `DISABLED`, not as unprovisioned, so a deletion never reads as an invitation — distinguishing a subject that was never linked from one whose link was soft-deleted, and refusing a live link whose `person` row is soft-deleted | `main:identity/internal/PersonAccessService.explainAbsence` (via `PersonResolver.wasErased`, a **native** existence probe because `@SQLRestriction` hides the row); `main:identity/internal/PersonRepository.existsDeletedById` | `test:analytics/internal/AnalyticsApiTest.softDeletedUsersAreExcludedFromTheReport` covers the read side; the gate branch itself has **no test** |
+| FR-IDN-5 | provision in this order — **person first**: create (or reuse) the `person` in status `INVITED` and its primary `person_contact`; create the Keycloak account if absent; grant the configured baseline realm role; issue temporary credentials via `execute-actions-email` (`UPDATE_PASSWORD`, `VERIFY_EMAIL`) when the account has none; and **record the Keycloak subject as an `external_identity` link last** | `main:identity/internal/PersonProvisioningService.java`; `main:identity/internal/KeycloakUserAdminGateway.java` | `test:identity/internal/IdentityProvisioningTest.provisionsKeycloakUserAndRecordsInvitedRow`; `test:identity/internal/KeycloakProvisioningIntegrationTest.provisioningANewUserInvitesThemAndTheEmailReachesTheMailbox` (real Keycloak + real Mailpit) |
+| FR-IDN-6 | **never** issue or store a password itself — the action-email is the only credential path, and no credential value is ever visible to the application or to the inviting admin | `main:identity/internal/KeycloakUserAdminGateway.java` (`issueTemporaryCredentials`) | `test:identity/internal/KeycloakProvisioningIntegrationTest.provisioningANewUserInvitesThemAndTheEmailReachesTheMailbox` |
 | FR-IDN-7 | **refuse to start** when `app.provisioning.default-realm-role` names a platform role, because invite is reachable by any org member holding `member:invite` | `main:identity/internal/ProvisioningProperties.java:19-32` | `test:identity/internal/ProvisioningPropertiesTest.aPlatformRoleAsTheProvisioningBaselineIsRejected`, `.anOrdinaryRoleIsAccepted`, `.blankOrMissingGrantsNothing`, `.aLookalikeRoleIsNotMistakenForAPlatformRole` |
-| FR-IDN-8 | grant provisioned accounts the baseline realm role only (default `USER`) and no platform authority | `main:identity/internal/UserProvisioningService.java:52-54` (the grant itself; 47-51 is the comment block explaining the ordering) | `test:identity/internal/KeycloakProvisioningIntegrationTest.provisioningGrantsTheBaselineRealmRoleAndNoPlatformAuthority` |
-| FR-IDN-9 | be idempotent across re-provisioning: an existing Keycloak account with credentials receives no new invite, and a concurrent duplicate insert is absorbed when a row for that subject now exists | `main:identity/internal/UserProvisioningService.java:41-76` | `test:identity/internal/IdentityProvisioningTest.preExistingKeycloakAccountWithCredentialsGetsNoInvite`, `.fullyProvisionedUserIsIdempotentAndSendsNoInvite`, `.retryAfterFailedInviteReissuesCredentials` |
-| FR-IDN-10 | activate an `INVITED` account to `ACTIVE` lazily on its first real API request, publishing `UserActivated`, and treat a lost activation race as allowed rather than a 500 — **the person's own** request only, never an operator's read of them (§3.14, FR-IMP-12) | `main:identity/internal/UserAccessService.java:28-47`; `main:identity/internal/User.java:56-60`; `main:identity/internal/ProvisioningGateFilter.java:96-104` | `test:identity/internal/IdentityProvisioningTest.gateDeniesUnprovisionedThenActivatesInvitedOnFirstHit`; over HTTP, `test:identity/internal/ImpersonationProvisioningGateTest.aUsersOwnFirstRequestStillActivatesThem` ↔ `.aSessionNeverActivatesTheTargetItWears` |
-| FR-IDN-11 | expose `GET /api/v1/me` to any authenticated caller, reporting subject, email, hierarchy-expanded roles, active org alias and id, and a provisioning status of `INVITED`/`ACTIVE`/`DISABLED` or the literal `"UNPROVISIONED"` | `main:identity/internal/MeController.java:29-35` | none (no dedicated test; exercised indirectly by the gate test) |
-| FR-IDN-12 | expose a platform-wide, cursor-paginated user listing at `GET /api/v1/admin/users` requiring `platform-support` | `main:identity/internal/UserAdminController.java:29-34` | `test:shared/security/PlatformRoleHierarchyTest` (all tier cases use this endpoint as the support floor) |
-| FR-IDN-13 | resolve a subject from an email address for cross-module use, case-insensitively and deterministically (earliest `provisioned_at` wins) | `main:identity/internal/UserDirectoryService.java:18-24` | `test:notification/NotificationDeliveryTest.flagToggleEnqueuesThenWorkerDeliversEmailAndInApp` |
-| FR-IDN-14 | provide an opt-in, off-by-default **identity** dev bootstrap that projects an **existing** Keycloak account into `app_user` and can never create a Keycloak account, so a realm-imported platform admin passes the no-JIT gate without owning an org; idempotent, and needing Keycloak reachable | `main:identity/internal/PlatformAdminBootstrap.java:44-56` (`@ConditionalOnProperty(havingValue = "true")`, no `matchIfMissing`); `main:identity/internal/IdentityDevBootstrapProperties.java`; properties `app.identity.dev-bootstrap.{enabled, email}` (defaults `false`, `ayesigapo@gmail.com` — `application.yaml:95-101`) | none |
-| FR-IDN-15 | reconcile `app_user` against Keycloak on a schedule, disabling rows whose Keycloak account is definitively gone, because Keycloak is the system of record and pushes no deletion to this projection | `main:identity/internal/IdentityReconciliationJob.java:70-119` (`@Scheduled` + `@SchedulerLock("identity-reconciliation")`, daily `0 0 2 * * *`) | `test:identity/internal/IdentityReconciliationJobTest.anAccountDeletedInKeycloakIsDisabledAndAudited`, `.anAccountStillInKeycloakIsUntouched` |
+| FR-IDN-8 | grant provisioned accounts the baseline realm role only (default `USER`) and no platform authority | `main:identity/internal/PersonProvisioningService.java` (the grant, before the link is written) | `test:identity/internal/KeycloakProvisioningIntegrationTest.provisioningGrantsTheBaselineRealmRoleAndNoPlatformAuthority` |
+| FR-IDN-9 | be idempotent across re-provisioning: an existing Keycloak account with credentials receives no new invite, a retry after a failed invite re-sends it, and a concurrent duplicate is absorbed. **The link is the idempotency marker** — written last, so a failure at the invite leaves the person unlinked (and therefore unable to authenticate) and the retry adopts the existing person rather than minting a second one. Writing the link earlier would report success over an account stranded with no credentials | `main:identity/internal/PersonProvisioningService.java` | `test:identity/internal/IdentityProvisioningTest.preExistingKeycloakAccountWithCredentialsGetsNoInvite`, `.fullyProvisionedUserIsIdempotentAndSendsNoInvite`, `.retryAfterFailedInviteReissuesCredentials` |
+| FR-IDN-10 | activate an `INVITED` person to `ACTIVE` lazily on their first real API request — stamping `activated_at`, publishing `PersonActivated` — and treat a lost activation race as allowed rather than a 500 — **the person's own** request only, never an operator's read of them (§3.14, FR-IMP-12) | `main:identity/internal/PersonAccessService.java` (`authorize` → `activate`); `main:identity/internal/Person.activate`; `main:identity/internal/ProvisioningGateFilter.decide` | `test:identity/internal/IdentityProvisioningTest.gateDeniesUnprovisionedThenActivatesInvitedOnFirstHit`; over HTTP, `test:identity/internal/ImpersonationProvisioningGateTest.aUsersOwnFirstRequestStillActivatesThem` ↔ `.aSessionNeverActivatesTheTargetItWears` |
+| FR-IDN-11 | expose `GET /api/v1/me` to any authenticated caller, reporting **`personId`** (not a subject), email, hierarchy-expanded roles, active `organizationId`, and a provisioning status of `INVITED`/`ACTIVE`/`DISABLED` or the literal `"UNPROVISIONED"`; `personId` and `email` are both null before provisioning, because there is no person yet and so nothing to reach them at either | `main:identity/internal/MeController.java` | none (no dedicated test; exercised indirectly by the gate test) |
+| FR-IDN-12 | expose a platform-wide, cursor-paginated person listing at `GET /api/v1/admin/users` requiring `platform-support`, resolving the page's e-mails in ONE follow-up query rather than per row | `main:identity/internal/PersonAdminController.java`; `main:identity/internal/PersonAccessService.list` | `test:shared/security/PlatformRoleHierarchyTest` (all tier cases use this endpoint as the support floor) |
+| FR-IDN-13 | resolve a `person.id` from an email address for cross-module use, case-insensitively, with a **verified** address winning over an unverified one holding the same value — the only ordering the database can guarantee is unambiguous, since `uq_person_contact_verified_live` makes a proven address globally unique per kind while unverified duplicates are legal by design | `main:identity/internal/PersonDirectoryService.java`; `main:identity/internal/PersonContacts.java` | `test:notification/NotificationDeliveryTest.flagToggleEnqueuesThenWorkerDeliversEmailAndInApp` |
+| FR-IDN-14 | provide an opt-in, off-by-default **identity** dev bootstrap that projects an **existing** Keycloak account into `person` + `external_identity` and can never create a Keycloak account, so a realm-imported platform admin passes the no-JIT gate without owning an org; idempotent, and needing Keycloak reachable | `main:identity/internal/PlatformAdminBootstrap.java` (`@ConditionalOnProperty(havingValue = "true")`, no `matchIfMissing`); `main:identity/internal/IdentityDevBootstrapProperties.java`; properties `app.identity.dev-bootstrap.{enabled, email}` | none |
+| FR-IDN-15 | reconcile linked accounts against Keycloak on a schedule, disabling people whose Keycloak account is definitively gone, because Keycloak pushes no deletion to this platform | `main:identity/internal/IdentityReconciliationJob.java` (`@Scheduled` + `@SchedulerLock("identity-reconciliation")`, daily `0 0 2 * * *`) | `test:identity/internal/IdentityReconciliationJobTest.anAccountDeletedInKeycloakIsDisabledAndAudited`, `.anAccountStillInKeycloakIsUntouched` |
 | FR-IDN-16 | report a Keycloak account lookup as **tri-state** (`PRESENT`/`ABSENT`/`UNKNOWN`) and never act on `UNKNOWN`, so one Keycloak outage can never be read as a mass deletion | `main:identity/internal/KeycloakUserAdminGateway.accountPresence`; `main:identity/internal/IdentityReconciliationJob.java:88-93` | `test:identity/internal/IdentityReconciliationJobTest.anInconclusiveLookupNeverRevokesAnybody` |
 | FR-IDN-17 | abandon a reconciliation run, changing nothing, when the share of apparently-deleted accounts exceeds `max-orphan-ratio` — a wrong realm, base URL or lost `view-users` role makes every per-row lookup a legitimate 404, and only the proportion distinguishes that from attrition | `main:identity/internal/IdentityReconciliationJob.java:100-110` | `test:identity/internal/IdentityReconciliationJobTest.aMassDisappearanceIsTreatedAsMisconfigurationAndChangesNothing` |
 | FR-IDN-18 | ship the job in `REPORT` mode, skip accounts inside `grace-period` (still possibly mid-provisioning), and never re-visit an already-`DISABLED` row | `main:identity/internal/IdentityReconciliationJob.java:78-81,148-152`; `main:identity/internal/IdentityReconciliationProperties.java` | `test:identity/internal/IdentityReconciliationJobTest.reportModeFindsTheOrphanWithoutRevokingIt`, `.anAccountInsideTheGracePeriodIsNotExamined`, `.anAlreadyDisabledAccountIsNotVisitedAgain` |
-| FR-IDN-19 | audit each reconciliation-driven revocation as `identity.user_disabled_by_reconciliation` with a **null** actor — no human made the decision — committing the audit row in the same transaction as the status change | `main:identity/internal/IdentityReconciliationJob.java:140-160` (explicit `TransactionTemplate`: a self-invoked `@Transactional` never reaches the proxy) | `test:identity/internal/IdentityReconciliationJobTest.anAccountDeletedInKeycloakIsDisabledAndAudited` |
+| FR-IDN-19 | audit each reconciliation-driven revocation as `identity.person_disabled_by_reconciliation` with a **null** actor — no human made the decision — committing the audit row in the same transaction as the status change | `main:identity/internal/IdentityReconciliationJob.java` (explicit `TransactionTemplate`: a self-invoked `@Transactional` never reaches the proxy) | `test:identity/internal/IdentityReconciliationJobTest.anAccountDeletedInKeycloakIsDisabledAndAudited` |
+
+The three audit actions this module writes are `identity.person_provisioned`,
+`identity.external_identity_linked` and `identity.person_disabled_by_reconciliation`. The second is
+new with the decoupling and is the trail for "which provider account was attached to this human, and
+when" — a question that could not previously be asked, because the answer *was* the human.
 
 The "can never create a Keycloak account" claim is about the **identity** bootstrap only. The
 **organization** dev bootstrap (FR-ORG-31) is a separate runner and does create Keycloak state.
 
-**Absent by design / by gap:** there is **no endpoint that disables a user**. `User.disable()`
-(`main:identity/internal/User.java:62-64`) has no caller in `src/main`; `ProvisioningStatus.DISABLED`
-is fully enforced by the gate but can only be reached by direct SQL or by soft-deleting the row.
+**Absent by design / by gap:** there is **no endpoint that disables a person**. `Person.disable()` has
+no caller outside reconciliation; `ProvisioningStatus.DISABLED` is fully enforced by the gate but can
+otherwise only be reached by direct SQL or by soft-deleting the row.
 `KeycloakUserAdminGateway.realmRoles(String)` reads the target's **effective** realm roles (the
 `/role-mappings/realm/composite` endpoint, so composite and group-derived roles are included, matching
 what the token's `realm_access.roles` will carry) and is the input to the impersonation tier guardrail
 (§3.14, FR-IMP-14).
+
+**A person with no link is inert, not broken.** A Keycloak outage mid-provisioning leaves a `person`
+row that nothing can authenticate as — resolution runs through `external_identity`, and there is no
+row — and the retry adopts it rather than creating a second person. That is the cost the person-first
+ordering pays, stated here so nobody "cleans up" such rows on the assumption they are orphans.
 
 ### 3.3 Organizations and RBAC (FR-ORG)
 
@@ -386,22 +464,22 @@ provisioning, and the reserved-code check — none of which is an authorization 
 
 | ID | The system SHALL … | Implementation | Verification |
 |---|---|---|---|
-| FR-ORG-1 | maintain a fixed catalog of exactly 18 permission codes and reject an unknown code on any role write with 422 and `source.pointer = /data/attributes/permissions` | `main:organization/Permission.java`; `main:organization/internal/RoleService.java:147` | `test:organization/internal/OrgRbacApiTest.unknownPermissionCodeOnRoleCreateIs422` |
+| FR-ORG-1 | maintain a fixed catalog of exactly 29 permission codes and reject an unknown code on any role write with 422 and `source.pointer = /data/attributes/permissions` | `main:organization/Permission.java`; `main:organization/internal/RoleService.java:147` | `test:organization/internal/OrgRbacApiTest.unknownPermissionCodeOnRoleCreateIs422` |
 | FR-ORG-2 | expose the permission catalog read-only at `GET /api/v1/permissions` to any authenticated caller, with no org scope | `main:organization/internal/PermissionCatalogController.java:24-30` | `test:organization/internal/OrgRbacApiTest.permissionCatalogIsReadableByAnyAuthenticatedUser` |
 | FR-ORG-3 | seed exactly one system role per organization — `OWNER`, holding every permission in the catalog | `main:organization/internal/RoleSeeder.java:35-39` | `test:organization/internal/OrgRbacAuthorityTest.aFreshOrganizationHasExactlyOneRole`, `.ownerHasEveryPermissionIncludingOrgDelete` |
 | FR-ORG-4 | treat a role named `ADMIN` or `MEMBER` as an ordinary custom role that an owner may create, rename, re-permission and delete | `V16__org_role_owner_only.sql`; `main:organization/internal/RoleService.java:25-30` | `test:organization/internal/OrgRbacApiTest.aRoleNamedAdminIsJustAnotherCustomRole`; `test:organization/internal/OrgRbacAuthorityTest.seederLeavesFormerSystemRolesAloneAsCustomRoles` |
 | FR-ORG-5 | resolve a caller's permissions as the permission bundle of their **ACTIVE** membership's role in an **ACTIVE** organization, and return the empty set when the org is unknown or `SUSPENDED`, the membership is absent or `SUSPENDED`, or the role cannot be loaded. The `SUSPENDED` membership branch is enforced on the read path but has **no write path** — see the note below the table | `main:organization/internal/PermissionResolver.java:32-49` | `test:organization/internal/OrgRbacAuthorityTest.nonMemberHasNoPermissions`, `.suspendedOrganizationGrantsNothingUntilReactivated`, `.aSoftDeletedMembershipResolvesToZeroPermissions`, `.aMemberPointingAtASoftDeletedRoleResolvesToZeroPermissions`; the `SUSPENDED`-membership case has **no test** (nothing can produce one) |
 | FR-ORG-6 | grant nothing on the basis of a role's **code** — a role grants exactly the permissions it was given | `main:organization/internal/PermissionResolver.java` (no code branch) | `test:organization/internal/OrgRbacAuthorityTest.aRoleCodeGrantsNothingByItself`, `.aCustomRoleGrantsExactlyWhatItWasGiven`, `.aReadOnlyRoleResolvesToExactlyItsReadPermissions` |
 | FR-ORG-7 | deny any org-scoped check unless the target id **string-equals** the caller's single active organization id, with **no alias matching** and **no platform-role bypass**, before any database access | `main:shared/security/ApiPermissionEvaluator.java:36-58` | `test:organization/internal/OrgRbacApiTest.crossOrgAccessIsDeniedBeforeAnyDbHit`, `.tokenWithNoActiveOrgIsDenied`; `test:organization/internal/OrgRbacAuthorityTest.permissionsAreScopedToTheOwningOrganization` |
-| FR-ORG-8 | cache resolved permission sets under `org-permissions` keyed `<orgId>:<subject>`, with the organization's status enforced **inside** the cached value | `main:organization/internal/PermissionResolver.java:19,32-41` | `test:organization/internal/OrgRbacAuthorityTest.permissionCacheIsEvictedAfterAMembershipRoleChange` |
+| FR-ORG-8 | cache resolved permission sets under `org-permissions` keyed `<organizationId>:<personId>` — both halves are ids this platform mints, so no cache entry can outlive a provider identifier — with the organization's status enforced **inside** the cached value | `main:organization/internal/PermissionResolver.java` | `test:organization/internal/OrgRbacAuthorityTest.permissionCacheIsEvictedAfterAMembershipRoleChange` |
 | FR-ORG-9 | evict the permission cache on `RolePermissionsChanged`, `MembershipCreated`, `MembershipRoleChanged`, `MemberRemoved` and `OrganizationStatusChanged` | `main:organization/internal/OrgPermissionCacheEvictor.java:32-62` | `test:organization/internal/OrgRbacAuthorityTest.permissionCacheIsEvictedAfterAMembershipRoleChange`, `.suspendedOrganizationGrantsNothingUntilReactivated` |
 | FR-ORG-10 | create an organization only for `platform-admin`, rejecting a duplicate alias — locally **or** in Keycloak — with 409 and never adopting an existing org, and rejecting an alias that is not a lowercase slug matching `^[a-z0-9][a-z0-9-]{0,118}[a-z0-9]$` (letters, digits, hyphens; minimum two characters; `@Size(max = 120)`) with 422 and `source.pointer = /data/attributes/alias` | `main:organization/internal/OrganizationController.java:41-44` (the `@Pattern`), `:53-58`; `main:organization/internal/OrganizationService.java:46-57` | `test:organization/internal/OrgRbacApiTest.duplicateAliasCreateIsConflictNotAdoption`, `.createRefusesToAdoptAnExistingKeycloakOrg`; the alias pattern itself has **no test** |
-| FR-ORG-11 | on organization creation, create the Keycloak organization, provision the owner identity, add the owner as a Keycloak organization member, then atomically write the local org row, seed `OWNER` and create the first membership | `main:organization/internal/OrganizationService.java:79-84`; `main:organization/internal/OrgProjectionWriter.java:29-39` | **partial** — `test:organization/internal/OrgRbacApiTest.duplicateAliasCreateIsConflictNotAdoption`, `.createRefusesToAdoptAnExistingKeycloakOrg` reach `create` only as far as the conflict guard, and `test:organization/internal/KeycloakOrgAdminIntegrationTest.createAddFindRemovePinTheKeycloakOrganizationsWireContract` pins the Keycloak half against a real server. **No test calls `OrgProjectionWriter.projectWithOwner`** — `OrgRbacApiTest.seed` is a `@BeforeEach` fixture that assembles the projection by hand (`Organization.register` + `RoleSeeder.seedSystemRoles` + `Membership.create`), not through the production path. The orchestration end to end is unverified (§7.5) |
-| FR-ORG-12 | address organizations on the wire by their **Keycloak organization id**, not the local primary key | `main:organization/internal/OrganizationController.java` (`ResourceObject.id = getKcOrgId()`) | `test:organization/internal/OrgRbacApiTest` (every org-scoped call) |
+| FR-ORG-11 | on organization creation, create the organization at the identity provider, provision the owner (`PersonProvisioning`, person first), attach them at the provider through `ProviderOrgMembership`, then **atomically** write the local `organization` row, its `external_organization` link, the seeded `OWNER` role and the first `membership`. The provider-minted org id is a `String` passed straight through — it is `external_organization.external_org_id`, which is `varchar` precisely so a non-UUID identifier fits | `main:organization/internal/OrganizationService.java` (`create`); `main:organization/internal/OrgProjectionWriter.projectWithOwner` | **partial** — `test:organization/internal/OrgRbacApiTest.duplicateAliasCreateIsConflictNotAdoption`, `.createRefusesToAdoptAnExistingKeycloakOrg` reach `create` only as far as the conflict guard, and `test:organization/internal/KeycloakOrgAdminIntegrationTest.createAddFindRemovePinTheKeycloakOrganizationsWireContract` pins the Keycloak half against a real server. **No test calls `OrgProjectionWriter.projectWithOwner`** — `OrgRbacApiTest.seed` is a `@BeforeEach` fixture that assembles the projection by hand (`Organization.register` + `RoleSeeder.seedSystemRoles` + `Membership.create`), not through the production path. The orchestration end to end is unverified (§7.5) |
+| FR-ORG-12 | address organizations on the wire by **`organization.id`** — the same value stored in every `org_id` column, in cache keys and in the gateway's usage records. There is no second identifier to keep in step: what Keycloak (or any other provider) calls this tenant lives in `external_organization` and is read only by `OrgLookup` at the edge | `main:organization/internal/OrganizationController.java` (`ResourceObject.id = organization.getId()`) | `test:organization/internal/OrgRbacApiTest` (every org-scoped call) |
 | FR-ORG-13 | permit reading an organization with `org:read` and renaming it with `org:update` | `main:organization/internal/OrganizationController.java:61-70` | `test:organization/internal/OrgRbacApiTest.memberCannotUpdateOrgButOwnerCan` |
 | FR-ORG-14 | suspend and reactivate an organization only for `platform-admin`, and make suspension immediately revoke every member's org permissions | `main:organization/internal/OrganizationController.java:76-84`; `main:organization/internal/OrganizationService.java:105,116` | `test:organization/internal/OrgRbacApiTest.suspendIsPlatformAdminOnlyAndCutsMemberAccess` |
 | FR-ORG-15 | list organization members (cursor-paginated) with `member:read`, invite with `member:invite`, reassign a role with `member:role:assign` and remove with `member:remove` | `main:organization/internal/MemberController.java:54-82` | `test:organization/internal/OrgRbacApiTest.memberCanReadButCannotInvite`, `.ownerInviteProvisionsAcrossModulesAndCreatesMembership`, `.aCustomRoleCarryingMemberInviteCanInvite`, `.aRemovedMemberLeavesTheListingAndReleasesTheirRole` |
-| FR-ORG-16 | provision the invitee's identity, add them to the Keycloak organization and create the membership as one orchestrated invite, returning the existing membership unchanged when the person is already a member | `main:organization/internal/MemberService.java:65-105` | `test:organization/internal/OrgRbacApiTest.ownerInviteProvisionsAcrossModulesAndCreatesMembership` |
+| FR-ORG-16 | provision the invitee's identity (`person` first, provider link last), attach them at the provider's organization through the `ProviderOrgMembership` port — which exists because Keycloak's organization-member endpoints take a Keycloak USER id and nothing below the edge may see one — and create the membership as one orchestrated invite, returning the existing membership unchanged when the person is already a member | `main:organization/internal/MemberService.java:65-105` | `test:organization/internal/OrgRbacApiTest.ownerInviteProvisionsAcrossModulesAndCreatesMembership` |
 | FR-ORG-17 | reject an invite or role assignment naming a role code that does not exist in **this** organization, with 404 | `main:organization/internal/MemberService.java:166-169` (`requireRole`), `:172-175` (`lockRole`), `:181-183` (`notFound`) | `test:organization/internal/OrgRbacApiTest` (role resolution paths) |
 | FR-ORG-18 | create, read, update and delete organization roles under `role:create` / `role:read` / `role:update` / `role:delete`, with roles listed **un-paginated**; a role code must match `^[A-Za-z][A-Za-z0-9_]{1,62}$` (start with a letter, then letters/digits/underscores only, minimum three characters, `@Size(max = 64)`) or the request is 422 with `source.pointer = /data/attributes/code`, and the permission set must be **non-empty** on both create and update (`@NotEmpty`) or the request is 422 with `source.pointer = /data/attributes/permissions` — a role with no permissions cannot be created or updated into existence | `main:organization/internal/RoleController.java:47-53` (`CreateRoleRequest`), `:55-56` (`UpdateRoleRequest`), `:59-90` | `test:organization/internal/OrgRbacApiTest.memberCannotCreateRoleButOwnerCan`, `.ownerMintsARoleAndItsHolderGetsExactlyThosePermissions`; the code pattern and the non-empty rule have **no test** |
 | FR-ORG-19 | refuse to grant a permission the caller does not itself hold — on role create, role update, member invite and member role reassignment — with 403 naming the escalated codes | `main:organization/internal/PermissionEscalationGuard.java:41`; call sites `RoleService.java:77,93`, `MemberService.java:70,120` | `test:organization/internal/OrgRbacApiTest.aCallerCannotGrantAPermissionItDoesNotHold`, `.aNonOwnerCannotSelfPromoteToOwner`, `.aNonOwnerCannotInviteAnOwner` |
@@ -425,12 +503,15 @@ which only projects an account that already exists, FR-ORG-31 goes through
 and, when the local projection is absent, will:
 
 1. **find *or create* the Keycloak organization** — `keycloakOrg.findOrganizationIdByAlias(alias).orElseGet(() -> keycloakOrg.createOrganization(alias, name))`;
-2. **provision the owner identity** through `UserProvisioning.provision`, which creates the Keycloak
-   account if absent and triggers Keycloak's `execute-actions-email` invite (FR-IDN-5) — a real email
-   to the configured address;
-3. **add the owner as a Keycloak organization member** (`keycloakOrg.addMember`);
-4. write the local `organization` row, seed the `OWNER` role and create the first `membership`
-   (`OrgProjectionWriter.projectWithOwner`).
+2. **provision the owner identity** through `PersonProvisioning.provision`, which creates the person,
+   then the Keycloak account if absent, and triggers Keycloak's `execute-actions-email` invite
+   (FR-IDN-5) — a real email to the configured address;
+3. **attach the owner at the provider's organization** through `ProviderOrgMembership.attach`, which
+   translates the person id back to a Keycloak subject inside `identity` — the only module allowed to
+   hold one — so the tokens Keycloak issues them carry the `organization` claim the edge resolves the
+   tenant from;
+4. write the local `organization` row and its `external_organization` link, seed the `OWNER` role and
+   create the first `membership` (`OrgProjectionWriter.projectWithOwner`).
 
 `provision` is the **only** path in the system that adopts a pre-existing Keycloak organization —
 precisely the behaviour FR-ORG-10 forbids the admin-facing `create` from having. That asymmetry is
@@ -474,7 +555,7 @@ and no org-settings endpoint. They are grantable and ungated.
 | FR-PLT-4 | apply the same hierarchy to `CurrentUser.hasRole(...)`, so a hand-rolled check and `@PreAuthorize("hasRole(…)")` cannot answer differently | `main:shared/security/CurrentUserProvider.java:51-55`; `main:shared/security/CurrentUser.java:36-38` | `test:files/internal/FileApiTest.superadminInheritsTheDeleteTier`, `.supportMayReadAnyNamespace` |
 | FR-PLT-5 | **not** run the hierarchy downwards: a lower tier must never satisfy a higher check | `main:shared/security/SecurityConfig.java:54-60` | `test:shared/security/PlatformRoleHierarchyTest.theLadderDoesNotRunDownwards`, `.anOrdinaryUserReachesNeitherTier` |
 | FR-PLT-6 | map Keycloak `realm_access.roles` to `ROLE_<role>` and `resource_access.<client>.roles` to `ROLE_<client>_<role>`, so a **client** role can never satisfy a realm-role check | `main:shared/security/KeycloakJwtAuthenticationConverter.java:36-44` | `test:shared/security/KeycloakJwtAuthenticationConverterTest.mapsRealmRolesDirectlyAndNamespacesClientRoles`, `.clientRoleNamedPlatformAdminDoesNotBecomeRealmPlatformAdmin` |
-| FR-PLT-7 | name the Spring principal from `preferred_username`, falling back to the subject when the claim is absent — while every durable key uses the subject | `main:shared/security/KeycloakJwtAuthenticationConverter.java:45-47` | `test:shared/security/KeycloakJwtAuthenticationConverterTest.fallsBackToSubjectWithoutPreferredUsername`; `test:shared/security/SubjectAttributionTest.theConverterDoesNameThePrincipalAfterTheUsername`, `.currentSubjectIsTheSubjectWhileUsernameStaysTheDisplayName` |
+| FR-PLT-7 | name the Spring principal from `preferred_username`, falling back to the token subject when the claim is absent — while every durable key uses the resolved `person.id`. The principal name is a display string and nothing stores it | `main:shared/security/KeycloakJwtAuthenticationConverter.java:45-47` | `test:shared/security/KeycloakJwtAuthenticationConverterTest.fallsBackToSubjectWithoutPreferredUsername`; `test:shared/security/SubjectAttributionTest.theConverterDoesNameThePrincipalAfterTheUsername`, `.currentSubjectIsTheSubjectWhileUsernameStaysTheDisplayName` |
 | FR-PLT-8 | accept only tokens whose audience includes the configured API audience, so a realm token minted for another client (notably the `smsone-admin` service account holding `realm-management` roles) cannot authenticate | `application.yaml:12-17`; realm client scope `smsone-api-audience` | **no negative test** — `KeycloakIntegrationTest` mints only via `smsone-web` and asserts acceptance |
 | FR-PLT-9 | accept a real Keycloak-issued token end to end and let a real superadmin token reach a support-tier endpoint | `main:shared/security/SecurityConfig.java` | `test:shared/security/KeycloakIntegrationTest.securedEndpointAcceptsRealKeycloakJwt`, `.aRealSuperadminTokenReachesASupportTierEndpoint`, `.realmMintsTokensCarryingSubjectAndRealmRoles` |
 | FR-PLT-10 | expose the platform audit trail at `GET /api/v1/audit` to `platform-support` | `main:audit/internal/AuditController.java:46-47` | `test:audit/internal/AuditApiTest.platformViewIsAdminOnly` |
@@ -510,13 +591,13 @@ a platform tier, and the tier differs by operation.
 
 | ID | The system SHALL … | Implementation | Verification |
 |---|---|---|---|
-| FR-FIL-1 | store an uploaded object under a key minted as `u/<subject>/<uuid>/<sanitized-filename>`, sanitising the filename to `[A-Za-z0-9._-]` | `main:files/internal/FileController.java:131-136` | `test:files/internal/FileApiTest.uploadStoresUnderTheCallersNamespaceAndReturnsTheKey` |
+| FR-FIL-1 | store an uploaded object under a key minted as `u/<person-id>/<uuid>/<sanitized-filename>`, sanitising the filename to `[A-Za-z0-9._-]`. A machine credential is **refused** rather than given a namespace: the namespace is per person and an API key has no person id, so there is nothing to mint one from | `main:files/internal/FileController.java` | `test:files/internal/FileApiTest.uploadStoresUnderTheCallersNamespaceAndReturnsTheKey` |
 | FR-FIL-2 | switch to S3 multipart upload above a 5 MiB threshold | `main:files/internal/FileController.java` (`MULTIPART_THRESHOLD_BYTES`); `main:files/internal/S3StorageProvider.java` | `test:files/FileStorageIntegrationTest.multipartUploadSurvivesRealSeaweedFs` (real SeaweedFS) |
 | FR-FIL-3 | reject an empty upload with 422 and `source.parameter = "file"` | `main:files/internal/FileController.java:60-78` | `test:files/internal/FileApiTest.emptyUploadIs422` |
 | FR-FIL-4 | serve downloads as a **302** redirect to a presigned URL valid for 10 minutes, never proxying the payload | `main:files/internal/FileController.java:80-88` | `test:files/internal/FileApiTest.downloadRedirectsToAPresignedUrlForTheOwner` |
-| FR-FIL-5 | permit a caller to read only objects in their own `u/<subject>/` namespace, unless they hold `platform-support` or higher | `main:files/internal/FileController.java:83,148-153` | `test:files/internal/FileApiTest.aCallerCannotDownloadAnotherUsersFile`, `.supportMayReadAnyNamespace` |
+| FR-FIL-5 | permit a caller to read only objects in their own `u/<person-id>/` namespace, unless they hold `platform-support` or higher | `main:files/internal/FileController.java` | `test:files/internal/FileApiTest.aCallerCannotDownloadAnotherUsersFile`, `.supportMayReadAnyNamespace` |
 | FR-FIL-6 | require `platform-admin` (a **higher** tier than read) to delete an object outside the caller's own namespace | `main:files/internal/FileController.java:91-97` | `test:files/internal/FileApiTest.supportMayNotDeleteAnotherUsersFile`, `.adminMayDeleteAnyNamespace`, `.superadminInheritsTheDeleteTier`, `.deleteRemovesAnOwnedObject` |
-| FR-FIL-7 | mint a presigned **PUT** URL only under the caller's own subject, treating any supplied key purely as a filename hint, so no cross-namespace write path exists at any tier | `main:files/internal/FileController.java:99-130` | `test:files/internal/FileApiTest.presignPutMintsAnUploadUrlUnderTheCallersNamespace` |
+| FR-FIL-7 | mint a presigned **PUT** URL only under the caller's own `person.id`, treating any supplied key purely as a filename hint, so no cross-namespace write path exists at any tier | `main:files/internal/FileController.java` | `test:files/internal/FileApiTest.presignPutMintsAnUploadUrlUnderTheCallersNamespace` |
 | FR-FIL-8 | require a key for a presigned **GET**, apply the same owner-or-support check, and 404 when the object does not exist | `main:files/internal/FileController.java:99-130` | `test:files/FileStorageIntegrationTest.presignedGetAndPutWorkWithoutSdk` |
 | FR-FIL-9 | reject any `operation` other than `GET` or `PUT` with 422 and `source.pointer = /data/attributes/operation` | `main:files/internal/FileController.java:99-130` | none |
 | FR-FIL-10 | guard remote storage calls with a circuit breaker, while leaving presigning (local crypto) **outside** the breaker so it neither masks nor is blocked by a storage outage | `main:files/internal/S3StorageProvider.java:47-48`; `application.yaml` `resilience4j.circuitbreaker.instances.storage` | `test:files/ResilienceSmokeTest.circuitBreakerOpensUnderFaultInjection` |
@@ -537,7 +618,7 @@ Dispatch never sends inline: it enqueues into the durable `notification_delivery
 | FR-NOT-1 | expose a channel SPI (`NotificationChannelSender`) as the documented extension point, registering exactly one sender per channel and ignoring a duplicate with a warning | `main:notification/NotificationChannelSender.java`; `main:notification/internal/ChannelRegistry.java:20-31` | none (registry collision is not tested) |
 | FR-NOT-2 | support the channels `EMAIL`, `SMS`, `IN_APP`, `SLACK`, `WEBHOOK` | `main:notification/NotificationChannel.java` | `test:notification/NotificationDeliveryTest.dispatchFansOutAcrossChannels` |
 | FR-NOT-3 | durably enqueue one delivery row per recipient on `dispatch(...)` and return immediately without sending | `main:notification/internal/NotificationService.java:32-42`; `main:notification/internal/NotificationDeliveryQueue.java:38-60` | `test:notification/NotificationDeliveryTest.dispatchFansOutAcrossChannels` |
-| FR-NOT-4 | notify configured admins by email, plus in-app when the admin's subject can be resolved from their email, so an unprovisioned admin still receives the email | `main:notification/internal/NotificationService.java:44-59` | `test:notification/NotificationDeliveryTest.flagToggleEnqueuesThenWorkerDeliversEmailAndInApp` |
+| FR-NOT-4 | notify configured admins by email, plus in-app when the admin's `person.id` can be resolved from their email, so an unprovisioned admin still receives the email | `main:notification/internal/NotificationService.java:44-59` | `test:notification/NotificationDeliveryTest.flagToggleEnqueuesThenWorkerDeliversEmailAndInApp` |
 | FR-NOT-5 | claim delivery rows atomically with `FOR UPDATE SKIP LOCKED`, taking due `PENDING` rows and reclaiming `PROCESSING` rows whose lock is older than `stale-lock` | `main:notification/internal/NotificationDeliveryQueue.java:68-108` | `test:notification/internal/NotificationDeliveryQueueTest.staleClaimantsUpdatesAreFencedOutAfterReclaim` |
 | FR-NOT-6 | **fence** every terminal update on `status = 'PROCESSING' and attempts = <claimant's count>`, so a stale claimant whose row was re-claimed updates zero rows and only logs | `main:notification/internal/NotificationDeliveryQueue.java:110-140` | `test:notification/internal/NotificationDeliveryQueueTest.staleClaimantsUpdatesAreFencedOutAfterReclaim` |
 | FR-NOT-7 | dead-letter a row whose stored channel no longer maps to the enum, in place, rather than let it poison every batch it lands in | `main:notification/internal/NotificationDeliveryQueue.java:99-106` | `test:notification/internal/NotificationDeliveryQueueTest.unknownChannelRowIsDeadLetteredInsteadOfPoisoningTheBatch` |
@@ -551,8 +632,8 @@ Dispatch never sends inline: it enqueues into the durable `notification_delivery
 | FR-NOT-15 | not duplicate a message under concurrent fan-out | `main:notification/internal/NotificationDeliveryWorker.java:143-175` | `test:notification/NotificationDeliveryTest.fansOutHundredsConcurrentlyWithoutDuplicates` |
 | FR-NOT-16 | bound every outbound HTTP exchange (Slack, webhook channel) by a whole-exchange timeout and abort the connection on expiry | `main:notification/internal/HttpChannels.java:24-60` | none |
 | FR-NOT-17 | SSRF-guard every caller-supplied outbound URL on the Slack and webhook channels, treating an unsafe address as a permanent failure unless the guard says it is retryable — **unless `app.notification.webhook-allow-private-hosts` is true**, which skips address resolution entirely (see the note below the table) | `main:notification/internal/WebhookChannelSender.java:13,41`; `main:notification/internal/SlackChannelSender.java:36-40`; `main:notification/internal/NotificationProperties.java:20,31-33`; `main:shared/http/SafeOutboundUrl.java` | `test:shared/http/SafeOutboundUrlTest` (all six tests, including `.allowPrivateHostsBypassesTheAddressCheck`) |
-| FR-NOT-18 | address in-app notifications by the recipient's **immutable subject**, never a username or email | `main:notification/Recipient.java:24`; `main:notification/internal/InAppChannelSender.java:25` | `test:notification/NotificationDeliveryTest.flagToggleEnqueuesThenWorkerDeliversEmailAndInApp` |
-| FR-NOT-19 | list only the caller's own in-app notifications (cursor-paginated), scoped by subject, with no `@PreAuthorize` | `main:notification/internal/InAppNotificationService.java:37-61`; `main:notification/internal/NotificationController.java:30` | none (no dedicated API test) |
+| FR-NOT-18 | address in-app notifications by the recipient's **`person.id`** (`in_app_notification.person_id`), never a username or email | `main:notification/Recipient.java`; `main:notification/internal/InAppChannelSender.java` | `test:notification/NotificationDeliveryTest.flagToggleEnqueuesThenWorkerDeliversEmailAndInApp` |
+| FR-NOT-19 | list only the caller's own in-app notifications (cursor-paginated), scoped by `person.id`, with no `@PreAuthorize` | `main:notification/internal/InAppNotificationService.java:37-61`; `main:notification/internal/NotificationController.java:30` | none (no dedicated API test) |
 | FR-NOT-20 | return **404** when marking a notification read that does not exist **or** belongs to another user — never 403, so existence is not disclosed | `main:notification/internal/InAppNotificationService.java` | none |
 | FR-NOT-21 | mark-read via a conditional bulk update that does not bump `@Version`, so concurrent mark-reads cannot produce an optimistic-lock 500 | `main:notification/internal/InAppNotificationRepository.java` (`markReadIfUnread`) | none |
 | FR-NOT-22 | purge terminal (`SENT` and `FAILED`) delivery rows older than `app.notification.delivery.retention` (default P7D) via a nightly ShedLock-guarded, batched job | `main:notification/internal/NotificationRetentionJob.java` | `test:notification/internal/NotificationRetentionJobTest.purgesOldTerminalRowsAndNothingElse` |
@@ -624,14 +705,14 @@ would let a change commit while the row explaining it was still in flight.
 | ID | The system SHALL … | Implementation | Verification |
 |---|---|---|---|
 | FR-AUD-1 | offer every module a dependency-free way to record an audit row — `AuditLog.record(action, orgId, target, fromState, toState)` — called at the point of change and inside the changing transaction | `main:shared/audit/AuditLog.java`; `main:audit/internal/AuditLogImpl.java:30-34` | `test:audit/internal/AuditRecordingTest.settingChangeRecordsWhoWhatAndFromToState` |
-| FR-AUD-2 | record the acting principal as the token **subject**, and `null` for a system-triggered change | `main:audit/internal/AuditLogImpl.java:32` | `test:audit/internal/AuditRecordingTest.settingChangeRecordsWhoWhatAndFromToState`, `.systemTriggeredChangeHasNoActor` |
+| FR-AUD-2 | record the acting principal as the accountable **`person.id`** (`actor_person_id`), and `null` for a system job or a machine credential — a null that means "no human was answerable", not "unset" | `main:audit/internal/AuditLogImpl.java` | `test:audit/internal/AuditRecordingTest.settingChangeRecordsWhoWhatAndFromToState`, `.systemTriggeredChangeHasNoActor` |
 | FR-AUD-3 | record who, when (`occurred_at` from the injected `Clock`, plus `created_at` as the audit timeline), where (`org_id`, null for platform-level), what (`action`, `target`) and the before/after state | `main:audit/internal/AuditEntry.java`; `V13__audit_log.sql`, `V14__audit_log_state.sql` | `test:audit/internal/AuditRecordingTest.settingChangeRecordsWhoWhatAndFromToState` |
 | FR-AUD-4 | truncate every audit string field to its column length at construction, so an over-long value degrades rather than throwing | `main:audit/internal/AuditEntry.java:60-65` | none |
 | FR-AUD-5 | keep `audit_log` **append-only**: never soft-deletable, never mutated, and surviving the deletion of whatever it describes | `main:audit/internal/AuditEntry.java` (extends `BaseEntity`); `V17__soft_delete.sql:4` | `test:audit/internal/AuditRecordingTest.theTrailSurvivesTheSoftDeleteOfWhatItDescribes` |
 | FR-AUD-6 | expose a platform-wide audit view at `GET /api/v1/audit` requiring `platform-support`, filterable by `org` (exact `org_id`), `action` (exact match, blank ignored), `from` and `to`. **The window bounds `occurred_at`, not `created_at`**: `occurred_at >= from` (inclusive) and `occurred_at < to` (exclusive), while the sort, the keyset cursor and `links.next` all key on `created_at desc, id desc`. The two are different columns on the same row — `occurred_at` is when the change happened, `created_at` is when it was recorded (`V13__audit_log.sql:12,14`) — so a time-filtered page walk is ordered by a timestamp the filter does not constrain | `main:audit/internal/AuditController.java:46-47,77-94` (`cb.greaterThanOrEqualTo(root.get("occurredAt"), from)`, `cb.lessThan(root.get("occurredAt"), to)`), `:34` (`NEWEST_FIRST`), `:73` | `test:audit/internal/AuditApiTest.platformAdminListsAndFiltersByAction`, `.platformViewIsAdminOnly`; the `occurred_at`-vs-`created_at` split has **no test** |
 | FR-AUD-7 | expose an org-scoped audit view at `GET /api/v1/orgs/{orgId}/audit` requiring the `audit:read` permission, with the org filter forced to the path | `main:audit/internal/AuditController.java:57-58` | `test:audit/internal/AuditApiTest.orgScopedViewReturnsOnlyThatOrgWhenPermitted`, `.orgScopedViewDeniesWithoutTheAuditPermission` |
 | FR-GEO-1 | attach a geolocation to any record via the shared `GeoStamps` port under a per-record-type capture policy (OFF/OPTIONAL/REQUIRED), rejecting a missing or too-coarse fix; store coordinates as numeric lat/lng behind the `GeoSearch` port (no PostGIS) | `main:geo/internal/GeoStampsImpl.java`, `main:geo/internal/HaversineGeoSearch.java` | `test:geo/internal/GeoStampTest.attachIsRejectedWhenCaptureIsOffOrUnconfigured`, `.aFixTooCoarseForThePolicyIsRejected` |
-| FR-GEO-2 | query stamps by subject or bounding box, returning exact coordinates only with `geo:read_precise` and coarsened positions otherwise | `main:geo/internal/GeoController.java`, `main:geo/internal/GeoQueryService.java` | `test:geo/internal/GeoStampTest.boundingBoxSearchReturnsStampsInsideAndExcludesOutside`, `.nonPreciseReadCoarsensCoordinatesAndDropsAccuracy` |
+| FR-GEO-2 | query stamps by subject record or bounding box, returning exact coordinates only with `geo:read_precise` and coarsened positions otherwise | `main:geo/internal/GeoController.java`, `main:geo/internal/GeoQueryService.java` | `test:geo/internal/GeoStampTest.boundingBoxSearchReturnsStampsInsideAndExcludesOutside`, `.nonPreciseReadCoarsensCoordinatesAndDropsAccuracy` |
 | FR-AUD-8 | return both views newest-first and cursor-paginated | `main:audit/internal/AuditController.java:34` (`createdAt desc, id desc`); `V13__audit_log.sql:21-23` | `test:audit/internal/AuditApiTest.platformViewIsCursorPaginated` |
 | FR-AUD-9 | reject a non-ISO-8601 `from`/`to` with 422 and `source.parameter` naming the offending parameter | `main:audit/internal/AuditController.java:96-106` | `test:audit/internal/AuditApiTest.badInstantFilterIs422` |
 | FR-AUD-10 | audit these 22 actions: `identity.user_provisioned`, `.user_disabled_by_reconciliation`; `organization.created`, `.renamed`, `.suspended`, `.reactivated`, `.member_added`, `.member_role_changed`, `.member_removed`, `.role_created`, `.role_updated`, `.role_deleted`; `platform.impersonation_started`, `._ended`, `._superseded`; `settings.changed`, `.deleted`, `.feature_flag_changed`, `.feature_flag_deleted`; `webhooks.subscription_created`, `.subscription_updated`, `.subscription_deleted` | see §8 traceability | `test:audit/internal/AuditApiTest.platformAdminListsAndFiltersByAction` |
@@ -687,14 +768,14 @@ code change. See §10.
 |---|---|---|---|
 | FR-EVT-1 | publish domain events registered on an aggregate when the repository saves it | `main:shared/persistence/AggregateRoot.java:21-33` | `test:settings/SettingsModuleTest.upsertPublishesSettingChangedThroughTheRegistry` |
 | FR-EVT-2 | persist one publication row per *(event, registered listener)* in `event_publication`, and republish incomplete publications on restart — at-least-once delivery | `V2__modulith_event_publication.sql`; `application.yaml:53-55` | `test:scheduler/EventPurgeJobIntegrationTest.purgesCompletedPublications` |
-| FR-EVT-3 | publish these ten events: `SettingChanged`, `FeatureFlagChanged`, `UserProvisioned`, `UserActivated`, `OrganizationRegistered`, `OrganizationStatusChanged`, `MembershipCreated`, `MembershipRoleChanged`, `MemberRemoved`, `RolePermissionsChanged` | module API packages | `docs/EVENTS.md`; `test:settings/SettingsModuleTest`, `test:webhooks/internal/WebhookEventTest` |
+| FR-EVT-3 | publish these eighteen events: `SettingChanged`, `FeatureFlagChanged`, `TranslationChanged`, `PersonProvisioned`, `PersonActivated`, `OrganizationRegistered`, `OrganizationStatusChanged`, `OrganizationDeleted`, `MembershipCreated`, `MembershipRoleChanged`, `MemberRemoved`, `RolePermissionsChanged`, `DocumentRegistered`, `SubscriptionChanged`, `JobCompleted`, `TicketEscalated`, `GeoStampRecorded`, `GeoPolicyChanged`. **Every id in every payload is one this platform mints** — `personId`, `orgId`, `requesterPersonId` — so a consumer never has to know which provider authenticated anybody | module API packages | `docs/EVENTS.md`; `test:settings/SettingsModuleTest`, `test:webhooks/internal/WebhookEventTest` |
 | FR-EVT-4 | publish `MemberRemoved` **explicitly**, because a repository delete fires no `@DomainEvents` | `main:organization/internal/MemberService.java:138-140` | `test:organization/internal/OrgRbacAuthorityTest.aSoftDeletedMembershipResolvesToZeroPermissions`, `.aRemovedMemberCanBeInvitedBackIntoTheSameOrganization` — both call the private helper `removeMemberAsProductionDoes` (`:276`), which reproduces the delete-then-publish pair and then awaits the cache eviction that only the explicit publish can cause |
 | FR-EVT-5 | register `RolePermissionsChanged` on role **soft-delete** as well as on custom-role edit and system-role reconciliation, since deletion must evict cached permissions and notify subscribers | `main:organization/internal/Role.java:78,92,108` | `test:organization/internal/RoleSoftDeleteTest.deletingARoleHidesItWithoutTouchingItsPermissions` |
 | FR-EVT-6 | provide consumer-side deduplication via `EventInbox.recordIfNew(listenerId, messageId)`, exactly once per pair, joining the caller's transaction so a rolled-back listener leaves no inbox record | `main:shared/events/EventInbox.java:28-34`; `V7__event_inbox.sql` | `test:shared/events/EventInboxIntegrationTest.exactlyOncePerListenerAndMessage`, `.recordJoinsTheCallersTransaction` |
 | FR-EVT-7 | guard the two event consumers that have side effects with the inbox (`notification-flag-change`, `webhooks`), while the cache evictor deliberately uses none because a cache clear is idempotent | `main:notification/internal/FeatureFlagChangeNotifier.java:18,33`; `main:webhooks/internal/WebhookDispatcher.java:31-44`; `main:organization/internal/OrgPermissionCacheEvictor.java` | `test:webhooks/internal/WebhookEventTest.aMemberAddedEventEnqueuesADeliveryForASubscriber` |
 
 **Facts `docs/EVENTS.md` omits.** (1) Role soft-delete is a third publisher of
-`RolePermissionsChanged`. (2) Four events — `SettingChanged`, `UserProvisioned`, `UserActivated`,
+`RolePermissionsChanged`. (2) Four events — `SettingChanged`, `PersonProvisioned`, `PersonActivated`,
 `OrganizationRegistered` — have **zero production consumers**, and because the registry stores a row
 per *(event, listener)* they therefore produce **no `event_publication` rows at all**;
 `EventPurgeJobIntegrationTest` has to import its own probe listener to make the purge observable.
@@ -705,7 +786,7 @@ job** and grows unbounded, and `SettingChanged` is the only event without `occur
 
 | ID | The system SHALL … | Implementation | Verification |
 |---|---|---|---|
-| FR-DLC-1 | record deletion rather than executing it for all seven aggregate tables — `setting`, `feature_flag`, `app_user`, `organization`, `org_role`, `membership`, `webhook_subscription` | `V17__soft_delete.sql:23-29`; each entity's `@SQLDelete` | `test:shared/persistence/SoftDeleteTest.deleteStampsTheRowInsteadOfRemovingIt` |
+| FR-DLC-1 | record deletion rather than executing it for every soft-deletable aggregate — twenty-four tables today, of which `setting`, `feature_flag`, `organization`, `org_role`, `membership` and `webhook_subscription` are the originals `V17` retrofitted. `person`, `person_contact` and `external_identity` declare theirs in `V10` rather than being retrofitted, because their partial unique indexes are inseparable from the reasoning that makes them partial | `V17__soft_delete.sql`, `V10__identity_user.sql`; each entity's `@SQLDelete` | `test:shared/persistence/SoftDeleteTest.deleteStampsTheRowInsteadOfRemovingIt` |
 | FR-DLC-2 | hide a soft-deleted row from **every** JPA read path via `@SQLRestriction("deleted_at is null")` declared on each entity (Hibernate inherits neither annotation from a mapped superclass) | seven entities; `main:shared/persistence/SoftDeletableEntity.java:12-14` | `test:shared/persistence/SoftDeleteTest.everyJpaReadPathStopsSeeingADeletedRow`, `.markDeletedHidesTheRowThroughTheSameRestriction` |
 | FR-DLC-3 | bump `version = version + 1` inside the soft-delete statement and predicate it on `id = ? and version = ?`, so a stale delete affects zero rows and a concurrent flush cannot write `deleted_at = null` back | `main:shared/persistence/SoftDeletableEntity.java:20-27`; all seven `@SQLDelete` strings | `test:shared/persistence/SoftDeleteTest.deletingAStaleInstanceFailsInsteadOfSilentlyWinning`, `.aConcurrentUpdateCannotResurrectADeletedRow`; **`test:ArchitectureTests.softDeletableEntitiesDeclareTheirOwnHibernateAnnotations`** (reconstructs the expected SQL from each entity's own `@Table`) |
 | FR-DLC-4 | free a soft-deleted row's unique key for reuse, by replacing every unique constraint on those tables with a **partial** unique index over live rows | `V17__soft_delete.sql:34-59` | `test:shared/persistence/SoftDeleteTest.aDeletedKeyIsFreeToUseAgain`; `test:organization/internal/OrgRbacApiTest.aDeletedRoleCodeCanBeMintedAgain`; `test:organization/internal/OrgRbacAuthorityTest.aRemovedMemberCanBeInvitedBackIntoTheSameOrganization` |
@@ -716,18 +797,23 @@ job** and grows unbounded, and `SettingChanged` is the only event without `occur
 | FR-DLC-9 | reject a negative retention, a batch size below 1 or a max-batches below 1 **at startup**, while allowing a zero retention (how tests and one-off erasures ask for "now") | `main:shared/persistence/SoftDeleteProperties.java` | none (validation itself is untested) |
 | FR-DLC-10 | keep `audit_log`, `in_app_notification`, `webhook_delivery`, `role_permission` and the framework tables **out** of soft delete | `V17__soft_delete.sql:3-8` | `test:ArchitectureTests.softDeletableEntitiesDeclareTheirOwnHibernateAnnotations` (by exclusion); `test:audit/internal/AuditRecordingTest.theTrailSurvivesTheSoftDeleteOfWhatItDescribes` |
 | FR-DLC-11 | soft-delete a role through an ordinary versioned update rather than `repository.delete`, because `@SQLDelete` overrides only the entity row's statement and Hibernate would still hard-delete the `role_permission` collection underneath it | `main:organization/internal/Role.java:96-109`; `main:organization/internal/RoleService.java:123-124` | `test:organization/internal/RoleSoftDeleteTest.deletingARoleHidesItWithoutTouchingItsPermissions`, `.restoringADeletedRoleReturnsItsOriginalPermissions` |
-| FR-DLC-12 | filter soft-deleted rows manually in every non-JPA read path, since `@SQLRestriction` never applies to native SQL | `main:webhooks/internal/WebhookDeliveryQueue.java:80`; `main:analytics/internal/AnalyticsReport.java:22`; `main:identity/internal/UserRepository.java:21-23` | `test:webhooks/internal/WebhookDeliveryTest.aPendingDeliveryForADeletedSubscriptionIsNeverClaimed`; `test:analytics/internal/AnalyticsApiTest.softDeletedUsersAreExcludedFromTheReport` |
-| FR-DLC-13 | apply Flyway migrations against the real database at startup and record them | `V1`–`V19`; `application.yaml:27-29` | `test:shared/persistence/FlywayBaselineTest.baselineMigrationAppliedAgainstRealPostgres` |
+| FR-DLC-12 | filter soft-deleted rows manually in every non-JPA read path, since `@SQLRestriction` never applies to native SQL | `main:webhooks/internal/WebhookDeliveryQueue.java:80`; `main:analytics/internal/AnalyticsReport.java`; `main:identity/internal/PersonRepository.java` (`existsDeletedById`), `main:identity/internal/PersonResolver.wasErased` | `test:webhooks/internal/WebhookDeliveryTest.aPendingDeliveryForADeletedSubscriptionIsNeverClaimed`; `test:analytics/internal/AnalyticsApiTest.softDeletedUsersAreExcludedFromTheReport` |
+| FR-DLC-13 | apply Flyway migrations against the real database at startup and record them | `V1`–`V50`; `application.yaml:27-29` | `test:shared/persistence/FlywayBaselineTest.baselineMigrationAppliedAgainstRealPostgres` |
 
 **Reachability.** `SoftDeleteRecovery` is injected by **no controller** — restore is a Java API only,
-not reachable over HTTP. Neither `app_user` nor `organization` is ever deleted by application code
-(no `.delete(`/`.deleteById(` call exists on `UserRepository` or `OrganizationRepository`, and
-`OrganizationService` declares no `delete` method at all), although both are fully wired for soft
-delete and appear in `PURGE_ORDER`; the read side (FR-IDN-4) is built for a write side that does not
-yet exist. Two further states are enforced on the read path with no write path anywhere in `src/main`,
-so each is reachable only by direct SQL: `ProvisioningStatus.DISABLED` (§3.2 — `User.disable()` has no
-caller) and `MembershipStatus.SUSPENDED` (§3.3 — `Membership` has no suspend method, and `create` only
-ever writes `ACTIVE`).
+not reachable over HTTP. A `person` is soft-deleted only by compliance erasure (§3.25, FR-CMP-3), an
+`organization` only by `OrganizationService.delete` (which publishes `OrganizationDeleted`); neither
+has a route that deletes it as a matter of routine administration. `ProvisioningStatus.DISABLED` is
+reachable through reconciliation (FR-IDN-15) and otherwise only by direct SQL, and
+`MembershipStatus.SUSPENDED` is enforced on the read path with **no** write path anywhere in
+`src/main` (§3.3 — `Membership` has no suspend method, and `create` only ever writes `ACTIVE`).
+
+**Erasure must reach the link, not only the person.** A `person` soft-deleted while its
+`external_identity` row is still live reads as erased and *still authenticates*: the edge resolves
+through the link table, and `uq_external_identity_subject_live` is partial over `deleted_at is null`.
+`ComplianceService` therefore soft-deletes `external_identity` and `person_contact` alongside
+`person`, even though both carry a real cascading FK to it — the cascade fires on the **hard** delete
+thirty days later, and erasure is meant to take effect now.
 
 ### 3.14 Audited impersonation (FR-IMP)
 
@@ -739,9 +825,11 @@ operator on every row it writes; a widened role would do none of that. Schema in
 [DATA_MODEL.md](DATA_MODEL.md) §4.3.2 and §8; the contributor-facing invariants in
 [../AGENTS.md](../AGENTS.md) §5.5.
 
-The session module is `identity` (it owns the accounts a session names). The enforcing filter is in
-`shared`, reaching back through the `shared.security.ImpersonationLookup` port — the same seam as
-`OrgAuthorization`, and the reason `shared` still compile-depends on no business module.
+The session module is `identity` (it owns the people a session names), and sessions name them by
+`person.id`: `impersonation_session.actor_person_id`, `target_person_id`, `ended_by_person_id`. The
+enforcing filter is in `shared`, reaching back through the `shared.security.ImpersonationLookup`
+port — the same seam as `PersonLookup` and `OrgAuthorization`, and the reason `shared` still
+compile-depends on no business module.
 
 | ID | The system SHALL … | Implementation | Verification |
 |---|---|---|---|
@@ -749,7 +837,7 @@ The session module is `identity` (it owns the accounts a session names). The enf
 | FR-IMP-2 | swap the request's effective principal when `X-Impersonate: <sessionId>` is present on an `/api/**` request, and leave both the chain and the security context untouched when it is absent | `main:shared/security/ImpersonationFilter.java:79-83,134-144` | `test:shared/security/ImpersonationFilterTest.theContextIsSwappedForTheChainAndRestoredAfterwards`, `.anAbsentHeaderLeavesBothTheChainAndTheContextAlone` |
 | FR-IMP-3 | perform that swap at `@Order(-2)` — after authentication (−100) and **before** rate limiting (−1), idempotency (0) and the provisioning gate (1) — so the whole downstream request sees one effective principal | `main:shared/security/ImpersonationFilter.java:46` | `test:identity/internal/ImpersonationProvisioningGateTest.aTargetDisabledMidSessionIsRefused` (the gate evaluates the target, proving it runs after the swap) |
 | FR-IMP-4 | give the impersonated principal an **empty** authority collection, so org permissions still resolve from the database for the target while every `hasRole('platform-*')` check fails — including on the endpoint that mints sessions | `main:shared/security/ImpersonatedAuthenticationToken.java:28`; `main:shared/security/CurrentUserProvider.java:75-86` | `test:identity/internal/ImpersonationReachTest.supportReachesTenantDataThroughASessionAndTheAdminSurfaceOnlyOutsideOne` |
-| FR-IMP-5 | resolve a session by its id **and** the authenticated actor's subject, so a leaked session id is worthless to anyone but the operator it was issued to — including an operator holding a higher tier | `main:identity/internal/ImpersonationSessionRepository.java:21`; `main:shared/security/ImpersonationFilter.java:84-91` | `test:identity/internal/ImpersonationReachTest.aSessionIdPresentedByADifferentActorIsRejected` |
+| FR-IMP-5 | resolve a session by its id **and** the authenticated actor's `person.id`, so a leaked session id is worthless to anyone but the operator it was issued to — including an operator holding a higher tier | `main:identity/internal/ImpersonationSessionRepository.java`; `main:shared/security/ImpersonationFilter.java` | `test:identity/internal/ImpersonationReachTest.aSessionIdPresentedByADifferentActorIsRejected` |
 | FR-IMP-6 | treat a malformed, unknown, ended or expired id identically — **403 `FORBIDDEN`** in the envelope with `source.header = "X-Impersonate"`, never a 500 and never a distinguishing message | `main:identity/internal/ImpersonationLookupImpl.java:39-46`; `main:shared/security/ImpersonationFilter.java:147-150` | `test:identity/internal/ImpersonationReachTest.aMalformedSessionIdIsAForbiddenEnvelopeNotAServerError`; `test:shared/security/ImpersonationFilterTest.anUnresolvableSessionDeniesWithoutRunningTheChainOrTouchingTheContext` |
 | FR-IMP-7 | permit only `GET`, `HEAD` and `OPTIONS` inside a `READ_ONLY` session, rejecting anything else before the endpoint is reached | `main:shared/security/ImpersonationFilter.java:58,129-132` | `test:shared/security/ImpersonationFilterTest.aReadOnlySessionPassesTheSafeMethodsAndRefusesTheRest`, `.aWriteCapableSessionPassesAnUnsafeMethod`; `test:identity/internal/ImpersonationReachTest.aReadOnlySessionRefusesAnUnsafeMethodAndNamesTheHeaderThatCausedIt` |
 | FR-IMP-8 | restore the previous `SecurityContext` in a `finally`, so a pooled request thread never hands the next request someone else's identity | `main:shared/security/ImpersonationFilter.java:134-144` | `test:shared/security/ImpersonationFilterTest.theContextIsSwappedForTheChainAndRestoredAfterwards`; `test:identity/internal/ImpersonationReachTest.theRequestAfterAnImpersonatedOneSeesItsOwnIdentity` |
@@ -757,16 +845,16 @@ The session module is `identity` (it owns the accounts a session names). The enf
 | FR-IMP-10 | re-check **both** accounts' provisioning state on every impersonated request — independently of `app.provisioning.gate-enabled`, since a guarantee this feature is sold on cannot be borrowed from a switch another module owns | `main:identity/internal/ImpersonationLookupImpl.java:50-51,74-80` | `test:identity/internal/ImpersonationReachTest.disablingTheOperatorsOwnAccountDeniesTheVeryNextImpersonatedRequest`, `.deletingTheTargetMidSessionDeniesTheVeryNextImpersonatedRequest` |
 | FR-IMP-11 | decide liveness on read (`ended_at is null and expires_at > now`) so that ending a session denies the **very next** request and an expired one denies with **no sweep job** and no `_expired` action | `main:identity/internal/ImpersonationSession.java:95-97`; `main:identity/internal/ImpersonationService.java:136-152` | `test:identity/internal/ImpersonationReachTest.endingASessionDeniesTheVeryNextRequest`, `.anExpiredSessionDeniesWithoutAnySweepJobHavingRun` (asserts `ended_at` stays null) |
 | FR-IMP-12 | never write to the account a session wears: the provisioning gate uses `peek`, not `authorize`, so no lazy `INVITED → ACTIVE` fires on an operator's read | `main:identity/internal/ProvisioningGateFilter.java:96-104` | `test:identity/internal/ImpersonationProvisioningGateTest.aSessionNeverActivatesTheTargetItWears`, with `.aUsersOwnFirstRequestStillActivatesThem` as the control |
-| FR-IMP-13 | refuse a target that has no `app_user`, is `DISABLED`, or is soft-deleted — and keep **404 and 409 distinct**, because a 404 invites re-provisioning the very account somebody erased | `main:identity/internal/ImpersonationService.java:249-260`; `main:identity/internal/UserRepository.java` (`existsDeletedBySubject`) | `test:identity/internal/ImpersonationApiTest.aDeletedTargetIsAConflictAndAnUnknownOneIsNotFound`, `.aDisabledTargetCannotBeImpersonated` |
+| FR-IMP-13 | refuse a target that is not a live `person`, is `DISABLED`, or is soft-deleted — and keep **404 and 409 distinct**, because a 404 invites re-provisioning the very account somebody erased. The target arrives as a `person.id` already: an operator picking somebody out of the platform listing is picking a person, not a provider account | `main:identity/internal/ImpersonationService.java` (`requireImpersonableTarget`); `main:identity/internal/PersonRepository.existsDeletedById` | `test:identity/internal/ImpersonationApiTest.aDeletedTargetIsAConflictAndAnUnknownOneIsNotFound`, `.aDisabledTargetCannotBeImpersonated` |
 | FR-IMP-14 | permit impersonating an account that itself holds **any** platform realm role only to `platform-superadmin`, resolving the target's **effective** realm roles from Keycloak's composite mapping (the set the target's token will carry) | `main:identity/internal/ImpersonationService.java:267-276`; `main:identity/internal/KeycloakUserAdminGateway.java` (`realmRoles` → `/role-mappings/realm/composite`) | `test:identity/internal/ImpersonationApiTest.onlyASuperadminMayImpersonateAnAccountHoldingAPlatformRole`; `test:identity/internal/KeycloakProvisioningIntegrationTest.realmRolesReportsRolesHeldThroughACompositeNotJustDirectMappings` (real Keycloak) |
 | FR-IMP-15 | default `mode` to `READ_ONLY` and require `platform-admin` for `WRITE` — checked in the service, because the mode is in the body and an annotation cannot see it | `main:identity/internal/ImpersonationController.java:96-106`; `main:identity/internal/ImpersonationService.java:87-92` | `test:identity/internal/ImpersonationApiTest.aWriteCapableSessionRequiresPlatformAdmin` |
 | FR-IMP-16 | require a `reason` of at least 8 characters after trim and at most 500, rejecting (never truncating) with 422 and `source.pointer = /data/attributes/reason` | `main:identity/internal/ImpersonationService.java:209-224` | `test:identity/internal/ImpersonationApiTest.aReasonMustBeGivenAndMustSayEnoughToReview` |
 | FR-IMP-17 | bound the session lifetime server-side — default `app.impersonation.default-ttl` (PT15M), cap `max-ttl` (PT30M) — **rejecting** an over-cap request with 422 rather than silently clamping it, and refusing to start when the default exceeds the cap | `main:identity/internal/ImpersonationProperties.java`; `main:identity/internal/ImpersonationService.java:226-238` | `test:identity/internal/ImpersonationApiTest.aSessionOpensReadOnlyForTheServerDefaultLifetime`, `.theServerBoundsTheSessionLifetimeAndRefusesAnOverCapRequest` |
 | FR-IMP-18 | refuse self-impersonation with 422 — it grants nothing but produces a trail that reads as oversight and records none | `main:identity/internal/ImpersonationService.java:199-205` | `test:identity/internal/ImpersonationApiTest.nobodyMayImpersonateThemselves` |
 | FR-IMP-19 | hold at most **one live session per (actor, target)**: re-issuing supersedes the previous one and audits the supersede, a merely lapsed session is left untouched, and concurrent opens are serialised by a `pg_advisory_xact_lock` over the pair rather than a unique index (liveness depends on `expires_at`, which an index cannot express) | `main:identity/internal/ImpersonationService.java:169-187`; `main:identity/internal/ImpersonationSessionRepository.java:35-56` | `test:identity/internal/ImpersonationApiTest.reIssuingAgainstTheSameTargetSupersedesTheOldSessionAndAuditsBoth`, `.twoOpensInFlightForOnePairStillLeaveExactlyOneLiveSession`, `.reIssuingAfterASessionLapsedLeavesTheLapsedRowUntouched` |
-| FR-IMP-20 | list an operator's own sessions — live and historical, newest first, cursor-paginated per §4.4 — and require `platform-admin` for `?actor=<subject>`, since who is being investigated is itself sensitive | `main:identity/internal/ImpersonationController.java:82-87`; `main:identity/internal/ImpersonationService.java:112-129` | `test:identity/internal/ImpersonationApiTest.theListingShowsOnlyTheCallersOwnSessionsAndPaginatesByCursor`, `.aPlatformAdminCanReviewAnotherOperatorsSessionsAndAPeerCannot` |
+| FR-IMP-20 | list an operator's own sessions — live and historical, newest first, cursor-paginated per §4.4 — and require `platform-admin` for `?actor=<personId>`, since who is being investigated is itself sensitive | `main:identity/internal/ImpersonationController.java:82-87`; `main:identity/internal/ImpersonationService.java:112-129` | `test:identity/internal/ImpersonationApiTest.theListingShowsOnlyTheCallersOwnSessionsAndPaginatesByCursor`, `.aPlatformAdminCanReviewAnotherOperatorsSessionsAndAPeerCannot` |
 | FR-IMP-21 | let the opening operator **or** any `platform-admin` end a session immediately, keeping the ending one-way and idempotent (a second call must not move "when did the reach stop" or re-audit) | `main:identity/internal/ImpersonationService.java:136-152`; `main:identity/internal/ImpersonationSession.java:85-92` | `test:identity/internal/ImpersonationApiTest.onlyTheOperatorWhoOpenedASessionOrAPlatformAdminMayEndIt` |
-| FR-IMP-22 | record `audit_log.actor` as the **accountable human** — the operator inside a session — with the worn identity in `on_behalf_of` and the session in `impersonation_id`, filled from the security context so the `AuditLog` port signature is unchanged and no call site can forget it | `main:audit/internal/AuditLogImpl.java:46-59`; `main:audit/internal/AuditEntry.java:33-37`; `V19__audit_log_impersonation.sql` | `test:identity/internal/ImpersonationReachTest.anAuditRowFromInsideASessionNamesTheOperatorAndTheIdentityTheyWore`, `.aWebhookCreatedInsideASessionNamesTheOperatorAndTheSession` |
+| FR-IMP-22 | record `audit_log.actor_person_id` as the **accountable human** — the operator inside a session — with the worn identity in `on_behalf_of_person_id` and the session in `impersonation_id`, filled from the security context (`CurrentUser.accountablePersonId()`) so the `AuditLog` port signature is unchanged and no call site can forget it | `main:audit/internal/AuditLogImpl.java:46-59`; `main:audit/internal/AuditEntry.java:33-37`; `V19__audit_log_impersonation.sql` | `test:identity/internal/ImpersonationReachTest.anAuditRowFromInsideASessionNamesTheOperatorAndTheIdentityTheyWore`, `.aWebhookCreatedInsideASessionNamesTheOperatorAndTheSession` |
 | FR-IMP-23 | audit the session lifecycle as `platform.impersonation_started` / `_ended` / `_superseded` with a **null `org_id`**, keeping the requested org in the detail — writing an unvalidated `org_id` would let any `platform-support` operator post chosen text into an unrelated tenant's `GET /orgs/{id}/audit` feed | `main:identity/internal/ImpersonationService.java:169-187,150-151` | `test:identity/internal/ImpersonationApiTest.theLifecycleTrailIsPlatformScopedRatherThanFiledUnderTheRequestedOrg`, `.reIssuingAgainstTheSameTargetSupersedesTheOldSessionAndAuditsBoth` |
 | FR-IMP-24 | surface `onBehalfOf` and `impersonationId` on the audit resource, so a reviewer can find every action taken inside someone else's account from the API alone | `main:audit/internal/AuditController.java:47-49,117-130` | `test:identity/internal/ImpersonationReachTest.anAuditRowFromInsideASessionNamesTheOperatorAndTheIdentityTheyWore` (its final assertions read `GET /api/v1/audit`) |
 | FR-IMP-25 | make `app.impersonation.enabled=false` **refuse** rather than remove the feature: every route and the `X-Impersonate` header answer **403** naming the switch. The header must never be silently ignored — a dropped header succeeds as the operator while they believe they are wearing the target | `main:identity/internal/ImpersonationController.java` (`requireEnabled`); `main:shared/security/ImpersonationFilter.java` | `test:identity/internal/ImpersonationDisabledTest.theRouteRefusesInsteadOfDisappearing`, `.theListingAndTheEndpointThatEndsASessionRefuseToo`, `.theImpersonateHeaderIsRefusedRatherThanIgnored` |
@@ -775,11 +863,12 @@ The session module is `identity` (it owns the accounts a session names). The enf
 validated** against the target's memberships: it only becomes the session's active org, and
 permissions still resolve from the database for the target, so an org the target does not belong to
 grants exactly nothing — the same fail-closed answer a membership check would produce, without a
-second copy of the org model living in `identity` (`ImpersonationService.java:74-78`). An **`INVITED`**
-target is impersonable on purpose; the defect worth avoiding there was the *write* (FR-IMP-12), not
-the reachability. And `currentSubject()` under a session returns the **target**, not the operator, so
-rate-limit buckets, idempotency keys and `created_by` all describe the identity the request ran as —
-`audit_log` is the single place that records who was answerable (FR-IMP-22).
+second copy of the org model living in `identity`. An **`INVITED`** target is impersonable on purpose;
+the defect worth avoiding there was the *write* (FR-IMP-12), not the reachability. And
+`CurrentUser.personId()` under a session returns the **target**, not the operator, so rate-limit
+buckets, idempotency keys and `created_by` all describe the identity the request ran as —
+`accountablePersonId()` is the single accessor that names who was answerable, and `audit_log` the
+single place that records it (FR-IMP-22).
 
 ---
 
@@ -881,7 +970,7 @@ The system SHALL:
 | FR-PRF-1 | serve the caller's own profile get-or-default (a never-saved profile answers empty, not 404), whole-document upsert with validated contacts (EMAIL/PHONE/OTHER), and a support-only cross-user read | `main:profile/internal/{ProfileService,MeProfileController,AdminProfileController}` | `test:profile/internal/ProfileApiTest` |
 | FR-PRF-2 | store per-user preferences as small key/value pairs with ADDITIVE puts — only sent keys change; a null value deletes its key | `ProfileService.putPreferences` | same |
 | FR-PRF-3 | manage avatars behind the files port (image/*, 2 MB cap, 302-presigned download): new object first, row second, OLD object deleted last — any failure leaves a working avatar | `ProfileService.changeAvatar` | same (replace deletes the old object) |
-| FR-PRF-4 | list the caller's linked identity providers read-only (Keycloak federated identities) — linking is the IdP console's act, never this API's | `identity/UserDirectory.linkedAccounts`, `MeProfileController` | same |
+| FR-PRF-4 | list the caller's linked identity providers read-only — linking and unlinking are acts performed at the provider, and this platform displays them rather than mutating them. This used to be an HTTP call to Keycloak on every render; the links are rows now (`external_identity`), so it is a local select — **and it keeps answering for providers Keycloak is not**, which the remote call could never do | `identity/PersonDirectory.linkedAccounts`, `MeProfileController` | same |
 | FR-PRF-5 | list every organization the caller belongs to with their role in each (`GET /api/v1/me/organizations`) — the dual-member switch list; the SWITCH itself is a token re-request scoped via the Keycloak `organization` claim, never a client-asserted value | `organization/internal/OrgMembershipsController` | `ProfileApiTest.aDualMemberSeesBothOrganizationsWithTheirRoleInEach` |
 
 ### 3.22 API keys — machine credentials (FR-KEY)
@@ -890,7 +979,7 @@ The system SHALL:
 
 | ID | Requirement | Where | Verified by |
 |---|---|---|---|
-| FR-KEY-1 | authenticate `X-Api-Key: sk_<prefix>.<secret>` inside the security chain BEFORE the bearer filter; an invalid/absent key authenticates nothing (request proceeds anonymous → 401, never a prefix-existence oracle) | `main:shared/security/{ApiKeyAuthenticationFilter,ApiKeyAuthenticatorImpl}` | `test:apikeys/internal/ApiKeyAuthTest.aKeyCannotOutrankItsCreator` |
+| FR-KEY-1 | authenticate `X-Api-Key: sk_<prefix>.<secret>` inside the security chain BEFORE the bearer filter; an invalid/absent key authenticates nothing (request proceeds anonymous → 401, never a prefix-existence oracle). A machine key costs the edge **no** identity lookups: it already names its tenant and carries its own permission subset, and it has no person to resolve | `main:shared/security/ApiKeyAuthenticationFilter`, `main:apikeys/internal/ApiKeyAuthenticatorImpl` | `test:apikeys/internal/ApiKeyAuthTest.aKeyCannotOutrankItsCreator` |
 | FR-KEY-2 | cap an org key at mint to a SUBSET of the creator's org permissions (a key can never out-rank its creator) and enforce that subset — plus strict org-id equality — through `ApiPermissionEvaluator`'s machine branch, never through roles | `main:apikeys/internal/ApiKeyService.createOrgKey`, `main:shared/security/ApiPermissionEvaluator` | `ApiKeyAuthTest.{anOrgKeyCarriesASubset…,aKeyCannotOutrankItsCreator}` |
 | FR-KEY-3 | hash secrets (SHA-256, constant-time compare), show the plaintext exactly once at mint, honor expiry, and stamp usage throttled off the auth path | `ApiKeyHashing`, `ApiKeyAuthenticatorImpl` | `ApiKeyAuthTest` |
 | FR-KEY-4 | offer platform (support-tier, platform-admin-minted, read-only) and org (`apikey:manage`) key surfaces; revocation is immediate soft-delete; all audited | `{AdminApiKeyController,OrgApiKeyController}` | `ApiKeyAuthTest.aPlatformKeyReadsSupportSurfacesButNotAdminOnes` |
@@ -901,7 +990,7 @@ The system SHALL:
 
 | ID | Requirement | Where | Verified by |
 |---|---|---|---|
-| FR-ACC-1 | let a user self-register devices (idempotent per `(subject, fingerprint)` = `X-Device-Id`), list and revoke them; support reads a user's devices for context; trusting a device is the ORG's grant, never a self-claim | `main:access/internal/{DeviceService,MeDeviceController,AdminDeviceController}` | `test:access/internal/AccessPolicyTest.devicesRegisterIdempotentlyAndRevoke` |
+| FR-ACC-1 | let a person self-register devices (idempotent per `(person_id, fingerprint)` = `X-Device-Id`), list and revoke them; support reads a user's devices for context; trusting a device is the ORG's grant, never a self-claim | `main:access/internal/{DeviceService,MeDeviceController,AdminDeviceController}` | `test:access/internal/AccessPolicyTest.devicesRegisterIdempotentlyAndRevoke` |
 | FR-ACC-2 | enforce a per-org security policy (IP allowlist / require-trusted-device / session-max-age) in a filter AFTER auth on org-scoped calls whose URL org matches the caller's active org; each rule TIGHTENS access; a denial is a distinct, counted (`smsone.securitypolicy.denied{rule}`), 403 naming the rule | `main:access/internal/{OrgSecurityPolicy,OrgPolicyEnforcementFilter,CidrMatcher}` | `test:access/internal/AccessPolicyTest.theThreePolicyRulesEachDenyWithTheirName` |
 | FR-ACC-3 | never lock an org out of its own policy: the org's `/security-policy` endpoints are exempt from enforcement (org:update still guards them), and `last_seen_at` is stamped throttled off the request path | `OrgPolicyEnforcementFilter` (recovery hatch), `DeviceService.stampLastSeen` | same test (the compliant path recovers and the stamp is asserted) |
 
@@ -922,9 +1011,9 @@ The system SHALL:
 | ID | Requirement | Where | Verified by |
 |---|---|---|---|
 | FR-CMP-1 | record consent APPEND-ONLY (a withdrawal is a new row) and expose the caller's history | `main:compliance/internal/{ConsentRecord,ComplianceService.recordConsent}` | `test:compliance/internal/ComplianceTest.consentIsAppendOnlyAndErasureSoftDeletes` |
-| FR-CMP-2 | let platform-admin place/release legal holds (subject or org) that, while active, BLOCK the retention purge (a held aged-out row survives; released, it purges) and any erasure of the held data — via the `LegalHolds` kernel port, default-FALSE when compliance is absent (fail-open) | `main:shared/compliance/LegalHolds.java`, `main:compliance/internal/{LegalHold,LegalHoldsImpl}`, `main:scheduler/internal/SoftDeletePurgeJob` (held-owner guard) | `test:scheduler/internal/LegalHoldPurgeTest`, `ComplianceTest.aLegalHoldMakesErasureRefused` |
-| FR-CMP-3 | execute GDPR erasure — soft-delete the subject's owned rows now (invisible immediately), hard-erase at the retention window; REFUSED while a hold is in force | `ComplianceService.requestErasure` | same tests |
-| FR-CMP-4 | give a subject a self-service data export (portability) of their own record | `ComplianceService.dataExport`, `MeComplianceController` | exercised via `/me/data-export` |
+| FR-CMP-2 | let platform-admin place/release legal holds (person or org) that, while active, BLOCK the retention purge (a held aged-out row survives; released, it purges) and any erasure of the held data — via the `LegalHolds` kernel port, default-FALSE when compliance is absent (fail-open) | `main:shared/compliance/LegalHolds.java`, `main:compliance/internal/{LegalHold,LegalHoldsImpl}`, `main:scheduler/internal/SoftDeletePurgeJob` (held-owner guard) | `test:scheduler/internal/LegalHoldPurgeTest`, `ComplianceTest.aLegalHoldMakesErasureRefused` |
+| FR-CMP-3 | execute GDPR erasure — soft-delete the person's owned rows now (invisible immediately), hard-erase at the retention window; REFUSED while a hold is in force. The owned set is `person`, `external_identity`, `person_contact`, `person_profile` and `user_device`; **`external_identity` must be in it** or the erased person keeps authenticating, because the edge resolves through the link and its unique index is partial over live rows | `ComplianceService.requestErasure` | same tests |
+| FR-CMP-4 | give a person a self-service data export (portability) of their own record | `ComplianceService.dataExport`, `MeComplianceController` | exercised via `/me/data-export` |
 
 ### 3.26 Maintenance windows (FR-MNT)
 
@@ -1078,12 +1167,14 @@ event vocabulary either (§4.8, item 5).
   "event": "org.member.added",
   "orgId": "3f1c…-…-…",
   "occurredAt": "2026-07-31T09:14:02.117Z",
-  "data": { "subject": "…", "role": "OWNER" }
+  "data": { "personId": "…", "role": "OWNER" }
 }
 ```
 
 - `event` — one of the five codes in FR-WHK-1; identical to the `X-Webhook-Event` header.
-- `orgId` — the Keycloak organization id, as a string.
+- `orgId` — `organization.id`, as a string. Subscribers that stored the old Keycloak organization id
+  have to re-key: there is no dual-write and no translation on the way out, deliberately, because a
+  second identifier on the wire is the thing this platform just spent a refactor removing.
 - `occurredAt` — the domain event's own instant, `Instant.toString()` (ISO-8601, UTC, `Z`).
 - `data` — a flat object. **Every value is a JSON string**, without exception: the builder holds a
   `Map<String, String>` (`WebhookPayload.java:18`), so a UUID or an enum is emitted quoted, never as a
@@ -1096,9 +1187,9 @@ Per-event `data` keys, from `main:webhooks/internal/WebhookEventListener.java`:
 
 | `event` | `data` keys | Source |
 |---|---|---|
-| `org.member.added` | `subject`, `role` (the role **code**; dropped if the event carries none) | `:31-33` |
-| `org.member.removed` | `subject` | `:42-43` |
-| `org.member.role_changed` | `subject` — **the new role is not carried** | `:52-53` |
+| `org.member.added` | `personId`, `role` (the role **code**; dropped if the event carries none) | `:31-33` |
+| `org.member.removed` | `personId` | `:42-43` |
+| `org.member.role_changed` | `personId` — **the new role is not carried** | `:52-53` |
 | `org.role.permissions_changed` | `roleId` — the role id only; **the permissions are not carried** | `:62-63` |
 | `org.status_changed` | `status` (`ACTIVE` \| `SUSPENDED`) | `:72-73` |
 
@@ -1107,8 +1198,10 @@ needs the new role or the new permission set must call back into the API.
 
 ### 4.6 Endpoint catalogue
 
-Authority column: **"authenticated"** means a valid token plus a provisioned, non-disabled account —
-no `@PreAuthorize`. Every endpoint can additionally return 401, 403 `ACCOUNT_NOT_PROVISIONED`,
+Authority column: **"authenticated"** means a valid token plus a provisioned, non-disabled person —
+no `@PreAuthorize`. Every `{orgId}` is an `organization.id`; every `{personId}` is a `person.id`. No
+provider identifier appears anywhere in this catalogue, which is the externally visible half of the
+identity decoupling. Every endpoint can additionally return 401, 403 `ACCOUNT_NOT_PROVISIONED`,
 403 `ACCOUNT_DISABLED`, 429 and 500.
 
 | Method | Path | Required authority | Success | Notable errors |
@@ -1117,7 +1210,7 @@ no `@PreAuthorize`. Every endpoint can additionally return 401, 403 `ACCOUNT_NOT
 | POST | `/mcp` | API key (org) — JSON-RPC; per-tool permissions re-checked inside (§4.7) | 200 | 401; tool errors in-band with `ErrorCode` + requestId |
 | GET | `/api/v1/admin/users` | `platform-support` | 200 (paged) | — |
 | POST | `/api/v1/admin/impersonations` | `platform-support` (`mode=WRITE` needs `platform-admin`) | **201** | 403 write mode / target holds a platform role, 404 unknown target, 409 target deleted or `DISABLED`, 422 blank or short `reason` / self / over-cap `ttl` / bad `mode` |
-| GET | `/api/v1/admin/impersonations` | `platform-support`; `?actor=<subject>` needs `platform-admin` | 200 (paged) | 403 another operator's sessions |
+| GET | `/api/v1/admin/impersonations` | `platform-support`; `?actor=<personId>` needs `platform-admin` | 200 (paged) | 403 another operator's sessions |
 | DELETE | `/api/v1/admin/impersonations/{id}` | the opening operator, or `platform-admin` | **204** | 403, 404 |
 | GET | `/api/v1/permissions` | authenticated | 200 (list) | — |
 | POST | `/api/v1/orgs` | `platform-admin` | **201** | 409 duplicate alias (local **or** Keycloak), 422 alias not a lowercase slug `^[a-z0-9][a-z0-9-]{0,118}[a-z0-9]$` / blank name / non-email owner |
@@ -1127,12 +1220,12 @@ no `@PreAuthorize`. Every endpoint can additionally return 401, 403 `ACCOUNT_NOT
 | POST | `/api/v1/orgs/{orgId}/reactivate` | `platform-admin` | 200 | 404 |
 | GET | `/api/v1/orgs/{orgId}/members` | `member:read` | 200 (paged) | — |
 | POST | `/api/v1/orgs/{orgId}/members` | `member:invite` | **201** (also on a no-op re-invite) | 403 escalation, 404 unknown role, 422 |
-| PUT | `/api/v1/orgs/{orgId}/members/{subject}/role` | `member:role:assign` | 200 | 403 escalation, 404, **409 last owner** |
-| DELETE | `/api/v1/orgs/{orgId}/members/{subject}` | `member:remove` | **204** | 404, **409 last owner** |
+| PUT | `/api/v1/orgs/{orgId}/members/{personId}/role` | `member:role:assign` | 200 | 403 escalation, 404, **409 last owner** |
+| DELETE | `/api/v1/orgs/{orgId}/members/{personId}` | `member:remove` | **204** | 404, **409 last owner** |
 | GET | `/api/v1/orgs/{orgId}/roles` | `role:read` | 200 (list, un-paged) | — |
 | POST / GET | `/api/v1/orgs/{orgId}/groups` | `member:role:assign` create / `member:read` list | **201** / 200 (paged) | 403 escalation, 404 |
 | PUT | `/api/v1/orgs/{orgId}/groups/{id}/role` | `member:role:assign` | 200 | 403, 404 |
-| POST / DELETE | `/api/v1/orgs/{orgId}/groups/{id}/members[/{subject}]` | `member:role:assign` | 200 | 404 (incl. non-member add) |
+| POST / DELETE | `/api/v1/orgs/{orgId}/groups/{id}/members[/{personId}]` | `member:role:assign` | 200 | 404 (incl. non-member add) |
 | DELETE | `/api/v1/orgs/{orgId}/groups/{id}` | `member:role:assign` | **204** | 404 |
 | GET | `/api/v1/orgs/{orgId}/roles/{roleId}` | `role:read` | 200 | 404 |
 | POST | `/api/v1/orgs/{orgId}/roles` | `role:create` | **201** | 403 escalation, 409 reserved/duplicate, 422 unknown permission / empty `permissions` / `PLATFORM` prefix / code not matching `^[A-Za-z][A-Za-z0-9_]{1,62}$` |
@@ -1190,9 +1283,9 @@ no `@PreAuthorize`. Every endpoint can additionally return 401, 403 `ACCOUNT_NOT
 | POST / GET / DELETE | `/api/v1/me/avatar` | authenticated | **201** / **302** presigned / **204** | 404 none set, 422 not an image or >2 MB |
 | GET | `/api/v1/me/linked-accounts` | authenticated | 200 (read-only IdP links) | — |
 | GET | `/api/v1/me/organizations` | authenticated | 200 (memberships + role codes — the org-switch list) | — |
-| GET | `/api/v1/admin/users/{subject}/profile` | `platform-support` | 200 | — |
+| GET | `/api/v1/admin/users/{personId}/profile` | `platform-support` | 200 | — |
 | POST / GET / DELETE | `/api/v1/me/devices` | authenticated | **201** (idempotent per fingerprint) / 200 (paged) / **204** | 422 |
-| GET | `/api/v1/admin/users/{subject}/devices` | `platform-support` | 200 (paged) | — |
+| GET | `/api/v1/admin/users/{personId}/devices` | `platform-support` | 200 (paged) | — |
 | GET / PUT | `/api/v1/orgs/{orgId}/security-policy` | `org:read` / `org:update` | 200 (get-or-default open) | 422 bad CIDR |
 | POST | `/api/v1/orgs/{orgId}/security-policy/trusted-devices` | `org:update` | 200 | 404 unknown device |
 | — | (enforcement) org-scoped calls | policy denial | **403** naming the rule (`ip-allowlist` / `session-max-age` / `trusted-device`) | — |
@@ -1200,7 +1293,7 @@ no `@PreAuthorize`. Every endpoint can additionally return 401, 403 `ACCOUNT_NOT
 | GET | `/api/v1/me/data-export` | authenticated | 200 (your record) | — |
 | POST | `/api/v1/me/erasure-request` | authenticated | 200 (EXECUTED, or REFUSED under hold) | — |
 | GET | `/api/v1/admin/compliance/legal-holds` | `platform-support` | 200 (active holds) | — |
-| POST | `/api/v1/admin/compliance/legal-holds/{subject\|org}` | `platform-admin` | **201** | 422 |
+| POST | `/api/v1/admin/compliance/legal-holds/{subject\|org}` | `platform-admin` | **201** | 422. The path segment is the hold's SCOPE, not an identifier — `/subject` takes a `personId` in the body, `/org` an `orgId` |
 | DELETE | `/api/v1/admin/compliance/legal-holds/{id}` | `platform-admin` | **204** | 404 |
 | POST | `/api/v1/admin/compliance/erasure` | `platform-admin` | 200 (EXECUTED / REFUSED) | — |
 | POST / GET / DELETE | `/api/v1/admin/maintenance` | `platform-admin` schedule/cancel, `platform-support` list | **201** / 200 / **204** | 422 |
@@ -1222,7 +1315,7 @@ no `@PreAuthorize`. Every endpoint can additionally return 401, 403 `ACCOUNT_NOT
 | POST | `/api/v1/orgs/{orgId}/exchange/jobs/{id}/cancel` | `exchange:submit` (requester, or the handler permission) | 200 (best-effort; batch-boundary) | 403, 404, 409 already finished |
 | GET | `/api/v1/orgs/{orgId}/exchange/jobs/{id}/report` | `exchange:read` (requester, or the handler permission) | **302** presigned (`row_number,error` CSV) | 403, 404 no report |
 | GET | `/api/v1/orgs/{orgId}/exchange/jobs/{id}/result` | `exchange:read` (requester, or the handler permission) | **302** presigned | 403, 404 no result |
-| GET | `/api/v1/notifications` | authenticated (scoped to caller's subject) | 200 (paged) | — |
+| GET | `/api/v1/notifications` | authenticated (scoped to the caller's `person.id`) | 200 (paged) | — |
 | POST | `/api/v1/notifications/{id}/read` | authenticated (scoped) | 200 | 404 (also when it is another user's) |
 | POST | `/api/v1/files` (multipart `file`) | authenticated | **201** | 422 empty / unreadable |
 | GET | `/api/v1/files/{*key}` | owner, or `platform-support` | **302** + `Location` (no body) | 403 foreign namespace, 404 |
@@ -1306,7 +1399,7 @@ Tool-level authorization mirrors the REST vocabulary; errors are in-band tool re
 | FR-MCP-3 | scope every tool to the authenticated principal's organization with no organization parameter on any tool | `main:mcp/internal/ToolContext.java`, `main:mcp/internal/McpRequestContextExtractor.java` | `test:mcp/internal/McpExchangeSearchToolsIntegrationTest.searchFindsOnlyThisOrgsIndexedRecords` |
 | FR-MCP-4 | refuse WRITE/DESTRUCTIVE tools during a RESTRICT maintenance window (`SERVICE_UNAVAILABLE`) and while the subscription is PAUSED (`SUBSCRIPTION_PAUSED`), while reads pass, and enforce the org IP allowlist on every call | `main:mcp/internal/McpWriteGuard.java`, `main:mcp/internal/McpToolDispatcher.java` | `test:mcp/internal/McpGuardrailsTest.aMaintenanceWindowRefusesWritesButNotReads`, `.aPausedSubscriptionMakesTheOrgReadOnly`, `.theOrgIpAllowlistGatesEveryCallNotJustWrites` |
 | FR-MCP-5 | accept the API key as `Authorization: Bearer sk_…` in addition to `X-Api-Key`, at the gateway and the modulith, without disturbing JWT authentication | `main:shared/security/ApiKeyAuthenticationFilter.java`, `main:shared/security/SecurityConfig.java`, `gateway:security/GatewaySecurityConfig.java`, `gateway:security/EdgeAuthorizationFilter.java` | `test:mcp/internal/McpServerIntegrationTest.theBearerSkSpellingAuthenticatesLikeTheHeader` |
-| FR-MCP-6 | carry the request id on every tool result and error, audit every mutation as `mcp.tool_invoked` with the key subject as actor, and refuse ALL requests with a named error when `app.mcp.enabled=false` | `main:mcp/internal/McpToolDispatcher.java`, `main:mcp/internal/McpCatalogFilteringTransport.java` | `test:mcp/internal/McpServerIntegrationTest.aRealClientInitializesListsAndCallsWhoamiWithAnOrgKey` (requestId), `test:mcp/internal/McpAccountToolsIntegrationTest.orgGetReadsAndOrgUpdateRenamesWithAnAuditTrail` |
+| FR-MCP-6 | carry the request id on every tool result and error, audit every mutation as `mcp.tool_invoked`, and refuse ALL requests with a named error when `app.mcp.enabled=false`. **Two attribution branches, one action:** a person-backed caller (an OAuth connector) goes through `AuditLog.record`, so the security context stays the authority on who acted — passing the person id as a parameter would overwrite the operator with the worn identity inside an impersonation session. A machine key has no person, so `recordExternal` leaves `actor_person_id` NULL (truthful — no human is answerable for a robot) and carries `key:<uuid>` in `to_state` to name the credential, since otherwise every key in an org would be indistinguishable from every other | `main:mcp/internal/McpToolDispatcher.java`, `main:mcp/internal/McpCatalogFilteringTransport.java` | `test:mcp/internal/McpServerIntegrationTest.aRealClientInitializesListsAndCallsWhoamiWithAnOrgKey` (requestId), `test:mcp/internal/McpAccountToolsIntegrationTest.orgGetReadsAndOrgUpdateRenamesWithAnAuditTrail` |
 | FR-MCP-7 | additionally admit OAuth 2.1 connectors: serve RFC 9728 protected-resource metadata (naming the Keycloak realm), challenge anonymous `/mcp` calls with `WWW-Authenticate … resource_metadata`, and accept a realm JWT at `/mcp` ONLY when its `aud` carries `smsone-mcp` (stamped by the consented `mcp` client scope) — a web login token, though valid platform-wide, is refused there; anonymous client self-registration is policed (trusted hosts, forced consent, default scopes) | `main:shared/security/{SecurityConfig,McpTokenAuthorizationManager,ApiAuthenticationEntryPoint}.java`, `docker/keycloak/realm-smsone.json` | `test:mcp/internal/McpOAuthIntegrationTest.aConsentedMcpTokenEntersAndTheSameUsersWebTokenDoesNot`, `.anonymousDynamicClientRegistrationIsPolicedNotOpen`, `test:mcp/internal/McpServerIntegrationTest.theOauthDiscoveryDocumentAndChallengeBootstrapNativeConnectors` |
 
 ## 5. Non-functional requirements
@@ -1320,8 +1413,8 @@ Authorization has **two disjoint axes**. Nothing bridges them.
 | | **Platform axis** | **Organization axis** |
 |---|---|---|
 | Subject of the grant | The person, platform-wide | The person **in one organization** |
-| Carrier | Keycloak **realm role** in the token | `membership` row → `org_role` → `role_permission`, in the database |
-| Vocabulary | 3 hierarchical tiers (`platform-superadmin` > `platform-admin` > `platform-support`) | 18 flat permission codes |
+| Carrier | Keycloak **realm role** in the token — the one authority this platform still reads off a provider's claim | `membership` row (keyed `person_id`) → `org_role` → `role_permission`, in the database |
+| Vocabulary | 3 hierarchical tiers (`platform-superadmin` > `platform-admin` > `platform-support`) | 29 flat permission codes |
 | Expression | `@PreAuthorize("hasRole('platform-…')")` | `@PreAuthorize("hasPermission(#orgId, 'organization', '<code>')")` |
 | Evaluator | `RoleHierarchy` + `DefaultMethodSecurityExpressionHandler` | `ApiPermissionEvaluator` → `OrgAuthorization` → `PermissionResolver` |
 | Scope | Global | Exactly one organization — the one the token is scoped to |
@@ -1353,7 +1446,7 @@ of its own, which is exactly what a widened role would not.
 | NFR-SEC-13 | Actuator SHALL expose only `health` and `info`, with `show-details: never` | `test:shared/security/SecurityContractTest.healthProbesArePublic` |
 | NFR-SEC-14 | An org role code SHALL NOT be able to impersonate the platform vocabulary (`PLATFORM*` prefix rejected) — a naming guard, explicitly **not** a privilege boundary | `test:organization/internal/OrgRbacApiTest.anOrgRoleCodeCannotBorrowThePlatformVocabulary` |
 | NFR-SEC-15 | A platform operator SHALL reach tenant data only through an impersonation session (§3.14), and the platform tier that authorized the session SHALL NOT travel into it | `test:identity/internal/ImpersonationReachTest.supportReachesTenantDataThroughASessionAndTheAdminSurfaceOnlyOutsideOne` |
-| NFR-SEC-16 | A session id SHALL NOT function as a bearer token: it is resolved against the authenticated actor's own subject, so a leaked id grants its holder nothing — including a holder of a *higher* tier | `test:identity/internal/ImpersonationReachTest.aSessionIdPresentedByADifferentActorIsRejected` |
+| NFR-SEC-16 | A session id SHALL NOT function as a bearer token: it is resolved against the authenticated actor's own `person.id`, so a leaked id grants its holder nothing — including a holder of a *higher* tier | `test:identity/internal/ImpersonationReachTest.aSessionIdPresentedByADifferentActorIsRejected` |
 | NFR-SEC-17 | A swapped `SecurityContext` SHALL be restored before the request thread returns to the pool, and every gate a session passed SHALL be re-decided on the next request rather than trusted from open time | `test:shared/security/ImpersonationFilterTest.theContextIsSwappedForTheChainAndRestoredAfterwards`; `test:identity/internal/ImpersonationReachTest.theRequestAfterAnImpersonatedOneSeesItsOwnIdentity`, `.endingASessionDeniesTheVeryNextRequest`, `.anOperatorWhoLosesTheirPlatformTierLosesTheSessionTheyHold` |
 
 **Residual security gaps** (present in code, stated so a fork can close them):
@@ -1380,12 +1473,12 @@ of its own, which is exactly what a widened role would not.
 
 | ID | Requirement | Verification |
 |---|---|---|
-| NFR-TEN-1 | The tenant key SHALL be the Keycloak organization id everywhere — on the wire, in `org_id` columns, and in cache keys — never the local surrogate key | `test:organization/internal/OrgRbacApiTest` (all org calls) |
+| NFR-TEN-1 | The tenant key SHALL be **`organization.id`** everywhere — on the wire, in every `org_id` column, in cache keys, in Kill Bill's external key and in the gateway's usage records — and no provider's organization identifier SHALL appear outside `external_organization` | `test:organization/internal/OrgRbacApiTest` (all org calls) |
 | NFR-TEN-2 | A request SHALL be denied unless the target organization id **string-equals** the caller's single active organization, checked before any database access, with no alias branch | `test:organization/internal/OrgRbacApiTest.crossOrgAccessIsDeniedBeforeAnyDbHit` |
 | NFR-TEN-3 | Multi-tenant reads SHALL filter by the tenant key **in the query**, not after loading, as defence in depth below the annotation | `test:organization/internal/OrgRbacAuthorityTest.permissionsAreScopedToTheOwningOrganization`; `test:webhooks/internal/WebhookApiTest.theDeliveryLogOutlivesTheSubscriptionButStaysTenantScoped` |
 | NFR-TEN-4 | Suspending an organization SHALL immediately revoke every member's permissions, with the status check inside the cached value and eviction on the status-change event | `test:organization/internal/OrgRbacApiTest.suspendIsPlatformAdminOnlyAndCutsMemberAccess`; `test:organization/internal/OrgRbacAuthorityTest.suspendedOrganizationGrantsNothingUntilReactivated` |
-| NFR-TEN-5 | Permission cache entries SHALL be keyed `<orgId>:<subject>` so no entry can be shared across tenants | `test:organization/internal/OrgRbacAuthorityTest.permissionCacheIsEvictedAfterAMembershipRoleChange` |
-| NFR-TEN-6 | Per-user resources (files, in-app notifications) SHALL be scoped by the caller's **subject**, and a foreign resource SHALL yield 403 (files) or 404 (notifications — no existence disclosure) | `test:files/internal/FileApiTest.aCallerCannotDownloadAnotherUsersFile` |
+| NFR-TEN-5 | Permission cache entries SHALL be keyed `<organizationId>:<personId>` so no entry can be shared across tenants | `test:organization/internal/OrgRbacAuthorityTest.permissionCacheIsEvictedAfterAMembershipRoleChange` |
+| NFR-TEN-6 | Per-person resources (files, in-app notifications, devices, profiles) SHALL be scoped by the caller's **`person.id`**, and a foreign resource SHALL yield 403 (files) or 404 (notifications — no existence disclosure) | `test:files/internal/FileApiTest.aCallerCannotDownloadAnotherUsersFile` |
 | NFR-TEN-7 | Rate-limit buckets SHALL be per tenant on TENANT-scoped tiers, so one tenant cannot exhaust another's quota | `test:shared/ratelimit/RateLimitIntegrationTest.edgeFilterKeysByActiveOrgFromTheOrganizationClaim` |
 | NFR-TEN-8 | Idempotency keys SHALL be namespaced per principal, so no caller can replay or squat another's key | `test:shared/idempotency/IdempotencyIntegrationTest.keysAreScopedPerPrincipal` |
 
@@ -1397,14 +1490,14 @@ tenant's cached permissions. This is a performance property, not an isolation de
 
 | ID | Requirement | Verification |
 |---|---|---|
-| NFR-AUD-1 | Every audited change SHALL record who (subject), when (`occurred_at` + `created_at`), where (`org_id`, null for platform-level), what (`action`, `target`) and from→to state | `test:audit/internal/AuditRecordingTest.settingChangeRecordsWhoWhatAndFromToState` |
+| NFR-AUD-1 | Every audited change SHALL record who (`actor_person_id`), when (`occurred_at` + `created_at`), where (`org_id`, null for platform-level), what (`action`, `target`) and from→to state | `test:audit/internal/AuditRecordingTest.settingChangeRecordsWhoWhatAndFromToState` |
 | NFR-AUD-2 | The audit row SHALL commit or roll back **atomically with the change it describes**, because `AuditLog.record` runs inside the caller's transaction | `test:audit/internal/AuditRecordingTest` |
 | NFR-AUD-3 | `audit_log` SHALL be append-only: never soft-deletable, never updated, and surviving the deletion of its subject | `test:audit/internal/AuditRecordingTest.theTrailSurvivesTheSoftDeleteOfWhatItDescribes` |
-| NFR-AUD-4 | Attribution SHALL use the immutable subject in **all** durable stores — `audit_log.actor`, `created_by`/`updated_by`, idempotency principals, rate-limit buckets — never `preferred_username` | `test:shared/security/SubjectAttributionTest` (six tests) |
-| NFR-AUD-5 | A change with no principal on the thread SHALL be recorded as such: `audit_log.actor` null, `created_by`/`updated_by` the `"system"` sentinel — which records "there was no principal", distinct from a null meaning "unset" | `test:audit/internal/AuditRecordingTest.systemTriggeredChangeHasNoActor`; `test:shared/security/SubjectAttributionTest.auditColumnsRecordTheSubjectNotTheUsername`, `.updatedByAlsoRecordsTheSubject` |
+| NFR-AUD-4 | Attribution SHALL use the immutable `person.id` in **all** durable stores — `audit_log.actor_person_id`, `created_by`/`updated_by`, idempotency principals, rate-limit buckets — never `preferred_username`, and never a provider subject | `test:shared/security/SubjectAttributionTest` (six tests) |
+| NFR-AUD-5 | A change with no accountable human SHALL be recorded as such: `audit_log.actor_person_id` **null** and `created_by`/`updated_by` **null**. The old `"system"` sentinel string is gone — a `uuid` column has no room for one — so NULL now carries that meaning outright: it says "no person was answerable" (a cron job, a machine key), not "unset". `created_by`/`updated_by` are `uuid` referencing a person with **no foreign key**, deliberately, because this modulith is destined to split into services | `test:audit/internal/AuditRecordingTest.systemTriggeredChangeHasNoActor`; `test:shared/security/SubjectAttributionTest.auditColumnsRecordTheSubjectNotTheUsername`, `.updatedByAlsoRecordsTheSubject` |
 | NFR-AUD-6 | There SHALL be **no `deleted_by` column**: `@SQLDelete` is raw SQL and cannot see the security context, so the column would be reliably populated only on the paths that bypass it; the actor lives in the `audit_log` row the deleting service writes | `main:shared/persistence/SoftDeletableEntity.java:28-32` (design rationale); no test |
 | NFR-AUD-7 | Audit reads SHALL be tenant-scoped on the org endpoint and tier-gated on the platform endpoint | `test:audit/internal/AuditApiTest.orgScopedViewReturnsOnlyThatOrgWhenPermitted`, `.platformViewIsAdminOnly` |
-| NFR-AUD-8 | Inside an impersonation session `audit_log.actor` SHALL name the **accountable operator**, with the worn identity in `on_behalf_of` and the session in `impersonation_id` — and this SHALL be the only attribution on the request that differs from the effective subject | `test:identity/internal/ImpersonationReachTest.anAuditRowFromInsideASessionNamesTheOperatorAndTheIdentityTheyWore`, `.aWebhookCreatedInsideASessionNamesTheOperatorAndTheSession` |
+| NFR-AUD-8 | Inside an impersonation session `audit_log.actor_person_id` SHALL name the **accountable operator**, with the worn identity in `on_behalf_of_person_id` and the session in `impersonation_id` — and this SHALL be the only attribution on the request that differs from the effective person | `test:identity/internal/ImpersonationReachTest.anAuditRowFromInsideASessionNamesTheOperatorAndTheIdentityTheyWore`, `.aWebhookCreatedInsideASessionNamesTheOperatorAndTheSession` |
 | NFR-AUD-9 | `impersonation_session` SHALL be end-only, never soft-deletable and never removed: the operator a delete would serve is the one whose reach the row records | `V18__impersonation_session.sql:3-9` (design rationale); `main:identity/internal/ImpersonationSession.java:17-27`; no test — the absence of a delete path is what enforces it |
 
 **Coverage gap:** webhook subscription mutations, file operations and notification mark-read produce
@@ -1429,11 +1522,16 @@ All values are the shipped defaults, each traceable to a property or constant.
 | NFR-PERF-11 | Purges SHALL be batched so a backlog never becomes one long-lived transaction | soft delete: 500 rows/batch, 100 batches/table/run, each batch on its own connection | `SoftDeleteProperties`; `SoftDeletePurgeJob` |
 | NFR-PERF-12 | Rate-limit tiers SHALL be enforced per window | write 60/min (TENANT), read 600/min (TENANT), default 300/min (PRINCIPAL). A custom tier may also use scope `IP`; those are the three values `RateLimitScope` defines (FR-HTTP-26) | `app.rate-limit.tiers`, `app.rate-limit.default-tier` |
 | NFR-PERF-13 | A rate-limit capacity change SHALL be understood to take effect for an **active** key only after the bucket TTL | 10 minutes | `DistributedRateLimiter.BUCKET_TTL` |
+| NFR-PERF-14 | Edge identity resolution SHALL be cached, so the per-request `(iss, sub)` → `person.id` and org-claim → `organization.id` lookups cost no database read in steady state. Safe because the rows are immutable (`external_identity`'s link columns are `updatable = false`) and because the entry is an **identity, not a decision**: `person.status` is read live on every request, so a stale entry can only fail closed. Absences are deliberately not cached, so a first provisioning resolves on the person's next request with nothing to evict | caches `person-by-subject` and `org-by-external-id`, on the same two-level manager | `main:identity/internal/PersonResolutionCache.java`, `main:organization/internal/OrgResolutionCache.java`; the id is cached **as text** because a JSON scalar cannot carry a type id and a bare `UUID` reads back from L2 as a `String` — `test:shared/cache/ValkeyCacheIntegrationTest.aScalarLosesItsTypeAcrossL2WhichIsWhyTheEdgeResolversCacheText` |
 
-**Known unindexed sorts.** `setting`, `feature_flag`, `app_user` and `membership` are listed on
-`(createdAt desc, id desc)` with no supporting composite index; only `in_app_notification`,
-`audit_log` and `webhook_delivery` have one. `idx_app_user_email` indexes the raw column while the
-only email query is case-insensitive, so it likely serves nothing the code runs.
+**Keyset listings are indexed.** The gap this section used to record — `setting`, `feature_flag`,
+the person listing and `membership` sorted on `(created_at desc, id desc)` with no supporting
+composite index — was closed by `V49`/`V50`, which add partial `…_recent` indexes over live rows
+(`idx_setting_recent`, `idx_feature_flag_recent`, `idx_person_recent`, `idx_membership_org_recent`
+and their peers), each justified in the migration by measured `EXPLAIN (ANALYZE, BUFFERS)` output
+against a seeded database. The e-mail lookup is likewise no longer a mismatch: `idx_person_contact_value`
+is on `(kind, lower(contact_value))` where `deleted_at is null`, which is the shape the
+case-insensitive query actually asks for.
 
 ### 5.5 Reliability and degradation (NFR-REL)
 
@@ -1520,7 +1618,7 @@ but not yet exercised.
 
 Review-enforced rules with no automated gate (`AGENTS.md` §1): Testcontainers-only, cursor-only
 pagination, no cross-module foreign keys, no JIT provisioning, disjoint authorization axes,
-subject-not-username for durable keys, `audit_log` append-only, no Lombok.
+`person.id`-not-username for durable keys, `audit_log` append-only, no Lombok.
 
 ### 5.9 Testability (NFR-TST)
 
@@ -1530,7 +1628,7 @@ subject-not-username for durable keys, `audit_log` append-only, no Lombok.
 | NFR-TST-2 | Postgres SHALL be a JVM-wide singleton container so context caching is not defeated | `AbstractIntegrationTest` static block, `max_connections=400` |
 | NFR-TST-3 | Tests SHALL NOT depend on a running OTLP collector, Valkey, or the rate limiter unless they start their own | `application-test.yaml` disables OTLP export, cache L2, rate limiting, the provisioning gate, the organization dev bootstrap and both delivery workers. Each **except the provisioning gate** is re-enabled by the IT that owns it; `app.provisioning.gate-enabled: false` (`:29`) is the only occurrence of the key anywhere in `src/test`, so `ProvisioningGateFilter` — a `@ConditionalOnProperty` bean — is **never instantiated in any test run**, and the filter itself is never exercised (§7.5, FR-IDN-1..3) |
 | NFR-TST-4 | A retention default SHALL be tested at its **shipped** value, not a convenient one | `SoftDeletePurgeJobIntegrationTest` runs against the real `P30D` window |
-| NFR-TST-5 | Business code SHALL be able to take a `Clock` bean so time-dependent behaviour is controllable | `shared/config/ClockConfig`; consumed by `JpaAuditingConfig`, `AuditLogImpl`, `EventInbox`, `IdempotencyStore`, `SoftDeletePurgeJob`, `UserAccessService` |
+| NFR-TST-5 | Business code SHALL be able to take a `Clock` bean so time-dependent behaviour is controllable | `shared/config/ClockConfig`; consumed by `JpaAuditingConfig`, `AuditLogImpl`, `EventInbox`, `IdempotencyStore`, `SoftDeletePurgeJob`, `PersonAccessService` |
 
 **Testability limits.** `deleted_at` is written by two different clocks, neither of them the `Clock`
 bean: **Postgres `now()`** on every `@SQLDelete` path (all seven entities), and a raw `Instant.now()`
@@ -1548,58 +1646,47 @@ and Postgres `now()`; the `Instant.now()` on the following line is the `MemberRe
 
 ### 6.1 Where the data model is documented
 
-**`docs/DATA_MODEL.md` is the data-model reference.** It carries the per-column tables for all 17
-tables, the entity hierarchy, the soft-delete mechanism, the migration history and the retention
-picture, written against this same working tree. This section does not restate it; it gives the
-inventory and the three structural facts a reader of *this* document needs, and defers the columns.
+**`docs/DATA_MODEL.md` is the data-model reference**, and this section does not restate it. It carries
+every one of the **54** tables, column by column, grouped by owning module, with the relationships and
+the column conventions (`created_by`/`updated_by`, soft refs versus real FKs, partial unique indexes)
+stated once rather than per table. §2.2 gives the table→module inventory; what follows here is only
+the handful of structural facts a reader of *this* document needs.
 
 The other authoritative sources, in order:
 
-1. **`src/main/resources/db/migration/V1…V17.sql`** — the schema itself. Each migration carries a
-   header explaining *why*, not just *what*; `V9`, `V12`, `V14`, `V16` and `V17` in particular record
-   decisions that cannot be recovered from the resulting DDL.
-2. **The ten `@Entity` classes** — nine mapped through `BaseEntity`: `Setting`, `FeatureFlag`, `User`,
-   `Organization`, `Role`, `Membership`, `WebhookSubscription` (all `SoftDeletableEntity`),
-   `AuditEntry` and `InAppNotification` (both plain `BaseEntity`) — plus `WebhookDelivery`, a bare
-   `@Entity` read model with no `@Version` whose `payload` column is deliberately unmapped.
-   (`BaseEntity` itself is not an `@Entity`; it matches a naive grep only through `@EntityListeners`.)
+1. **`src/main/resources/db/migration/V1…V50.sql`** — the schema itself. Each migration carries a
+   header explaining *why*, not just *what*; `V9`, `V12`, `V14`, `V16` and `V17` record decisions that
+   cannot be recovered from the resulting DDL, and `V10`/`V11` record the identity decoupling: why
+   `app_user` became `person` + `external_identity`, and why `organization.id` — not `kc_org_id` — is
+   the tenant key.
+2. **The `@Entity` classes**, most mapped through `BaseEntity` and the soft-deletable ones through
+   `SoftDeletableEntity`. (`BaseEntity` itself is not an `@Entity`; it matches a naive grep only
+   through `@EntityListeners`.) `WebhookDelivery` is the exception: a bare `@Entity` read model with
+   no `@Version` whose `payload` column is deliberately unmapped.
 3. **`docs/modulith/module-*.adoc`** — generated per-module canvases.
 
-**The 17 tables.** Ownership is per §2.2; the migration column is where the table is created.
+`V1` is an intentionally empty baseline. Twenty-four tables carry `deleted_at`; the ledgers and join
+tables that do not — `audit_log`, `in_app_notification`, `webhook_delivery`, `role_permission`,
+`org_group_member`, `impersonation_session`, the framework tables — are each excluded for a stated
+reason (FR-DLC-10, NFR-AUD-3, NFR-AUD-9).
 
-| Table | Owner | Created | What it holds |
-|---|---|---|---|
-| `flyway_schema_history` | Flyway (framework) | — (created by Flyway itself, in no migration) | Applied-migration ledger |
-| `event_publication` | Spring Modulith (framework) | `V2` | The outbox: one row per *(event, registered listener)*; `completion_date` null = incomplete |
-| `shedlock` | ShedLock (framework) | `V4` | One row per named job lock; `TIMESTAMP` without zone on purpose (`usingDbTime()`) |
-| `setting` | `settings` | `V3` (+`V17`) | Platform key/value configuration; unique `setting_key` over live rows |
-| `feature_flag` | `settings` | `V6` (+`V17`) | Platform flags; unique `flag_key` over live rows |
-| `idempotency_key` | `shared` | `V5` | Claim-first replay store, PK `(principal, idem_key)` where principal is the **subject** |
-| `event_inbox` | `shared` | `V7` | Consumer-side dedupe, PK `(listener_id, message_id)` |
-| `in_app_notification` | `notification` | `V8` | Delivered in-app messages, keyed by recipient **subject**; never soft-deletable |
-| `notification_delivery` | `notification` | `V9` (+`V12`) | The durable fan-out queue; `V9` also **drops** the `V8` `notification_log` |
-| `app_user` | `identity` | `V10` (+`V17`) | Local projection of a Keycloak account + provisioning lifecycle; unique `subject` over live rows |
-| `organization` | `organization` | `V11` (+`V17`) | Local projection of a Keycloak Organization; unique `kc_org_id` and `alias` over live rows |
-| `org_role` | `organization` | `V11` (+`V16`, `V17`) | Per-org role; unique `(org_id, code)` over live rows |
-| `role_permission` | `organization` | `V11` | `@ElementCollection` of `org_role`, PK `(role_id, permission)`; **not** soft-deletable — it follows its role's lifecycle |
-| `membership` | `organization` | `V11` (+`V17`) | Subject ↔ role inside one org; unique `(org_id, user_subject)` over live rows |
-| `audit_log` | `audit` | `V13` (+`V14`) | Append-only trail; `V14` drops `detail` for `from_state`/`to_state`; never soft-deletable |
-| `webhook_subscription` | `webhooks` | `V15` (+`V17`) | Per-org outbound endpoint, event set, status and signing secret |
-| `webhook_delivery` | `webhooks` | `V15` | The signed-delivery queue and log; a log, not an aggregate — never soft-deletable |
-
-`V1` is an intentionally empty baseline. The three framework tables and `role_permission`,
-`audit_log`, `in_app_notification` and `webhook_delivery` are the seven tables `V17` deliberately
-leaves out of soft delete; the other seven all gained `deleted_at` (FR-DLC-1, FR-DLC-10).
-
-Three structural facts worth stating here:
+Structural facts worth stating here:
 
 - **Every column value is supplied by the application.** The only DB `DEFAULT` in the entire schema
   is `notification_delivery.attempts int not null default 0`. Primary keys are generated in Java
   (`@UuidGenerator`, or `UUID.randomUUID()` in the JDBC queues) — no `gen_random_uuid()` anywhere.
-- **Seven foreign keys exist, all intra-module** (§2.2 — the three originals plus `exchange_job_error` (V24), `plan_entitlement` and `org_subscription` (V26), and `user_contact` (V28)). Two are now largely dormant under soft
-  delete: `webhook_delivery.subscription_id`'s cascade can only fire during the hard-delete purge,
-  never during a user-facing delete, and `role_permission`'s cascade is precisely why role deletion
-  bypasses `@SQLDelete` (FR-DLC-11).
+- **Sixteen foreign keys exist, all intra-module** (§2.2). Several are dormant under soft delete:
+  `webhook_delivery.subscription_id`'s cascade can only fire during the hard-delete purge, never
+  during a user-facing delete, and `role_permission`'s cascade is precisely why role deletion bypasses
+  `@SQLDelete` (FR-DLC-11). The same is true of `external_identity.person_id` and
+  `person_contact.person_id`, which is why erasure soft-deletes those rows explicitly rather than
+  relying on the cascade (§3.13).
+- **Cross-module references are bare `uuid` columns with no FK, and that is a design decision, not an
+  omission.** `membership.person_id`, `audit_log.actor_person_id`, `document.owner_person_id`,
+  `exchange_job.requester_person_id` and every `created_by`/`updated_by` point at `person.id` without
+  the database enforcing it, because this modulith is meant to be splittable into services and a
+  constraint the split would have to drop is a constraint that should not have been taken. The
+  consequence is stated where it bites: `SoftDeletePurgeJob` cannot rely on cascades for ordering.
 - **Two vocabularies for one concept.** `role_permission.permission` stores the `Permission` **enum
   constant name** (`ORG_READ`) because of `@Enumerated(EnumType.STRING)`, while the REST API and the
   audit trail use the wire code (`org:read`). Nothing in the column name signals which is stored.
@@ -1608,7 +1695,7 @@ Three structural facts worth stating here:
 
 | Data | Window | Mechanism | Configurable via |
 |---|---|---|---|
-| Soft-deleted rows in the seven aggregate tables | **P30D** | `SoftDeletePurgeJob`, nightly 04:00 by default, batched | `app.persistence.soft-delete.{retention, purge-enabled, batch-size, max-batches}`; schedule `app.scheduler.soft-delete-purge-cron` |
+| Soft-deleted rows in every soft-deletable table | **P30D**, or the org's `org_retention_override` where one is set | `SoftDeletePurgeJob`, nightly 04:00 by default, batched | `app.persistence.soft-delete.{retention, purge-enabled, batch-size, max-batches}`; schedule `app.scheduler.soft-delete-purge-cron` |
 | Completed event publications | **P7D** | `EventPublicationPurgeJob`, nightly 03:00 by default | `app.scheduler.event-retention` (**not present in `application.yaml`** — `@Value` default only); schedule `app.scheduler.event-purge-cron` |
 | Idempotency keys | **P1D** | `IdempotencyPurgeJob`, nightly 03:30 by default | `app.idempotency.retention` (**not in `application.yaml`**); schedule `app.scheduler.idempotency-purge-cron` |
 | Terminal (`SENT`/`FAILED`) notification deliveries | **P7D** | `NotificationRetentionJob` — nightly, ShedLock-guarded, batched | `app.notification.delivery.retention` |
@@ -1632,12 +1719,14 @@ deliberately allowed: it is how tests and one-off erasures ask for "now".
 
 | Personal data | Stored where | Notes |
 |---|---|---|
-| Email address | `app_user.email` (`varchar(320)`); also transiently in the invite call to Keycloak; `audit_log.to_state` on `identity.user_provisioned` (`"email=<address>"`) | The system of record for the identity is Keycloak; this is a projection |
-| Keycloak subject | `app_user.subject`, `membership.user_subject`, `audit_log.actor`, `in_app_notification.recipient`, `idempotency_key.principal`, `created_by`/`updated_by`, rate-limit keys, file object keys (`u/<subject>/…`) | Pseudonymous — an opaque UUID, not a name |
-| Display name | **not stored.** First/last name are passed to Keycloak at provisioning and never persisted locally | `CreateOrganizationRequest.ownerFirstName`/`ownerLastName` carry no constraints and no local column |
+| Email address | `person_contact` (`kind = EMAIL`, `contact_value varchar(320)`, `is_primary`, `verified_at`); also transiently in the invite call to Keycloak; `audit_log.to_state` on `identity.person_provisioned` | It left the person row deliberately: a human has more than one address, and only a *proven* one can be globally unique (`uq_person_contact_verified_live`) |
+| Name | `person.formatted_name`, `given_name`, `family_name`, `middle_name`, `honorific_prefix`/`suffix`, `preferred_name` | Now stored, and stored as **name parts plus a supplied whole**: `formatted_name` is never assembled from the parts, because their order is cultural. `family_name` is nullable because mononyms and patronymics are ordinary |
+| `person.id` | The identifier every module keys on: `membership.person_id`, `audit_log.actor_person_id`, `in_app_notification.person_id`, `document.owner_person_id`, `exchange_job.requester_person_id`, `created_by`/`updated_by`, idempotency principals, rate-limit buckets, file object keys (`u/<person-id>/…`) | Pseudonymous — an opaque UUID this platform mints, not a name and not a provider's identifier |
+| Provider subject | `external_identity.external_subject` (with `provider`, `issuer`, `external_username`) — **and nowhere else** | The one place in the schema holding an identifier minted elsewhere. Confining it here is what lets a provider be swapped without touching another table |
+| Display name (UI preference) | `person_profile.display_name` | Distinct from `person.preferred_name`: what someone asked to be called is part of who they are, how their name renders in this UI is a preference |
 | Message content | `in_app_notification.subject`/`body`; `notification_delivery.subject`/`body`/`recipient` | Recipient may be an email address or phone number depending on channel |
-| Client IP | Rate-limit bucket key only, when neither tenant nor subject resolves; capped at 45 characters; **redacted before logging** | Not persisted to any table |
-| Webhook payloads | `webhook_delivery.payload` | Contains subjects and role/org ids; deliberately **not exposed** through the delivery-log API |
+| Client IP | Rate-limit bucket key only, when neither tenant nor principal resolves; capped at 45 characters; **redacted before logging** | Not persisted to any table |
+| Webhook payloads | `webhook_delivery.payload` | Contains person and role/org ids; deliberately **not exposed** through the delivery-log API |
 
 ### 6.4 What is deliberately not stored
 
@@ -1650,7 +1739,10 @@ deliberately allowed: it is how tests and one-off erasures ask for "now".
   value. There is no password column, no hash, no reset token and no refresh token anywhere in the
   schema.
 - **No `deleted_by` column** — see NFR-AUD-6.
-- **No display names**, as above.
+- **No system person.** A cron job, a startup task and a machine key each write NULL into
+  `created_by`/`updated_by` rather than pointing at a sentinel row. Minting one would put a robot in
+  the person directory — eligible for a membership, for audit attribution and for a GDPR erasure
+  request. NULL is the schema's own way of saying what the old `"system"` string was trying to say.
 - **No offsets or totals** for any collection (ADR 0002) — nothing counts rows for presentation.
 - **No client-supplied SQL.** Analytics SQL is developer-authored per enum constant; clients select
   a report by code.
@@ -1659,8 +1751,7 @@ deliberately allowed: it is how tests and one-off erasures ask for "now".
 
 ### 6.5 Erasure
 
-Erasure is a **two-stage** process and there is currently **no HTTP route into either stage** for a
-user account.
+Erasure is a **two-stage** process, reached through the compliance module (§3.25).
 
 1. **Stage 1 — soft delete.** `repository.delete(entity)` (or `Role.softDelete`) stamps `deleted_at`.
    The row becomes invisible to every JPA read path, its unique key is freed for reuse, and it is
@@ -1669,19 +1760,27 @@ user account.
    (P30D), children before parents, batched, nightly. This is irreversible. `app.persistence.soft-delete.purge-enabled`
    is a freeze switch that needs no redeploy.
 
-**What this means for a subject-erasure request today:**
+**What this means for a person-erasure request today:**
 
-- `app_user` and `organization` are fully wired for soft delete and appear in `PURGE_ORDER`, but **no
-  application code deletes either** — grep finds no `.delete(`/`.deleteById(` on `UserRepository` or
-  `OrganizationRepository`. Reaching stage 1 for an account requires direct SQL.
-- Erasing an account does **not** erase its footprint. `audit_log` is append-only by design and
-  retains `actor` (a subject) indefinitely; `in_app_notification` retains `recipient` with no
-  retention; `webhook_delivery.payload` retains subjects with no working retention; `event_inbox`
-  retains message ids with no purge. Files under `u/<subject>/` are only removed by an explicit
-  delete call.
-- A fork with an erasure obligation must add: an account-disable and account-delete path, retention
-  for `in_app_notification` and `webhook_delivery`, an `event_inbox` purge, and a policy decision on
-  the audit trail (whose append-only property is a deliberate, `AGENTS.md`-level rule).
+- Stage 1 **is** reachable: `ComplianceService.requestErasure` (§3.25, FR-CMP-3) soft-deletes the
+  person's owned rows — `person`, `external_identity`, `person_contact`, `person_profile`,
+  `user_device` — in one raw-JDBC sweep, refusing while a legal hold is in force.
+- **`external_identity` is in that set for a reason, and removing it would be a security bug.** The
+  edge resolves a token through the link table, and `uq_external_identity_subject_live` is partial
+  over live rows: a person soft-deleted while their link stayed live would read as erased and go on
+  authenticating. The real cascading FK does not help here — it fires on the hard delete thirty days
+  later, and erasure has to take effect now.
+- Erasing a person does **not** erase their footprint. `audit_log` is append-only by design and
+  retains `actor_person_id` indefinitely; `in_app_notification` retains `person_id` with no retention;
+  `webhook_delivery.payload` retains person ids with no working retention; `event_inbox` retains
+  message ids with no purge. Files under `u/<person-id>/` are only removed by an explicit delete call.
+- What the decoupling did buy: a person id is a pseudonym this platform mints, so the residue above is
+  a bare UUID with no name, no e-mail and no provider account behind it once `person` and
+  `person_contact` are purged. Under the old model the residue was the Keycloak subject, which still
+  resolved to a live account at the IdP.
+- A fork with a full erasure obligation must still add: retention for `in_app_notification` and
+  `webhook_delivery`, an `event_inbox` purge, and a policy decision on the audit trail (whose
+  append-only property is a deliberate, `AGENTS.md`-level rule).
 
 ---
 
@@ -1690,14 +1789,16 @@ user account.
 ### 7.1 Strategy
 
 `./gradlew build` runs every gate. There is no separate integration-test source set and no tag-based
-exclusion of the slow tests: **54 test classes executing 274 tests** (266 `@Test` + 1
-`@ParameterizedTest` declarations, the parameterized one and several table-driven loops contributing
-more than one execution each) **and 4 `@ArchTest` rules**, of which 45 classes extend
-`AbstractIntegrationTest` and therefore need Docker. (`src/test` holds 58 Java files;
-`testsupport/AbstractIntegrationTest`, `shared/web/EnvelopeTestController`,
-`identity/internal/ImpersonationFixtures` and `organization/internal/OrgRbacFixtures` carry no tests and
-are support classes.) Two tasks are tagged and run selectively — `exportModulithDocs` (`docs-export`)
-and `exportOpenApi` (`openapi-export`).
+exclusion of the slow tests: **131 test-bearing classes out of 141 files in `src/test`** — the
+remainder are fixtures and support classes (`testsupport/AbstractIntegrationTest`,
+`shared/web/EnvelopeTestController`, `identity/internal/ImpersonationFixtures`,
+`organization/internal/OrgRbacFixtures` and their peers) — plus the gateway's own suite in its
+separate build. Most classes extend `AbstractIntegrationTest` and therefore need Docker. Two tasks are
+tagged and run selectively — `exportModulithDocs` (`docs-export`) and `exportOpenApi`
+(`openapi-export`).
+
+Exact counts move with every slice and are not restated here; `./gradlew build` is the authority, and
+`docs/CHECKLIST.md` records the gate each shipped deliverable passed.
 
 ### 7.2 How each requirement class is verified
 
@@ -1778,11 +1879,12 @@ do not appear there. **✗** marks a requirement with no automated verification 
 | FR-HTTP-17..23 | `main:shared/idempotency/{IdempotencyFilter,IdempotencyStore,CachedBodyRequestWrapper}.java`, `V5__idempotency_key.sql` | `test:shared/idempotency/IdempotencyIntegrationTest` (7 tests), `test:shared/security/SubjectAttributionTest` |
 | FR-HTTP-24 ✗, 27 ✗, 30 ✗ | `main:shared/idempotency/IdempotencyStore.java`, `main:shared/ratelimit/{RateLimitKeyResolver,DistributedRateLimiter}.java` | — |
 | FR-HTTP-25..29 | `main:shared/ratelimit/{RateLimitFilter,RateLimitProperties,RateLimitKeyResolver,DistributedRateLimiter,RateLimitConfig,RateLimitScope,RateLimitVerdict}.java` | `test:shared/ratelimit/RateLimitIntegrationTest` (5 tests) |
-| FR-IDN-1, 2 ✗, 3 ✗ (HTTP level), 10 | `main:identity/internal/{ProvisioningGateFilter,UserAccessService,User}.java` | `test:identity/internal/IdentityProvisioningTest.gateDeniesUnprovisionedThenActivatesInvitedOnFirstHit`, `.disabledUserIsDeniedByBothAuthorizeAndPeek` (`UserAccessService` decisions); `test:identity/internal/ImpersonationProvisioningGateTest` (4 tests) is the only place the filter runs over HTTP — it covers FR-IDN-1 and FR-IDN-10, not FR-IDN-2 or the `ACCOUNT_DISABLED` code (§7.5) |
-| FR-IDN-4 ✗ | `main:identity/internal/{UserAccessService,UserRepository}.java` | (read side only) `test:analytics/internal/AnalyticsApiTest.softDeletedUsersAreExcludedFromTheReport` |
-| FR-IDN-5..9 | `main:identity/internal/{UserProvisioningService,KeycloakUserAdminGateway,ProvisioningProperties}.java`, `main:shared/keycloak/{KeycloakAdminClientConfig,KeycloakServiceAccountTokens,KeycloakAdminProperties}.java`, `V10__identity_user.sql` | `test:identity/internal/IdentityProvisioningTest` (6 tests), `test:identity/internal/KeycloakProvisioningIntegrationTest` (3 tests), `test:identity/internal/ProvisioningPropertiesTest` (3 `@Test` + 1 `@ParameterizedTest`) |
+| FR-IDN-1, 2 ✗, 3 ✗ (HTTP level), 10 | `main:identity/internal/{ProvisioningGateFilter,PersonAccessService,Person,CallerSubject}.java` | `test:identity/internal/IdentityProvisioningTest.gateDeniesUnprovisionedThenActivatesInvitedOnFirstHit`, `.disabledUserIsDeniedByBothAuthorizeAndPeek` (`PersonAccessService` decisions); `test:identity/internal/ImpersonationProvisioningGateTest` (4 tests) is the only place the filter runs over HTTP — it covers FR-IDN-1 and FR-IDN-10, not FR-IDN-2 or the `ACCOUNT_DISABLED` code (§7.5) |
+| FR-IDN-4 ✗ | `main:identity/internal/{PersonAccessService,PersonResolver,PersonRepository}.java` | (read side only) `test:analytics/internal/AnalyticsApiTest.softDeletedUsersAreExcludedFromTheReport` |
+| FR-IDN-5..9 | `main:identity/internal/{PersonProvisioningService,PersonContacts,ExternalIdentity,ExternalIdentityRepository,KeycloakUserAdminGateway,ProvisioningProperties}.java`, `main:shared/keycloak/{KeycloakAdminClientConfig,KeycloakServiceAccountTokens,KeycloakAdminProperties}.java`, `V10__identity_user.sql` | `test:identity/internal/IdentityProvisioningTest` (6 tests), `test:identity/internal/KeycloakProvisioningIntegrationTest` (3 tests), `test:identity/internal/ProvisioningPropertiesTest` (3 `@Test` + 1 `@ParameterizedTest`) |
 | FR-IDN-11 ✗, 14 ✗ | `main:identity/internal/{MeController,PlatformAdminBootstrap,IdentityDevBootstrapProperties}.java` | — |
-| FR-IDN-12..13 | `main:identity/internal/{UserAdminController,UserDirectoryService}.java` | `test:shared/security/PlatformRoleHierarchyTest`, `test:notification/NotificationDeliveryTest.flagToggleEnqueuesThenWorkerDeliversEmailAndInApp` |
+| **Edge identity resolution** (FR-HTTP pipeline, FR-ORG-7..8, NFR-TEN-1) | `main:shared/security/{PersonLookup,OrgLookup,CurrentUser,CurrentUserProvider,CurrentUserFilter}.java`, `main:identity/internal/{PersonLookupImpl,PersonResolver,PersonResolutionCache,IdentityProvider}.java`, `main:organization/internal/{OrgLookupImpl,OrgResolver,OrgResolutionCache,ExternalOrganization}.java`, `V10`, `V11` | `test:shared/security/SubjectAttributionTest`, `test:shared/cache/ValkeyCacheIntegrationTest` (the text-form round trip the cached id depends on), `test:organization/internal/OrgRbacApiTest` (every org-scoped call resolves through both ports) |
+| FR-IDN-12..13 | `main:identity/internal/{PersonAdminController,PersonDirectoryService,PersonContacts}.java` | `test:shared/security/PlatformRoleHierarchyTest`, `test:notification/NotificationDeliveryTest.flagToggleEnqueuesThenWorkerDeliversEmailAndInApp` |
 | FR-IDN-15..19 | `main:identity/internal/{IdentityReconciliationJob,IdentityReconciliationProperties,KeycloakUserAdminGateway}.java`; `application.yaml:102-118` | `test:identity/internal/IdentityReconciliationJobTest` (7 tests) |
 | FR-ORG-1..2, 6 | `main:organization/Permission.java`, `main:organization/internal/PermissionCatalogController.java` | `test:organization/internal/OrgRbacApiTest.unknownPermissionCodeOnRoleCreateIs422`, `.permissionCatalogIsReadableByAnyAuthenticatedUser`, `test:organization/internal/OrgRbacAuthorityTest.aRoleCodeGrantsNothingByItself` |
 | FR-ORG-3..4, 29 | `main:organization/internal/{RoleSeeder,SystemRoleCatalogReconciler,Role}.java`, **`V16__org_role_owner_only.sql`** | `test:organization/internal/OrgRbacAuthorityTest.aFreshOrganizationHasExactlyOneRole`, `.seederReconcilesADriftedSystemRoleBackToTheCatalog`, `.seederLeavesFormerSystemRolesAloneAsCustomRoles`, `test:organization/internal/OrgRbacApiTest.aRoleNamedAdminIsJustAnotherCustomRole` |
@@ -1797,7 +1899,7 @@ do not appear there. **✗** marks a requirement with no automated verification 
 | FR-PLT-9..13 | see FR-AUD-6..7, FR-SCH-5, FR-ANA-2, FR-SET-2/8 | `test:shared/security/KeycloakIntegrationTest` (4 tests) |
 | FR-IMP-1, 13..21, 23 | `main:identity/internal/{ImpersonationController,ImpersonationService,ImpersonationSession,ImpersonationSessionRepository,ImpersonationMode,ImpersonationProperties}.java`, **`V18__impersonation_session.sql`** | `test:identity/internal/ImpersonationApiTest` (16 tests); `test:identity/internal/KeycloakProvisioningIntegrationTest.realmRolesReportsRolesHeldThroughACompositeNotJustDirectMappings` (FR-IMP-14's composite half, against real Keycloak) |
 | FR-IMP-2, 4..11 | `main:shared/security/{ImpersonationFilter,ImpersonationLookup,ImpersonatedPrincipal,ImpersonatedAuthenticationToken,CurrentUser,CurrentUserProvider}.java`, `main:identity/internal/ImpersonationLookupImpl.java` | `test:shared/security/ImpersonationFilterTest` (6 tests), `test:identity/internal/ImpersonationReachTest` (13 tests) |
-| FR-IMP-3, 12 | `main:identity/internal/{ProvisioningGateFilter,UserAccessService}.java` | `test:identity/internal/ImpersonationProvisioningGateTest` (4 tests) — the only context in the suite with `app.provisioning.gate-enabled=true`, which is also the only HTTP-level coverage the gate has at all (cf. FR-IDN-1..3) |
+| FR-IMP-3, 12 | `main:identity/internal/{ProvisioningGateFilter,PersonAccessService}.java` | `test:identity/internal/ImpersonationProvisioningGateTest` (4 tests) — the only context in the suite with `app.provisioning.gate-enabled=true`, which is also the only HTTP-level coverage the gate has at all (cf. FR-IDN-1..3) |
 | FR-IMP-22, 24 | `main:audit/internal/{AuditLogImpl,AuditEntry,AuditController}.java`, **`V19__audit_log_impersonation.sql`** | `test:identity/internal/ImpersonationReachTest.anAuditRowFromInsideASessionNamesTheOperatorAndTheIdentityTheyWore`, `.aWebhookCreatedInsideASessionNamesTheOperatorAndTheSession` |
 | FR-IMP-25 | `@Value("${app.impersonation.enabled:true}")` on `main:identity/internal/ImpersonationController.java:55` (enforced per handler by `requireEnabled()`) and `main:shared/security/ImpersonationFilter.java:72`; `application.yaml:119-128` | `test:identity/internal/ImpersonationDisabledTest` (3 tests) |
 | FR-LOC-1..6 | `main:localization/{Messages,TranslationChanged}.java`, `main:localization/internal/{Translation,TranslationRepository,TranslationBundles,MessagesImpl,TranslationService,TranslationController,LocalizationProperties}.java`, **`V21__localization.sql`** | `test:localization/internal/MessageResolutionTest` (3 tests), `test:localization/internal/LocalizationApiTest` (4 tests) |
@@ -1813,7 +1915,7 @@ do not appear there. **✗** marks a requirement with no automated verification 
 | FR-ANA-1..10 | `main:analytics/internal/{AnalyticsReport,AnalyticsReportService,AnalyticsReportController,DuckDbAnalyticsEngine,AnalyticsProperties}.java`, `main:analytics/{AnalyticsEngine,AnalyticsException}.java` | `test:analytics/AnalyticsIntegrationTest` (7), `test:analytics/internal/AnalyticsApiTest` (5) |
 | FR-SCH-1..2, 4..5 | `main:scheduler/internal/{SchedulingConfig,EventPublicationPurgeJob,SoftDeletePurgeJob,SchedulerController}.java`, `V4__shedlock.sql` | `test:scheduler/SchedulerLockIntegrationTest` (2), `test:scheduler/EventPurgeJobIntegrationTest`, `test:scheduler/internal/SchedulerApiTest` (2), `test:scheduler/internal/SoftDeletePurgeJobIntegrationTest` (5) |
 | FR-SCH-3 ✗ | `main:scheduler/internal/IdempotencyPurgeJob.java` | — |
-| FR-EVT-1..7 | `main:shared/persistence/AggregateRoot.java`, `main:shared/events/EventInbox.java`, `main:shared/config/AsyncConfig.java`, the ten event records, `main:organization/internal/OrgPermissionCacheEvictor.java`, `main:notification/internal/FeatureFlagChangeNotifier.java`, `main:webhooks/internal/{WebhookEventListener,WebhookDispatcher}.java`, `V2`, `V7` | `test:shared/events/EventInboxIntegrationTest` (2), `test:settings/SettingsModuleTest.upsertPublishesSettingChangedThroughTheRegistry`, `test:webhooks/internal/WebhookEventTest`, `test:organization/internal/RoleSoftDeleteTest` |
+| FR-EVT-1..7 | `main:shared/persistence/AggregateRoot.java`, `main:shared/events/EventInbox.java`, `main:shared/config/AsyncConfig.java`, the eighteen event records, `main:organization/internal/OrgPermissionCacheEvictor.java`, `main:notification/internal/FeatureFlagChangeNotifier.java`, `main:webhooks/internal/{WebhookEventListener,WebhookDispatcher}.java`, `V2`, `V7` | `test:shared/events/EventInboxIntegrationTest` (2), `test:settings/SettingsModuleTest.upsertPublishesSettingChangedThroughTheRegistry`, `test:webhooks/internal/WebhookEventTest`, `test:organization/internal/RoleSoftDeleteTest` |
 | FR-DLC-1..5, 10..13 | `main:shared/persistence/{SoftDeletableEntity,AggregateRoot,BaseEntity,SoftDeleteRecovery,SoftDeleteProperties,JpaAuditingConfig}.java`, the eight soft-deletable entities, **`V17__soft_delete.sql`** + `V21` | `test:shared/persistence/SoftDeleteTest` (12), `test:organization/internal/RoleSoftDeleteTest` (2), `test:ArchitectureTests.softDeletableEntitiesDeclareTheirOwnHibernateAnnotations`, `test:shared/persistence/FlywayBaselineTest` |
 | FR-DLC-6..8 | `main:scheduler/internal/SoftDeletePurgeJob.java` | `test:scheduler/internal/SoftDeletePurgeJobIntegrationTest` (5) |
 | FR-DLC-9 ✗ | `main:shared/persistence/SoftDeleteProperties.java` | — |
@@ -1823,7 +1925,7 @@ do not appear there. **✗** marks a requirement with no automated verification 
 | NFR-AUD-9 ✗ | `V18__impersonation_session.sql`, `main:identity/internal/ImpersonationSession.java` | — (enforced by the absence of a delete path, not by a test) |
 | NFR-AUD-6 ✗ | `main:shared/persistence/SoftDeletableEntity.java:28-32` (design decision) | — |
 | NFR-PERF-3..6, NFR-REL-10 | `main:shared/cache/{CacheConfig,CacheProperties,TwoLevelCacheManager,TwoLevelCache,CacheInvalidationBroadcaster}.java` | `test:shared/cache/ValkeyCacheIntegrationTest` (4), `test:shared/cache/ValkeyOutageIntegrationTest` |
-| NFR-MNT-1..3 | all ten `package-info.java` files | `test:ModularityTests.verifiesModularStructure` |
+| NFR-MNT-1..3 | all twenty-seven `package-info.java` files | `test:ModularityTests.verifiesModularStructure` |
 | NFR-MNT-4..8 | ArchUnit-enforced source rules; `main:scheduler/internal/SoftDeletePurgeJob.java` (`PURGE_ORDER`) | `test:ArchitectureTests` (4 rules), `test:scheduler/internal/SoftDeletePurgeJobIntegrationTest.purgeOrderCoversEverySoftDeletableEntity` |
 | NFR-MNT-9..11 | `main:shared/web/OpenApiConfig.java`; Modulith `Documenter` | `test:DocumentationGenerationTest`, `test:shared/web/OpenApiExportTest`, `test:shared/web/CursorPaginationContractTest` |
 | NFR-TST-1..5 | `test:testsupport/AbstractIntegrationTest`, `src/test/resources/application-test.yaml`, `main:shared/config/ClockConfig.java` | the suite itself; ADR 0003 |
@@ -1849,17 +1951,17 @@ be looking for:
    still resolve from the database for the target (so tenant endpoints work) and why every
    `hasRole('platform-*')` check fails inside a session (so `/api/v1/admin/**`, including the endpoint
    that mints sessions, is unreachable from within one).
-2. `audit_log.actor` is the accountable human — the operator — while every other durable attribution
+2. `audit_log.actor_person_id` is the accountable human — the operator — while every other durable attribution
    on the request (`created_by`, `updated_by`, the rate-limit bucket, the idempotency key) records the
-   effective subject, the target. That inversion is deliberate and lives in exactly one place,
-   `main:audit/internal/AuditLogImpl.attribution()`.
+   effective person, the target. That inversion is deliberate and lives in exactly one place,
+   `main:audit/internal/AuditLogImpl.attribution()`, reading `CurrentUser.accountablePersonId()`.
 
 ### 9.2 Functional gaps in the built system
 
 | Gap | Detail | Suggested resolution |
 |---|---|---|
 | **No delete route for settings or feature flags** | `SettingService.delete` / `FeatureFlagService.delete` exist and are the only cache-correct removal path; neither controller declares `@DeleteMapping` | Add the two `DELETE` endpoints under `platform-admin`, or document the omission as intentional |
-| **No user-disable or user-delete path** | `User.disable()` has no caller outside reconciliation; nothing deletes `app_user` or `organization`, though both are fully soft-delete-wired and in `PURGE_ORDER` | Needed before any erasure obligation can be met (§6.5) |
+| **No routine person-disable path** | `Person.disable()` has a caller only in reconciliation; there is no admin endpoint that disables somebody. Erasure (§3.25) is the only path that soft-deletes a person, and `OrganizationService.delete` the only one that soft-deletes a tenant | Add an explicit disable route, or document that reconciliation and erasure are the only two ways an account stops working |
 | **Soft-delete restore is unreachable over HTTP** | `SoftDeleteRecovery` is injected by no controller | Decide whether restore is an operator API or deliberately Java-only |
 | **Webhook secrets stored in plaintext** | `webhook_subscription.secret varchar(200)`; returned into the claim result set by design | Encrypt at rest, or accept and document |
 | **No CORS** | Nothing anywhere in `src/main` | Required before any cross-origin browser client |
@@ -1877,17 +1979,24 @@ be looking for:
 
 ### 9.3 Documentation drift to reconcile
 
-None open. The last three items — the `FeatureFlagChangeNotifier` javadoc (documented the message id
-without its `@occurredAt` component and inverted the re-toggle semantics), the `docs/EVENTS.md`
-publisher table (role soft-delete as a `RolePermissionsChanged` publisher, the webhook wire codes,
-the four zero-consumer events), and `docs/LOCAL_ACCESS.md`'s machine-specific ports — were fixed in
-the 2026-08-01 docs restructure.
+**Open: `docs/EVENTS.md` still describes the pre-decoupling event vocabulary.** Its publisher table
+names `ug.co.smsone.identity.UserProvisioned` and `UserActivated` (now `PersonProvisioned` /
+`PersonActivated`), gives the payload of `MembershipCreated`, `MembershipRoleChanged` and
+`MemberRemoved` as carrying a `subject` (now `personId`), and describes `JobCompleted` as carrying
+`requester` (now `requesterPersonId`). The consumer table repeats `UserProvisioned`. FR-EVT-3 in this
+document is the corrected list; `docs/EVENTS.md` needs the same pass.
+
+Everything else is closed. The previous three items — the `FeatureFlagChangeNotifier` javadoc
+(documented the message id without its `@occurredAt` component and inverted the re-toggle
+semantics), the `docs/EVENTS.md` publisher table (role soft-delete as a `RolePermissionsChanged`
+publisher, the webhook wire codes, the four zero-consumer events), and `docs/LOCAL_ACCESS.md`'s
+machine-specific ports — were fixed in the 2026-08-01 docs restructure.
 
 Everything else previously listed here was reconciled in the 2026-08-01 cleanup pass: `audit/package-info.java`
 now describes synchronous recording through the port; `AGENTS.md` §4.2's `@SQLDelete` template carries the
 version increment and §7 states the real purge-error rule (isolate per independent table, rethrow at the end)
-and the sanctioned `@Scheduled`-outside-`scheduler` case; `docs/ARCHITECTURE.md` and `README.md` show all ten
-modules; `docs/CHECKLIST.md`, `docs/NEXT_TASKS.md`, `docs/COMPLETED_MODULES.md`, `docker/.env.example` and
+and the sanctioned `@Scheduled`-outside-`scheduler` case; `docs/ARCHITECTURE.md` and `README.md` show every
+module; `docs/CHECKLIST.md`, `docs/NEXT_TASKS.md`, `docs/COMPLETED_MODULES.md`, `docker/.env.example` and
 `gradle/libs.versions.toml` were corrected.
 
 ---
@@ -1983,7 +2092,7 @@ and the Keycloak state this runner creates are tabulated under FR-ORG-31 in §3.
 | Key | Default | Note |
 |---|---|---|
 | `from` | `no-reply@smsone.co.ug` (`NOTIFICATION_FROM`) | — |
-| `admins[].email` | `ayesigapo@gmail.com` (`NOTIFICATION_ADMIN_EMAIL`) | The in-app subject is resolved from this email at dispatch (FR-NOT-4) |
+| `admins[].email` | `ayesigapo@gmail.com` (`NOTIFICATION_ADMIN_EMAIL`) | The in-app recipient's `person.id` is resolved from this email at dispatch (FR-NOT-4) |
 | `slack-webhook-url` | empty (`NOTIFICATION_SLACK_WEBHOOK`) | — |
 | `webhook-timeout-seconds` | `5` (`NOTIFICATION_WEBHOOK_TIMEOUT`) | — |
 | `webhook-allow-private-hosts` | `false` — **code default only, no `application.yaml` entry** | **Disables the SSRF guard for the Slack and webhook channels** (FR-NOT-17, NFR-SEC-9); `true` in the test profile |

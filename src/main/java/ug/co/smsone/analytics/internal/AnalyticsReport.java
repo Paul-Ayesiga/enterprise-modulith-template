@@ -8,6 +8,14 @@ import java.util.Optional;
  * input, per the {@code AnalyticsEngine} contract): a Postgres {@code sourceSql} materialized into the
  * DuckDB mart {@code martTable}, then an aggregate {@code martQuery} run against that mart.
  *
+ * <p><b>{@code sourceSql} is row-level on purpose, and it is not free.</b> Every column it selects is
+ * copied out of Postgres and into DuckDB on each refresh — {@code delivery-outcomes} moves 300,000
+ * rows to answer with four. Select the narrowest set of columns the {@code martQuery} actually groups
+ * by; pre-aggregating in {@code sourceSql} instead would be faster still and is deliberately not done,
+ * because then the mart is the answer and the OLAP engine is doing nothing. What keeps the cost
+ * bounded is {@code AnalyticsReportService}: a refresh happens at most once per
+ * {@code app.analytics.mart-ttl}, so a report can be up to that interval behind its source.
+ *
  * <p><b>{@code sourceSql} runs as raw JDBC, so {@code @SQLRestriction} does not apply.</b> A report
  * over a soft-deletable table must filter {@code deleted_at is null} itself, or it silently disagrees
  * with the admin API reading the same table — and the report is the one used for headcounts and

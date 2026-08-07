@@ -127,8 +127,12 @@ public class OrgPolicyEnforcementFilter extends OncePerRequestFilter {
             // this rule — the same answer it always got, now stated instead of falling out of a
             // subject string that matched no row. An org requiring trusted devices excludes its
             // API keys from org-scoped calls; that is the rule doing its job, not a gap.
+            // The org is passed explicitly since V51: trust is a grant BY an organization, so the only
+            // grant that can satisfy this org's policy is this org's own. Before, one global boolean on
+            // the device meant a blessing from any org — including one the caller created themselves —
+            // satisfied every org's rule for that person.
             if (caller.personId() == null || fingerprint == null || fingerprint.isBlank()
-                    || !devices.isTrusted(caller.personId(), fingerprint.trim())) {
+                    || !devices.isTrusted(caller.organizationId(), caller.personId(), fingerprint.trim())) {
                 return "trusted-device";
             }
         }
