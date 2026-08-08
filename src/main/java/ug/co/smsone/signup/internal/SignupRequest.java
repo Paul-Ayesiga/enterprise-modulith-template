@@ -9,7 +9,7 @@ import java.util.UUID;
 
 /** One signup handshake. The token itself never touches this row — only its SHA-256. */
 @Entity
-@Table(name = "signup_request")
+@Table(name = "signup_request", schema = "platform")
 class SignupRequest {
 
     static final String PENDING = "PENDING";

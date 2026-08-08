@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.shared.tenancy.SplitTables;
 import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
@@ -105,23 +106,45 @@ class ExchangeWorker implements SmartLifecycle {
      * which opens its own transaction, which is the only order that works: the transaction chooses its
      * connection, and the axis has to already be set when it does.
      *
-     * <p><b>PHASE 2 SPLITS THIS PIN IN TWO, and the seam is already visible below.</b> The claim is a
-     * cross-tenant {@code SKIP LOCKED} scan over one queue and stays platform work (or becomes a scan
-     * per tenant). Everything from {@code MDC.put("org_id", …)} onwards is one tenant's work — the
-     * handler reads and writes THAT org's rows — so it becomes
-     * {@code TenantContext.runAs(job.orgId(), …)}. The MDC line marks the boundary today; it is not a
-     * coincidence that the value it puts there is exactly the axis the pin will take.
+     * <p><b>PHASE 2 SPLIT THIS PIN IN TWO, exactly where the seam was drawn.</b> {@code exchange_job}
+     * is a split table now (ADR 0010 §2 row 10), so the claim is no longer one cross-tenant
+     * {@code SKIP LOCKED} scan: it is one scan per HOME, and each is schema-qualified because work
+     * nobody has claimed yet belongs to no axis. Everything from {@code MDC.put("org_id", …)} onwards is
+     * ONE tenant's work — the handler reads and writes that org's rows, the artifact it registers is
+     * that org's document, the audit row it writes is that org's trail — so it is re-pinned from the
+     * claimed job's own {@code org_id} before {@code runClaimed}. That pin is what lets every
+     * other statement in {@code ExchangeJobStore} stay unqualified, and it is the only form that will
+     * still be right when a tenant is promoted to a schema of its own.
      */
     public int drainOnce() {
         return TenantContext.callAsPlatform(this::claimAndRunOne);
     }
 
+    /**
+     * Claims from each home in turn and runs the first job found, on that job's own axis.
+     *
+     * <p>Platform first (the order {@code SplitTables.homes()} declares), so a platform-scoped handler
+     * is never starved behind tenant traffic. One job per call regardless of how many homes there are:
+     * a claim that succeeds returns immediately, so a busy pool cannot monopolise the loop either.
+     */
     private int claimAndRunOne() {
-        Optional<ExchangeJob> claimed = store.claimOne(config.staleLock());
+        Optional<ExchangeJob> claimed = Optional.empty();
+        for (String home : SplitTables.homes()) {
+            claimed = store.claimOne(config.staleLock(), home);
+            if (claimed.isPresent()) {
+                break;
+            }
+        }
         if (claimed.isEmpty()) {
             return 0;
         }
+        // Off the platform axis and onto the job's, for the whole of the run and its bookkeeping. A
+        // platform-scoped job (null org_id) stays where it is; anything else is that tenant's work.
         ExchangeJob job = claimed.get();
+        return job.orgId() == null ? runClaimed(job) : TenantContext.callAs(job.orgId(), () -> runClaimed(job));
+    }
+
+    private int runClaimed(ExchangeJob job) {
         if (job.attempts() > config.maxAttempts()) {
             // Reclaim-loop circuit breaker: attempts normally cap inside failOrRetry, but a job
             // that keeps LOSING its claim (never reaching an exception) would otherwise burn claim

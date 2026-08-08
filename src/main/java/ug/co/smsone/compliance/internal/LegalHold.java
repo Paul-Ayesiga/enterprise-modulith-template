@@ -17,7 +17,7 @@ import org.hibernate.annotations.UuidGenerator;
  * rather than reaching for a null it cannot write.
  */
 @Entity
-@Table(name = "legal_hold")
+@Table(name = "legal_hold", schema = "platform")
 class LegalHold {
 
     /**

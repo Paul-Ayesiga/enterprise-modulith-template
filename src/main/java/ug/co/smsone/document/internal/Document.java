@@ -9,7 +9,24 @@ import org.hibernate.annotations.SQLRestriction;
 import ug.co.smsone.shared.document.NewDocument;
 import ug.co.smsone.shared.persistence.SoftDeletableEntity;
 
-/** The record of a stored file. Immutable after registration except through deletion. */
+/**
+ * The record of a stored file. Immutable after registration except through deletion.
+ *
+ * <p><b>Split table (ADR 0010 §2 row 6), and its null means something no other split table's does:
+ * a null {@code org_id} is a PERSONAL document, not an unknown tenant.</b> It belongs to the human in
+ * {@code owner_person_id} and it must NOT travel when one of their organizations is extracted — which
+ * is exactly why it lives in {@code platform} rather than in any tenant's schema. An org document is
+ * the tenant's and lives with the tenant.
+ *
+ * <p>Nothing here names a schema, and nothing needs to: the two scopes are reached through two
+ * controllers whose axes already agree with the rule. {@code /api/v1/me/documents} names no
+ * organization, so the request stays on the platform axis and resolves {@code platform.document};
+ * {@code /api/v1/orgs/{orgId}/documents} pins that tenant and resolves theirs. There is no read that
+ * spans both — a personal document is never listed beside an org's, by design — so the routing is the
+ * {@code search_path}, which is the form that keeps working when a tenant is promoted to its own
+ * schema. The predicates in {@code DocumentService} ({@code orgId is null and ownerPersonId = ?}) are
+ * still load-bearing: they are what stops one person's personal documents being served to another.
+ */
 @Entity
 @Table(name = "document")
 @SQLDelete(sql = "update document set deleted_at = now(), version = version + 1 where id = ? and version = ?")

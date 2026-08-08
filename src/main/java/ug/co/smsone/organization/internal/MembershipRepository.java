@@ -16,8 +16,26 @@ interface MembershipRepository extends JpaRepository<Membership, UUID>, JpaSpeci
 
     long countByOrgId(UUID orgId);
 
-    /** Every org a person belongs to — backed by {@code idx_membership_person}. */
-    List<Membership> findByPersonIdAndStatus(UUID personId, MembershipStatus status);
+    /**
+     * One member's role code, resolved inside ONE organization's schema.
+     *
+     * <p>An ad-hoc join rather than a mapped association: {@code membership.role_id} is a plain column
+     * with a real FK (V11, intra-module and intra-tenant, so both of AGENTS §1's FK clauses are
+     * satisfied), and nothing else in this module needs the object graph. {@code Role} carries
+     * {@code @SQLRestriction("deleted_at is null")}, so a membership whose role was soft-deleted under
+     * it yields EMPTY rather than a code — the same answer the batched id→code map gave by simply not
+     * containing the id, and normal, because a membership outlives its role (the FK is blind to
+     * {@code deleted_at}).
+     *
+     * <p>There is deliberately no person-first query left in this repository. {@code membership} is
+     * tenant-tier (ADR 0010 §2), so "every org this person belongs to" cannot be asked of one schema
+     * once tenants are siloed — it is answered by {@code platform.org_membership_index}, and leaving a
+     * {@code findByPersonId…} here would be an invitation to re-introduce the fan-out the index exists
+     * to prevent.
+     */
+    @Query("select r.code from Membership m, Role r "
+            + "where m.orgId = :orgId and m.personId = :personId and r.id = m.roleId")
+    Optional<String> roleCodeOf(@Param("orgId") UUID orgId, @Param("personId") UUID personId);
 
     /**
      * Row-locks the active members holding a given role for the duration of the transaction. Two

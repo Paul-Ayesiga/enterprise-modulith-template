@@ -14,6 +14,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
 /**
@@ -61,9 +62,12 @@ class AdminOrganizationApiTest extends AbstractIntegrationTest {
         assertThat(jdbc.queryForObject(
                 "select count(*) from organization where id = ? and deleted_at is not null",
                 Integer.class, orgId)).as("soft, restorable until the purge").isEqualTo(1);
-        assertThat(jdbc.queryForObject(
+        // On the ORG's axis: audit_log is a split table routed on org_id (ADR 0010 §2), and this row
+        // carries one — so AuditLogImpl wrote it to the tenant's copy, and the same unqualified name
+        // on the harness's platform pin would read the platform copy and report zero.
+        assertThat(TenantContext.callAs(orgId, () -> jdbc.queryForObject(
                 "select count(*) from audit_log where action = 'organization.deleted' and org_id = ?",
-                Integer.class, orgId)).isEqualTo(1);
+                Integer.class, orgId))).isEqualTo(1);
     }
 
     @Test
@@ -85,16 +89,33 @@ class AdminOrganizationApiTest extends AbstractIntegrationTest {
                 .authorities(new SimpleGrantedAuthority("ROLE_platform-admin"));
     }
 
-    /** organization.id IS the tenant key now — the test supplies it, nothing mints a provider id. */
+    /**
+     * organization.id IS the tenant key now — the test supplies it, nothing mints a provider id.
+     *
+     * <p><b>The fixture straddles both tiers and says which is which</b> (ADR 0010 §2).
+     * {@code organization} is platform-tier and stays on the harness's PLATFORM pin — it is the
+     * routing registry, and the row has to exist before there is a tenant to route to. The roster —
+     * {@code org_role}, {@code role_permission}, {@code membership} — is tenant-tier and lives in a
+     * schema that pin cannot see, so it takes one span on the organization's own axis. That split is
+     * the same one {@code AdminOrganizationController.listMembers} makes at runtime, which is exactly
+     * what the roster assertion above is reading back.
+     */
     private void seedOrgWithMember(UUID orgId, UUID personId) {
         jdbc.update("insert into organization (id, alias, name, status, version, created_at) "
                         + "values (?, ?, ?, 'ACTIVE', 0, now())",
                 orgId, "org-" + orgId.toString().substring(0, 13), "Org " + orgId);
         UUID roleId = UUID.randomUUID();
-        jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
-                + "values (?, ?, 'FLEET', 'Fleet', false, 0, now())", roleId, orgId);
-        jdbc.update("insert into role_permission (role_id, permission) values (?, 'ORG_READ')", roleId);
-        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+        TenantContext.runAs(orgId, () -> {
+            jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
+                    + "values (?, ?, 'FLEET', 'Fleet', false, 0, now())", roleId, orgId);
+            jdbc.update("insert into role_permission (role_id, permission) values (?, 'ORG_READ')", roleId);
+            jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
+                    + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+            // Qualified, so it lands in the platform schema from inside the tenant's axis — the pair
+            // OrgProjectionWriter writes in one transaction for every real seat (ADR 0010 §2.1).
+            jdbc.update("insert into platform.org_membership_index (person_id, org_id, status) "
+                    + "values (?, ?, 'ACTIVE') on conflict (person_id, org_id) do nothing",
+                    personId, orgId);
+        });
     }
 }

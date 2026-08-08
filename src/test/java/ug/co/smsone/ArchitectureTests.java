@@ -67,7 +67,14 @@ class ArchitectureTests {
                 // Both halves of the version clause are load-bearing. The predicate stops a stale
                 // delete from winning; the increment stops a concurrent stale UPDATE from writing
                 // deleted_at = null back over the delete, which no missing row would ever reveal.
-                String expected = "update " + table.get().name()
+                //
+                // The table is named the way the entity's own @Table names it, schema and all. Hibernate
+                // does not rewrite @SQLDelete — it ships the string verbatim — so a PLATFORM-tier entity
+                // whose delete said `update person` while its mapping said `platform.person` would soft-
+                // delete through search_path, hit tenant_pool, and update nothing. The repository call
+                // returns normally either way, which is precisely the class of failure this rule exists
+                // to make impossible (ADR 0010 §2).
+                String expected = "update " + qualifiedName(table.get())
                         + " set deleted_at = now(), version = version + 1 where id = ? and version = ?";
                 Optional<SQLDelete> delete = entity.tryGetAnnotationOfType(SQLDelete.class);
                 if (delete.isEmpty() || !expected.equals(delete.get().sql())) {
@@ -77,5 +84,10 @@ class ArchitectureTests {
                 }
             }
         };
+    }
+
+    /** {@code platform.person} for a platform-tier mapping, plain {@code ticket} for a tenant one. */
+    private static String qualifiedName(Table table) {
+        return table.schema().isBlank() ? table.name() : table.schema() + "." + table.name();
     }
 }

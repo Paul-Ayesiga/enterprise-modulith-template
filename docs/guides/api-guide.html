@@ -755,7 +755,27 @@ request counts into the <code>api_usage_daily</code> ledger (internal seam, <cod
 <code>app.billing.usage-export.enabled=true</code> the nightly export pushes them to Kill Bill as <code>api-requests</code>
 usage (tracking-id-deduped) for usage-based plans.</div>
 
-<h2 id="platsupport">C4 · Support queue, SLA, compliance &amp; retention</h2>
+<h2 id="platsupport">C4 · Support queue, SLA, audit, compliance &amp; retention</h2>
+<div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/audit</span><span class="perm plat">platform-support</span></div>
+  <div class="ep-body"><p><strong>Read this before you diff it against an older run — the meaning of the un-filtered call
+  changed.</strong> An organization's audit rows now live in that organization's own schema, and the rows belonging to no
+  organization live in the platform's, so one query can no longer see both.</p>
+  <ul>
+    <li><strong>No <code>org</code> parameter</strong> — the <strong>platform-level</strong> trail <em>only</em>:
+        impersonation opened/closed, <em>platform</em> key mint and revoke, settings, <em>global</em> feature-flag and
+        translation changes. Rows belonging to no tenant. It is <em>not</em> a cross-tenant union and will not become one.
+        An org's own key mint, or a flag override targeted at one org, is that org's row and comes back under
+        <code>?org=</code>.</li>
+    <li><strong><code>?org={orgId}</code></strong> — that one organization's trail, read inside that tenant. One org per
+        call, by design: there is no cursor that survives merging several.</li>
+  </ul>
+  <p>Everything else is unchanged: <code>action</code>, an ISO-8601 <code>from</code>/<code>to</code> window, cursor-paged
+  newest-first, and the same row shape as D7 (<code>actorPersonId</code> the accountable human, <code>onBehalfOfPersonId</code>
+  + <code>impersonationId</code> under impersonation, <code>target</code> free text).</p>
+  <p class="mut">If you were listing everything and post-filtering by <code>orgId</code> client-side, that no longer works —
+  pass <code>org</code> instead. Reading a tenant from here is a deliberate cross-tenant operator action and is treated as
+  one internally, the machine equivalent of impersonation. An org's own admins read the same trail without platform access
+  at <a href="#orgmisc"><code>GET /api/v1/orgs/{orgId}/audit</code></a>.</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/admin/tickets</span><span class="perm plat">platform-support</span></div>
   <div class="ep-body"><p>The cross-tenant support queue. Assign (<code>…/{id}/assignment</code>), reply public or <code>internal:true</code>
   (<code>…/{id}/messages</code>), set status (<code>PUT …/{id}/status</code>). SLA breaches auto-escalate + fire
@@ -777,12 +797,20 @@ usage (tracking-id-deduped) for usage-based plans.</div>
   <code>webhook-delivery</code>, <code>exchange-job</code> (the only org-scoped logs). <code>{"days":365}</code>; <code>DELETE</code> reverts to default.</p></div></div>
 
 <div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/admin/compliance/orgs/{orgId}/export</span><span class="perm plat">platform-admin</span></div>
-  <div class="ep-body"><p>One organization's data as a single JSON bundle — offboarding and DSAR handovers. Reads across every
-  org-owned table (memberships, roles, subscriptions, webhooks + deliveries, payments, usage, exchange, documents, tickets,
-  audit …); secret-bearing columns (webhook secrets, API-key hashes) are dropped <em>at the source</em>; capped at 1000
-  rows per table (the cap is stated in the payload). The export itself is audited.</p>
+  <div class="ep-body"><p>One organization's data as a single JSON bundle — offboarding and DSAR handovers. A fixed set of
+  <strong>21 disclosed tables</strong> (memberships, roles, subscriptions, webhooks + deliveries, payments, usage, exchange,
+  documents, tickets, audit …); secret-bearing columns (webhook secrets, API-key hashes) are dropped <em>at the source</em>;
+  capped at 1000 rows per table. The export itself is audited.</p>
+  <p><strong>It is a redacted disclosure artifact, not a copy of the tenant</strong> — and now says so in the payload, in
+  <code>bundleKind</code>, so a recipient who reads nothing else cannot mistake one for the other. Tenant tables with no
+  disclosure value are not in it. <em>Lifting</em> an organization to another deployment is a separate operator path with
+  different contents (it keeps the secrets, has no cap, and omits nothing); it is not an API call and never was.</p>
   <pre><code>GET /api/v1/admin/compliance/orgs/{orgId}/export
-# → {"attributes":{"organizationId":"…","rowCapPerTable":1000,"tables":{"organization":[…],"membership":[…],…}}}</code></pre></div></div>
+# → {"attributes":{"organizationId":"…","complete":true,"rowCapPerTable":1000,"truncatedTables":[],
+#                  "bundleKind":"REDACTED_DISCLOSURE — not a tenant extraction. …",
+#                  "tables":{"organization":[…],"membership":[…],…}}}</code></pre>
+  <p class="mut">Check <code>complete</code> first — it is the one field a program should branch on. A bundle that hit the
+  cap is <code>complete:false</code> and names the tables in <code>truncatedTables</code>.</p></div></div>
 
 <h2 id="platcfg">C5 · Platform config — integrations, settings, maintenance, ops</h2>
 <div class="ep"><div class="ep-head"><span class="method PUT">PUT</span><span class="path">/api/v1/admin/integrations</span><span class="perm plat">platform-admin</span></div>
@@ -981,7 +1009,10 @@ POST …/security-policy/trusted-devices {"personId":"5862…","deviceId":"…",
   in <code>actorPersonId</code> and the worn person in <code>onBehalfOfPersonId</code>, with
   <code>impersonationId</code> pointing at the session that carries the stated reason. <code>target</code> stays free
   text — it is polymorphic, so what it holds (a person id, a role code, a setting key) is read through
-  <code>action</code>. Read the maintenance banner at <code>GET …/maintenance?active=true</code>.</p></div></div>
+  <code>action</code>. Read the maintenance banner at <code>GET …/maintenance?active=true</code>.</p>
+  <p class="mut">Unchanged by the schema split, and it is the endpoint that stays whole: your organization's rows are your
+  organization's, wherever they are stored. Rows that belong to no tenant were never here and are on the platform trail
+  (<a href="#platsupport">C4</a>) instead.</p></div></div>
 
 <h2 id="geo">D8 · Geolocation</h2>
 <div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/geo/stamps</span><span class="perm org">geo:capture</span></div>
@@ -1008,7 +1039,7 @@ POST …/security-policy/trusted-devices {"personId":"5862…","deviceId":"…",
 <tr><td>400</td><td><code>BAD_REQUEST</code></td><td>Malformed / unreadable request</td></tr>
 <tr><td>401</td><td><code>UNAUTHORIZED</code></td><td>Missing / expired / foreign-audience token, or a bad API key</td></tr>
 <tr><td>402</td><td><code>SUBSCRIPTION_PAUSED</code></td><td>Org write while the plan is <code>PAUSED</code> (reads still pass)</td></tr>
-<tr><td>403</td><td><code>FORBIDDEN</code></td><td>RBAC, escalation guard, entitlement gates (upgrade-shaped), policy denials</td></tr>
+<tr><td>403</td><td><code>FORBIDDEN</code></td><td>RBAC, escalation guard, entitlement gates (upgrade-shaped), policy denials — and, before any of them, a credential naming <em>no</em> organization on an <code>/api/v1/orgs/{orgId}/…</code> route (<em>"scoped to an organization and your credential names none"</em>): use a token scoped to exactly one org, or a key minted inside it. Platform operators are exempt, and so is everything outside that prefix — the personal surface included, because a person seated in two orgs legitimately has no active org until they pick one (<code>GET /api/v1/me/organizations</code>)</td></tr>
 <tr><td>403</td><td><code>ACCOUNT_NOT_PROVISIONED</code> / <code>ACCOUNT_DISABLED</code></td><td>No-JIT gate / an erased account, or one an operator <a href="#users">suspended</a> — effective on the very next request</td></tr>
 <tr><td>404</td><td><code>RESOURCE_NOT_FOUND</code></td><td>Unknown id — including another org's id, another person's contact, and a soft-deleted person (never a 403 oracle)</td></tr>
 <tr><td>409</td><td><code>CONFLICT</code></td><td>Duplicate alias, last-owner, last-super-admin, self-suspension, an unproven address made primary or its last proven one removed, idempotency body mismatch, delete-before-suspend</td></tr>
@@ -1032,15 +1063,30 @@ What passes there behaves the same against the compose stack.</li>
 <h2 id="datalayer">E3 · Data layer &amp; database portability</h2>
 <p>You never touch the databases directly, but here is what stores what — and how the template ports to another RDBMS
 if a product built from it requires one.</p>
-<table class="params">
+<table class="compare">
   <tr><th>Store</th><th>Role</th></tr>
-  <tr><td>PostgreSQL</td><td>System of record — every module's tenant data, the transactional outbox, full-text search, soft-delete and retention, and the durable-queue tables.</td></tr>
+  <tr><td>PostgreSQL</td><td>System of record — every module's data, the transactional outbox, full-text search, soft-delete and retention, and the durable-queue tables. Split across <strong>two schemas</strong>: <code>platform</code> for what belongs to the installation (people, the org registry, catalogues, framework tables) and <code>tenant_pool</code> for what belongs to a tenant. Each request is pointed at one of them before any controller runs; seven tables exist in both. See below.</td></tr>
   <tr><td>Valkey</td><td>Shared fast state — the L2 cache with pub/sub invalidation, rate-limit windows, idempotency snapshots (24&nbsp;h), and the durable IP-block and route stores.</td></tr>
   <tr><td>SeaweedFS (S3)</td><td>File and document bytes, and exchange artifacts. Reads hand out short-lived presigned URLs, so bytes never proxy through the application.</td></tr>
   <tr><td>DuckDB (embedded)</td><td>Analytics marts behind <code>/api/v1/analytics/reports</code> — in-process OLAP, kept off the transactional path. Each mart is rebuilt on a TTL (<code>app.analytics.mart-ttl</code>, 15&nbsp;min), so reads are cheap and may lag Postgres by up to that interval.</td></tr>
   <tr><td>Kill Bill → MariaDB</td><td>The billing engine's own store (invoices, subscriptions, payments), reconciled one-way into entitlements.</td></tr>
   <tr><td>Keycloak → Postgres</td><td>One <em>authentication</em> provider's own store (its users, its organizations, realm roles). Not this platform's user directory: <code>person</code> is, in the Postgres above, and <code>external_identity</code> / <code>external_organization</code> are the only two tables permitted to hold an identifier minted over here.</td></tr>
 </table>
+<div class="card"><strong>Two schemas, and what a tester can actually observe.</strong> A tenant's rows and the platform's rows
+live in different schemas of the same database, and the connection serving a request is pointed at exactly one of them
+before any controller runs — so an unqualified read can only land in the schema this request was routed to. Almost nothing
+about the API changes: same paths, same payloads, same permissions.
+<ul style="margin:.5rem 0 0">
+  <li><strong>The one visible change</strong> is <a href="#platsupport"><code>GET /api/v1/audit</code></a> — un-filtered, it
+  is now the platform-level trail rather than everything; <code>?org=</code> reads one tenant.</li>
+  <li>A credential naming no organization on an <code>/api/v1/orgs/{orgId}/…</code> route is refused up front with a
+  <code>403</code> (<a href="#errors">E1</a>) instead of dying deeper in.</li>
+  <li>Nothing else moved: org-scoped endpoints answer exactly as before, and no id, field or status code changed.</li>
+</ul>
+<p style="margin:.6rem 0 0" class="mut">The point of the separation is portability of a tenant, not extra isolation
+inside one database — a tenant that lives in its own schema can be dumped and restored whole, with no
+<code>WHERE org_id = ?</code> to get wrong. That is also why every tenant query still carries its <code>org_id</code>
+predicate: while tenants share a pooled schema, that predicate is what separates them.</p></div>
 <div class="card tip"><strong>PostgreSQL-first, by design.</strong> The system of record is PostgreSQL, and the schema uses
 Postgres for genuine capability — soft-delete <em>partial indexes</em>, lock-free <code>SKIP&nbsp;LOCKED</code> queue
 processing, and native full-text search. This is the intended default: in a SaaS deployment, the platform owns its

@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.shared.web.ResourceObject;
 
 /**
@@ -26,12 +27,40 @@ import ug.co.smsone.shared.web.ResourceObject;
  * manage the plan catalog itself (create / update / delete). Reads are {@code platform-support};
  * anything that changes what a tenant may do is {@code platform-admin} and audited. Class-level
  * {@code /api/v1/admin} mapping keeps the surface out of the X-Impersonate docs.
+ *
+ * <h2>Two surfaces, two tiers, and one route that is genuinely both</h2>
+ *
+ * <p>{@code /orgs/{orgId}/subscription…} touches {@code org_subscription}, which is TENANT-tier
+ * (ADR 0010 §2), while {@code /plans…} touches {@code plan} and {@code plan_entitlement}, which are
+ * platform-tier catalog. {@code /api/v1/admin/orgs/{orgId}/…} is deliberately not matched by
+ * {@code CurrentUserFilter}'s org-scoped pattern — the caller is an operator with no organization —
+ * so the per-org routes enter the tenant themselves, the cross-tenant admin write of ADR 0010 §5.15.
+ * The catalog routes need no pin: their tables name their schema, so they resolve on the platform
+ * axis the request already carries.
+ *
+ * <p>The exception is {@link #deletePlan}, which is a catalog write whose GUARD is a question about
+ * every tenant — see the note there.
  */
 @RestController
 @RequestMapping("/api/v1/admin")
 class AdminSubscriptionController {
 
     private static final String PLAN_TYPE = "plan"; // wire contract — renaming breaks clients
+
+    /**
+     * The axis the delete guard borrows, when the question spans every tenant and names none.
+     *
+     * <p>It names no organization deliberately: an org that has never been promoted resolves to the
+     * shared {@code tenant_pool}, and a UUID in no {@code organization} row can never resolve to
+     * anything else — so this IS the pooled schema's axis, spelled with the only vocabulary
+     * {@code TenantContext} has. Same constant, same reasoning as {@code MappedSchemaValidator} and
+     * {@code WebhookSecretEncryptionMigrator}: one idiom for "the pool", not several.
+     *
+     * <p>When silos exist (ADR 0010 Phase 5) "is this plan assigned to anybody" stops being one query.
+     * The loop belongs at that point, over {@code platform.tenant_placement}, refusing on the first
+     * home that still holds an assignment.
+     */
+    private static final UUID POOLED_TENANT = new UUID(0L, 0L);
 
     private final SubscriptionService subscriptions;
 
@@ -60,7 +89,8 @@ class AdminSubscriptionController {
     @Operation(summary = "Inspect a tenant's subscription as the platform")
     @PreAuthorize("hasRole('platform-support')")
     ResourceObject get(@PathVariable UUID orgId) {
-        return SubscriptionResources.toResource(subscriptions.view(orgId));
+        return SubscriptionResources.toResource(
+                TenantContext.callAs(orgId, () -> subscriptions.view(orgId)));
     }
 
     @PutMapping("/orgs/{orgId}/subscription")
@@ -72,7 +102,8 @@ class AdminSubscriptionController {
                     out `org.subscription_changed` to the tenant's webhooks. Audited.""")
     @PreAuthorize("hasRole('platform-admin')")
     ResourceObject assign(@PathVariable UUID orgId, @RequestBody AssignRequest request) {
-        return SubscriptionResources.toResource(subscriptions.assign(orgId, request.plan()));
+        return SubscriptionResources.toResource(
+                TenantContext.callAs(orgId, () -> subscriptions.assign(orgId, request.plan())));
     }
 
     @PostMapping("/orgs/{orgId}/subscription/trial")
@@ -87,7 +118,8 @@ class AdminSubscriptionController {
     @ResponseStatus(HttpStatus.CREATED)
     ResourceObject startTrial(@PathVariable UUID orgId, @RequestBody TrialRequest request) {
         int days = request.days() == null ? 0 : request.days();
-        return SubscriptionResources.toResource(subscriptions.beginTrial(orgId, request.plan(), days));
+        return SubscriptionResources.toResource(
+                TenantContext.callAs(orgId, () -> subscriptions.beginTrial(orgId, request.plan(), days)));
     }
 
     @GetMapping("/plans")
@@ -129,7 +161,14 @@ class AdminSubscriptionController {
     @PreAuthorize("hasRole('platform-admin')")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     void deletePlan(@PathVariable String code) {
-        subscriptions.deletePlan(code);
+        // The one catalog route that reads a TENANT table: before deleting, the service asks whether
+        // any organization is still on this plan, and `org_subscription` is tenant-tier. So the whole
+        // call runs on the pooled tenant's axis — the platform-tier `plan` rows it writes are reached
+        // by name from there, exactly as they are from any tenant request, which is why this is one
+        // pin and not two spans. It has to be here rather than inside the service: deletePlan is
+        // @Transactional, and a pin set after the connection is bound is the silent no-op
+        // TenantContext.set throws to prevent (ADR 0010 §3.2).
+        TenantContext.runAs(POOLED_TENANT, () -> subscriptions.deletePlan(code));
     }
 
     /**

@@ -18,6 +18,15 @@ import ug.co.smsone.shared.web.ApiSource;
  * returned in the clear from the REST layer (the {@code Integrations} port decrypts for in-JVM
  * consumers). One enabled integration per (scope, kind) — a second create for the same pair is a
  * 409, so resolution stays deterministic.
+ *
+ * <p><b>Every read and write here is unqualified, and every one of them is reached on the axis its
+ * scope names</b> (ADR 0010 §2 rows 22–23). The platform-default surface is
+ * {@code /api/v1/admin/integrations}, whose caller has no organization and therefore runs on the
+ * platform axis; the org surface is {@code /api/v1/orgs/{orgId}/integrations}, whose caller runs on
+ * that tenant's. The {@code orgId == null} branches below are not schema selection — the
+ * {@code search_path} has already done that — they select the {@code org_id is null} PREDICATE, which
+ * still matters because a home could otherwise hand back a row belonging to the other scope. The one
+ * caller that has to span both homes at once is {@link IntegrationsImpl}, and it names its schemas.
  */
 @Service
 class IntegrationService {

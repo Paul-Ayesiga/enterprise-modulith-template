@@ -17,7 +17,7 @@ import org.hibernate.annotations.UuidGenerator;
  * human is not a record worth keeping.
  */
 @Entity
-@Table(name = "erasure_request")
+@Table(name = "erasure_request", schema = "platform")
 class ErasureRequest {
 
     /**

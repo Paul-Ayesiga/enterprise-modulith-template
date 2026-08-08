@@ -21,6 +21,7 @@ import ug.co.smsone.identity.PersonProvisioning;
 import ug.co.smsone.identity.ProvisionRequest;
 import ug.co.smsone.identity.ProvisionedPerson;
 import ug.co.smsone.identity.ProviderOrgMembership;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 import ug.co.smsone.testsupport.EdgeSeed;
 
@@ -63,28 +64,28 @@ class MembersExchangeHandlerTest extends AbstractIntegrationTest {
         });
         ExchangeContext context = new ExchangeContext(orgId, requester);
 
-        assertThat(handler.importRecord(context, record("new1@x.com", "INVITER")))
+        assertThat(importRecord(context, record("new1@x.com", "INVITER")))
                 .isEqualTo(ImportOutcome.APPLIED);
         assertThat(members(orgId, provisioned.get("new1@x.com"))).isEqualTo(1);
 
         // Replay of the same record (a resumed batch) is absorbed, not duplicated.
-        assertThat(handler.importRecord(context, record("new1@x.com", "INVITER")))
+        assertThat(importRecord(context, record("new1@x.com", "INVITER")))
                 .isEqualTo(ImportOutcome.APPLIED);
         assertThat(members(orgId, provisioned.get("new1@x.com"))).isEqualTo(1);
 
         // SWEEPER carries member:remove, which the requester does not hold — a grant they cannot make.
-        assertThatThrownBy(() -> handler.importRecord(context, record("new2@x.com", "SWEEPER")))
+        assertThatThrownBy(() -> importRecord(context, record("new2@x.com", "SWEEPER")))
                 .isInstanceOf(InvalidRecordException.class)
                 .hasMessageContaining("member:remove");
         assertThat(provisioned).doesNotContainKey("new2@x.com");
 
-        assertThatThrownBy(() -> handler.importRecord(context, record("", "INVITER")))
+        assertThatThrownBy(() -> importRecord(context, record("", "INVITER")))
                 .isInstanceOf(InvalidRecordException.class)
                 .hasMessage("email is required.");
-        assertThatThrownBy(() -> handler.importRecord(context, record("not-an-address", "INVITER")))
+        assertThatThrownBy(() -> importRecord(context, record("not-an-address", "INVITER")))
                 .isInstanceOf(InvalidRecordException.class)
                 .hasMessageContaining("not a valid address");
-        assertThatThrownBy(() -> handler.importRecord(context, record("new3@x.com", "GHOST")))
+        assertThatThrownBy(() -> importRecord(context, record("new3@x.com", "GHOST")))
                 .isInstanceOf(InvalidRecordException.class)
                 .hasMessageContaining("not found");
     }
@@ -99,7 +100,8 @@ class MembersExchangeHandlerTest extends AbstractIntegrationTest {
         seedMembership(orgId, unreachable, "INVITER");
 
         List<Map<String, String>> rows = new ArrayList<>();
-        handler.export(new ExchangeContext(orgId, UUID.randomUUID()), rows::add);
+        ExchangeContext context = new ExchangeContext(orgId, UUID.randomUUID());
+        TenantContext.runAs(orgId, () -> handler.export(context, rows::add));
 
         assertThat(rows).hasSize(2);
         assertThat(rows).allSatisfy(row -> assertThat(row.keySet())
@@ -112,6 +114,18 @@ class MembersExchangeHandlerTest extends AbstractIntegrationTest {
         assertThat(rows).anySatisfy(row -> assertThat(row.get("email")).isEmpty());
     }
 
+    /**
+     * The tenant axis {@code ExchangeWorker} declares before it hands a record to a handler
+     * ({@code TenantContext.callAs(job.orgId(), …)}), spelled out here because this test drives the
+     * handler directly, off any job. ONE span, not two: the roster it writes — {@code membership},
+     * {@code org_role}, {@code role_permission} — is tenant-tier (ADR 0010 §2), and the platform-tier
+     * rows the same call reaches ({@code person}, {@code person_contact},
+     * {@code platform.org_membership_index}) are addressed by name, so they resolve from here too.
+     */
+    private ImportOutcome importRecord(ExchangeContext context, Map<String, String> record) {
+        return TenantContext.callAs(context.orgId(), () -> handler.importRecord(context, record));
+    }
+
     private static Map<String, String> record(String email, String roleCode) {
         Map<String, String> record = new HashMap<>();
         record.put("email", email);
@@ -122,9 +136,9 @@ class MembersExchangeHandlerTest extends AbstractIntegrationTest {
     }
 
     private int members(UUID orgId, UUID personId) {
-        Integer n = jdbc.queryForObject(
+        Integer n = TenantContext.callAs(orgId, () -> jdbc.queryForObject(
                 "select count(*) from membership where org_id = ? and person_id = ? and deleted_at is null",
-                Integer.class, orgId, personId);
+                Integer.class, orgId, personId));
         return n == null ? 0 : n;
     }
 
@@ -133,19 +147,32 @@ class MembersExchangeHandlerTest extends AbstractIntegrationTest {
         return EdgeSeed.organization(jdbc, "kc-org-" + UUID.randomUUID(), "acme-" + UUID.randomUUID());
     }
 
+    /**
+     * {@code org_role} and {@code role_permission} are TENANT-tier (ADR 0010 §2), so the seed runs on
+     * the organization's own axis — the harness pins PLATFORM, where neither table exists.
+     */
     private void seedRole(UUID orgId, String code, String... permissions) {
         UUID roleId = UUID.randomUUID();
-        jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
-                + "values (?, ?, ?, ?, false, 0, now())", roleId, orgId, code, code);
-        for (String permission : permissions) {
-            jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleId, permission);
-        }
+        TenantContext.runAs(orgId, () -> {
+            jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
+                    + "values (?, ?, ?, ?, false, 0, now())", roleId, orgId, code, code);
+            for (String permission : permissions) {
+                jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleId, permission);
+            }
+        });
     }
 
     private void seedMembership(UUID orgId, UUID personId, String roleCode) {
-        UUID roleId = jdbc.queryForObject(
-                "select id from org_role where org_id = ? and code = ?", UUID.class, orgId, roleCode);
-        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+        TenantContext.runAs(orgId, () -> {
+            UUID roleId = jdbc.queryForObject(
+                    "select id from org_role where org_id = ? and code = ?", UUID.class, orgId, roleCode);
+            jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
+                    + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+            // Qualified from inside the tenant's axis, exactly as OrgProjectionWriter writes it in the
+            // same transaction as the membership row (ADR 0010 §2.1).
+            jdbc.update("insert into platform.org_membership_index (person_id, org_id, status) "
+                    + "values (?, ?, 'ACTIVE') on conflict (person_id, org_id) do nothing",
+                    personId, orgId);
+        });
     }
 }

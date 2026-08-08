@@ -8,4 +8,5 @@
 * `u.c.s.s.idempotency.IdempotencyProperties` (in Shared Kernel)
 * `u.c.s.s.audit.AuditLog` (in Shared Kernel)
 * `u.c.s.s.persistence.SoftDeleteProperties` (in Shared Kernel)
+* `u.c.s.s.persistence.MappedTables` (in Shared Kernel)
 |===

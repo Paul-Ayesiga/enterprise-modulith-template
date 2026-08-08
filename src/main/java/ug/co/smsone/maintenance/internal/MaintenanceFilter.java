@@ -34,14 +34,14 @@ public class MaintenanceFilter extends OncePerRequestFilter {
     private static final Pattern ORG_PATH = Pattern.compile("^/api/v1/orgs/([0-9a-fA-F-]{36})(/.*)?$");
     private static final Set<String> WRITE_METHODS = Set.of("POST", "PUT", "PATCH", "DELETE");
 
-    private final MaintenanceWindowRepository windows;
+    private final MaintenanceService maintenance;
     private final CurrentUserProvider currentUser;
     private final EnvelopeErrorWriter errorWriter;
     private final Clock clock;
 
-    public MaintenanceFilter(MaintenanceWindowRepository windows, CurrentUserProvider currentUser,
+    public MaintenanceFilter(MaintenanceService maintenance, CurrentUserProvider currentUser,
             EnvelopeErrorWriter errorWriter, Clock clock) {
-        this.windows = windows;
+        this.maintenance = maintenance;
         this.currentUser = currentUser;
         this.errorWriter = errorWriter;
         this.clock = clock;
@@ -61,7 +61,11 @@ public class MaintenanceFilter extends OncePerRequestFilter {
         }
         CurrentUser caller = currentUser.currentUser().orElse(null);
         UUID orgId = caller == null ? null : caller.organizationId();
-        List<MaintenanceWindow> active = windows.activeFor(clock.instant(), orgId);
+        // Through the service, not the repository, since ADR 0010 Phase 2: the platform-wide windows and
+        // this org's own live in different schemas now, so "what is in effect" is two reads and the
+        // service owns the one that names `platform`. Order 4 puts this after CurrentUserFilter's pin
+        // (@Order -1), which is what makes the tenant half resolve to the right tenant.
+        List<MaintenanceWindow> active = maintenance.activeFor(orgId);
         MaintenanceWindow restricting = active.stream()
                 .filter(MaintenanceWindow::restricts).findFirst().orElse(null);
         if (restricting == null) {

@@ -43,7 +43,7 @@ class NotificationDeliveryQueue {
 
     void enqueue(List<NewDelivery> deliveries, int maxAttempts) {
         jdbc.batchUpdate("""
-                insert into notification_delivery
+                insert into platform.notification_delivery
                     (id, channel, recipient, subject, body, org_id, status, attempts, max_attempts, next_attempt_at, created_at)
                 values (?, ?, ?, ?, ?, ?, 'PENDING', 0, ?, now(), now())
                 """, new BatchPreparedStatementSetter() {
@@ -74,10 +74,10 @@ class NotificationDeliveryQueue {
      */
     List<ClaimedDelivery> claim(int batchSize, Duration staleLock) {
         List<ClaimedDelivery> claimed = jdbc.query("""
-                update notification_delivery d
+                update platform.notification_delivery d
                 set status = 'PROCESSING', locked_at = now(), attempts = attempts + 1
                 from (
-                    select id from notification_delivery
+                    select id from platform.notification_delivery
                     where (status = 'PENDING' and next_attempt_at <= now())
                        or (status = 'PROCESSING' and locked_at < now() - (? * interval '1 millisecond'))
                     order by next_attempt_at
@@ -126,14 +126,14 @@ class NotificationDeliveryQueue {
 
     void markSent(UUID id, int expectedAttempts) {
         fenced("markSent", id, jdbc.update(
-                "update notification_delivery set status = 'SENT', locked_at = null, last_error = null, "
+                "update platform.notification_delivery set status = 'SENT', locked_at = null, last_error = null, "
                         + "throttled_since = null where id = ? and status = 'PROCESSING' and attempts = ?",
                 id, expectedAttempts));
     }
 
     void reschedule(UUID id, Instant nextAttemptAt, String error, int expectedAttempts) {
         fenced("reschedule", id, jdbc.update(
-                "update notification_delivery set status = 'PENDING', next_attempt_at = ?, locked_at = null, "
+                "update platform.notification_delivery set status = 'PENDING', next_attempt_at = ?, locked_at = null, "
                         + "last_error = ?, throttled_since = null where id = ? and status = 'PROCESSING' and attempts = ?",
                 Timestamp.from(nextAttemptAt), truncate(error, MAX_ERROR), id, expectedAttempts));
     }
@@ -142,7 +142,7 @@ class NotificationDeliveryQueue {
         // Throttling is not a failed attempt — undo the claim's increment so a rate-limited delivery
         // is never dead-lettered for lack of trying; remember when the throttled stretch began.
         fenced("rescheduleThrottled", id, jdbc.update(
-                "update notification_delivery set status = 'PENDING', next_attempt_at = ?, locked_at = null, "
+                "update platform.notification_delivery set status = 'PENDING', next_attempt_at = ?, locked_at = null, "
                         + "attempts = greatest(attempts - 1, 0), throttled_since = coalesce(throttled_since, now()) "
                         + "where id = ? and status = 'PROCESSING' and attempts = ?",
                 Timestamp.from(nextAttemptAt), id, expectedAttempts));
@@ -150,7 +150,7 @@ class NotificationDeliveryQueue {
 
     void deadLetter(UUID id, String error, int expectedAttempts) {
         fenced("deadLetter", id, jdbc.update(
-                "update notification_delivery set status = 'FAILED', locked_at = null, last_error = ? "
+                "update platform.notification_delivery set status = 'FAILED', locked_at = null, last_error = ? "
                         + "where id = ? and status = 'PROCESSING' and attempts = ?",
                 truncate(error, MAX_ERROR), id, expectedAttempts));
     }
@@ -163,8 +163,8 @@ class NotificationDeliveryQueue {
      */
     int purgeTerminalBatch(Instant cutoff, int batchSize) {
         return jdbc.update("""
-                delete from notification_delivery where id in (
-                    select id from notification_delivery
+                delete from platform.notification_delivery where id in (
+                    select id from platform.notification_delivery
                     where status in ('SENT', 'FAILED') and created_at < ?
                     order by created_at
                     limit ?)

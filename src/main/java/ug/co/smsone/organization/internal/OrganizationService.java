@@ -11,6 +11,7 @@ import ug.co.smsone.identity.ProviderOrgMembership;
 import ug.co.smsone.shared.audit.AuditLog;
 import ug.co.smsone.shared.error.ConflictException;
 import ug.co.smsone.shared.error.NotFoundException;
+import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
  * Organization lifecycle. Creating an org creates the provider-side organization, provisions the first
@@ -24,6 +25,21 @@ import ug.co.smsone.shared.error.NotFoundException;
  * <p>Every {@code orgId} in this class is {@code organization.id}. The provider's own organization id
  * is a String, opaque, and travels no further than {@link OrgProjectionWriter} and the two ports that
  * need it.
+ *
+ * <h2>Which methods declare a tenant axis, and which deliberately do not (ADR 0010 §2)</h2>
+ *
+ * <p>{@link #rename}, {@link #suspend}, {@link #reactivate}, {@link #delete}, {@link #require} and
+ * {@link #platformList} touch {@code platform.organization} and nothing else, and {@code AuditLog}
+ * spells its own schema out. Every one of them is reached from a platform-scoped route (the operator
+ * surface) or an org-scoped one (already pinned by {@code CurrentUserFilter}), and each works from
+ * either axis because a qualified name always does. They are left alone.
+ *
+ * <p>The two provisioning paths are the exception, because they are the only writes in this class that
+ * reach the TENANT's own tables — {@code org_role}, {@code role_permission}, {@code membership},
+ * through {@link OrgProjectionWriter}. They run from routes that name no tenant ({@code POST
+ * /api/v1/orgs} is an operator route; self-service signup has no caller at all), so the axis they
+ * arrive on is PLATFORM and the tenant half of that write would find no tables. Both therefore pin
+ * explicitly, OUTSIDE the transaction, which is the only place a pin can go.
  */
 @Service
 class OrganizationService {
@@ -113,13 +129,20 @@ class OrganizationService {
         // The tenant and the audit row that explains it commit together (projectWithOwner's
         // @Transactional joins this template): separate commits would let a crash leave an
         // organization no audit accounts for — and the strict-create retry (409) never writes it.
-        return transactionTemplate.execute(tx -> {
-            Organization organization = projectionWriter.projectWithOwner(
-                    externalOrgId, normalizedAlias, name, owner.personId());
-            auditLog.record("organization.created", organization.getId(), normalizedAlias, null,
-                    "owner=" + ownerEmail);
-            return new NewOrganization(organization, owner.personId());
-        });
+        //
+        // The pin wraps the template rather than sitting inside it, because the schema is chosen when
+        // the connection is borrowed and the template has already borrowed one (ADR 0010 §3.2). Strict
+        // create has just proved no org holds this alias locally or at the provider, so tenantAxisOf
+        // will answer "a new one" — it is asked anyway rather than assumed, so the one caller that can
+        // reach an EXISTING tenant here (the dev re-adopt below) needs no second spelling of this line.
+        return TenantContext.callAs(projectionWriter.tenantAxisOf(externalOrgId, normalizedAlias),
+                () -> transactionTemplate.execute(tx -> {
+                    Organization organization = projectionWriter.projectWithOwner(
+                            externalOrgId, normalizedAlias, name, owner.personId());
+                    auditLog.record("organization.created", organization.getId(), normalizedAlias, null,
+                            "owner=" + ownerEmail);
+                    return new NewOrganization(organization, owner.personId());
+                }));
     }
 
     /**
@@ -155,7 +178,12 @@ class OrganizationService {
         ProvisionedPerson owner = personProvisioning.provision(
                 new ProvisionRequest(ownerEmail, ownerGivenName, ownerFamilyName));
         providerOrgMembership.attach(owner.personId(), externalOrgId);
-        return projectionWriter.projectWithOwner(externalOrgId, alias, name, owner.personId());
+        // Same pin as create(), and the reason it is asked rather than assumed lives here: this is the
+        // re-adopt path, so the tenant may ALREADY exist (a Keycloak org that survived a local reset,
+        // relinked to a local row this method did not create). Answering with the pool for one of those
+        // would write its roles into the wrong schema the day it is promoted.
+        return TenantContext.callAs(projectionWriter.tenantAxisOf(externalOrgId, alias),
+                () -> projectionWriter.projectWithOwner(externalOrgId, alias, name, owner.personId()));
     }
 
     Organization require(UUID orgId) {

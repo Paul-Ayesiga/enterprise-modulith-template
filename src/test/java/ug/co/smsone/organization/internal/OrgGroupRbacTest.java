@@ -19,6 +19,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import ug.co.smsone.shared.security.OrgAuthorization;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 import ug.co.smsone.testsupport.EdgeSeed;
 
@@ -172,22 +173,42 @@ class OrgGroupRbacTest extends AbstractIntegrationTest {
                 "select external_subject from external_identity where person_id = ?", String.class, personId);
     }
 
+    /**
+     * {@code org_role}, {@code role_permission} and {@code org_group} are all TENANT-tier (ADR 0010
+     * §2), so every fixture below runs on the organization's own axis rather than on the harness's
+     * PLATFORM pin — on that pin they resolve inside {@code platform} and fail with a relation that
+     * plainly exists. One span, not one per statement: they are all the same tenant's rows, and a
+     * second span would be a second connection and therefore a second transaction.
+     */
     private UUID seedRole(UUID orgId, String code, String... permissions) {
         UUID roleId = UUID.randomUUID();
-        jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
-                + "values (?, ?, ?, ?, false, 0, now())", roleId, orgId, code, code);
-        for (String permission : permissions) {
-            jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleId, permission);
-        }
+        TenantContext.runAs(orgId, () -> {
+            jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
+                    + "values (?, ?, ?, ?, false, 0, now())", roleId, orgId, code, code);
+            for (String permission : permissions) {
+                jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleId, permission);
+            }
+        });
         return roleId;
     }
 
+    /** Reads {@code org_role}, so it needs the same tenant axis {@link #seedRole} wrote it on. */
     private UUID roleId(UUID orgId, String code) {
-        return jdbc.queryForObject("select id from org_role where org_id = ? and code = ?", UUID.class, orgId, code);
+        return TenantContext.callAs(orgId, () -> jdbc.queryForObject(
+                "select id from org_role where org_id = ? and code = ?", UUID.class, orgId, code));
     }
 
     private void seedMembership(UUID orgId, UUID personId, UUID roleId) {
-        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+        TenantContext.runAs(orgId, () -> {
+            jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
+                    + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+            // The routing row EdgeSeed.member writes for every real seat: membership is tenant-tier and
+            // platform.org_membership_index is the platform-side answer to "which orgs is this person
+            // in" (ADR 0010 §2.1). Qualified, so it lands in the platform schema from the tenant's axis
+            // — the same statement OrgProjectionWriter runs in the same transaction as the row above.
+            jdbc.update("insert into platform.org_membership_index (person_id, org_id, status) "
+                    + "values (?, ?, 'ACTIVE') on conflict (person_id, org_id) do nothing",
+                    personId, orgId);
+        });
     }
 }

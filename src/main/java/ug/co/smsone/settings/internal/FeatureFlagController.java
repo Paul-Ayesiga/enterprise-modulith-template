@@ -16,10 +16,30 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.shared.web.CursorPageRequest;
 import ug.co.smsone.shared.web.ResourceObject;
 import ug.co.smsone.shared.web.WindowedResult;
 
+/**
+ * The flag catalog and its per-org overrides — two tiers behind one {@code @RequestMapping}, which is
+ * why the three {@code /orgs/{orgId}} routes below pin a tenant and the three above them do not.
+ *
+ * <p>{@code feature_flag} is platform-tier: one catalog, shared by every tenant, and a flag is not a
+ * thing an organization owns. {@code feature_flag_org_override} is TENANT-tier — it is that
+ * organization's own exception and travels with it on extraction (ADR 0010 §2). So the override routes
+ * touch both tiers in one call, and they reach them the way ADR 0010 §5.15 requires: the tenant is
+ * entered explicitly with {@link TenantContext#runAs}, and the platform table is reached from inside
+ * that axis because {@code FeatureFlag} names its schema ({@code @Table(schema = "platform")}). One
+ * pin, not two spans, precisely because only one of the two tables is unqualified.
+ *
+ * <p><strong>Why the controller pins and not the service.</strong> These are platform-operator routes
+ * — {@code /api/v1/feature-flags/…} names no organization to {@code CurrentUserFilter}, so the request
+ * arrives on the PLATFORM axis and stays there. The pin has to happen OUTSIDE the transaction, and
+ * every {@code FeatureFlagService} method is {@code @Transactional}: pinning inside one would be a
+ * silent no-op on a connection already bound to the platform search_path, which is why
+ * {@code TenantContext.set} throws there rather than allowing it.
+ */
 @RestController
 @RequestMapping("/api/v1/feature-flags")
 class FeatureFlagController {
@@ -77,7 +97,9 @@ class FeatureFlagController {
     @PreAuthorize("hasRole('platform-admin')")
     ResourceObject setOrgOverride(@PathVariable String key, @PathVariable UUID orgId,
             @Valid @RequestBody OrgOverrideRequest request) {
-        featureFlagService.setOrgOverride(key, orgId, request.enabled());
+        // Inside the method body, not around it: @PreAuthorize runs on the axis the request arrived
+        // with, and the permission check on the sibling GET reads the CALLER's tenant-tier rows.
+        TenantContext.runAs(orgId, () -> featureFlagService.setOrgOverride(key, orgId, request.enabled()));
         return effective(key, orgId);
     }
 
@@ -87,7 +109,7 @@ class FeatureFlagController {
     @PreAuthorize("hasRole('platform-admin')")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     void clearOrgOverride(@PathVariable String key, @PathVariable UUID orgId) {
-        featureFlagService.clearOrgOverride(key, orgId);
+        TenantContext.runAs(orgId, () -> featureFlagService.clearOrgOverride(key, orgId));
     }
 
     @GetMapping("/{key}/orgs/{orgId}")
@@ -97,8 +119,12 @@ class FeatureFlagController {
                     global value. Unknown flags evaluate to false, never an error.""")
     @PreAuthorize("hasRole('platform-admin') or hasPermission(#orgId, 'organization', 'org:read')")
     ResourceObject effective(@PathVariable String key, @PathVariable UUID orgId) {
+        // An operator arrives on PLATFORM and a member of this org arrives already pinned to it, so
+        // this is a narrowing for one caller and a no-op for the other — and it reads the override
+        // either way. runAs restores, so the call from setOrgOverride above nests correctly.
+        boolean enabled = TenantContext.callAs(orgId, () -> featureFlagService.isEnabledFor(key, orgId));
         return new ResourceObject(key + ":" + orgId, "feature-flag-evaluation",
-                new EffectiveFlagAttributes(key, featureFlagService.isEnabledFor(key, orgId)));
+                new EffectiveFlagAttributes(key, enabled));
     }
 
     private static ResourceObject toResource(FeatureFlag flag) {

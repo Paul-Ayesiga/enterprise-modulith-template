@@ -29,8 +29,8 @@ import ug.co.smsone.shared.persistence.SoftDeletableEntity;
  * distinct in a unique index, so a nullable issuer would let one provider org be claimed twice.
  */
 @Entity
-@Table(name = "external_organization")
-@SQLDelete(sql = "update external_organization set deleted_at = now(), version = version + 1 "
+@Table(name = "external_organization", schema = "platform")
+@SQLDelete(sql = "update platform.external_organization set deleted_at = now(), version = version + 1 "
         + "where id = ? and version = ?")
 @SQLRestriction("deleted_at is null")
 class ExternalOrganization extends SoftDeletableEntity {

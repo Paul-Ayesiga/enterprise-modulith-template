@@ -157,8 +157,8 @@ flowchart TB
 
   subgraph CORE["SPRING MODULITH :28080 — servlet + JDBC"]
     direction TB
-    chain["filter chain −100…5: security → impersonation →<br/>identity resolve + MDC → rate limit → idempotency →<br/>provisioning gate → org policy → maintenance →<br/>subscription access"]
-    ident["identity resolution (once per request)<br/>(iss,sub) → external_identity → person.id<br/>organization claim → external_organization → organization.id"]
+    chain["filter chain −100…5: security → impersonation →<br/>identity resolve + tenant pin + MDC → rate limit → idempotency →<br/>provisioning gate → org policy → maintenance →<br/>subscription access"]
+    ident["identity resolution + tenant pin (once per request)<br/>(iss,sub) → external_identity → person.id<br/>organization claim → external_organization → organization.id<br/>then that org pins the schema every later borrow uses"]
     modules["26 modules · ArchUnit-enforced boundaries · shared kernel ports"]
     outbox["event publication registry (outbox, same TX)"]
     mcp["/mcp — MCP stateless streamable HTTP<br/>35 tools · permission-filtered"]
@@ -178,7 +178,7 @@ flowchart TB
 
   subgraph STORES["DATA PLANE"]
     direction LR
-    pg[("Postgres 18<br/>records + outbox + FTS")]
+    pg[("Postgres 18 — schemas platform + tenant_pool<br/>records + outbox + FTS")]
     vk[("Valkey 8<br/>L2 cache · buckets · windows · idempotency")]
     sw[("SeaweedFS<br/>S3 objects")]
     kb[("Kill Bill + MariaDB<br/>invoices · payments")]
@@ -337,7 +337,8 @@ flowchart TB
     <p class="sec-sub">The gateway already authenticated the token; the modulith re-validates it (defense in
       depth), turns it into <em>its own</em> identity once at −1, and then runs the rest of its ordered servlet
       chain — each filter one concern, each with a named refusal. Everything from −1 down keys on a
-      <code>person.id</code> and an <code>organization.id</code>, never on an issuer's subject.</p>
+      <code>person.id</code> and an <code>organization.id</code>, never on an issuer's subject — and, since the
+      schema split, runs against a database connection already pointed at that organization's own schema.</p>
     <div class="chain">
       <div class="stagebox core"><span class="ord">MAX_PREC</span>
         <span class="what"><b>RequestId</b> — adopts the gateway's <code>gw-…</code> id (or mints one); it becomes <code>meta.requestId</code> in every envelope.</span>
@@ -354,7 +355,11 @@ flowchart TB
       <div class="stagebox core"><span class="ord">−1</span>
         <span class="what"><b>Identity resolution</b> — the one place a provider fact becomes a platform fact, and the reason Keycloak is swappable. <code>(iss, sub)</code> → <code>external_identity</code> → <code>person.id</code> (<code>PersonLookup</code>); the <code>organization</code> claim → <code>external_organization</code> → <code>organization.id</code> (<code>OrgLookup</code>); the membership's role → a permission set (<code>OrgAuthorization</code>). Below this line no module ever sees an issuer or a subject again. Every port is optional and every absence <b>default-DENIES</b> — <code>shared</code> must not compile-depend on the modules owning those tables, and an unanswerable question is not a yes.</span>
         <span class="fail"><span class="pill">3 DB reads</span><span class="pill">memoized/request</span></span></div>
-      <div class="connector">│▼ resolved BEFORE anything reads it</div>
+      <div class="connector">│▼ same filter, second act</div>
+      <div class="stagebox core"><span class="ord">−1</span>
+        <span class="what"><b>Tenant pin</b> — the org just resolved becomes the <em>schema</em> the request reads from, and it is set here because everything below reads a tenant table. Three states, no fourth: an org → that tenant's schema (<code>tenant_pool</code> today, its own <code>t_&lt;hex&gt;</code> once promoted); a platform operator, or any route that names no org → <code>platform</code>; <b>nothing declared → <code>no_tenant</code>, a real and permanently empty schema</b>. The path is set unconditionally on every connection <em>borrow</em> and never reset on close, so the next borrower always overwrites it and there is nothing to leak. A tenant-scoped route (<code>/api/v1/orgs/{orgId}/…</code>) reached by a credential naming no org is refused right here rather than allowed to read nothing.</span>
+        <span class="fail"><span class="pill bad">403 (no org)</span><span class="pill store">search_path</span></span></div>
+      <div class="connector">│▼ resolved AND routed BEFORE anything reads it</div>
       <div class="stagebox core"><span class="ord">−1</span>
         <span class="what"><b>Org MDC</b> — stamps the <em>effective</em> org/tenant into the log context, so even a 429 two steps later is attributed. Shares the order with resolution and the tie is deliberately irrelevant: this filter only READS through the same provider, so whichever runs first performs the single resolution and the other is served the memo.</span>
         <span class="fail"><span class="pill">logging</span></span></div>
@@ -689,8 +694,8 @@ sequenceDiagram
     <div class="diagram">
       <pre class="mermaid">
 stateDiagram-v2
-  [*] --> ACTIVE : POST /admin/impersonations — targetPersonId names a PERSON,\nnot a provider subject; platform-support floor, reason ≥ 8 chars (audited),\nWRITE mode needs platform-admin
-  ACTIVE --> ACTIVE : each tenant request with X-Impersonate <id>\n→ filter @Order(−2) swaps the principal,\nsession re-validated against the store
+  [*] --> ACTIVE : POST /admin/impersonations — targetPersonId names a PERSON,\nnot a provider subject — platform-support floor, reason ≥ 8 chars (audited),\nWRITE mode needs platform-admin
+  ACTIVE --> ACTIVE : each tenant request carrying an X-Impersonate session id\n→ filter @Order(−2) swaps the principal,\nsession re-validated against the store
   ACTIVE --> ENDED : DELETE (operator or admin cuts it off)
   ACTIVE --> EXPIRED : clock hits expiresAt — default TTL 15 min, hard cap 30 min
   ENDED --> [*]
@@ -759,10 +764,11 @@ flowchart TB
     <p class="sec-sub">Five stores, each with one job — plus a two-level cache in front of the hot reads.</p>
     <div class="grid">
       <div class="card c-infra"><h3>Postgres 18</h3><span class="tag">system of record</span><ul>
-        <li>Every module's tenant data — <b>54 tables</b>, 50 Flyway migrations, one schema</li>
-        <li><code>person</code> + <code>person_contact</code> — the canonical identity; <code>external_identity</code> / <code>external_organization</code> are the only tables holding an id minted by a provider</li>
-        <li><code>event_publication</code> — the transactional outbox</li>
-        <li>Full-text search: <code>websearch_to_tsquery</code> + <code>pg_trgm</code> typo fallback (p95 ~35ms @ 100k docs)</li>
+        <li>Every module's data — <b>56 tables</b> across <b>two schemas</b>, from two Flyway sequences on one shared version counter</li>
+        <li><code>platform</code> — 29 tables the installation owns; <code>tenant_pool</code> — 20 a tenant owns; <b>7 exist in both</b> and route on <code>org_id</code> (see below)</li>
+        <li><code>person</code> + <code>person_contact</code> — the canonical identity, <code>platform</code>-side and never per-tenant; <code>external_identity</code> / <code>external_organization</code> are the only tables holding an id minted by a provider</li>
+        <li><code>platform.event_publication</code> — the transactional outbox</li>
+        <li>Full-text search: <code>websearch_to_tsquery</code> + <code>pg_trgm</code> typo fallback (p95 ~35ms @ 100k docs); <code>pg_trgm</code> lives in its own <code>ext</code> schema so its operators resolve from every tenant path</li>
         <li>Soft deletes + nightly purge at retention (legal holds skip)</li>
         <li>Scheduler lock rows — clustered single-flight jobs</li>
       </ul></div>
@@ -798,6 +804,34 @@ flowchart TB
         <li>Dev-mode store lives in-container — a recreate re-imports the realm</li>
       </ul></div>
     </div>
+
+    <p class="sec-sub" style="margin-top:18px"><b>Postgres, split in two — and the one line that chooses.</b> Platform-owned
+      rows and tenant-owned rows live in different schemas of the same database. Nothing consults a mapping per query: the
+      request's tenant is pinned once at −1, and every connection <b>borrowed</b> after that has its
+      <code>search_path</code> set before it is handed over — in front of Hibernate <em>and</em> in front of the ~22 classes
+      that hold a <code>JdbcTemplate</code> directly, plus ShedLock and the Modulith event registry. Set on borrow, never
+      reset on close: the next borrower always overwrites, so there is nothing to leak. Flyway is the one deliberate
+      exception — it binds to the raw pool, because a migrator handed the tenant-less path would find nothing to migrate.</p>
+    <div class="chain">
+      <div class="stagebox"><span class="ord">org</span>
+        <span class="what"><code>search_path = tenant_pool, ext</code> — every tenant is pooled today and separated inside that schema by the <code>org_id</code> predicate every tenant query still carries. A promoted tenant gets <code>t_&lt;32hex&gt;, ext</code> instead, derived from <code>organization.id</code> with <b>zero database reads</b>; that is the only difference, which is why promotion is a placement flip rather than a code change. Tenant tables are named <b>unqualified</b> so the path can decide.</span>
+        <span class="fail"><span class="pill store">tenant tables, bare</span></span></div>
+      <div class="stagebox"><span class="ord">platform</span>
+        <span class="what"><code>search_path = platform, ext</code> — operators, catalogues, the person graph, the framework tables. <code>platform</code> is on <em>no</em> tenant's path, so a platform table is only ever reached by being NAMED (<code>platform.person</code>) — which is exactly what lets a tenant-pinned request read one without leaving its own axis. A build gate fails the compile when a mapping or a SQL literal gets that backwards in either direction.</span>
+        <span class="fail"><span class="pill store">platform.&lt;table&gt;</span></span></div>
+      <div class="stagebox"><span class="ord">absent</span>
+        <span class="what"><b>The poison state</b> — <code>search_path = no_tenant</code>, a real schema that is permanently empty and deliberately has no <code>ext</code> on it either. An unqualified tenant read there dies with <code>relation "ticket" does not exist</code> instead of answering out of whatever the previous borrower left behind. Ugly on purpose, and unreachable in practice because the refusal at −1 gets there first.</span>
+        <span class="fail"><span class="pill bad">relation does not exist</span></span></div>
+      <div class="stagebox"><span class="ord">both</span>
+        <span class="what"><b>Seven tables live in both schemas</b> — <code>audit_log</code>, <code>document</code>, <code>exchange_job</code>, <code>exchange_job_error</code>, <code>integration</code>, <code>integration_setting</code>, <code>maintenance_window</code>. Same DDL, two homes; <code>org_id</code> decides which copy a row belongs to — non-null is the tenant's and travels with it, null is the platform's and stays. Both addresses are legal for these and mean <em>different rows</em>, which is where the split's one visible API consequence lands: <code>GET /api/v1/audit</code> with no <code>org</code> is now the platform trail, not everything.</span>
+        <span class="fail"><span class="pill">1 table · 2 homes</span></span></div>
+    </div>
+    <p class="sec-sub"><b>Why, in one line:</b> once a tenant has been promoted into its own schema,
+      <code>pg_dump -n t_&lt;hex&gt;</code> is a complete, restorable tenant — no <code>WHERE org_id = ?</code> to get wrong and
+      no dependency-ordered extraction script to forget a table in. Lifting a tenant out becomes a runbook step instead of a
+      project. It is <em>not</em> bought as extra isolation: the same role reaches every schema, tenants sharing
+      <code>tenant_pool</code> are still separated by their <code>org_id</code> predicate, and keeping callers apart remains
+      the filter chain's job.</p>
 
     <p class="sec-sub" style="margin-top:18px"><b>The two-level cache</b> (shared kernel, backing entitlements,
       permissions, settings…): L1 is per-node Caffeine, L2 is shared Valkey; a pub/sub invalidation channel

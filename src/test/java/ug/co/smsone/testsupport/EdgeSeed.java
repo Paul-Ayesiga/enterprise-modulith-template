@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
+import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
  * Seeds the rows the EDGE resolves a request through: a {@code person} plus the
@@ -140,17 +141,43 @@ public final class EdgeSeed {
      *
      * <p>Raw SQL for the reason the class javadoc gives, one module further along: {@code org_role} and
      * {@code membership} belong to {@code organization.internal}. The columns are V11's.
+     *
+     * <p><strong>It writes the routing row too, and a fixture that forgot to would be lying about the
+     * state it claims to seed.</strong> {@code membership} is tenant-tier and
+     * {@code platform.org_membership_index} is the platform-side answer to "which organizations is
+     * this person in" (ADR 0010 §2.1) — {@code MemberService} and {@code OrgProjectionWriter} write
+     * the pair in one transaction, and every real membership in the database therefore has both rows.
+     * Seeding only the membership would produce a state the application cannot produce, and
+     * {@code GET /me/organizations} would answer an empty list for a person who plainly has a seat.
+     * The index is qualified because it is the platform's whichever axis the seeding thread is on.
      */
     public static UUID member(JdbcTemplate jdbc, UUID organizationId, UUID personId, String roleCode) {
         UUID roleId = UUID.randomUUID();
-        jdbc.update("""
-                insert into org_role (id, org_id, code, name, system_role, version, created_at)
-                values (?, ?, ?, ?, false, 0, now())
-                """, roleId, organizationId, roleCode, roleCode);
-        jdbc.update("""
-                insert into membership (id, org_id, person_id, role_id, status, version, created_at)
-                values (?, ?, ?, ?, 'ACTIVE', 0, now())
-                """, UUID.randomUUID(), organizationId, personId, roleId);
+        // The tenant axis this method's javadoc has been promising since Phase 1, declared here rather
+        // than left to each caller: org_role and membership are TENANT-tier, so on the harness's
+        // PLATFORM pin they would resolve inside `platform` and fail with a relation that plainly
+        // exists — and every one of this method's callers wants the same answer, the organization it
+        // was already handed. runAs restores whatever the caller had, so nesting inside a
+        // callAsPlatform seeding block stays correct.
+        TenantContext.runAs(organizationId, () -> {
+            jdbc.update("""
+                    insert into org_role (id, org_id, code, name, system_role, version, created_at)
+                    values (?, ?, ?, ?, false, 0, now())
+                    """, roleId, organizationId, roleCode, roleCode);
+            jdbc.update("""
+                    insert into membership (id, org_id, person_id, role_id, status, version, created_at)
+                    values (?, ?, ?, ?, 'ACTIVE', 0, now())
+                    """, UUID.randomUUID(), organizationId, personId, roleId);
+            // Qualified, so it lands in the platform schema from inside the tenant's axis — which is
+            // exactly what OrgMembershipIndex does in production, in the same transaction as the row
+            // above. `do nothing` rather than an upsert: a fixture re-seeding the same seat is a test
+            // repeating itself, not a status change.
+            jdbc.update("""
+                    insert into platform.org_membership_index (person_id, org_id, status)
+                    values (?, ?, 'ACTIVE')
+                    on conflict (person_id, org_id) do nothing
+                    """, personId, organizationId);
+        });
         return roleId;
     }
 

@@ -11,6 +11,31 @@ import ug.co.smsone.organization.Permission;
  * permissions). Cached in the two-level cache; a role/membership/org-status change clears it via
  * {@link OrgPermissionCacheEvictor}. A separate bean so the cached call goes through the proxy
  * (self-invocation wouldn't).
+ *
+ * <h2>Axis contract: this method must run on {@code organizationId}'s OWN axis (ADR 0010 §3.2)</h2>
+ *
+ * <p>Three of the four tables it reads are TENANT-tier — {@code membership}, {@code org_role} and
+ * {@code role_permission} (docs/DATA_MODEL.md) — and a tenant-tier table is addressed BARE, so the
+ * {@code search_path} on the borrowed connection is the only thing that says which schema it means.
+ * On a PLATFORM axis they are not merely the wrong tenant's rows, they are no rows at all:
+ * {@code relation "org_role" does not exist}. The fourth, {@code platform.organization}, is reached by
+ * name and so resolves from either axis — which is why one tenant span covers the whole method and the
+ * org-status check can stay inside the cached value where a suspension's eviction reaches it.
+ *
+ * <p><b>The pin is not taken here, and that is not an omission.</b> This method is {@code @Cacheable}
+ * and is called from two directions with different obligations:
+ *
+ * <ul>
+ *   <li>{@link OrgAuthorizationImpl} — the port, reached from OUTSIDE the module by callers that have
+ *       no reason to know these tables are the tenant's (the edge, on the platform axis; a scheduler,
+ *       on none). It pins, because it is the boundary where the module's own knowledge lives.</li>
+ *   <li>{@link PermissionEscalationGuard} — reached from INSIDE, and always already on the axis:
+ *       every one of its callers is serving a request, a tool call or an exchange job for the very org
+ *       being asked about, and all three pin before they open a transaction ({@code CurrentUserFilter},
+ *       {@code McpToolDispatcher}, {@code ExchangeWorker}). Several of them ARE inside a transaction by
+ *       the time the guard runs — {@code RoleService.create} is — and a pin there would throw for
+ *       re-declaring an axis the connection is already on. So the guard must not pin, and does not.</li>
+ * </ul>
  */
 @Component
 class PermissionResolver {

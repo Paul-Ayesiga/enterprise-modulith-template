@@ -18,7 +18,7 @@ import java.util.UUID;
  * soft ref with no FK, on the same terms as {@link PersonProfile} (V28).
  */
 @Entity
-@Table(name = "person_preference")
+@Table(name = "person_preference", schema = "platform")
 @IdClass(PersonPreference.Key.class)
 class PersonPreference {
 

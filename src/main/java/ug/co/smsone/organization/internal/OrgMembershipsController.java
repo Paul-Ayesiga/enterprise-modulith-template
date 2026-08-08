@@ -16,18 +16,26 @@ import ug.co.smsone.shared.web.ResourceObject;
  * organization switch. The switch itself is a TOKEN act (re-request scoped to the chosen org via
  * the identity provider's {@code organization} claim); the server never trusts a client-asserted
  * active org, which is exactly why this endpoint only lists.
+ *
+ * <p><b>This is the one person-first read in the codebase, and the reason
+ * {@code platform.org_membership_index} exists</b> (ADR 0010 §2.1). Every other membership read
+ * already knows its organization — the token's {@code organization} claim resolved it before
+ * {@code OrgAuthorization} was called — so it is a single-schema probe. This one does not, and cannot:
+ * the caller has not chosen a tenant yet, and a person seated in two organizations resolves to NO
+ * organization at all, by design. Asked of the tenant schemas it would be a query per tenant; asked of
+ * the index it is one probe on the platform axis the request is already on.
  */
 @RestController
 @RequestMapping("/api/v1/me")
 class OrgMembershipsController {
 
-    private final MembershipRepository memberships;
+    private final OrgMembershipIndex membershipIndex;
     private final OrganizationRepository organizations;
     private final MemberService members;
 
-    OrgMembershipsController(MembershipRepository memberships,
+    OrgMembershipsController(OrgMembershipIndex membershipIndex,
             OrganizationRepository organizations, MemberService members) {
-        this.memberships = memberships;
+        this.membershipIndex = membershipIndex;
         this.organizations = organizations;
         this.members = members;
     }
@@ -47,27 +55,30 @@ class OrgMembershipsController {
         if (user.personId() == null) {
             return List.of();
         }
-        List<Membership> mine = memberships.findByPersonIdAndStatus(user.personId(), MembershipStatus.ACTIVE);
+        List<OrgMembershipIndex.Seat> mine =
+                membershipIndex.seatsOf(user.personId(), MembershipStatus.ACTIVE);
         if (mine.isEmpty()) {
             return List.of();
         }
+        // Platform-tier and still batched: organization rows are one schema for everybody, so the one
+        // batch that survives the split survives it intact. It is also the filter that keeps a
+        // soft-deleted organization out of the switcher — @SQLRestriction drops it here, which is why
+        // the index deliberately does NOT track the org's own liveness. One authority per fact.
         Map<UUID, Organization> orgs = organizations.findAllById(
-                        mine.stream().map(Membership::getOrgId).collect(Collectors.toSet())).stream()
+                        mine.stream().map(OrgMembershipIndex.Seat::orgId).collect(Collectors.toSet())).stream()
                 .collect(Collectors.toMap(Organization::getId, org -> org));
-        // Both maps are built BEFORE the stream, and that is the whole point: the role code used to be
-        // fetched inside it with a per-org query, so this endpoint cost one role query per tenant the
-        // caller belongs to — the one caller whose row count is, by definition, several organizations
-        // wide. The organizations were already batched here; the roles now are too, by the exact role
-        // ids the memberships name rather than by org (see MemberService#roleCodesByIds).
-        Map<UUID, String> roleCodes = members.roleCodesByIds(
-                mine.stream().map(Membership::getRoleId).collect(Collectors.toSet()));
         return mine.stream()
-                .map(membership -> {
-                    Organization org = orgs.get(membership.getOrgId());
+                .map(seat -> {
+                    Organization org = orgs.get(seat.orgId());
                     if (org == null) {
                         return null; // org soft-deleted under the membership: not a switch target
                     }
-                    String roleCode = roleCodes.get(membership.getRoleId());
+                    // 1 + N, knowingly (ADR 0010 §5.4). The role code lives in the ORG's schema, so
+                    // this visits each of the caller's own organizations in turn — see
+                    // MemberService#roleCodeIn for why the batch that used to do this in one query
+                    // cannot survive tenants living in different schemas. N is the caller's org count,
+                    // never the tenant count; the index is what guarantees that difference.
+                    String roleCode = members.roleCodeIn(seat.orgId(), user.personId());
                     return new ResourceObject(org.getId().toString(), "my-organization",
                             new MyOrgAttributes(org.getAlias(), org.getName(),
                                     org.getStatus().name(), roleCode));

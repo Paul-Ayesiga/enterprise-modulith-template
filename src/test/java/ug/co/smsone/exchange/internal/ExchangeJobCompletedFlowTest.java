@@ -40,7 +40,11 @@ class ExchangeJobCompletedFlowTest extends AbstractIntegrationTest {
     @BeforeEach
     void reset() {
         handler.reset();
-        jdbc.update("delete from exchange_job");
+        for (String home : ug.co.smsone.shared.tenancy.SplitTables.homes()) {
+            // exchange_job is a split table: leftovers in EITHER home would be claimed ahead of this
+            // test's job, which claims strictly oldest-first (ADR 0010 §2 row 10).
+            jdbc.update("delete from " + home + ".exchange_job");
+        }
     }
 
     @Test

@@ -21,8 +21,8 @@ import ug.co.smsone.shared.persistence.SoftDeletableEntity;
  * table without the deletion of a display preference deleting the address the system mails.
  */
 @Entity
-@Table(name = "person_profile")
-@SQLDelete(sql = "update person_profile set deleted_at = now(), version = version + 1 where id = ? and version = ?")
+@Table(name = "person_profile", schema = "platform")
+@SQLDelete(sql = "update platform.person_profile set deleted_at = now(), version = version + 1 where id = ? and version = ?")
 @SQLRestriction("deleted_at is null")
 class PersonProfile extends SoftDeletableEntity {
 

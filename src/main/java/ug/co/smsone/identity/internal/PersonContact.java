@@ -38,8 +38,8 @@ import ug.co.smsone.shared.persistence.SoftDeletableEntity;
  * {@link #verify} and {@link #makePrimary} — are the two doors, and both are locked behind a proof.
  */
 @Entity
-@Table(name = "person_contact")
-@SQLDelete(sql = "update person_contact set deleted_at = now(), version = version + 1 "
+@Table(name = "person_contact", schema = "platform")
+@SQLDelete(sql = "update platform.person_contact set deleted_at = now(), version = version + 1 "
         + "where id = ? and version = ?")
 @SQLRestriction("deleted_at is null")
 class PersonContact extends SoftDeletableEntity {

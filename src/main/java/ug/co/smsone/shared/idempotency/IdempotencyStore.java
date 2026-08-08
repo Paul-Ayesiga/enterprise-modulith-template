@@ -45,7 +45,7 @@ public class IdempotencyStore {
         // PORTING: Postgres UPSERT with a conditional DO UPDATE. On another RDBMS this is a whole-
         // statement rewrite (Oracle/SQL Server MERGE, MySQL ON DUPLICATE KEY) — see docs/PORTING.md.
         int changed = jdbcTemplate.update("""
-                insert into idempotency_key (principal, idem_key, request_hash, created_at)
+                insert into platform.idempotency_key (principal, idem_key, request_hash, created_at)
                 values (?, ?, ?, ?)
                 on conflict (principal, idem_key) do update
                     set request_hash = excluded.request_hash, created_at = excluded.created_at
@@ -58,7 +58,7 @@ public class IdempotencyStore {
     public Optional<StoredResponse> find(String principal, String key) {
         return jdbcTemplate.query("""
                         select request_hash, response_status, response_body, content_type
-                        from idempotency_key where principal = ? and idem_key = ?
+                        from platform.idempotency_key where principal = ? and idem_key = ?
                         """,
                         (rs, rowNum) -> new StoredResponse(
                                 rs.getString("request_hash"),
@@ -73,7 +73,7 @@ public class IdempotencyStore {
     public void complete(String principal, String key, Instant claimedAt, int status, String body,
             String contentType) {
         jdbcTemplate.update("""
-                update idempotency_key
+                update platform.idempotency_key
                 set response_status = ?, response_body = ?, content_type = ?
                 where principal = ? and idem_key = ? and created_at = ?
                 """, status, body, contentType, principal, key, Timestamp.from(claimedAt));
@@ -86,7 +86,7 @@ public class IdempotencyStore {
      */
     public void release(String principal, String key, Instant claimedAt) {
         jdbcTemplate.update(
-                "delete from idempotency_key where principal = ? and idem_key = ? and created_at = ?",
+                "delete from platform.idempotency_key where principal = ? and idem_key = ? and created_at = ?",
                 principal, key, Timestamp.from(claimedAt));
     }
 
@@ -127,8 +127,8 @@ public class IdempotencyStore {
     /** One batch. Package-private so a test can drive a single one and see the bound hold. */
     int purgeBatch(Timestamp cutoff) {
         return jdbcTemplate.update("""
-                delete from idempotency_key where (principal, idem_key) in (
-                    select principal, idem_key from idempotency_key
+                delete from platform.idempotency_key where (principal, idem_key) in (
+                    select principal, idem_key from platform.idempotency_key
                     where created_at < ?
                     order by created_at
                     limit ?)

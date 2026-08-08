@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import ug.co.smsone.shared.error.ValidationException;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.shared.web.ApiSource;
 import ug.co.smsone.shared.web.CursorPageRequest;
 import ug.co.smsone.shared.web.ResourceObject;
@@ -62,6 +63,27 @@ class AdminOrganizationController {
         return toResource(organizations.require(orgId));
     }
 
+    /**
+     * <b>Two pinned spans, and the split is the point</b> (ADR 0010 §2). This route is
+     * {@code /api/v1/admin/orgs/…}, so it is NOT matched by {@code CurrentUserFilter}'s org-scoped
+     * pattern — deliberately, because the caller is an operator who belongs to no tenant — and it
+     * therefore arrives on the PLATFORM axis. That axis is right for the first question and wrong for
+     * the second:
+     *
+     * <ul>
+     *   <li><b>Does this tenant exist?</b> {@code platform.organization}, platform-tier. It is a
+     *       platform fact and the 404 has to be answerable even for a tenant whose schema is
+     *       unreachable, so it stays out here rather than being folded into the span below.</li>
+     *   <li><b>Who is in it?</b> {@code membership} and {@code org_role}, TENANT-tier and addressed
+     *       bare, so only that tenant's own axis can say which schema they mean. Entering it here,
+     *       explicitly, is what {@code CurrentUserFilter} defers to when it declines to match this
+     *       path.</li>
+     * </ul>
+     *
+     * <p>The mapping runs INSIDE the tenant span, not after it: {@code roleCodes} is read there and the
+     * lambda is what consumes it, so keeping them together means one axis for one question rather than
+     * a window whose rows outlive the schema they came from.
+     */
     @GetMapping("/{orgId}/members")
     @Operation(summary = "List an organization's members as the platform",
             description = """
@@ -69,13 +91,15 @@ class AdminOrganizationController {
                     Managing members stays a tenant action (or an impersonation session's).""")
     @PreAuthorize("hasRole('platform-support')")
     WindowedResult<ResourceObject> listMembers(@PathVariable UUID orgId, CursorPageRequest page) {
-        organizations.require(orgId); // unknown org answers 404, not an empty page
-        Map<UUID, String> roleCodes = members.roleCodes(orgId);
-        return WindowedResult.of(members.list(orgId, page), page,
-                membership -> new ResourceObject(membership.getId().toString(), "membership",
-                        new AdminMemberAttributes(membership.getPersonId(),
-                                roleCodes.get(membership.getRoleId()),
-                                membership.getStatus().name(), membership.getCreatedAt())));
+        organizations.require(orgId); // unknown org answers 404, not an empty page — platform axis
+        return TenantContext.callAs(orgId, () -> {
+            Map<UUID, String> roleCodes = members.roleCodes(orgId);
+            return WindowedResult.of(members.list(orgId, page), page,
+                    membership -> new ResourceObject(membership.getId().toString(), "membership",
+                            new AdminMemberAttributes(membership.getPersonId(),
+                                    roleCodes.get(membership.getRoleId()),
+                                    membership.getStatus().name(), membership.getCreatedAt())));
+        });
     }
 
     @DeleteMapping("/{orgId}")

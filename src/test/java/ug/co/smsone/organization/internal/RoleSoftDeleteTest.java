@@ -10,6 +10,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import ug.co.smsone.organization.Permission;
 import ug.co.smsone.shared.persistence.SoftDeleteRecovery;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 import ug.co.smsone.testsupport.EdgeSeed;
 
@@ -20,6 +21,13 @@ import ug.co.smsone.testsupport.EdgeSeed;
  * remove and {@code repository.delete(role)} would stamp {@code deleted_at} while hard-deleting
  * {@code role_permission} underneath it. Nothing surfaces that at delete time — it surfaces when
  * someone restores the role and it grants nothing.
+ *
+ * <p><b>Every test body runs inside one {@code TenantContext.runAs(orgId, …)}.</b> {@code org_role} and
+ * {@code role_permission} are TENANT-tier (ADR 0010 §2) and the harness pins PLATFORM, where neither
+ * exists — so without the span the subject here is unreachable rather than merely mis-scoped. One span
+ * per test and not one per call: the save, the delete, the restore and the read-back are all the same
+ * tenant's rows, and separate spans would be separate connections for no reason. {@link #seedOrg} stays
+ * outside it because {@code organization} is platform-tier and belongs on the harness's own pin.
  */
 class RoleSoftDeleteTest extends AbstractIntegrationTest {
 
@@ -40,13 +48,15 @@ class RoleSoftDeleteTest extends AbstractIntegrationTest {
     @Test
     void deletingARoleHidesItWithoutTouchingItsPermissions() {
         UUID orgId = seedOrg();
-        UUID id = roles.save(Role.create(orgId, "AUDITOR", "Auditor", false, null, GRANTED)).getId();
+        TenantContext.runAs(orgId, () -> {
+            UUID id = roles.save(Role.create(orgId, "AUDITOR", "Auditor", false, null, GRANTED)).getId();
 
-        roleService.delete(orgId, id);
+            roleService.delete(orgId, id);
 
-        assertThat(roles.findById(id)).as("hidden from every ordinary read path").isEmpty();
-        assertThat(deletedAt(id)).isNotNull();
-        assertThat(permissionCount(id)).as("nothing is scrubbed, only stamped").isEqualTo(GRANTED.size());
+            assertThat(roles.findById(id)).as("hidden from every ordinary read path").isEmpty();
+            assertThat(deletedAt(id)).isNotNull();
+            assertThat(permissionCount(id)).as("nothing is scrubbed, only stamped").isEqualTo(GRANTED.size());
+        });
     }
 
     /**
@@ -57,13 +67,15 @@ class RoleSoftDeleteTest extends AbstractIntegrationTest {
     @Test
     void restoringADeletedRoleReturnsItsOriginalPermissions() {
         UUID orgId = seedOrg();
-        UUID id = roles.save(Role.create(orgId, "AUDITOR", "Auditor", false, null, GRANTED)).getId();
-        roleService.delete(orgId, id);
+        TenantContext.runAs(orgId, () -> {
+            UUID id = roles.save(Role.create(orgId, "AUDITOR", "Auditor", false, null, GRANTED)).getId();
+            roleService.delete(orgId, id);
 
-        recovery.restore(recovery.findDeleted(Role.class, id).orElseThrow());
+            recovery.restore(recovery.findDeleted(Role.class, id).orElseThrow());
 
-        assertThat(roles.findById(id).orElseThrow().getPermissions())
-                .containsExactlyInAnyOrderElementsOf(GRANTED);
+            assertThat(roles.findById(id).orElseThrow().getPermissions())
+                    .containsExactlyInAnyOrderElementsOf(GRANTED);
+        });
     }
 
     /**
@@ -76,10 +88,12 @@ class RoleSoftDeleteTest extends AbstractIntegrationTest {
         return EdgeSeed.organization(jdbc, "kc-org-" + UUID.randomUUID(), "roles-" + UUID.randomUUID());
     }
 
+    /** Bare tenant-tier names: call only from inside the tests' {@code runAs} span (see the class note). */
     private Timestamp deletedAt(UUID id) {
         return jdbc.queryForObject("select deleted_at from org_role where id = ?", Timestamp.class, id);
     }
 
+    /** Same rule as {@link #deletedAt}. */
     private int permissionCount(UUID roleId) {
         Integer count = jdbc.queryForObject(
                 "select count(*) from role_permission where role_id = ?", Integer.class, roleId);

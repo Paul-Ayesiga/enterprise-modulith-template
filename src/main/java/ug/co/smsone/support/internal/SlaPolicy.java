@@ -7,7 +7,7 @@ import ug.co.smsone.shared.persistence.BaseEntity;
 
 /** SLA targets for one priority — seeded reference data, not soft-deletable. */
 @Entity
-@Table(name = "sla_policy")
+@Table(name = "sla_policy", schema = "platform")
 class SlaPolicy extends BaseEntity {
 
     @Column(nullable = false, length = 2)

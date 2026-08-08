@@ -42,7 +42,11 @@ class MaintenanceTest extends AbstractIntegrationTest {
     // rows must not outlive the test or they contaminate every other org-write test.
     @org.junit.jupiter.api.AfterEach
     void clearWindows() {
-        jdbc.update("delete from maintenance_window");
+        // BOTH homes. A platform-wide window left behind 503s every org write in the run, and an org
+        // window left behind 503s that org's — and since ADR 0010 Phase 2 they are two different tables.
+        for (String home : ug.co.smsone.shared.tenancy.SplitTables.homes()) {
+            jdbc.update("delete from " + home + ".maintenance_window");
+        }
     }
 
     @Test
@@ -103,8 +107,15 @@ class MaintenanceTest extends AbstractIntegrationTest {
                 .andExpect(status().isServiceUnavailable());
     }
 
+    /**
+     * Seeds into the home the row's {@code org_id} names (ADR 0010 §2 row 25: {@code maintenance_window}
+     * is a split table). The harness pins PLATFORM on the test thread, so an unqualified insert would put
+     * an org's window in {@code platform.maintenance_window} — where the filter, running on the tenant's
+     * axis, would never look for it.
+     */
     private void window(UUID orgId, String mode, Instant starts, Instant ends) {
-        jdbc.update("insert into maintenance_window (id, org_id, starts_at, ends_at, mode, message, version, created_at) "
+        jdbc.update("insert into " + ug.co.smsone.shared.tenancy.SplitTables.homeOf(orgId)
+                + ".maintenance_window (id, org_id, starts_at, ends_at, mode, message, version, created_at) "
                 + "values (?, ?, ?, ?, ?, 'scheduled maintenance', 0, now())",
                 UUID.randomUUID(), orgId, java.sql.Timestamp.from(starts), java.sql.Timestamp.from(ends), mode);
     }
@@ -142,16 +153,22 @@ class MaintenanceTest extends AbstractIntegrationTest {
      */
     private String seedMember(UUID orgId, String label, String... permissions) {
         String subject = label + "-" + UUID.randomUUID();
+        // person and external_identity are platform-tier, so they ride the harness's platform pin.
         UUID personId = EdgeSeed.person(jdbc, subject);
         UUID roleId = UUID.randomUUID();
-        jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
-                + "values (?, ?, ?, 'MaintRole', false, 0, now())", roleId, orgId,
-                "MNT_" + label.toUpperCase().replace('-', '_'));
-        for (String permission : permissions) {
-            jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleId, permission);
-        }
-        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+        // The seat is not: org_role, role_permission and membership are TENANT-tier (ADR 0010 §2), so
+        // they need this org's axis — on the platform pin they would land in, or fail to find, the
+        // wrong schema. Same declaration EdgeSeed.member makes for the same three tables.
+        ug.co.smsone.shared.tenancy.TenantContext.runAs(orgId, () -> {
+            jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
+                    + "values (?, ?, ?, 'MaintRole', false, 0, now())", roleId, orgId,
+                    "MNT_" + label.toUpperCase().replace('-', '_'));
+            for (String permission : permissions) {
+                jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleId, permission);
+            }
+            jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
+                    + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+        });
         return subject;
     }
 }

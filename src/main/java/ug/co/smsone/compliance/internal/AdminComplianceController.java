@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 import ug.co.smsone.shared.error.ForbiddenException;
 import ug.co.smsone.shared.error.ValidationException;
 import ug.co.smsone.shared.security.CurrentUser;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.shared.web.ApiSource;
 import ug.co.smsone.shared.web.CursorPageRequest;
 import ug.co.smsone.shared.web.ResourceObject;
@@ -35,14 +36,19 @@ import ug.co.smsone.shared.web.WindowedResult;
 @RequestMapping("/api/v1/admin/compliance")
 class AdminComplianceController {
 
-    // -- org export (tenant offboarding) --
-    private final OrgExportService orgExport;
+    /**
+     * The REDACTED half of what used to be one "org export". The other half —
+     * {@code TenantExtractionService}, the complete secret-bearing copy used to lift a tenant
+     * elsewhere — has no route here and is not getting one: it is unbounded and carries live
+     * credentials, so it is an operator runbook step, not a JSON response (ADR 0010 §6).
+     */
+    private final GdprBundleService gdprBundle;
 
     private final ComplianceService compliance;
 
-    AdminComplianceController(ComplianceService compliance, OrgExportService orgExport) {
+    AdminComplianceController(ComplianceService compliance, GdprBundleService gdprBundle) {
         this.compliance = compliance;
-        this.orgExport = orgExport;
+        this.gdprBundle = gdprBundle;
     }
 
     record PersonHoldRequest(UUID personId, String reason) {
@@ -114,19 +120,33 @@ class AdminComplianceController {
     }
 
     @GetMapping("/orgs/{orgId}/export")
-    @Operation(summary = "Export one organization's records (offboarding bundle)",
+    @Operation(summary = "Export one organization's records (redacted disclosure bundle)",
             description = """
-                    A JSON bundle of the organization's rows across every org-owned table — membership, \
-                    roles, subscription, integrations, webhooks, payments, usage, tickets, audit. \
+                    A REDACTED JSON bundle of the organization's rows across the disclosed tables — \
+                    membership, roles, subscription, integrations, webhooks, payments, usage, tickets, \
+                    audit. It is a disclosure artifact, NOT a tenant extraction: secret-bearing \
+                    columns never leave the database, per-table row caps apply, and the tenant's own \
+                    tables that carry no disclosure value are not here. Lifting an organization to \
+                    another deployment is a separate operator path with different contents. \
                     LIVE rows only (soft-deleted rows are excluded; the organization row itself is the \
                     exception, since offboarding runs after the tenant is deleted), each table in a \
-                    fixed newest-first order so the same data always produces the same bundle. Capped \
-                    per table: `rowCapPerTable` states the cap, and a bundle that hit it says so — \
-                    `complete:false` plus `truncatedTables`. Secret-bearing columns never leave the \
-                    database. Audited as compliance.org_exported.""")
+                    fixed newest-first order so the same data always produces the same bundle. \
+                    `rowCapPerTable` states the cap, and a bundle that hit it says so — \
+                    `complete:false` plus `truncatedTables`. Audited as compliance.org_exported.""")
     @PreAuthorize("hasRole('platform-admin')")
     ResourceObject exportOrg(@PathVariable UUID orgId) {
-        return new ResourceObject(orgId.toString(), "org-export", orgExport.export(orgId));
+        // The tenant is entered EXPLICITLY here, and it should read like the deliberate cross-tenant
+        // capability it is (ADR 0010 §5.15 — the machine equivalent of impersonation). The caller is a
+        // platform operator: CurrentUserFilter pinned this thread to PLATFORM because an operator has
+        // no organization, and the bundle reads tenant-tier tables (membership, ticket,
+        // webhook_subscription…) which exist in no schema on that path.
+        //
+        // It wraps the service call rather than sitting inside it because the service is
+        // @Transactional: the schema is chosen at connection borrow, so a pin taken after the
+        // transaction opened would be a silent no-op on the previous tenant's search_path —
+        // TenantContext.set throws rather than let that happen (ADR 0010 §3.2).
+        return new ResourceObject(orgId.toString(), "org-export",
+                TenantContext.callAs(orgId, () -> gdprBundle.export(orgId)));
     }
 
     /**

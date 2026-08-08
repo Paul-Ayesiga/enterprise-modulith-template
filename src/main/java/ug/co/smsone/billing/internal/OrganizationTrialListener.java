@@ -4,8 +4,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.modulith.events.ApplicationModuleListener;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.event.TransactionalEventListener;
 import ug.co.smsone.organization.OrganizationRegistered;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.subscription.Subscriptions;
 
 /**
@@ -21,8 +24,9 @@ import ug.co.smsone.subscription.Subscriptions;
  * entitlement-only — no Kill Bill subscription or invoice until it converts — so it is independent of
  * the account auto-provisioned off the same event.
  *
- * <p>{@link ApplicationModuleListener}: after the org tx commits, async, in its own transaction,
- * recorded in the event publication registry — a transient failure is retried, not lost.
+ * <p>After the org tx commits, async, recorded in the event publication registry — a transient
+ * failure is retried, not lost. Spelled as {@code @Async} + {@code @TransactionalEventListener}
+ * rather than {@link ApplicationModuleListener} for the reason on {@link #on}.
  */
 @Component
 @ConditionalOnProperty(name = "app.billing.trial-on-signup.enabled", havingValue = "true")
@@ -38,9 +42,20 @@ class OrganizationTrialListener {
         this.properties = properties;
     }
 
-    @ApplicationModuleListener
+    /**
+     * The organization the event names is the axis, declared before any connection is borrowed.
+     * {@code org_subscription} — the row {@code startTrialForNewOrg} writes — is tenant-tier (ADR 0010
+     * §2), and a pooled listener thread carries no axis at all, so without this the trial lands in the
+     * empty {@code no_tenant} schema. {@link ApplicationModuleListener} would bundle
+     * {@code @Transactional} and open that connection before the method body could pin anything, which
+     * is why the annotation is split apart here — the same split as
+     * {@code DeviceTrustRevocationListener}. The port opens its own transaction inside the pin.
+     */
+    @Async
+    @TransactionalEventListener
     void on(OrganizationRegistered event) {
-        subscriptions.startTrialForNewOrg(event.orgId(), properties.plan(), properties.days());
+        TenantContext.runAs(event.orgId(),
+                () -> subscriptions.startTrialForNewOrg(event.orgId(), properties.plan(), properties.days()));
         log.info("Applied trial-on-signup ({} {}-day) to new organization {} ({})",
                 properties.plan(), properties.days(), event.alias(), event.orgId());
     }

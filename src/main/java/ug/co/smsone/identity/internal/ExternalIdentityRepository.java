@@ -41,7 +41,7 @@ interface ExternalIdentityRepository extends JpaRepository<ExternalIdentity, UUI
      * an unlinked-because-erased subject are the same absence to HQL and must decide differently.
      */
     @Query(value = """
-            select exists(select 1 from external_identity
+            select exists(select 1 from platform.external_identity
                           where provider = :provider and issuer = :issuer
                             and external_subject = :externalSubject and deleted_at is not null)
             """, nativeQuery = true)

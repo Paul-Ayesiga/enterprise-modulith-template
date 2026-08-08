@@ -39,9 +39,26 @@ import ug.co.smsone.testsupport.EdgeSeed;
  * grant behind, in any organization. They go here rather than in a class of their own because every
  * ingredient — registration, revocation, the org's grant, and the filter that reads it — is already
  * set up in this file, and the guarantee is only meaningful end to end.
+ *
+ * <p><b>Fixtures here declare their tier explicitly, because this file writes both.</b> The harness pins
+ * PLATFORM ({@code TenantAxisExtension}), which is right for {@code person}, {@code organization},
+ * {@code external_identity} and {@code user_device} — and wrong for {@code org_role},
+ * {@code role_permission}, {@code membership} and {@code user_device_trust}, which are tenant-tier
+ * (ADR 0010 §2) and since Phase 2 live in a schema a platform axis cannot see. So the seeds below take a
+ * {@code TenantContext.runAs(orgId, …)} span around the tenant half and leave the platform half on the
+ * harness pin, rather than widening one pin over both.
  */
 @AutoConfigureMockMvc
 class AccessPolicyTest extends AbstractIntegrationTest {
+
+    /**
+     * The org whose axis a CROSS-ORG count borrows — see {@link #grants}. It names no organization
+     * deliberately: an org that has never been promoted resolves to the shared {@code tenant_pool}, and a
+     * UUID in no {@code organization} row can never resolve to anything else. Same constant, same
+     * reasoning as {@code MappedSchemaValidator} and {@code WebhookSecretEncryptionMigrator}; ADR 0010
+     * Phase 5 turns it into a loop over {@code platform.tenant_placement}.
+     */
+    private static final UUID POOLED_TENANT = new UUID(0L, 0L);
 
     @Autowired
     private MockMvc mockMvc;
@@ -182,8 +199,11 @@ class AccessPolicyTest extends AbstractIntegrationTest {
                         .with(attacker.token()))
                 .andExpect(status().isNotFound());
 
-        assertThat(jdbc.queryForObject("select count(*) from user_device_trust where device_id = ?",
-                Integer.class, victimDevice))
+        // On the ATTACKER's axis: the grant that must not exist would have been written by their request,
+        // so this asks the schema that request was routed to. (user_device_trust is tenant-tier, so the
+        // harness's PLATFORM pin cannot see it at all.)
+        assertThat(TenantContext.callAs(attackerOrg, () -> jdbc.queryForObject(
+                "select count(*) from user_device_trust where device_id = ?", Integer.class, victimDevice)))
                 .as("no grant may be written for a person who is not the acting org's member")
                 .isZero();
     }
@@ -204,13 +224,19 @@ class AccessPolicyTest extends AbstractIntegrationTest {
         Member inA = seedMember(orgA, "dual", "ORG_READ", "ORG_UPDATE");
         UUID orgB = seedOrg();
         UUID roleB = UUID.randomUUID();
-        jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
-                + "values (?, ?, 'POLB', 'PolRole', false, 0, now())", roleB, orgB);
-        for (String permission : new String[] {"ORG_READ", "ORG_UPDATE", "SUBSCRIPTION_READ"}) {
-            jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleB, permission);
-        }
-        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgB, inA.personId(), roleB);
+        // Org B's seat for the SAME person. All three tables are tenant-tier, so the block runs on org
+        // B's axis; the person up on the platform tier is what makes one human in two orgs expressible.
+        TenantContext.runAs(orgB, () -> {
+            jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
+                    + "values (?, ?, 'POLB', 'PolRole', false, 0, now())", roleB, orgB);
+            for (String permission : new String[] {"ORG_READ", "ORG_UPDATE", "SUBSCRIPTION_READ"}) {
+                jdbc.update("insert into role_permission (role_id, permission) values (?, ?)",
+                        roleB, permission);
+            }
+            jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
+                    + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgB, inA.personId(),
+                    roleB);
+        });
 
         UUID device = registerDevice(inA, "dual-fp");
 
@@ -234,9 +260,10 @@ class AccessPolicyTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.errors[0].detail",
                         org.hamcrest.Matchers.containsString("trusted-device")));
 
-        assertThat(jdbc.queryForObject(
+        // Org A's axis, because the row asked about is org A's grant.
+        assertThat(TenantContext.callAs(orgA, () -> jdbc.queryForObject(
                 "select count(*) from user_device_trust where device_id = ? and org_id = ?",
-                Integer.class, device, orgA))
+                Integer.class, device, orgA)))
                 .as("org A's own grant is untouched — this is isolation, not revocation")
                 .isEqualTo(1);
     }
@@ -328,9 +355,15 @@ class AccessPolicyTest extends AbstractIntegrationTest {
      * This is the pooled-thread case ADR 0010 §3.2 singles out: the HTTP path is on virtual threads that
      * are never reused, so only the scheduler, {@code @Async} executors and helpers like this one can
      * expose a missing pin. A test that awaits is doing background work and has to say so.
+     *
+     * <p><b>A TENANT axis, and deliberately not any one tenant's.</b> The question is "how many orgs, of
+     * all of them" — the same cross-tenant question {@code DeviceTrustRevocationListener} answers — so
+     * it borrows the pooled schema's axis through {@link #POOLED_TENANT} rather than naming an org it
+     * would then be blind past. A platform pin is what it used to take, and since Phase 2 that reaches
+     * a schema this table is not in.
      */
     private int grants(UUID deviceId) {
-        Integer count = TenantContext.callAsPlatform(() -> jdbc.queryForObject(
+        Integer count = TenantContext.callAs(POOLED_TENANT, () -> jdbc.queryForObject(
                 "select count(*) from user_device_trust where device_id = ?", Integer.class, deviceId));
         return count == null ? 0 : count;
     }
@@ -345,17 +378,28 @@ class AccessPolicyTest extends AbstractIntegrationTest {
                 .andExpect(status().isOk());
     }
 
-    /** Adds an EXISTING person to another org — the multi-org shape {@link #seedMember} cannot make. */
+    /**
+     * Adds an EXISTING person to another org — the multi-org shape {@link #seedMember} cannot make, and
+     * now also the tenant half of {@code seedMember} itself.
+     *
+     * <p>Everything written here is TENANT-tier — {@code org_role}, {@code role_permission} and
+     * {@code membership} (ADR 0010 §2) — so the whole block takes the organization's own axis. On the
+     * harness's PLATFORM pin these resolve inside {@code platform} and fail with a relation that plainly
+     * exists elsewhere.
+     */
     private void joinOrg(UUID orgId, UUID personId, String... permissions) {
         UUID roleId = UUID.randomUUID();
-        jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
-                + "values (?, ?, ?, 'PolRole', false, 0, now())", roleId, orgId,
-                "POL_" + roleId.toString().substring(0, 8).toUpperCase());
-        for (String permission : permissions) {
-            jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleId, permission);
-        }
-        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+        TenantContext.runAs(orgId, () -> {
+            jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
+                    + "values (?, ?, ?, 'PolRole', false, 0, now())", roleId, orgId,
+                    "POL_" + roleId.toString().substring(0, 8).toUpperCase());
+            for (String permission : permissions) {
+                jdbc.update("insert into role_permission (role_id, permission) values (?, ?)",
+                        roleId, permission);
+            }
+            jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
+                    + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+        });
     }
 
     /** Registers a device for this member and returns its id. */
@@ -392,16 +436,11 @@ class AccessPolicyTest extends AbstractIntegrationTest {
      */
     private Member seedMember(UUID orgId, String label, String... permissions) {
         String subject = label + "-" + UUID.randomUUID();
+        // The PLATFORM half, on the harness pin: person and external_identity are the human's, not any
+        // tenant's — a person seated in two orgs is one row, which is the whole reason they are up there.
         UUID personId = EdgeSeed.person(jdbc, subject);
-        UUID roleId = UUID.randomUUID();
-        jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
-                + "values (?, ?, ?, 'PolRole', false, 0, now())", roleId, orgId,
-                "POL_" + roleId.toString().substring(0, 8).toUpperCase());
-        for (String permission : permissions) {
-            jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleId, permission);
-        }
-        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+        // The TENANT half. runAs restores the harness pin afterwards, so the caller stays on PLATFORM.
+        joinOrg(orgId, personId, permissions);
         return new Member(personId, subject, member(orgId, subject));
     }
 

@@ -43,8 +43,10 @@ class NotificationRetentionJob {
         // Declares the platform axis around the whole run: each batch commits on its own connection and
         // every one of those borrows reads the axis afresh, so one pin outside the loop covers them all.
         // ADR 0010 §3.4.
-        // PHASE 2: notification_delivery carries an org_id — when it moves to the tenant tier this
-        // batch loop nests inside a per-tenant loop, one runAs(orgId) each.
+        // PLATFORM is the tier, not a placeholder: notification_delivery carries an org_id but stayed
+        // platform-tier (§2) because it is transport claimed by a cluster-wide sweep. Unlike the webhook
+        // and exchange retention jobs this one also consults no org_retention_override — the delivery
+        // log has one cutoff for everyone — so there is no tenant-tier read to open a second span for.
         int total = TenantContext.callAsPlatform(() -> {
             int purged = 0;
             for (int batch = 0; batch < MAX_BATCHES; batch++) {

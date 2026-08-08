@@ -199,7 +199,13 @@ class SubscriptionGatingTest extends AbstractIntegrationTest {
                         Map.of("id", String.valueOf(link.get("external_org_id"))))));
     }
 
-    /** TINY: members capped at 1, no exchange — the plan that makes every gate observable. */
+    /**
+     * TINY: members capped at 1, no exchange — the plan that makes every gate observable.
+     *
+     * <p>Unqualified and unpinned on purpose: {@code plan} and {@code plan_entitlement} are
+     * platform-tier catalog (ADR 0010 §2), so they resolve on the platform axis the harness already
+     * pins. Contrast {@link #seedInviter}, whose three tables are the tenant's.
+     */
     private void seedTinyPlan() {
         UUID planId = UUID.randomUUID();
         jdbc.update("insert into plan (id, code, name, rank, version, created_at) "
@@ -218,17 +224,23 @@ class SubscriptionGatingTest extends AbstractIntegrationTest {
      * The org's ONE member — the count the {@code members.max} cap is measured against. A real
      * {@code person} plus its identity link, because the invite gate runs for a caller the edge has
      * already resolved; a membership without one would authorize nobody.
+     *
+     * <p>Two tiers, two spans: {@code person} and {@code external_identity} are platform-tier and take
+     * the harness's own pin, while {@code org_role}, {@code role_permission} and {@code membership}
+     * are the tenant's and only resolve on that org's axis (ADR 0010 §2).
      */
     private void seedInviter(UUID orgId, String subject) {
         UUID personId = EdgeSeed.person(jdbc, subject);
         UUID roleId = UUID.randomUUID();
-        jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
-                + "values (?, ?, 'GATED', 'Gated', false, 0, now())", roleId, orgId);
-        for (String permission : new String[] {"ORG_READ", "MEMBER_READ", "MEMBER_INVITE",
-                "SUBSCRIPTION_READ", "EXCHANGE_SUBMIT"}) {
-            jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleId, permission);
-        }
-        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+        TenantContext.runAs(orgId, () -> {
+            jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
+                    + "values (?, ?, 'GATED', 'Gated', false, 0, now())", roleId, orgId);
+            for (String permission : new String[] {"ORG_READ", "MEMBER_READ", "MEMBER_INVITE",
+                    "SUBSCRIPTION_READ", "EXCHANGE_SUBMIT"}) {
+                jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleId, permission);
+            }
+            jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
+                    + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+        });
     }
 }

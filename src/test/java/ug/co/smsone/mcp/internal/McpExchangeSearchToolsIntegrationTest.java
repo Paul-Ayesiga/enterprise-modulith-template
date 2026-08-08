@@ -14,6 +14,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.jdbc.core.JdbcTemplate;
 import ug.co.smsone.search.SearchDoc;
 import ug.co.smsone.search.SearchIndex;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 import ug.co.smsone.testsupport.EdgeSeed;
 
@@ -88,7 +89,7 @@ class McpExchangeSearchToolsIntegrationTest extends AbstractIntegrationTest {
             assertThat(result.isError()).isTrue();
             assertThat(McpTestSupport.textOf(result)).contains("FORBIDDEN")
                     .contains("needs a signed-in person");
-            assertThat(jdbc.queryForObject("select count(*) from exchange_job where org_id = ?",
+            assertThat(jdbc.queryForObject("select count(*) from " + ug.co.smsone.shared.tenancy.SplitTables.TENANT_POOL + ".exchange_job where org_id = ?",
                     Integer.class, orgId)).isZero();
         }
     }
@@ -115,14 +116,21 @@ class McpExchangeSearchToolsIntegrationTest extends AbstractIntegrationTest {
     /**
      * A queued EXPORT exactly as {@code ExchangeJobStore.submit} leaves one — the submit path itself
      * is a REST/person surface now, so the row is the honest fixture for the poll/cancel tools.
+     *
+     * <p><b>Written on the ORG's axis, and that is what makes it the same row the tools read.</b>
+     * {@code exchange_job} is a SPLIT table routed on {@code org_id} (ADR 0010 §2 row 10): a non-null
+     * org means the tenant's copy. Seeded on the harness's PLATFORM pin the unqualified name lands in
+     * {@code platform.exchange_job} instead, and {@code McpToolDispatcher} — which pins the key's org
+     * before invoking a handler — then reads the tenant copy and answers "Exchange job not found" for
+     * a job the fixture plainly inserted.
      */
     private UUID seedExport(UUID orgId, UUID requesterPersonId, String handler) {
         UUID id = UUID.randomUUID();
-        jdbc.update("""
+        TenantContext.runAs(orgId, () -> jdbc.update("""
                 insert into exchange_job (id, org_id, requester_person_id, job_type, handler,
                                           handler_version, format, status, created_at)
                 values (?, ?, ?, 'EXPORT', ?, 1, 'CSV', 'PENDING', now())
-                """, id, orgId, requesterPersonId, handler);
+                """, id, orgId, requesterPersonId, handler));
         return id;
     }
 

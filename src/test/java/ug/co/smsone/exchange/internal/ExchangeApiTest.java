@@ -64,7 +64,11 @@ class ExchangeApiTest extends AbstractIntegrationTest {
         handler.reset();
         // The queue is one shared table and drainOnce() claims strictly oldest-first — leftovers
         // from other tests would be claimed instead of this test's job.
-        jdbc.update("delete from exchange_job");
+        for (String home : ug.co.smsone.shared.tenancy.SplitTables.homes()) {
+            // exchange_job is a split table: leftovers in EITHER home would be claimed ahead of this
+            // test's job, which claims strictly oldest-first (ADR 0010 §2 row 10).
+            jdbc.update("delete from " + home + ".exchange_job");
+        }
     }
 
     @Test
@@ -130,10 +134,15 @@ class ExchangeApiTest extends AbstractIntegrationTest {
                 .contains("2,key is required.")
                 .contains("3,value 'bad' is not allowed.");
 
-        // Both artifacts — the source and the report — are filed as EXCHANGE documents.
-        assertThat(jdbc.queryForObject(
-                "select count(*) from document where org_id = ? and source = 'EXCHANGE'",
-                Integer.class, orgId)).isEqualTo(2);
+        // Both artifacts — the source and the report — are filed as EXCHANGE documents. Counted on the
+        // ORG'S axis: `document` is a split table and a row with a non-null org_id is the tenant's
+        // (ADR 0010 §2 row 12), so the harness's platform pin would count the personal-document home
+        // and answer a confident zero.
+        Integer exchangeDocuments = ug.co.smsone.shared.tenancy.TenantContext.callAs(orgId,
+                () -> jdbc.queryForObject(
+                        "select count(*) from document where org_id = ? and source = 'EXCHANGE'",
+                        Integer.class, orgId));
+        assertThat(exchangeDocuments).isEqualTo(2);
 
         // Throughput is counted, per outcome and per record result.
         assertThat(counter("smsone.exchange.jobs",
@@ -270,16 +279,22 @@ class ExchangeApiTest extends AbstractIntegrationTest {
      */
     private String seedMember(UUID orgId, String label, String... permissions) {
         String subject = label + "-" + UUID.randomUUID();
+        // person and external_identity are platform-tier, so they ride the harness's platform pin.
         UUID personId = EdgeSeed.person(jdbc, subject);
         UUID roleId = UUID.randomUUID();
-        jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
-                + "values (?, ?, ?, 'ExchangeRole', false, 0, now())", roleId, orgId,
-                "XCH_" + label.toUpperCase().replace('-', '_'));
-        for (String permission : permissions) {
-            jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleId, permission);
-        }
-        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+        // The seat is not: org_role, role_permission and membership are TENANT-tier (ADR 0010 §2), so
+        // they need this org's axis — on the platform pin they would land in, or fail to find, the
+        // wrong schema. Same declaration EdgeSeed.member makes for the same three tables.
+        ug.co.smsone.shared.tenancy.TenantContext.runAs(orgId, () -> {
+            jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
+                    + "values (?, ?, ?, 'ExchangeRole', false, 0, now())", roleId, orgId,
+                    "XCH_" + label.toUpperCase().replace('-', '_'));
+            for (String permission : permissions) {
+                jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleId, permission);
+            }
+            jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
+                    + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+        });
         return subject;
     }
 }

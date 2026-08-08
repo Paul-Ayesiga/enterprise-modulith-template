@@ -19,6 +19,14 @@ import ug.co.smsone.shared.persistence.BaseEntity;
  * column, while {@code target} is polymorphic and read through {@code action} — a person id here, a
  * ticket uuid there, a setting key elsewhere — so typing it would force every writer to choose between
  * two columns on a contract encoded in a string.
+ *
+ * <p><b>This is the READ mapping, and it is deliberately UNQUALIFIED (ADR 0010 §2, {@code audit_log}
+ * is P+T).</b> The table exists in both {@code platform} and the tenant schema, so the
+ * {@code search_path} the request is running on picks the copy: an org-scoped query resolves that
+ * tenant's own trail, a platform query resolves the platform-level rows. Adding
+ * {@code schema = "platform"} here would silently make every org's audit view read the platform's
+ * trail instead of their own. The WRITE side cannot use the same trick and says why —
+ * {@link AuditLogImpl}.
  */
 @Entity
 @Table(name = "audit_log")
@@ -77,27 +85,9 @@ class AuditEntry extends BaseEntity {
         // JPA
     }
 
-    static AuditEntry of(UUID orgId, String action, Attribution attribution, String target,
-            String fromState, String toState, Instant occurredAt) {
-        AuditEntry entry = new AuditEntry();
-        entry.orgId = orgId;
-        entry.action = action;
-        entry.actorPersonId = attribution.actorPersonId();
-        entry.onBehalfOfPersonId = attribution.onBehalfOfPersonId();
-        entry.impersonationId = attribution.impersonationId();
-        entry.target = truncate(target, TARGET_MAX);
-        entry.fromState = truncate(fromState, STATE_MAX);
-        entry.toState = truncate(toState, STATE_MAX);
-        entry.occurredAt = occurredAt;
-        return entry;
-    }
-
-    private static String truncate(String value, int max) {
-        if (value == null) {
-            return null;
-        }
-        return value.length() <= max ? value : value.substring(0, max);
-    }
+    // No factory, and no setters: the row is written by AuditLogImpl's one qualified INSERT, because a
+    // JPA mapping names ONE table and this table has two homes. This class is the read side only —
+    // which is also why nothing here truncates any more (the write does, against V13's column widths).
 
     UUID getOrgId() {
         return orgId;

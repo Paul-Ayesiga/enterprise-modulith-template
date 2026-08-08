@@ -5,6 +5,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,6 +30,20 @@ class SlaEscalationJob {
     private static final Logger log = LoggerFactory.getLogger(SlaEscalationJob.class);
     private static final int BATCH = 100;
     private static final List<String> BUMP = List.of("P4", "P3", "P2", "P1");
+
+    /**
+     * The tenant axis this cross-tenant sweep runs on. It names no organization deliberately: an org in
+     * no {@code organization} row can only ever resolve to the shared {@code tenant_pool}, so this IS
+     * the pooled schema's axis — the same constant and reasoning as {@code ExchangeScheduleFiringJob}
+     * and {@code WebhookRetentionJob}.
+     *
+     * <p>PHASE 5 makes this a loop over {@code platform.tenant_placement}, one transaction per home,
+     * and {@link #BATCH} becomes per-home rather than global — a fairness change, since breaches are
+     * ordered within a home from then on and not across the installation.
+     * {@link SupportNotifier#ticketsEscalated} stays one digest per sweep by collecting across the loop
+     * rather than inside it.
+     */
+    private static final UUID POOLED_TENANT = new UUID(0L, 0L);
 
     private final TicketRepository tickets;
     private final SupportNotifier notifier;
@@ -58,16 +73,17 @@ class SlaEscalationJob {
      * one wrapped the other was unspecified, and with the transaction outside, ShedLock's own
      * {@code shedlock} borrow would have been axis-less too.
      *
-     * <p>PHASE 2: {@code lockBreached} sweeps tickets across every tenant in one statement. When
-     * {@code ticket} moves to the tenant tier this becomes a loop — {@code runAs(orgId)} plus its own
-     * transaction per tenant — and {@link SupportNotifier#ticketsEscalated} stays one digest per sweep
-     * by collecting across the loop rather than inside it.
+     * <p><b>A TENANT axis since Phase 2, not the platform one it used to take.</b> {@code ticket} is
+     * tenant-tier (ADR 0010 §2), so on the platform axis {@code lockBreached} does not sweep zero rows —
+     * it fails outright with {@code relation "ticket" does not exist}, inside a scheduled job whose
+     * exception nobody reads at 04:00, and every SLA breach on the installation stops escalating. The
+     * pin is what makes the statement resolve at all.
      */
     @Scheduled(cron = "${app.scheduler.support-escalation-cron:15 * * * * *}")
     @SchedulerLock(name = "support-sla-escalation", lockAtMostFor = "PT5M")
     public void escalateBreaches() {
-        // Declares the platform axis, then opens the transaction inside it. ADR 0010 §3.4.
-        TenantContext.runAsPlatform(() -> transactions.executeWithoutResult(tx -> escalate()));
+        // Declares the tenant axis, then opens the transaction inside it. ADR 0010 §3.4.
+        TenantContext.runAs(POOLED_TENANT, () -> transactions.executeWithoutResult(tx -> escalate()));
     }
 
     private void escalate() {

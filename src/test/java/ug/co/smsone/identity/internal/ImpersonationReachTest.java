@@ -28,6 +28,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import ug.co.smsone.identity.ProvisioningStatus;
 import ug.co.smsone.organization.Permission;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 import ug.co.smsone.testsupport.EdgeSeed;
 
@@ -47,6 +48,16 @@ import ug.co.smsone.testsupport.EdgeSeed;
  * repositories: those are package-private in {@code organization.internal}, and the Keycloak gateway
  * this test must mock is package-private here. Same real Postgres either way — see
  * {@code SoftDeletePurgeJobIntegrationTest} for the same trade.
+ *
+ * <p><b>This class reads and writes BOTH tenancy tiers, and every fixture below says which.</b> That is
+ * not incidental to impersonation, it is the feature: {@code person}, {@code external_identity} and
+ * {@code impersonation_session} are platform-tier — the operator, the human they wear, and the session
+ * that authorizes it exist above every tenant — while {@code org_role}, {@code role_permission} and
+ * {@code membership} are the tenant's, because what the worn identity may DO is decided inside one
+ * organization. The harness pins PLATFORM ({@code TenantAxisExtension}), so the tenant half takes an
+ * explicit {@code TenantContext.runAs(orgId, …)} span rather than one wider pin over both.
+ * {@code audit_log} is split down the same seam and needs both spellings —
+ * see {@link #orgAuditRow} and {@link #platformAuditRow}.
  */
 @AutoConfigureMockMvc
 class ImpersonationReachTest extends AbstractIntegrationTest {
@@ -165,7 +176,7 @@ class ImpersonationReachTest extends AbstractIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON).content(createRole(code)))
                 .andExpect(status().isCreated());
 
-        Map<String, Object> row = auditRow("organization.role_created", code);
+        Map<String, Object> row = orgAuditRow("organization.role_created", code);
         assertThat(row.get("actor_person_id")).isEqualTo(operator);        // the human answerable
         assertThat(row.get("on_behalf_of_person_id")).isEqualTo(member);    // the identity they wore
         assertThat(row.get("actor_person_id")).isNotEqualTo(row.get("on_behalf_of_person_id"));
@@ -174,15 +185,16 @@ class ImpersonationReachTest extends AbstractIntegrationTest {
         // The other half of the invariant, and the half nothing else pins: the row the request created
         // records the TARGET. A well-meaning change that made created_by name the accountable operator
         // would leave every audit assertion above passing.
-        assertThat(jdbc.queryForObject("select created_by from org_role where org_id = ? and code = ?",
-                UUID.class, orgId, code))
+        assertThat(TenantContext.callAs(orgId, () -> jdbc.queryForObject(
+                "select created_by from org_role where org_id = ? and code = ?", UUID.class, orgId, code)))
                 .as("only audit_log inverts attribution")
                 .isEqualTo(member);
 
         // The same operator's own request, made outside the session, keeps the plain shape: one actor,
         // no second identity. A non-null on_behalf_of is therefore exactly "done inside someone else's
-        // account", with no further interpretation needed.
-        Map<String, Object> opened = auditRow("platform.impersonation_started", member.toString());
+        // account", with no further interpretation needed. Read on the PLATFORM axis, because the
+        // impersonation lifecycle rows carry no org and live in the platform copy of audit_log.
+        Map<String, Object> opened = platformAuditRow("platform.impersonation_started", member.toString());
         assertThat(opened.get("actor_person_id")).isEqualTo(operator);
         assertThat(opened.get("on_behalf_of_person_id")).isNull();
         assertThat(opened.get("impersonation_id")).isNull();
@@ -225,7 +237,10 @@ class ImpersonationReachTest extends AbstractIntegrationTest {
         mockMvc.perform(get(MEMBERS, orgId).with(support(operator)).header(HEADER, session))
                 .andExpect(status().isOk());
 
-        jdbc.update("update impersonation_session set expires_at = ? where id = ?",
+        // Qualified: impersonation_session is platform-tier (ADR 0010 §2 — an opaque session id is
+        // resolved at @Order(-2), before any tenant is known), and naming its home is what keeps this
+        // statement correct whatever axis the thread happens to carry.
+        jdbc.update("update platform.impersonation_session set expires_at = ? where id = ?",
                 Timestamp.from(Instant.now().minusSeconds(60)), session);
 
         mockMvc.perform(get(MEMBERS, orgId).with(support(operator)).header(HEADER, session))
@@ -349,7 +364,7 @@ class ImpersonationReachTest extends AbstractIntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
 
-        Map<String, Object> row = auditRow("webhooks.subscription_created",
+        Map<String, Object> row = orgAuditRow("webhooks.subscription_created",
                 JsonPath.read(created, "$.data.id"));
         assertThat(row.get("actor_person_id")).isEqualTo(operator);
         assertThat(row.get("on_behalf_of_person_id")).isEqualTo(member);
@@ -425,25 +440,53 @@ class ImpersonationReachTest extends AbstractIntegrationTest {
      */
     private void seedOrgMembership(UUID orgId, UUID personId, Permission... permissions) {
         UUID roleId = UUID.randomUUID();
-        jdbc.update("""
-                insert into org_role (id, org_id, code, name, system_role, version, created_at)
-                values (?, ?, 'MEMBER', 'Member', false, 0, now())
-                """, roleId, orgId);
-        for (Permission permission : permissions) {
-            // @Enumerated(STRING) stores the enum NAME; the wire code (org:read) is a different string.
-            jdbc.update("insert into role_permission (role_id, permission) values (?, ?)",
-                    roleId, permission.name());
-        }
-        jdbc.update("""
-                insert into membership (id, org_id, person_id, role_id, status, version, created_at)
-                values (?, ?, ?, ?, 'ACTIVE', 0, now())
-                """, UUID.randomUUID(), orgId, personId, roleId);
+        // All three tables are TENANT-tier (ADR 0010 §2), so they are written on the organization's own
+        // axis. The person these rows point at was minted on the PLATFORM axis by provisionedPerson() —
+        // that split is the whole shape of this module: who you are is the platform's, what you may do
+        // here is the tenant's.
+        TenantContext.runAs(orgId, () -> {
+            jdbc.update("""
+                    insert into org_role (id, org_id, code, name, system_role, version, created_at)
+                    values (?, ?, 'MEMBER', 'Member', false, 0, now())
+                    """, roleId, orgId);
+            for (Permission permission : permissions) {
+                // @Enumerated(STRING) stores the enum NAME; the wire code (org:read) is a different string.
+                jdbc.update("insert into role_permission (role_id, permission) values (?, ?)",
+                        roleId, permission.name());
+            }
+            jdbc.update("""
+                    insert into membership (id, org_id, person_id, role_id, status, version, created_at)
+                    values (?, ?, ?, ?, 'ACTIVE', 0, now())
+                    """, UUID.randomUUID(), orgId, personId, roleId);
+        });
     }
 
+    /** {@code org_role} is the tenant's, so the question is only answerable on the tenant's axis. */
     private boolean roleExists(UUID orgId, String code) {
-        Integer count = jdbc.queryForObject("select count(*) from org_role where org_id = ? and code = ?",
-                Integer.class, orgId, code);
+        Integer count = TenantContext.callAs(orgId, () -> jdbc.queryForObject(
+                "select count(*) from org_role where org_id = ? and code = ?", Integer.class, orgId, code));
         return count != null && count > 0;
+    }
+
+    /**
+     * An audit row the ORGANIZATION owns — a role created, a webhook subscribed. {@code audit_log} is a
+     * split table (ADR 0010 §2) routed on {@code org_id}: a non-null org means the row is that tenant's
+     * compliance record and {@code AuditLogImpl} wrote it into the tenant home, so reading it takes the
+     * tenant's axis. On the harness's PLATFORM pin this finds {@code platform.audit_log} — a real table,
+     * with none of these rows in it, so the failure is an empty result rather than a missing relation.
+     */
+    private Map<String, Object> orgAuditRow(String action, String target) {
+        return TenantContext.callAs(orgId, () -> auditRow(action, target));
+    }
+
+    /**
+     * A PLATFORM-level audit row — the impersonation lifecycle. Those are recorded with a null
+     * {@code orgId} on purpose ({@code ImpersonationService.record}: opening a session is a platform act
+     * and the requested org arrives unvalidated), so they live in the platform copy and are read on the
+     * harness's own axis. Two spellings, because there are genuinely two homes.
+     */
+    private Map<String, Object> platformAuditRow(String action, String target) {
+        return TenantContext.callAsPlatform(() -> auditRow(action, target));
     }
 
     private Map<String, Object> auditRow(String action, String target) {

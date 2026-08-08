@@ -15,6 +15,14 @@ import ug.co.smsone.shared.security.CurrentUserProvider;
  * (its permission bundle) and inviting/re-roling a member (the target role's bundle). Without the
  * latter, {@code member:role:assign} alone is equivalent to OWNER: assign yourself the OWNER role.
  * OWNER holds everything, so it is unconstrained.
+ *
+ * <p><b>No tenant pin here, deliberately</b> (ADR 0010 §3.2). This guard only ever runs for the org the
+ * caller is already inside — a request, a tool call or an exchange job, each of which pinned that org
+ * before it opened its transaction — and by the time it runs, several of those callers ARE inside that
+ * transaction ({@code RoleService.create} is). Re-declaring the axis there would throw, correctly:
+ * the connection is bound and its schema already chosen. {@link PermissionResolver}'s class note
+ * carries the full contract; {@link OrgAuthorizationImpl} is where the pin lives for the callers that
+ * arrive from outside the module.
  */
 @Component
 class PermissionEscalationGuard {

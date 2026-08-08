@@ -18,7 +18,7 @@ import ug.co.smsone.shared.persistence.BaseEntity;
  * = feature on; key present with a value = numeric cap; key absent = feature off / unlimited.
  */
 @Entity
-@Table(name = "plan")
+@Table(name = "plan", schema = "platform")
 class Plan extends BaseEntity {
 
     @Column(nullable = false, length = 30, unique = true)
@@ -31,7 +31,8 @@ class Plan extends BaseEntity {
     private int rank;
 
     @ElementCollection(fetch = FetchType.EAGER)
-    @CollectionTable(name = "plan_entitlement", joinColumns = @JoinColumn(name = "plan_id"))
+    @CollectionTable(name = "plan_entitlement", schema = "platform",
+            joinColumns = @JoinColumn(name = "plan_id"))
     @MapKeyColumn(name = "ent_key")
     @Column(name = "limit_value")
     private Map<String, Long> entitlements = new LinkedHashMap<>();

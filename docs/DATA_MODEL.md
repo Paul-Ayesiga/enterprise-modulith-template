@@ -1,10 +1,12 @@
 # Data Model
 
-Every table in the schema, its columns and its relationships. Generated from
-`src/main/resources/db/migration`, which is the source of truth.
+Every table in the database, its columns and its relationships. Generated from
+`src/main/resources/db/migration`, which is the source of truth — and since ADR 0010 Phase 2 that is
+two sequences, `platform/` and `tenant/`. Which one created a table is the same statement as its tier.
 
-**55 tables**, grouped by owning module, alphabetical within each group. (`flyway_schema_history` is
-created by Flyway itself, is not declared in any migration, and is not counted here.)
+**56 tables**, grouped by owning module, alphabetical within each group. Seven of them were created in
+both schemas and are counted once, here and in every total below. (`flyway_schema_history` is created
+by Flyway itself, is not declared in any migration, and is not counted here.)
 
 ## Column conventions
 
@@ -23,29 +25,66 @@ These columns mean the same thing everywhere they appear and are not re-explaine
   tier** boundary either (below). A foreign key is real only when both ends are in the same module
   *and* the same tier.
 
-## Tenancy tier
+## Tenancy tier — and the schema it now names
 
-Every table carries a **Tier**, from ADR 0010 §2: which schema owns it once the platform's global data
-and each tenant's own data live apart. It is an ownership decision, not a statement about today's
-`search_path` — nothing is routed yet, and everything is still in one schema.
+Every table carries a **Tier**, from ADR 0010 §2. Through Phase 1 it recorded a decision and nothing
+more: every tier still resolved to the single schema all the tables occupied. Phase 2 moved them, so a
+tier is now also the answer to *where is this table, and how is it addressed*.
 
-- **platform** — one copy for the whole installation. It is never per-tenant, and a tenant lifted onto
-  its own database gets a projection or a snapshot of it, never the rows themselves.
-- **tenant** — the tenant's own data. A tenant that cannot answer a question from these tables alone is
-  not extractable, which is the property the tier exists to protect.
-- **platform + tenant** — the same DDL in both schemas, one table with two homes. The tier line says
-  what decides which home a given row belongs to; for five of the seven it is `org_id` nullability.
+- **platform** — created in the `platform` schema; one copy for the whole installation. `platform` is
+  on no tenant's `search_path`, so it is only ever reached by being **named**: entity mappings declare
+  `schema = "platform"` and hand-written SQL writes `platform.<table>`. A tenant lifted onto its own
+  database gets a projection or a snapshot of these, never the rows themselves.
+- **tenant** — created in the tenant schema, which is `tenant_pool` while the tenant is pooled and
+  `t_<32hex>` once it is promoted. Addressed **unqualified**, always, so the connection's `search_path`
+  decides which tenant answers — that is the only form that survives promotion, since no schema name
+  compiled into the binary can name a silo. A tenant that cannot answer a question from these tables
+  alone is not extractable, which is the property the tier exists to protect.
+- **platform + tenant** — the same DDL ran in **both** schemas: one table, two homes, seven of them
+  (`audit_log`, `document`, `exchange_job`, `exchange_job_error`, `integration`, `integration_setting`,
+  `maintenance_window`). Which copy a row belongs to is decided by `org_id` — non-NULL is the tenant's
+  and travels with it, NULL is the platform's and stays. `exchange_job_error` and `integration_setting`
+  have no `org_id` and follow their parent. Both forms of address are legal for them and mean different
+  rows: bare reaches the tenant copy, `platform.<table>` the platform one. Each tier line below states
+  its own rule, because NULL does not mean the same thing in all seven.
+
+## The schemas
+
+- `platform` — the 29 platform-tier tables, the platform copy of the seven split ones, and Flyway's own
+  `flyway_schema_history`.
+- `tenant_pool` — the 20 tenant-tier tables and the tenant copy of the seven. Every tenant lives here
+  until it is promoted, so inside this schema `org_id` is the only thing separating them: **every
+  tenant query keeps its `org_id` predicate**, and in a silo it is redundant but free and remains the
+  detector that catches a misrouted write.
+- `ext` — `pg_trgm`, and nothing else. It sits on every tenant's path so `word_similarity` and the `%`
+  operator resolve, without putting a data-bearing schema there. It holds no table.
+- `no_tenant` — real, empty, and permanently so. A connection borrowed with no tenant declared is
+  pointed at it, so an unqualified tenant read fails with `relation "…" does not exist` rather than
+  quietly answering out of someone else's rows.
+- `public` — holds nothing and is on no path.
+
+Two migration sequences, one counter: `db/migration/platform/` runs at boot with `platform` as its
+default schema, and `db/migration/tenant/` holds the tenant tier's DDL, run against a tenant schema. A
+table's tier is which directory created it; the seven split tables were created by both, from the same
+DDL. V-numbers are one global sequence across the two directories and are deliberately non-contiguous
+within either — `db/migration/platform/V1__baseline.sql` carries the rule and the reason.
 
 Ownership decides the tier, not column presence: `ticket_message`, `org_group_member` and
 `role_permission` have no `org_id` of their own and are still the tenant's, reached through a parent
 that has one. A clause follows the tier only where ownership is not what the column list suggests —
 and on every `platform + tenant` table, where it states the deciding rule.
 
-**No foreign key may connect two tiers.** A tier boundary is a future schema boundary and then a future
-database boundary, and a foreign key cannot span either. `TenancyTierBoundaryTest` enforces both halves
-of this: every table in `information_schema` has a tier recorded here, and no FK in `pg_constraint`
-joins two tables of different tiers. A table added in a later migration fails the build until it has a
-tier — which is the whole point, because a boundary rots by accretion, not by decision.
+**No foreign key may connect two tiers.** A tier boundary is now a schema boundary and later a database
+boundary, and a foreign key cannot span either. `TenancyTierBoundaryTest` enforces both halves of this:
+every table in the database has a tier recorded here, and no FK joins two tables of different tiers. A
+table added in a later migration fails the build until it has a tier — which is the whole point, because
+a boundary rots by accretion, not by decision.
+
+**And no table may be addressed by the wrong tier.** `PlatformSchemaQualificationTest` reads the same
+`**Tier:**` lines and fails the build when an entity mapping or a SQL literal names a platform-tier
+table without `platform.`, or a tenant-tier one with any schema at all. Both mistakes fail silently at
+runtime — the first resolves to nothing, the second reads the pool for a tenant that has been promoted
+out of it — which is why they are a build gate and not a review note.
 
 ---
 
@@ -750,6 +789,19 @@ One person's place in one group.
 | person_id | uuid | no | The person in it; half the primary key |
 
 Relationships: `group_id` → `org_group.id` (**real FK**, cascade delete); `person_id` → `person.id` (soft ref, no FK). Primary key (`group_id`, `person_id`).
+
+### org_membership_index
+Which organizations a person holds a live seat in — the platform-side answer to a question no tenant schema can answer, because the answer spans tenants and the caller has not chosen one yet. It **routes; the tenant schema authorizes**, and the row is three routing keys precisely so there is nothing here to authorize with.
+
+**Tier:** platform — `membership` is the tenant's, so the person-first read (`GET /api/v1/me/organizations`, and the operator's person view) would otherwise be a query per tenant schema on a route a multi-org human hits at every sign-in.
+
+| Column | Type | Null | Description |
+|---|---|---|---|
+| person_id | uuid | no | The person; half the primary key |
+| org_id | uuid | no | An organization they hold a live seat in; half the primary key |
+| status | varchar(20) | no | Mirrors `membership.status` — ACTIVE or SUSPENDED |
+
+Relationships: `person_id` → `person.id` and `org_id` → `organization.id` (soft ref, no FK); `membership` is the row this mirrors and there is **no FK to it and cannot be** — the two are in different tiers, and after a database split not even in the same database. Primary key (`person_id`, `org_id`); indexed by `org_id` for the org-first sweep. No `version`, `created_at` or `deleted_at`: it carries no history, is written inside the same transaction as the `membership` row it mirrors, and is deleted rather than tombstoned when the seat goes. `OrgMembershipIndexReconciler` is what replaces the missing constraint, for the paths that write `membership` in raw SQL and cannot know this exists.
 
 ### org_role
 A named bundle of permissions inside one organization.

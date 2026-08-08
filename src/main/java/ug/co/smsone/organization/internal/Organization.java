@@ -20,8 +20,8 @@ import ug.co.smsone.shared.persistence.SoftDeletableEntity;
  * but the claim is resolved through the link table — an alias is never trusted as an identifier.
  */
 @Entity
-@Table(name = "organization")
-@SQLDelete(sql = "update organization set deleted_at = now(), version = version + 1 where id = ? and version = ?")
+@Table(name = "organization", schema = "platform")
+@SQLDelete(sql = "update platform.organization set deleted_at = now(), version = version + 1 where id = ? and version = ?")
 @SQLRestriction("deleted_at is null")
 class Organization extends SoftDeletableEntity {
 

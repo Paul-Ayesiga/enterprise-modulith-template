@@ -9,37 +9,101 @@ import ug.co.smsone.organization.OrganizationRegistered;
 
 /**
  * Writes the local tenant atomically: the {@code organization} row, its link to the provider
- * organization, its seeded system roles, and the first OWNER membership all commit together or not at
- * all. A separate bean so the {@code @Transactional} boundary is applied by the proxy (a self-invoked
- * {@code @Transactional} method would be a no-op). Called only after the provider-side steps succeed,
- * so a mid-flight failure leaves no partial local state.
+ * organization, its seeded system roles, the first OWNER membership and that membership's routing row
+ * in {@code platform.org_membership_index} all commit together or not at all. A separate bean so the
+ * {@code @Transactional} boundary is applied by the proxy (a self-invoked {@code @Transactional}
+ * method would be a no-op). Called only after the provider-side steps succeed, so a mid-flight failure
+ * leaves no partial local state.
+ *
+ * <h2>Which axis this write runs on (ADR 0010 §2, §3.2)</h2>
+ *
+ * <p>It touches both tiers, and it still takes ONE pinned span — the TENANT's. Everything platform-tier
+ * in here is reached BY NAME ({@code @Table(schema = "platform")} on {@code Organization} and
+ * {@code ExternalOrganization}, {@code platform.org_membership_index} spelled out in
+ * {@link OrgMembershipIndex}), so it resolves from any axis; {@code org_role}, {@code role_permission}
+ * and {@code membership} are bare and resolve only from the tenant's. A platform pin would therefore
+ * see three of the five tables and none of the ones this class exists to create. That single span is
+ * also what keeps the promise in the first paragraph: a second pin would mean a second connection,
+ * which would mean a second transaction, which would mean an organization that can exist without an
+ * owner.
+ *
+ * <p>The pin cannot be taken inside — the axis is chosen when the connection is borrowed, and
+ * {@code @Transactional} has already borrowed one — so it is the CALLER's, taken around this call and
+ * with {@link #tenantAxisOf} to say which tenant. {@link OrganizationService} is that caller.
  */
 @Component
 class OrgProjectionWriter {
+
+    /**
+     * The axis a tenant that does not exist yet is created on. It names no organization on purpose: a
+     * tenant that has never been promoted resolves to the shared {@code tenant_pool}, and a UUID that
+     * is in no {@code organization} row can never resolve to anything else — so this is the pooled
+     * schema's own axis, expressed with the only vocabulary {@code TenantContext} has (it pins an ORG;
+     * there is no "the pool" state). Same constant, same reasoning as {@code MappedSchemaValidator} and
+     * {@code WebhookSecretEncryptionMigrator}: one idiom for "the pool", not three.
+     *
+     * <p>It is the RIGHT answer here rather than a stand-in, and the reason is the lifecycle: a tenant
+     * is BORN pooled and is only ever promoted later (ADR 0010 Phase 5 is a placement flip on an
+     * existing tenant). The id Hibernate is about to assign therefore cannot name a silo, so the schema
+     * this write must land in is {@code tenant_pool} in every world — including after Phase 5, when
+     * {@link #tenantAxisOf} keeps returning the real id for a tenant that already exists and this
+     * constant only for one that does not.
+     */
+    private static final UUID NEW_POOLED_TENANT = new UUID(0L, 0L);
 
     private final OrganizationRepository organizations;
     private final OrgResolver orgResolver;
     private final RoleSeeder roleSeeder;
     private final RoleRepository roles;
     private final MembershipRepository memberships;
+    private final OrgMembershipIndex membershipIndex;
     private final ApplicationEventPublisher events;
     private final Clock clock;
 
     OrgProjectionWriter(OrganizationRepository organizations, OrgResolver orgResolver, RoleSeeder roleSeeder,
-            RoleRepository roles, MembershipRepository memberships, ApplicationEventPublisher events,
-            Clock clock) {
+            RoleRepository roles, MembershipRepository memberships, OrgMembershipIndex membershipIndex,
+            ApplicationEventPublisher events, Clock clock) {
         this.organizations = organizations;
         this.orgResolver = orgResolver;
         this.roleSeeder = roleSeeder;
         this.roles = roles;
         this.memberships = memberships;
+        this.membershipIndex = membershipIndex;
         this.events = events;
         this.clock = clock;
     }
 
     /**
+     * The tenant axis {@link #projectWithOwner} has to be pinned to, answered BEFORE the transaction
+     * opens because by then it is too late (ADR 0010 §3.2).
+     *
+     * <p>It asks the same two questions {@code projectWithOwner} asks first, in the same order and for
+     * the same reason — the provider LINK is the stronger identity, the alias is the fallback — but as
+     * a read, on platform-tier tables only, which is why it needs no axis of its own to answer with.
+     * Duplicating the lookup costs one indexed read on a path that already makes two network calls to
+     * Keycloak; what it buys is that the write below stays a single atomic transaction instead of being
+     * split into a "learn the id" commit and a "fill the tenant in" commit, with a crash between them
+     * leaving an organization nobody owns.
+     *
+     * <p>An org that is neither linked nor aliased is being created right now, and gets
+     * {@link #NEW_POOLED_TENANT} — see that constant for why a brand-new tenant's schema is never in
+     * doubt.
+     */
+    UUID tenantAxisOf(String externalOrgId, String alias) {
+        return orgResolver.organizationIdOfKeycloakOrg(externalOrgId)
+                .flatMap(organizations::findById)
+                .or(() -> organizations.findByAlias(alias))
+                .map(Organization::getId)
+                .orElse(NEW_POOLED_TENANT);
+    }
+
+    /**
      * Idempotent get-or-create of the whole local tenant. {@code externalOrgId} is the provider's
      * organization id — opaque here, and stored in exactly one place.
+     *
+     * <p><b>Call it inside {@code TenantContext.callAs(tenantAxisOf(externalOrgId, alias), …)}</b> — see
+     * the class note. The tenant-tier half of this write is addressed bare and has no other way to say
+     * which schema it means.
      *
      * <p>The tenant is looked up by its provider LINK first and by alias only as a fallback: the link is
      * the stronger identity (an alias is a slug two systems could disagree about), and on the re-adopt
@@ -56,9 +120,16 @@ class OrgProjectionWriter {
         UUID orgId = organization.getId();
         roleSeeder.seedSystemRoles(orgId); // idempotent; joins this transaction
         Role ownerRole = roles.findByOrgIdAndCode(orgId, Role.OWNER_CODE).orElseThrow();
-        memberships.findByOrgIdAndPersonId(orgId, ownerPersonId)
+        Membership owner = memberships.findByOrgIdAndPersonId(orgId, ownerPersonId)
                 .orElseGet(() -> memberships.save(
                         Membership.create(orgId, ownerPersonId, ownerRole.getId(), Role.OWNER_CODE)));
+        // The routing row joins the same atomic write (ADR 0010 §2.1). This is the sharpest place for
+        // it: the owner's is the FIRST membership of a brand-new tenant, so a routing row that landed
+        // outside this transaction and lost a crash race would leave the founder of an organization
+        // unable to see it in their own switcher — with a token that names no org, because they belong
+        // to more than one, and therefore no other way in. Unconditional, like saveMembership's, so a
+        // re-adopted tenant (a Keycloak org that survived a local reset) also gets its row.
+        membershipIndex.record(orgId, ownerPersonId, owner.getStatus());
         return organization;
     }
 

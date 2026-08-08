@@ -17,7 +17,7 @@ import org.hibernate.annotations.UuidGenerator;
  * rather than a bug.
  */
 @Entity
-@Table(name = "consent_record")
+@Table(name = "consent_record", schema = "platform")
 class ConsentRecord {
 
     /**

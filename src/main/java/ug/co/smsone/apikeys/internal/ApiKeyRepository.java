@@ -25,7 +25,7 @@ interface ApiKeyRepository extends JpaRepository<ApiKey, UUID>, JpaSpecification
      * older than the throttle window.
      */
     @Modifying
-    @Query(value = "update api_key set last_used_at = :now where id = :id "
+    @Query(value = "update platform.api_key set last_used_at = :now where id = :id "
             + "and (last_used_at is null or last_used_at < :throttleBefore)", nativeQuery = true)
     void touchThrottled(@Param("id") UUID id, @Param("now") java.time.Instant now,
             @Param("throttleBefore") java.time.Instant throttleBefore);

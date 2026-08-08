@@ -1,7 +1,6 @@
 package ug.co.smsone.organization.internal;
 
 import java.time.Instant;
-import java.util.Collection;
 import java.util.Map;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -21,6 +20,7 @@ import ug.co.smsone.organization.MemberRemoved;
 import ug.co.smsone.shared.audit.AuditLog;
 import ug.co.smsone.shared.error.ConflictException;
 import ug.co.smsone.shared.error.NotFoundException;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.shared.web.CursorPageRequest;
 
 /**
@@ -37,6 +37,22 @@ import ug.co.smsone.shared.web.CursorPageRequest;
  * <p>Both invite and role assignment pass the {@link PermissionEscalationGuard}: handing someone a
  * role IS granting its permissions, so the caller must hold every permission the role carries —
  * otherwise {@code member:role:assign} alone would be equivalent to OWNER (assign yourself OWNER).
+ *
+ * <p><b>Every write that creates or ends a seat also writes {@link OrgMembershipIndex}, inside the
+ * same transaction</b> (ADR 0010 §2.1). {@code membership} is tenant-tier and the index is the one
+ * platform-side copy of "which orgs is this person in" — the only question no tenant schema can
+ * answer. Role changes do not touch it: it holds routing keys and no role, on purpose, because the
+ * index routes and the tenant schema authorizes.
+ *
+ * <p><b>Which axis this class runs on: the caller's, and every caller already declares it.</b> All of
+ * {@code membership}, {@code org_role} and {@code role_permission} are tenant-tier and addressed bare,
+ * so nothing here works without one — and nothing here pins one either, because each entry point is
+ * reached for the org that is already on the thread: an org-scoped request pinned by
+ * {@code CurrentUserFilter}, an MCP tool call pinned by {@code McpToolDispatcher}, a bulk import pinned
+ * by {@code ExchangeWorker}, the operator roster pinned by {@code AdminOrganizationController}. The one
+ * exception is {@link #roleCodeIn}, which is asked about an org the caller is NOT in, and pins for
+ * itself — see its javadoc. That cross-tier write in {@link #saveMembership} needs one span and not
+ * two; {@link OrgMembershipIndex}'s {@code TABLE} note is where that is argued.
  */
 @Service
 class MemberService {
@@ -47,6 +63,7 @@ class MemberService {
             Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
 
     private final MembershipRepository memberships;
+    private final OrgMembershipIndex membershipIndex;
     private final RoleRepository roles;
     private final PersonProvisioning personProvisioning;
     private final ProviderOrgMembership providerOrgMembership;
@@ -58,13 +75,15 @@ class MemberService {
     private final ug.co.smsone.subscription.Entitlements entitlements;
     private final org.springframework.beans.factory.ObjectProvider<ug.co.smsone.access.OrgSecurityPolicies> securityPolicies;
 
-    MemberService(MembershipRepository memberships, RoleRepository roles, PersonProvisioning personProvisioning,
+    MemberService(MembershipRepository memberships, OrgMembershipIndex membershipIndex,
+            RoleRepository roles, PersonProvisioning personProvisioning,
             ProviderOrgMembership providerOrgMembership, OrgResolver orgResolver,
             ApplicationEventPublisher events,
             PermissionEscalationGuard escalationGuard, TransactionTemplate transactionTemplate,
             AuditLog auditLog, ug.co.smsone.subscription.Entitlements entitlements,
             org.springframework.beans.factory.ObjectProvider<ug.co.smsone.access.OrgSecurityPolicies> securityPolicies) {
         this.memberships = memberships;
+        this.membershipIndex = membershipIndex;
         this.roles = roles;
         this.personProvisioning = personProvisioning;
         this.providerOrgMembership = providerOrgMembership;
@@ -84,14 +103,27 @@ class MemberService {
     }
 
     /**
-     * {@link #roleCodes(UUID)} for rows that span organizations. Asking per org is the trap here:
-     * {@code GET /me/organizations} did exactly that inside its stream, so a person in twelve tenants
-     * paid twelve role queries to render twelve rows. The role ids are known up front, so one query
-     * answers them all.
+     * One person's role code in ONE organization, read from that organization's own schema.
+     *
+     * <p><b>This replaces a batch, and the regression is deliberate and recorded</b> (ADR 0010 §5.4).
+     * {@code GET /me/organizations} used to collect every role id across every org the caller belongs
+     * to and resolve them in a single query — a fix, with its own comment, for a version that paid a
+     * query per organization. Post-split those role rows live in different tenant schemas, so one
+     * query cannot see them: a batch that still worked would only be working because every tenant
+     * happens to share {@code tenant_pool} today, and it would return nothing for the first tenant
+     * promoted to a silo. The endpoint goes back to 1 + N, where <b>N is the caller's OWN org count</b>
+     * — one for 100% of the seeded population, a handful for the people this endpoint exists for — and
+     * not the tenant count, which is the fan-out the whole design forbids.
+     *
+     * <p>Not {@code @Transactional}: {@code callAs} must wrap the transaction, never sit inside one
+     * (ADR 0010 §3.2 — the schema is chosen at connection borrow), and a single read needs no wider
+     * boundary than the one Spring Data opens for it.
+     *
+     * @return the role's code, or {@code null} when the role has been soft-deleted under the
+     *     membership — the same answer the batched map gave by simply not containing the id
      */
-    @Transactional(readOnly = true)
-    Map<UUID, String> roleCodesByIds(Collection<UUID> roleIds) {
-        return roles.codeMapByIds(roleIds);
+    String roleCodeIn(UUID orgId, UUID personId) {
+        return TenantContext.callAs(orgId, () -> memberships.roleCodeOf(orgId, personId).orElse(null));
     }
 
     Membership invite(UUID orgId, String email, String givenName, String familyName, String roleCode) {
@@ -148,9 +180,24 @@ class MemberService {
      * row. The member would then appear with a null role code and zero permissions, created by a 201,
      * with nothing anywhere explaining why. The shared lock makes the re-read decisive rather than
      * merely narrower — see {@link RoleRepository#lockByOrgIdAndCode}.
+     *
+     * <p><b>The routing index is written here, in this same transaction, on BOTH paths</b> (ADR 0010
+     * §2.1). Same transaction because the alternative — write it after the commit — leaves a window in
+     * which a crash produces a member who cannot see their own organization, and nothing anywhere
+     * would notice until they said so. Both paths because the idempotent re-invite is the cheapest
+     * place to heal a membership older than the index itself: this method is the only one that knows a
+     * live membership exists right now, whoever created it.
+     *
+     * <p><b>The two rows are in different TIERS and still in one transaction, on the tenant's axis.</b>
+     * {@code membership} is bare and lands in this tenant's schema; the index row names
+     * {@code platform.org_membership_index} outright and lands in the platform's. Nothing here has to
+     * change axis, so nothing here has to give up atomicity — which is the whole reason the index is
+     * addressed by name (see {@link OrgMembershipIndex}). If it were reached bare instead, this method
+     * would need two pins, therefore two connections, therefore two commits, and a crash between them
+     * would produce exactly the invisible member the shared transaction rules out.
      */
     Membership saveMembership(UUID orgId, UUID personId, String roleCode) {
-        return memberships.findByOrgIdAndPersonId(orgId, personId)
+        Membership membership = memberships.findByOrgIdAndPersonId(orgId, personId)
                 .orElseGet(() -> {
                     Role role = lockRole(orgId, roleCode);
                     try {
@@ -164,6 +211,8 @@ class MemberService {
                                 .orElseThrow(() -> ex);
                     }
                 });
+        membershipIndex.record(orgId, personId, membership.getStatus());
+        return membership;
     }
 
     Window<Membership> list(UUID orgId, CursorPageRequest page) {
@@ -179,6 +228,9 @@ class MemberService {
         if (membership.getRoleId().equals(newRole.getId())) {
             return membership; // no-op, avoids a spurious event + cache flush
         }
+        // No OrgMembershipIndex write anywhere in this method, and that is the invariant rather than an
+        // omission: the index carries no role, because it routes and never authorizes. A re-role does
+        // not change which organizations this person belongs to, so there is nothing for it to learn.
         escalationGuard.requireCallerHolds(orgId, newRole.getPermissions());
         guardLastOwnerLoss(orgId, membership); // demoting the last owner would lock the org out
         String previousRole = roles.findById(membership.getRoleId()).map(Role::getCode).orElse(null);
@@ -199,6 +251,11 @@ class MemberService {
             guardLastOwnerLoss(orgId, membership);
             String previousRole = roles.findById(membership.getRoleId()).map(Role::getCode).orElse(null);
             memberships.delete(membership);
+            // Inside the same transaction as the delete, for the reason saveMembership gives: the seat
+            // and the row that advertises it must go together, or the removed member keeps this
+            // organization in their switcher until the nightly reconciler notices. Harmless — the
+            // authoritative check runs on arrival and denies — but it is a lie the UI would tell.
+            membershipIndex.forget(orgId, personId);
             // A delete does not trigger @DomainEvents, so publish explicitly — evicts the permission cache.
             events.publishEvent(new MemberRemoved(orgId, personId, Instant.now()));
             auditLog.record("organization.member_removed", orgId, personId.toString(),

@@ -10,8 +10,8 @@ import ug.co.smsone.settings.FeatureFlagChanged;
 import ug.co.smsone.shared.persistence.SoftDeletableEntity;
 
 @Entity
-@Table(name = "feature_flag")
-@SQLDelete(sql = "update feature_flag set deleted_at = now(), version = version + 1 where id = ? and version = ?")
+@Table(name = "feature_flag", schema = "platform")
+@SQLDelete(sql = "update platform.feature_flag set deleted_at = now(), version = version + 1 where id = ? and version = ?")
 @SQLRestriction("deleted_at is null")
 public class FeatureFlag extends SoftDeletableEntity {
 

@@ -101,6 +101,14 @@ class WebhookDeliveryQueue {
      * {@code FOR UPDATE} anywhere in a UNION ("FOR UPDATE is not allowed with UNION/INTERSECT/EXCEPT"),
      * parenthesised branches included. The arms therefore choose candidates and the outer select — a
      * plain single-table read — takes the locks.
+     *
+     * <p><b>Everything above about ordering and starvation is scoped to ONE schema, and today that
+     * happens to be every tenant.</b> Both tables are tenant-tier (ADR 0010 §2), so the caller pins a
+     * tenant axis and this statement sees whatever that axis resolves to — the shared pool while nobody
+     * is promoted. The paused-subscription starvation this shape fixes is therefore cross-tenant today
+     * and becomes per-tenant the moment a silo exists, which is when
+     * {@link WebhookDeliveryWorker#drainOnce} turns into a loop and this query's {@code limit} stops
+     * being the whole fleet's batch. Nothing here changes then; what changes is what "the queue" means.
      */
     List<ClaimedWebhookDelivery> claim(int batchSize, Duration staleLock) {
         return jdbc.query("""

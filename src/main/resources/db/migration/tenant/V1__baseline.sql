@@ -1,0 +1,35 @@
+-- V1: schema baseline, and the root of the TENANT sequence.
+-- Intentionally empty: tables land with the modules that own them (modules own their data).
+-- Flyway records this migration so every later change is versioned from a common root.
+--
+-- THIS DIRECTORY IS THE TENANT TIER (ADR 0010 §2, Phase 2). Everything here is created in whichever
+-- schema holds one tenant's rows: `tenant_pool` while pooled, `t_<32hex>` once a tenant is promoted
+-- to its own silo (Phase 5). Which one is a property of the RUN, not of the file — that is the whole
+-- design, and it has two consequences that are rules, not style:
+--
+--   1. NOTHING HERE IS SCHEMA-QUALIFIED. Every table is named bare so the `search_path` decides
+--      which tenant it means. A `platform.` prefix in this directory would bind a tenant's schema to
+--      the platform's and un-extract the tenant.
+--   2. NO FOREIGN KEY MAY LEAVE THIS DIRECTORY. `organization`, `plan` and `user_device` are
+--      platform-tier: they are not on this sequence's `search_path`, and after ADR 0010 Phase 7 they
+--      are not in this database at all. The four columns that used to carry such a key
+--      (`membership.org_id`, `org_role.org_id`, `org_group.org_id`, `org_subscription.plan_id`) and
+--      the one that carried a load-bearing cascade (`user_device_trust.device_id`) are declared as
+--      soft refs; V53's tenant half holds the reasoning for all five and each declaring file points
+--      at it. `TenancyTierBoundaryTest` fails the build if a new one appears.
+--
+-- THESE MIGRATIONS DO NOT RUN AT BOOT. ADR 0010 §4.2: the Helm chart gives a pod ~105 s before the
+-- kubelet kills it and Flyway runs before the servlet container serves, so a per-tenant fan-out at
+-- startup is a rollout that fails as the fleet grows. Phase 4 builds the runner — parallel, never
+-- aborting on one tenant's failure, per-schema history, recorded in `platform.tenant_placement`.
+-- Until it lands, `db/migration/bootstrap/V9999__tenant_pool.sql` replays this sequence into
+-- `tenant_pool` from the tail of the platform run; it is generated from these files and deleted in
+-- Phase 4.
+--
+-- THE COUNTER RULE IS UNCHANGED AND ONE LINE LONGER (AGENTS §4.5): one global counter across BOTH
+-- directories, and a new migration takes the next global number and lands in exactly ONE of them.
+-- Gaps in this directory's numbering are the platform's migrations and are correct; never renumber
+-- to close one. See the platform half of V1 for the rest of the rule and for what a V-number
+-- appearing in both directories means.
+--
+-- SPLIT (ADR 0010 §4.1): this is the tenant half of V1. Its sibling is db/migration/platform/V1__baseline.sql.

@@ -57,8 +57,12 @@ import ug.co.smsone.shared.web.RequestPaths;
  * database read — {@code external_identity}, {@code person}, {@code external_organization},
  * {@code organization} — and with the tenant still absent those reads borrow a connection pointed at the
  * empty {@code no_tenant} schema and fail. Pinning PLATFORM first states the truth of that window: no
- * tenant is known yet and everything read in it is platform-tier. It is not the "absent → fall back to
- * platform" the ADR forbids — that rule is about the routing DataSource's treatment of the absent state,
+ * tenant is known yet and every table read to LEARN one is platform-tier. The caller's org permissions
+ * are not — {@code membership}, {@code org_role} and {@code role_permission} are tenant-tier — so
+ * {@link CurrentUserProvider} takes a tenant axis of its own for that one read, inside the window this
+ * pin opens, and hands it back. Two spans, not one wider pin: widening this one would claim the person
+ * graph belongs to a tenant. None of this is the "absent → fall back to platform" the ADR forbids — that
+ * rule is about the routing DataSource's treatment of the absent state,
  * which stays {@code no_tenant} unconditionally. Note the window this filter cannot cover: the security
  * chain runs at {@code -100} and {@code ImpersonationFilter} at {@code -2}, so {@code api_key} and
  * {@code impersonation_session} are read before any pin exists here.

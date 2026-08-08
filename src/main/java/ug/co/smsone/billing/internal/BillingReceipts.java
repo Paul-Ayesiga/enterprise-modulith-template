@@ -16,6 +16,14 @@ import ug.co.smsone.organization.OrgContacts;
  * The receipt: a successful Kill Bill payment mails the org's owners a summary of the freshest
  * invoice (number, amount, remaining balance). Deliberately best-effort — a receipt must never make
  * a payment path fail, so every miss degrades to a log line.
+ *
+ * <p><strong>Called on the org's own axis, and it does not pin one for itself.</strong> Both reads
+ * here are tenant-tier: {@code billing_account} directly, and {@code OrgContacts.ownerEmails} through
+ * {@code org_role} + {@code membership} (ADR 0010 §2 — the person rows it ends at are platform-tier
+ * and named as such by their mapping, so one tenant axis reaches the whole chain). Its only caller is
+ * {@code BillingService.onPaymentOutcome}, which has already entered the tenant it found. A pin here
+ * would be a second, redundant spelling of that — and a wrong one the day this is called from inside
+ * a transaction.
  */
 @Component
 class BillingReceipts {

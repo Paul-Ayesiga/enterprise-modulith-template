@@ -25,7 +25,7 @@ class SearchIndexStore {
 
     void upsert(SearchDoc doc) {
         jdbc.update("""
-                insert into search_document (id, org_id, entity_type, entity_id, title, body, updated_at)
+                insert into platform.search_document (id, org_id, entity_type, entity_id, title, body, updated_at)
                 values (?, ?, ?, ?, ?, ?, ?)
                 on conflict (entity_type, entity_id) do update
                     set org_id = excluded.org_id, title = excluded.title,
@@ -35,7 +35,7 @@ class SearchIndexStore {
     }
 
     void remove(String entityType, String entityId) {
-        jdbc.update("delete from search_document where entity_type = ? and entity_id = ?",
+        jdbc.update("delete from platform.search_document where entity_type = ? and entity_id = ?",
                 entityType, entityId);
     }
 }

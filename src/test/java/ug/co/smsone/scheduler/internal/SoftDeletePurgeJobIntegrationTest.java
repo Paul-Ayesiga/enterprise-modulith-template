@@ -15,7 +15,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import ug.co.smsone.shared.persistence.MappedTables;
 import ug.co.smsone.shared.persistence.SoftDeletableEntity;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 import ug.co.smsone.testsupport.EdgeSeed;
 
@@ -26,6 +28,15 @@ import ug.co.smsone.testsupport.EdgeSeed;
  *
  * <p>Runs against the shipped default window (P30D) rather than an overridden one — a wrong default is
  * exactly the kind of bug that would otherwise ship.
+ *
+ * <p><b>Which probes carry a pin, and why the others do not.</b> The harness pins PLATFORM on the test
+ * thread, so a platform-tier seed ({@code organization}, {@code person}, {@code setting},
+ * {@code feature_flag}, {@code user_device}) is already on its own axis and reads bare. A tenant-tier
+ * one is not, and says so with {@code TenantContext.runAs(orgId, …)} — the same declaration the job
+ * itself now makes for its tenant pass (ADR 0010 §2). The pin is on the seed rather than on the whole
+ * test because getting it wrong is the bug under test: a probe row written into the wrong schema would
+ * be invisible to the pass that is supposed to purge it, and the assertion would pass for the wrong
+ * reason.
  */
 class SoftDeletePurgeJobIntegrationTest extends AbstractIntegrationTest {
 
@@ -33,11 +44,24 @@ class SoftDeletePurgeJobIntegrationTest extends AbstractIntegrationTest {
     private static final Instant AGED = Instant.now().minus(Duration.ofDays(60));
     private static final Instant FRESH = Instant.now();
 
+    /**
+     * The pooled tenant's axis, for the one check that is about a SCHEMA rather than about any org —
+     * {@link #everyPurgeStepDeclaresTheTierItsTableActuallyLivesIn}. Same constant and same reasoning
+     * as the job's own: a uuid in no {@code organization} row can only ever resolve to
+     * {@code tenant_pool}. The probes below pin {@link #orgId} instead, because they DO have an org to
+     * name and it is the one their rows belong to.
+     */
+    private static final UUID POOLED_TENANT = new UUID(0L, 0L);
+
     @Autowired
     private SoftDeletePurgeJob job;
 
     @Autowired
     private JdbcTemplate jdbc;
+
+    /** The same source the job resolves table names from, so the probes address exactly what it does. */
+    @Autowired
+    private MappedTables tables;
 
     @Autowired
     private EntityManagerFactory entityManagerFactory;
@@ -82,20 +106,35 @@ class SoftDeletePurgeJobIntegrationTest extends AbstractIntegrationTest {
      * matches nothing.
      */
     private void runPurge() {
-        jdbc.update("update shedlock set lock_until = timestamp '1970-01-01 00:00:00' where name = ?",
+        // platform.shedlock, named: it has no entity, so it is qualified in its own SQL (ADR 0010 §2).
+        jdbc.update("update platform.shedlock set lock_until = timestamp '1970-01-01 00:00:00' where name = ?",
                 "soft-delete-purge");
         job.purgeExpiredSoftDeletes();
     }
 
+    /**
+     * Unwound on the TENANT axis, and the qualification is what lets one pin cover both tiers here:
+     * {@link MappedTables} names a platform table {@code platform.<table>}, which resolves whatever the
+     * {@code search_path} is, while a tenant table stays bare and is placed by the pin. That is a
+     * property of the fixture, not of the job — the job takes two passes because Phase 7 splits the
+     * DATABASES, and a teardown does not have to survive that.
+     */
     @AfterEach
     void removeSurvivors() {
-        for (UUID deviceId : seededTrustDevices) {
-            jdbc.update("delete from user_device_trust where device_id = ?", deviceId);
+        if (orgId == null) {
+            // Seeding never got as far as the tenant, so nothing was written and there is no axis to
+            // pin. Returning keeps the real failure visible instead of burying it under this one.
+            return;
         }
-        for (int i = seeded.size() - 1; i >= 0; i--) {
-            Seeded row = seeded.get(i);
-            jdbc.update("delete from " + row.table() + " where id = ?", row.id());
-        }
+        TenantContext.runAs(orgId, () -> {
+            for (UUID deviceId : seededTrustDevices) {
+                jdbc.update("delete from user_device_trust where device_id = ?", deviceId);
+            }
+            for (int i = seeded.size() - 1; i >= 0; i--) {
+                Seeded row = seeded.get(i);
+                jdbc.update("delete from " + tables.qualified(row.table()) + " where id = ?", row.id());
+            }
+        });
     }
 
     @Test
@@ -135,7 +174,9 @@ class SoftDeletePurgeJobIntegrationTest extends AbstractIntegrationTest {
     void purgesAnAgedMembershipAndItsAgedRoleInOneRun() {
         UUID role = insertRole(AGED);
         UUID membership = insertMembership(role, AGED);
-        jdbc.update("insert into role_permission (role_id, permission) values (?, 'member:read')", role);
+        // TENANT-tier, and it must land in the same schema as the org_role it cascades from.
+        TenantContext.runAs(orgId, () -> jdbc.update(
+                "insert into role_permission (role_id, permission) values (?, 'member:read')", role));
 
         runPurge();
 
@@ -203,16 +244,82 @@ class SoftDeletePurgeJobIntegrationTest extends AbstractIntegrationTest {
     }
 
     /**
-     * {@link SoftDeletePurgeJob#CASCADES} is a second hand-written list, and it fails the same way the
-     * first one does — silently. A cascade declared against a table the loop never visits simply never
-     * runs, and the rows it was meant to reconcile stay forever with nothing to say so. Pinning its keys
-     * to {@link SoftDeletePurgeJob#PURGE_ORDER} is what makes "declared" and "executed" the same word.
+     * {@code SoftDeletePurgeJob.CASCADES} is a second hand-written list, and it fails the same way the
+     * first one does — silently: the rows it was meant to reconcile stay forever with nothing to say so.
+     * Its keys name the {@link SoftDeletePurgeJob#PURGE_ORDER} table whose rows the child hangs off, and
+     * pinning them to that list is what keeps a cascade from being declared against a table this job
+     * does not manage at all.
+     *
+     * <p>The key is still the PARENT even though the sweep now runs in the pass its CHILD's tier names
+     * — {@code user_device} is platform-tier and {@code user_device_trust} is the tenant's, which is why
+     * the FK between them was cut in the first place. The parent is what the reconciler is ABOUT; the
+     * tier is only where the statement has to run.
      */
     @Test
     void everyCascadeHangsOffATablePurgeOrderVisits() {
         assertThat(SoftDeletePurgeJob.cascadeParents())
                 .isNotEmpty()
-                .isSubsetOf(SoftDeletePurgeJob.PURGE_ORDER);
+                .isSubsetOf(SoftDeletePurgeJob.purgeOrderTables());
+    }
+
+    /**
+     * <b>The tier on each {@link SoftDeletePurgeJob.PurgeStep} decides which PASS visits the table, and
+     * a wrong one fails at 04:00 rather than here — unless something checks it.</b> This is that
+     * something, and it asks the DATABASE rather than a second hand-written list: for each step, does
+     * the name the job will actually interpolate resolve on the axis the job will actually run it on?
+     *
+     * <p>{@code to_regclass} is the same question the purge's own SQL asks, on a connection routed the
+     * same way, and it answers null instead of throwing — so a mis-tiered table shows up as a readable
+     * assertion rather than as a swallowed nightly ERROR.
+     *
+     * <p>Each tier gets its own two-sided check, and the negative halves are the ones that catch a
+     * mistake the positive half cannot:
+     * <ul>
+     *   <li>PLATFORM must be SCHEMA-QUALIFIED. Bare would resolve on the platform pass too — and then
+     *       silently mean the tenant's copy the day anyone moved the pass.</li>
+     *   <li>TENANT must be bare, resolve on the tenant axis, and NOT resolve on the platform one. A
+     *       tenant-tier name that resolves under {@code platform} is a table that is really split, and
+     *       its platform home would never be purged.</li>
+     *   <li>BOTH must be bare and resolve on BOTH. A split table declared TENANT leaks its platform
+     *       copy's tombstones forever — {@code document}'s platform copy is where PERSONAL documents
+     *       live.</li>
+     * </ul>
+     */
+    @Test
+    void everyPurgeStepDeclaresTheTierItsTableActuallyLivesIn() {
+        for (SoftDeletePurgeJob.PurgeStep step : SoftDeletePurgeJob.PURGE_ORDER) {
+            String name = tables.qualified(step.table());
+            boolean onPlatform = TenantContext.callAsPlatform(() -> resolves(name));
+            boolean onTenant = TenantContext.callAs(POOLED_TENANT, () -> resolves(name));
+            switch (step.tier()) {
+                case PLATFORM -> {
+                    assertThat(name).as("%s is PLATFORM, so the purge must NAME its schema", step.table())
+                            .isEqualTo("platform." + step.table());
+                    assertThat(onPlatform).as("%s must resolve on the platform pass", name).isTrue();
+                }
+                case TENANT -> {
+                    assertThat(name).as("%s is TENANT, so search_path must place it", step.table())
+                            .isEqualTo(step.table());
+                    assertThat(onTenant).as("%s must resolve on the tenant pass", name).isTrue();
+                    assertThat(onPlatform)
+                            .as("%s resolves under `platform` too — it is a SPLIT table and the platform"
+                                    + " copy would never be purged; declare it BOTH", name)
+                            .isFalse();
+                }
+                case BOTH -> {
+                    assertThat(name).as("%s is split, so both homes are reached by the same bare name",
+                            step.table()).isEqualTo(step.table());
+                    assertThat(onPlatform).as("%s must resolve on the platform pass", name).isTrue();
+                    assertThat(onTenant).as("%s must resolve on the tenant pass", name).isTrue();
+                }
+            }
+        }
+    }
+
+    /** Whether the current axis's {@code search_path} can reach {@code table}. */
+    private boolean resolves(String table) {
+        return Boolean.TRUE.equals(
+                jdbc.queryForObject("select to_regclass(?) is not null", Boolean.class, table));
     }
 
     /**
@@ -236,7 +343,7 @@ class SoftDeletePurgeJobIntegrationTest extends AbstractIntegrationTest {
                 .map(SoftDeletePurgeJobIntegrationTest::tableOf)
                 .toList();
 
-        assertThat(SoftDeletePurgeJob.PURGE_ORDER)
+        assertThat(SoftDeletePurgeJob.purgeOrderTables())
                 .containsExactlyInAnyOrderElementsOf(mapped)
                 .doesNotHaveDuplicates();
     }
@@ -267,10 +374,12 @@ class SoftDeletePurgeJobIntegrationTest extends AbstractIntegrationTest {
 
     private UUID insertRole(Instant deletedAt) {
         UUID id = UUID.randomUUID();
-        jdbc.update("""
+        // TENANT-tier (ADR 0010 §2), so the harness's platform pin cannot see it: on `platform, ext`
+        // this insert fails with a relation that plainly exists, in the other schema.
+        TenantContext.runAs(orgId, () -> jdbc.update("""
                 insert into org_role (id, org_id, code, name, system_role, version, created_at, deleted_at)
                 values (?, ?, ?, 'Purge probe', false, 0, now(), ?)
-                """, id, orgId, "PURGE_" + suffix(id), timestamp(deletedAt));
+                """, id, orgId, "PURGE_" + suffix(id), timestamp(deletedAt)));
         return track("org_role", id);
     }
 
@@ -281,10 +390,12 @@ class SoftDeletePurgeJobIntegrationTest extends AbstractIntegrationTest {
      */
     private UUID insertMembership(UUID roleId, Instant deletedAt) {
         UUID id = UUID.randomUUID();
-        jdbc.update("""
+        // TENANT-tier, like the org_role it points at — the FK between them is intra-tier, which is
+        // why V53 could keep it and cut the one to `organization`.
+        TenantContext.runAs(orgId, () -> jdbc.update("""
                 insert into membership (id, org_id, person_id, role_id, status, version, created_at, deleted_at)
                 values (?, ?, ?, ?, 'ACTIVE', 0, now(), ?)
-                """, id, orgId, UUID.randomUUID(), roleId, timestamp(deletedAt));
+                """, id, orgId, UUID.randomUUID(), roleId, timestamp(deletedAt)));
         return track("membership", id);
     }
 
@@ -319,22 +430,24 @@ class SoftDeletePurgeJobIntegrationTest extends AbstractIntegrationTest {
 
     private UUID insertSubscription(Instant deletedAt) {
         UUID id = UUID.randomUUID();
-        jdbc.update("""
+        // TENANT-tier: a subscription is the tenant's endpoint and travels with it.
+        TenantContext.runAs(orgId, () -> jdbc.update("""
                 insert into webhook_subscription
                     (id, org_id, url, secret, event_types, status, version, created_at, deleted_at)
                 values (?, ?, 'https://example.test/hook', 'secret', 'settings.changed', 'ACTIVE', 0, now(), ?)
-                """, id, orgId, timestamp(deletedAt));
+                """, id, orgId, timestamp(deletedAt)));
         return track("webhook_subscription", id);
     }
 
     private UUID insertDelivery(UUID subscriptionId) {
         UUID id = UUID.randomUUID();
-        jdbc.update("""
+        // TENANT-tier, and it has to land in the same schema as the subscription it cascades from.
+        TenantContext.runAs(orgId, () -> jdbc.update("""
                 insert into webhook_delivery
                     (id, subscription_id, org_id, event_type, payload, status, attempts, max_attempts,
                      next_attempt_at, created_at)
                 values (?, ?, ?, 'settings.changed', '{}', 'DELIVERED', 1, 5, now(), now())
-                """, id, subscriptionId, orgId);
+                """, id, subscriptionId, orgId));
         return track("webhook_delivery", id);
     }
 
@@ -372,16 +485,20 @@ class SoftDeletePurgeJobIntegrationTest extends AbstractIntegrationTest {
      * carries the same values the application would have written.
      */
     private void grantTrust(UUID deviceId) {
-        jdbc.update("""
+        // BOTH tiers in one statement, which is why the pin and the qualification are both here: the
+        // grant is the TENANT's row, the device it copies from is PLATFORM's. That is the shape the FK
+        // used to have and the reason V53 had to cut it (ADR 0010 §6) — and it is what the reconciler
+        // under test reconciles.
+        TenantContext.runAs(orgId, () -> jdbc.update("""
                 insert into user_device_trust (device_id, org_id, granted_at, person_id, fingerprint)
-                select ?, ?, now(), d.person_id, d.fingerprint from user_device d where d.id = ?
-                """, deviceId, orgId, deviceId);
+                select ?, ?, now(), d.person_id, d.fingerprint from platform.user_device d where d.id = ?
+                """, deviceId, orgId, deviceId));
         seededTrustDevices.add(deviceId);
     }
 
     private int trustGrants(UUID deviceId) {
-        Integer count = jdbc.queryForObject(
-                "select count(*) from user_device_trust where device_id = ?", Integer.class, deviceId);
+        Integer count = TenantContext.callAs(orgId, () -> jdbc.queryForObject(
+                "select count(*) from user_device_trust where device_id = ?", Integer.class, deviceId));
         return count == null ? 0 : count;
     }
 
@@ -390,15 +507,21 @@ class SoftDeletePurgeJobIntegrationTest extends AbstractIntegrationTest {
         return id;
     }
 
+    /**
+     * Reads across both tiers on ONE axis, which the assertions need and the job deliberately does not
+     * do: the name comes from {@link MappedTables}, so a platform table arrives already qualified and
+     * resolves whatever the pin is, while a tenant one stays bare and is placed by it.
+     */
     private boolean exists(String table, UUID id) {
-        Integer count = jdbc.queryForObject(
-                "select count(*) from " + table + " where id = ?", Integer.class, id);
+        Integer count = TenantContext.callAs(orgId, () -> jdbc.queryForObject(
+                "select count(*) from " + tables.qualified(table) + " where id = ?", Integer.class, id));
         return count != null && count > 0;
     }
 
+    /** {@code role_permission} is TENANT-tier and has no entity of its own — it cascades from org_role. */
     private int countPermissions(UUID roleId) {
-        Integer count = jdbc.queryForObject(
-                "select count(*) from role_permission where role_id = ?", Integer.class, roleId);
+        Integer count = TenantContext.callAs(orgId, () -> jdbc.queryForObject(
+                "select count(*) from role_permission where role_id = ?", Integer.class, roleId));
         return count == null ? 0 : count;
     }
 

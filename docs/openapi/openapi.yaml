@@ -6594,9 +6594,11 @@ paths:
       - Platform · Ops
       summary: Search the platform-wide audit trail
       description: "Newest first, narrowed by any combination of `org`, `action` and\
-        \ an ISO-8601 `from`/`to` instant window. For a row written inside an impersonation\
-        \ session `actorPersonId` is the accountable operator and `onBehalfOfPersonId`\
-        \ is the identity they wore."
+        \ an ISO-8601 `from`/`to` instant window. Without `org` this is the platform-level\
+        \ trail (events that belong to no tenant); with `org` it is that organization's\
+        \ own trail. For a row written inside an impersonation session `actorPersonId`\
+        \ is the accountable operator and `onBehalfOfPersonId` is the identity they\
+        \ wore."
       operationId: platform
       parameters:
       - name: org
@@ -7255,16 +7257,19 @@ paths:
     get:
       tags:
       - Platform · Compliance
-      summary: Export one organization's records (offboarding bundle)
-      description: "A JSON bundle of the organization's rows across every org-owned\
-        \ table — membership, roles, subscription, integrations, webhooks, payments,\
-        \ usage, tickets, audit. LIVE rows only (soft-deleted rows are excluded; the\
-        \ organization row itself is the exception, since offboarding runs after the\
-        \ tenant is deleted), each table in a fixed newest-first order so the same\
-        \ data always produces the same bundle. Capped per table: `rowCapPerTable`\
-        \ states the cap, and a bundle that hit it says so — `complete:false` plus\
-        \ `truncatedTables`. Secret-bearing columns never leave the database. Audited\
-        \ as compliance.org_exported."
+      summary: Export one organization's records (redacted disclosure bundle)
+      description: "A REDACTED JSON bundle of the organization's rows across the disclosed\
+        \ tables — membership, roles, subscription, integrations, webhooks, payments,\
+        \ usage, tickets, audit. It is a disclosure artifact, NOT a tenant extraction:\
+        \ secret-bearing columns never leave the database, per-table row caps apply,\
+        \ and the tenant's own tables that carry no disclosure value are not here.\
+        \ Lifting an organization to another deployment is a separate operator path\
+        \ with different contents. LIVE rows only (soft-deleted rows are excluded;\
+        \ the organization row itself is the exception, since offboarding runs after\
+        \ the tenant is deleted), each table in a fixed newest-first order so the\
+        \ same data always produces the same bundle. `rowCapPerTable` states the cap,\
+        \ and a bundle that hit it says so — `complete:false` plus `truncatedTables`.\
+        \ Audited as compliance.org_exported."
       operationId: exportOrg
       parameters:
       - name: orgId

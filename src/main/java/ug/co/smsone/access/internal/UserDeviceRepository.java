@@ -37,7 +37,7 @@ interface UserDeviceRepository extends JpaRepository<UserDevice, UUID>, JpaSpeci
      * <p>{@code @SQLRestriction} does not reach native queries, which is why it has to be written here.
      */
     @Modifying
-    @Query(value = "update user_device set last_seen_at = :now where person_id = :personId "
+    @Query(value = "update platform.user_device set last_seen_at = :now where person_id = :personId "
             + "and fingerprint = :fingerprint and deleted_at is null "
             + "and (last_seen_at is null or last_seen_at < :throttleBefore)",
             nativeQuery = true)

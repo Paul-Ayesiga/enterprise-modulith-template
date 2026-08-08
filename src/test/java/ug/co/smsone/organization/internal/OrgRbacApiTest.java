@@ -35,6 +35,7 @@ import ug.co.smsone.identity.ProvisionRequest;
 import ug.co.smsone.identity.ProvisionedPerson;
 import ug.co.smsone.identity.ProviderOrgMembership;
 import ug.co.smsone.organization.Permission;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 import ug.co.smsone.testsupport.EdgeSeed;
 
@@ -46,6 +47,20 @@ import ug.co.smsone.testsupport.EdgeSeed;
  * <p>{@code OWNER} is the only seeded role; MANAGER and VIEWER are built here the way an owner builds
  * them through the API. Nothing in the request path reads a role code, so the codes are arbitrary —
  * {@link #aRoleNamedAdminIsJustAnotherCustomRole()} pins that.
+ *
+ * <h2>Where the tenant axis comes from, and why only half this class declares one (ADR 0010 §3.4)</h2>
+ *
+ * <p>Every {@code mockMvc.perform(...)} below needs nothing: {@code CurrentUserFilter} resolves the
+ * token, pins the organization it names, and restores what the test thread had on the way out — which
+ * is the production behaviour this class exists to exercise, so borrowing an axis for it would be
+ * testing the harness instead.
+ *
+ * <p>What DOES need one is everything the test does around those requests. The harness pins PLATFORM,
+ * and the seed and the assertions reach {@code org_role}, {@code role_permission} and
+ * {@code membership} — tenant-tier, addressed bare, so on that axis they resolve to nothing rather than
+ * to the wrong rows. Those sites say {@link #callInOrg} and mean it. The rows read to BUILD a token —
+ * {@code external_organization}, {@code external_identity} — are platform-tier and resolve on the
+ * harness pin unchanged, which is the same division {@code CurrentUserFilter} itself makes.
  */
 @AutoConfigureMockMvc
 class OrgRbacApiTest extends AbstractIntegrationTest {
@@ -89,10 +104,22 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
         // organization.id. The register()/save() pair left the link out, which meant no token could
         // resolve this tenant and the invite path's requireProviderOrgId had nothing to hand Keycloak.
         orgId = EdgeSeed.organization(jdbc, "kc-org-" + UUID.randomUUID(), "acme-" + UUID.randomUUID());
-        roleSeeder.seedSystemRoles(orgId); // seeds OWNER, and only OWNER
-        owner = attachToSeededOwner(newPerson());
+        // org_role and role_permission are the tenant's; EdgeSeed.organization wrote platform rows and
+        // needed no axis of its own.
+        TenantContext.runAs(orgId, () -> roleSeeder.seedSystemRoles(orgId)); // seeds OWNER, and only OWNER
+        owner = attachToSeededOwner(newPerson()); // the fixtures pin for themselves — see OrgRbacFixtures
         manager = attachToNewRole(newPerson(), "MANAGER", MANAGER_PERMISSIONS);
         viewer = attachToNewRole(newPerson(), "VIEWER", VIEWER_PERMISSIONS);
+    }
+
+    /**
+     * Reads THIS organization's own tables — {@code org_role}, {@code membership},
+     * {@code role_permission} — from the test thread, which the harness pinned to PLATFORM. They are
+     * tenant-tier and unqualified (ADR 0010 §2), so without this they fail with
+     * {@code relation "org_role" does not exist} rather than returning the wrong rows.
+     */
+    private <T> T callInOrg(java.util.function.Supplier<T> work) {
+        return TenantContext.callAs(orgId, work);
     }
 
     /**
@@ -172,7 +199,7 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
         // Attaching at the provider now goes through identity, which owns the subject the call needs.
         then(providerOrgMembership).should().attach(eq(newPersonId), any());
         org.junit.jupiter.api.Assertions.assertTrue(
-                memberships.findByOrgIdAndPersonId(orgId, newPersonId).isPresent());
+                callInOrg(() -> memberships.findByOrgIdAndPersonId(orgId, newPersonId)).isPresent());
     }
 
     @Test
@@ -323,7 +350,8 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
 
     @Test
     void systemRoleUpdateIsForbidden() throws Exception {
-        UUID ownerRoleId = roles.findByOrgIdAndCode(orgId, Role.OWNER_CODE).orElseThrow().getId();
+        UUID ownerRoleId = callInOrg(() ->
+                roles.findByOrgIdAndCode(orgId, Role.OWNER_CODE).orElseThrow().getId());
         mockMvc.perform(put("/api/v1/orgs/{orgId}/roles/{roleId}", orgId, ownerRoleId)
                         .with(token(owner, orgId))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -380,8 +408,8 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.errors[0].code").value("FORBIDDEN"));
 
         org.junit.jupiter.api.Assertions.assertEquals(
-                roles.findByOrgIdAndCode(orgId, "MANAGER").orElseThrow().getId(),
-                memberships.findByOrgIdAndPersonId(orgId, manager).orElseThrow().getRoleId());
+                callInOrg(() -> roles.findByOrgIdAndCode(orgId, "MANAGER").orElseThrow().getId()),
+                callInOrg(() -> memberships.findByOrgIdAndPersonId(orgId, manager).orElseThrow().getRoleId()));
     }
 
     @Test
@@ -484,19 +512,21 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
     @Test
     void aDeletedRoleCodeCanBeMintedAgain() throws Exception {
         createAuditorRole();
-        UUID firstId = roles.findByOrgIdAndCode(orgId, "AUDITOR").orElseThrow().getId();
+        UUID firstId = callInOrg(() -> roles.findByOrgIdAndCode(orgId, "AUDITOR").orElseThrow().getId());
 
         mockMvc.perform(delete("/api/v1/orgs/{orgId}/roles/{roleId}", orgId, firstId).with(token(owner, orgId)))
                 .andExpect(status().isNoContent());
 
         createAuditorRole();
 
-        UUID secondId = roles.findByOrgIdAndCode(orgId, "AUDITOR").orElseThrow().getId();
+        UUID secondId = callInOrg(() -> roles.findByOrgIdAndCode(orgId, "AUDITOR").orElseThrow().getId());
         assertThat(secondId).isNotEqualTo(firstId);
-        assertThat(jdbc.queryForObject("select count(*) from org_role where org_id = ? and code = 'AUDITOR'",
-                Integer.class, orgId)).isEqualTo(2); // one dead, one live
-        assertThat(jdbc.queryForObject("select deleted_at is not null from org_role where id = ?",
-                Boolean.class, firstId)).isTrue();
+        assertThat(callInOrg(() -> jdbc.queryForObject(
+                "select count(*) from org_role where org_id = ? and code = 'AUDITOR'",
+                Integer.class, orgId))).isEqualTo(2); // one dead, one live
+        assertThat(callInOrg(() -> jdbc.queryForObject(
+                "select deleted_at is not null from org_role where id = ?",
+                Boolean.class, firstId))).isTrue();
     }
 
     /**
@@ -507,7 +537,7 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
     @Test
     void aRemovedMemberLeavesTheListingAndReleasesTheirRole() throws Exception {
         createAuditorRole();
-        UUID auditorId = roles.findByOrgIdAndCode(orgId, "AUDITOR").orElseThrow().getId();
+        UUID auditorId = callInOrg(() -> roles.findByOrgIdAndCode(orgId, "AUDITOR").orElseThrow().getId());
         mockMvc.perform(put("/api/v1/orgs/{orgId}/members/{personId}/role", orgId, viewer)
                         .with(token(owner, orgId))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -525,8 +555,9 @@ class OrgRbacApiTest extends AbstractIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[?(@.id=='" + owner + "')]").exists())   // listing reaches the org
                 .andExpect(jsonPath("$.data[?(@.id=='" + viewer + "')]").doesNotExist());
-        assertThat(jdbc.queryForObject("select count(*) from membership where org_id = ? and person_id = ?",
-                Integer.class, orgId, viewer)).isEqualTo(1); // hidden, not gone
+        assertThat(callInOrg(() -> jdbc.queryForObject(
+                "select count(*) from membership where org_id = ? and person_id = ?",
+                Integer.class, orgId, viewer))).isEqualTo(1); // hidden, not gone
 
         mockMvc.perform(delete("/api/v1/orgs/{orgId}/roles/{roleId}", orgId, auditorId).with(token(owner, orgId)))
                 .andExpect(status().isNoContent());

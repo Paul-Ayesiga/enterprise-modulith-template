@@ -28,7 +28,7 @@ interface PersonRepository extends JpaRepository<Person, UUID>, JpaSpecification
      * deleted person and a person who never existed are the same absence, and they must not lead to the
      * same access decision — one is a hard stop, the other is an invitation to onboard.
      */
-    @Query(value = "select exists(select 1 from person where id = :id and deleted_at is not null)",
+    @Query(value = "select exists(select 1 from platform.person where id = :id and deleted_at is not null)",
             nativeQuery = true)
     boolean existsDeletedById(@Param("id") UUID id);
 

@@ -30,6 +30,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import ug.co.smsone.files.FileStorageProvider;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 import ug.co.smsone.testsupport.EdgeSeed;
 
@@ -37,6 +38,16 @@ import ug.co.smsone.testsupport.EdgeSeed;
  * The catalog's contract: org scoping via the new document permissions, the personal surface's
  * blast-radius tiering, delete's bytes-now/row-soft asymmetry, and the search tie-in. Storage is
  * mocked at the PORT (the system edge) — the files module's own IT pins the real S3 semantics.
+ *
+ * <p><strong>{@code document} is one of the seven split tables, and this class exercises both of its
+ * homes.</strong> A null {@code org_id} is a PERSONAL document and lives in {@code platform.document};
+ * an org's document lives in that tenant's copy (ADR 0010 §2). Neither controller needs a pin — the
+ * personal surface names no organization so the request stays on the platform axis, and
+ * {@code /api/v1/orgs/{orgId}/documents} is pinned at the edge — but a {@code JdbcTemplate} assertion
+ * on the test thread does: unqualified, it resolves against the harness's PLATFORM pin, where an org
+ * document is not merely missing, it is in a different table of the same name. So the direct reads
+ * about org rows below declare the org's axis, and that is also what makes them assertions about the
+ * copy the request actually wrote.
  */
 @AutoConfigureMockMvc
 class DocumentApiTest extends AbstractIntegrationTest {
@@ -89,12 +100,16 @@ class DocumentApiTest extends AbstractIntegrationTest {
         then(storage).should().delete(key.capture());
         assertThat(key.getValue()).startsWith("doc/o/" + orgId + "/");
         assertThat(searchRows(id)).as("deleted documents are un-indexed").isZero();
-        // Bytes-now, row-soft: invisible to JPA, present for the trail.
-        assertThat(jdbc.queryForObject(
+        // Bytes-now, row-soft: invisible to JPA, present for the trail. On the ORG's axis — this
+        // document has a non-null org_id, so the soft-deleted row is in the tenant copy of `document`,
+        // and the same unqualified name on the harness's platform pin would read the personal one and
+        // report zero.
+        assertThat(TenantContext.callAs(orgId, () -> jdbc.queryForObject(
                 "select count(*) from document where id = ?::uuid and deleted_at is not null",
-                Integer.class, id)).isEqualTo(1);
-        List<String> actions = jdbc.queryForList(
-                "select action from audit_log where target = ? order by created_at", String.class, id);
+                Integer.class, id))).isEqualTo(1);
+        // Same rule, same reason: audit_log is split too, and both of these rows carry this org.
+        List<String> actions = TenantContext.callAs(orgId, () -> jdbc.queryForList(
+                "select action from audit_log where target = ? order by created_at", String.class, id));
         assertThat(actions).containsExactly("document.registered", "document.deleted");
     }
 
@@ -182,6 +197,11 @@ class DocumentApiTest extends AbstractIntegrationTest {
         return jwt().jwt(token -> token.subject(subject).claim("iss", EdgeSeed.ISSUER));
     }
 
+    /**
+     * Unqualified and unpinned: {@code search_document} is platform-tier (the index is derived data,
+     * rebuilt rather than extracted — ADR 0010 §2), so it resolves on the harness's own platform pin
+     * whichever home the document itself is in.
+     */
     private int searchRows(String documentId) {
         Integer n = jdbc.queryForObject(
                 "select count(*) from search_document where entity_type = 'document' and entity_id = ?",
@@ -205,20 +225,29 @@ class DocumentApiTest extends AbstractIntegrationTest {
         return subject;
     }
 
-    /** That person, plus an ACTIVE membership in {@code orgId} holding the document permissions. */
+    /**
+     * That person, plus an ACTIVE membership in {@code orgId} holding the document permissions.
+     *
+     * <p>Two spans: {@code person} and {@code external_identity} are platform-tier and take the
+     * harness's pin, {@code org_role} / {@code role_permission} / {@code membership} are the tenant's
+     * (ADR 0010 §2) and take the org's.
+     */
     private String seedMember(UUID orgId, String label, boolean manager) {
         String subject = label + "-" + UUID.randomUUID();
         UUID personId = EdgeSeed.person(jdbc, subject);
         UUID roleId = UUID.randomUUID();
-        jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
-                + "values (?, ?, ?, 'DocRole', false, 0, now())", roleId, orgId,
-                "DOCS_" + label.toUpperCase().replace('-', '_'));
-        jdbc.update("insert into role_permission (role_id, permission) values (?, 'DOCUMENT_READ')", roleId);
-        if (manager) {
-            jdbc.update("insert into role_permission (role_id, permission) values (?, 'DOCUMENT_MANAGE')", roleId);
-        }
-        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+        TenantContext.runAs(orgId, () -> {
+            jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
+                    + "values (?, ?, ?, 'DocRole', false, 0, now())", roleId, orgId,
+                    "DOCS_" + label.toUpperCase().replace('-', '_'));
+            jdbc.update("insert into role_permission (role_id, permission) values (?, 'DOCUMENT_READ')", roleId);
+            if (manager) {
+                jdbc.update("insert into role_permission (role_id, permission) values (?, 'DOCUMENT_MANAGE')",
+                        roleId);
+            }
+            jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
+                    + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+        });
         return subject;
     }
 }

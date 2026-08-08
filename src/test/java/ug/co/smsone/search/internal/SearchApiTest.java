@@ -169,18 +169,26 @@ class SearchApiTest extends AbstractIntegrationTest {
      * the SQL cuts on. Org and person come from {@link EdgeSeed} because each needs its provider link as
      * much as its row; the role and membership go straight into the tables, since search's own concern is
      * the projection rather than how a role gets built.
+     *
+     * <p><strong>Two pinned spans, because the seed spans both tiers</strong> (ADR 0010 §2).
+     * {@code organization}, {@code external_organization}, {@code person} and {@code external_identity}
+     * are platform-tier and take the harness's own pin; {@code org_role}, {@code role_permission} and
+     * {@code membership} are the tenant's, so they need that org's axis. One wider pin cannot cover
+     * both — a platform axis does not reach a tenant table and vice versa.
      */
     private UUID seedOrgRead(String subject) {
         UUID orgId = EdgeSeed.organization(jdbc, "kc-org-" + UUID.randomUUID(), "acme-" + UUID.randomUUID());
         UUID personId = EdgeSeed.person(jdbc, subject);
         UUID roleId = UUID.randomUUID();
-        jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
-                + "values (?, ?, 'OWNER', 'Owner', true, 0, now())", roleId, orgId);
-        // The column stores the enum NAME (SEARCH_QUERY), not the wire code (search:query) — see DATA_MODEL §4.4.3.
-        jdbc.update("insert into role_permission (role_id, permission) values (?, 'SEARCH_QUERY')", roleId);
-        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())",
-                UUID.randomUUID(), orgId, personId, roleId);
+        TenantContext.runAs(orgId, () -> {
+            jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
+                    + "values (?, ?, 'OWNER', 'Owner', true, 0, now())", roleId, orgId);
+            // The column stores the enum NAME (SEARCH_QUERY), not the wire code (search:query) — see DATA_MODEL §4.4.3.
+            jdbc.update("insert into role_permission (role_id, permission) values (?, 'SEARCH_QUERY')", roleId);
+            jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
+                    + "values (?, ?, ?, ?, 'ACTIVE', 0, now())",
+                    UUID.randomUUID(), orgId, personId, roleId);
+        });
         return orgId;
     }
 }

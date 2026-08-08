@@ -6,12 +6,14 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.shared.persistence.MappedTables;
 import ug.co.smsone.shared.persistence.SoftDeleteProperties;
 import ug.co.smsone.shared.tenancy.TenantContext;
 
@@ -29,7 +31,11 @@ import ug.co.smsone.shared.tenancy.TenantContext;
  * the offending row does not go away on its own. Erasure would quietly stop platform-wide while the
  * only symptom is one stack trace at 04:00. Loud AND complete, not loud instead of complete.
  *
- * <p>Two other things run in the same pass and are not retention at all: {@link #sweepSearchResidue}
+ * <p><b>It runs in two passes, one per tenancy tier</b> — see {@link #purgeExpiredSoftDeletes} for why
+ * the tier boundary is an axis boundary and not something a wider pin can paper over, and {@link Tier}
+ * for why every entry in {@link #PURGE_ORDER} names its own.
+ *
+ * <p>Two other things run in the same run and are not retention at all: {@link #sweepSearchResidue}
  * un-indexes rows whose source is gone, and {@link #CASCADES} deletes children a cut foreign key no
  * longer removes. Both are reconcilers — they compare two tables and fix the disagreement — and both
  * exist because a projection or a soft ref with no delete path leaves residue forever.
@@ -38,6 +44,67 @@ import ug.co.smsone.shared.tenancy.TenantContext;
 class SoftDeletePurgeJob {
 
     private static final Logger log = LoggerFactory.getLogger(SoftDeletePurgeJob.class);
+
+    /**
+     * The org whose axis the TENANT pass borrows. It names no organization deliberately: an org that
+     * has never been promoted resolves to the shared {@code tenant_pool}, and a UUID in no
+     * {@code organization} row can never resolve to anything else — so this IS the pooled schema's
+     * axis, spelled with the only vocabulary {@code TenantContext} has. Same constant, same reasoning
+     * as {@code MappedSchemaValidator} and {@code WebhookSecretEncryptionMigrator}: one idiom for "the
+     * pool", not three.
+     *
+     * <p>ADR 0010 Phase 5 turns the single tenant pass into a LOOP over
+     * {@code platform.tenant_placement} — one {@code runAs(orgId)} per silo plus this one for whatever
+     * is still pooled — because "every tenant" stops being one schema the day the first org is
+     * promoted. The two-pass structure below is what makes that a change to {@link #purgeEverything}
+     * and to nothing else.
+     */
+    private static final UUID POOLED_TENANT = new UUID(0L, 0L);
+
+    /**
+     * The tenancy tier of a purge step's table, and therefore WHICH PASS visits it (ADR 0010 §2).
+     *
+     * <p>Written down per entry rather than derived at the call site, because the failure it prevents
+     * is silent and nightly: a table visited on the wrong axis resolves to nothing, raises
+     * {@code relation "…" does not exist} at 04:00, and takes its retention promise with it.
+     * {@code SoftDeletePurgeJobIntegrationTest.everyPurgeStepDeclaresTheTierItsTableActuallyLivesIn}
+     * checks every declaration below against the database itself, so a table added to the wrong pass
+     * fails in the build rather than in the night.
+     */
+    enum Tier {
+
+        /**
+         * One copy, in {@code platform}. Addressed {@code platform.<table>} — so it would in fact
+         * resolve from either axis — but it is purged on the platform pass, because that is where it
+         * belongs and because the day the tiers become separate DATABASES (Phase 7) the pass is the
+         * only thing that will still be true.
+         */
+        PLATFORM,
+
+        /**
+         * The tenant's own table, addressed BARE so {@code search_path} decides which schema that is.
+         * Purged on the tenant pass; on the platform pass the same name resolves to nothing.
+         */
+        TENANT,
+
+        /**
+         * One of §2's seven SPLIT tables: a copy in each schema, both soft-deletable, both owed a
+         * purge. Visited by BOTH passes under the SAME bare name — the {@code search_path} is the only
+         * thing that makes the two visits different tables. Miss one pass and the other home's
+         * tombstones live forever: {@code document}'s platform copy holds PERSONAL documents, and
+         * "erased" would quietly stop meaning erased for every human on the platform.
+         */
+        BOTH;
+
+        /** Whether the pass running on {@code passTier} visits a table of this tier. */
+        boolean visitedOn(Tier passTier) {
+            return this == passTier || this == BOTH;
+        }
+    }
+
+    /** One table in {@link #PURGE_ORDER}, with the tier that says which pass reaches it. */
+    record PurgeStep(String table, Tier tier) {
+    }
 
     /**
      * Purge order — CHILDREN BEFORE PARENTS, and the order below is load-bearing, not cosmetic.
@@ -79,38 +146,57 @@ class SoftDeletePurgeJob {
      * parents is what this order states and an orphan is worth avoiding even when nothing enforces it.
      * The real answer arrives with the tenant schema, which is dropped whole (ADR 0010 §5).
      *
+     * <p><b>The order is preserved WITHIN a pass and means nothing across passes, which is exactly
+     * what ADR 0010 §2 guarantees</b> — no foreign key may connect two tiers, so no cross-tier
+     * ordering constraint can exist for one to violate. {@code membership} still precedes
+     * {@code org_role} (both tenant) and {@code external_organization} still precedes
+     * {@code organization} (both platform); nothing in this list depends on a tenant table being
+     * purged before a platform one, because nothing in the database could enforce it if it did.
+     *
      * <p>Package-private so the integration test can check this list against every
      * {@code SoftDeletableEntity} in the metamodel: a table added to the mapping but not to this list
-     * would leak deleted rows forever, and silently.
+     * would leak deleted rows forever, and silently. Each entry carries its {@link Tier} for the same
+     * class of reason — see {@link Tier}.
      */
-    static final List<String> PURGE_ORDER = List.of(
-            "org_group",
-            "membership",
-            "org_role",
-            "external_organization",
-            "organization",
-            "external_identity",
-            "person_contact",
-            "person",
-            "webhook_subscription",
-            "setting",
-            "feature_flag",
-            "translation",
-            "document",
-            "exchange_schedule",
-            "org_subscription",
-            "billing_account",
-            "person_profile",
-            "api_key",
-            "user_device",
-            "org_security_policy",
-            "integration",
-            "maintenance_window",
-            "ticket",
-            "geo_stamp");
+    static final List<PurgeStep> PURGE_ORDER = List.of(
+            new PurgeStep("org_group", Tier.TENANT),
+            new PurgeStep("membership", Tier.TENANT),
+            new PurgeStep("org_role", Tier.TENANT),
+            new PurgeStep("external_organization", Tier.PLATFORM),
+            new PurgeStep("organization", Tier.PLATFORM),
+            new PurgeStep("external_identity", Tier.PLATFORM),
+            new PurgeStep("person_contact", Tier.PLATFORM),
+            new PurgeStep("person", Tier.PLATFORM),
+            new PurgeStep("webhook_subscription", Tier.TENANT),
+            new PurgeStep("setting", Tier.PLATFORM),
+            new PurgeStep("feature_flag", Tier.PLATFORM),
+            new PurgeStep("translation", Tier.PLATFORM),
+            new PurgeStep("document", Tier.BOTH),
+            new PurgeStep("exchange_schedule", Tier.TENANT),
+            new PurgeStep("org_subscription", Tier.TENANT),
+            new PurgeStep("billing_account", Tier.TENANT),
+            new PurgeStep("person_profile", Tier.PLATFORM),
+            new PurgeStep("api_key", Tier.PLATFORM),
+            new PurgeStep("user_device", Tier.PLATFORM),
+            new PurgeStep("org_security_policy", Tier.TENANT),
+            new PurgeStep("integration", Tier.BOTH),
+            new PurgeStep("maintenance_window", Tier.BOTH),
+            new PurgeStep("ticket", Tier.TENANT),
+            new PurgeStep("geo_stamp", Tier.TENANT));
 
-    /** One reconciliation statement plus the table it empties — the child's name is what gets reported. */
-    private record Cascade(String childTable, String sql) {
+    /** The bare table names {@link #PURGE_ORDER} visits, for the tests that pin it to the metamodel. */
+    static List<String> purgeOrderTables() {
+        return PURGE_ORDER.stream().map(PurgeStep::table).toList();
+    }
+
+    /**
+     * One reconciliation statement plus the table it empties — the child's name is what gets reported —
+     * and the tier of THAT CHILD, which is the axis the statement has to run on. It is not necessarily
+     * the parent's: {@code user_device} is platform-tier and {@code user_device_trust} is the tenant's,
+     * which is precisely why the FK between them had to be cut (ADR 0010 §6) and why this reconciler
+     * exists at all.
+     */
+    private record Cascade(String childTable, Tier tier, String sql) {
     }
 
     /**
@@ -131,16 +217,23 @@ class SoftDeletePurgeJob {
      * without its reconciler.
      *
      * <p>Order-independent by construction: it keys on liveness, so running it before or after the
-     * parent's own batches gives the same answer. It runs after, so a single pass sees the final state.
+     * parent's own batches gives the same answer. It runs after — at the end of the pass its own tier
+     * names, which for this one is the TENANT pass, after the platform pass has already hard-deleted
+     * whatever it was going to. That ordering is why the platform pass runs first (see
+     * {@link #purgeEverything}) and why one night's run still sees the final state.
      *
      * <p>Table names here are constants in this class, never input — the same rule the interpolated
      * {@link #DELETE_BATCH} follows, and the reason these statements are literals rather than built.
+     * {@code user_device_trust} is bare because it is the tenant's and the pass's {@code search_path}
+     * places it; {@code platform.user_device} is named because it is not, and a cross-tier anti-join
+     * stays expressible only until Phase 7 makes the two tiers separate databases.
      */
     private static final Map<String, Cascade> CASCADES = Map.of(
-            "user_device", new Cascade("user_device_trust", """
+            "user_device", new Cascade("user_device_trust", Tier.TENANT, """
                     delete from user_device_trust t
                     where not exists (
-                        select 1 from user_device d where d.id = t.device_id and d.deleted_at is null)
+                        select 1 from platform.user_device d
+                         where d.id = t.device_id and d.deleted_at is null)
                     """));
 
     /** Package-private for the test that checks every cascade hangs off a table {@link #PURGE_ORDER} visits. */
@@ -221,50 +314,76 @@ class SoftDeletePurgeJob {
     private final SoftDeleteProperties properties;
     private final Clock clock;
     private final io.micrometer.core.instrument.MeterRegistry meters;
+    private final MappedTables tables;
 
     SoftDeletePurgeJob(JdbcTemplate jdbc, SoftDeleteProperties properties, Clock clock,
-            io.micrometer.core.instrument.MeterRegistry meters) {
+            io.micrometer.core.instrument.MeterRegistry meters, MappedTables tables) {
         this.jdbc = jdbc;
         this.properties = properties;
         this.clock = clock;
         this.meters = meters;
+        this.tables = tables;
     }
 
-    /** The active-hold exclusion for a table, or empty when the table has no held owner column. */
-    private static String heldGuard(String table) {
-        Map.Entry<Owner, String> owner = HELD_OWNER.get(table);
+    /**
+     * The active-hold exclusion for a table, or empty when the table has no held owner column.
+     *
+     * <p>{@code legal_hold} is named {@code platform.legal_hold} and the owner column is qualified off
+     * whatever name {@link #purgeTable} resolved (ADR 0010 §2). Holds are platform-tier because there
+     * must be exactly ONE set of them: a per-tenant copy this job could not see is a hold that
+     * silently stops holding, which is the failure the table exists to prevent — and an unqualified
+     * name on a tenant-pinned connection is that copy in every way that matters, because it resolves
+     * to nothing and the {@code not exists} then excludes nothing.
+     */
+    private static String heldGuard(String qualifiedTable) {
+        Map.Entry<Owner, String> owner = HELD_OWNER.get(bareName(qualifiedTable));
         if (owner == null) {
             return "";
         }
         String column = owner.getValue();
         String holdColumn = owner.getKey() == Owner.PERSON ? "person_id" : "org_id";
-        return " and not exists (select 1 from legal_hold h where h.released_at is null and h."
-                + holdColumn + " = " + table + "." + column + ")";
+        return " and not exists (select 1 from platform.legal_hold h where h.released_at is null and h."
+                + holdColumn + " = " + qualifiedTable + "." + column + ")";
+    }
+
+    /** {@code platform.person} → {@code person}: the key {@link #HELD_OWNER} and {@link #GUARDS} use. */
+    private static String bareName(String qualifiedTable) {
+        int dot = qualifiedTable.indexOf('.');
+        return dot < 0 ? qualifiedTable : qualifiedTable.substring(dot + 1);
     }
 
     /**
-     * <b>PHASE 2 TURNS THIS INTO A PER-TENANT LOOP, and it is the largest one in the codebase.</b>
-     * {@link #PURGE_ORDER} is 24 tables spanning both tiers, addressed unqualified — so the single
-     * {@code runAsPlatform} below is one pass over one schema only for as long as one schema is all
-     * there is. Once the tables split, the platform-tier names ({@code person}, {@code organization},
-     * {@code person_contact}, {@code external_identity}, {@code external_organization},
-     * {@code person_profile}, {@code user_device}, {@code setting}, {@code feature_flag},
-     * {@code translation}) stay on this pin and the tenant-tier remainder becomes
-     * {@code for each tenant: TenantContext.runAs(orgId, …)} — which also splits
-     * {@link #PURGE_ORDER}'s children-before-parents contract in two, because a tenant's rows and the
-     * {@code organization} row they hang off will no longer be reachable from one connection.
-     * {@link #CASCADES} and {@link #sweepSearchResidue()} are the sharp ones: both are anti-joins
-     * across the two tiers today ({@code user_device_trust} ↔ {@code user_device},
-     * {@code search_document} ↔ {@code person}/{@code organization}), and an anti-join cannot span
-     * schemas the connection is not on.
+     * <b>{@link #PURGE_ORDER} spans both tiers, so this is TWO passes on two axes — not one wider
+     * pin.</b> ADR 0010 Phase 2 moved the tables apart: the eleven platform-tier names are written
+     * {@code platform.<table>} (as are {@code legal_hold} and {@code search_document}), the ten
+     * tenant-tier ones stay bare so {@code search_path} places them, and the three split ones are bare
+     * in BOTH schemas — same name, two tables. The name is resolved per table in {@link #purgeTable},
+     * off the entity mapping; the AXIS is resolved here, off the {@link Tier} each step declares.
+     *
+     * <p>One pin could not do it. {@code runAsPlatform} puts {@code search_path} on {@code platform,
+     * ext}, where {@code org_group}, {@code membership}, {@code org_role}, {@code webhook_subscription},
+     * {@code exchange_schedule}, {@code org_subscription}, {@code billing_account},
+     * {@code org_security_policy}, {@code ticket}, {@code geo_stamp} and {@code user_device_trust}
+     * resolve to nothing — which is what a platform-pinned Phase 1 purge was quietly doing to every
+     * tenant's retention. A single tenant-pinned pass would reach the platform tables too (they are
+     * named, and a named schema ignores {@code search_path}) but it would purge the wrong half of the
+     * three split tables and it would stop working the day Phase 7 puts the tiers in separate
+     * databases. Two passes are what the tier boundary actually is.
+     *
+     * <p><b>Platform first, then tenant, and the reason is {@link #CASCADES}.</b> Nothing else orders
+     * them — no foreign key may cross a tier (§2), so neither pass can violate the other's
+     * constraints. The one real dependency is the {@code user_device_trust} reconciler: it hangs off
+     * {@code platform.user_device}'s LIVENESS, so running it after the platform pass has finished its
+     * hard deletes lets a single night's run see the final state instead of trailing it by a day.
+     *
+     * <p>Not one giant transaction, and not one connection: every batch commits on its own, and every
+     * one of those borrows reads the axis afresh — which is exactly why the pins wrap the passes
+     * rather than sitting inside them (ADR 0010 §3.4).
      */
     @Scheduled(cron = "${app.scheduler.soft-delete-purge-cron:0 0 4 * * *}")
     @SchedulerLock(name = "soft-delete-purge", lockAtMostFor = "PT30M")
     public void purgeExpiredSoftDeletes() {
-        // Declares the platform axis for the whole pass — see the note above. Outside the batches on
-        // purpose: they each commit on their own connection, and every one of those borrows reads the
-        // axis afresh. ADR 0010 §3.4.
-        TenantContext.runAsPlatform(this::purgeEverything);
+        purgeEverything();
     }
 
     private void purgeEverything() {
@@ -276,37 +395,83 @@ class SoftDeletePurgeJob {
 
         // Not @Transactional on purpose: every batch commits on its own connection, so a long backlog
         // never becomes one giant transaction holding row locks against live traffic.
-        Map<String, Integer> purged = new LinkedHashMap<>();
-        int total = 0;
-        RuntimeException firstFailure = null;
-        for (String table : PURGE_ORDER) {
-            try {
-                int rows = purgeTable(table, cutoff);
-                total += rows;
-                ug.co.smsone.shared.metrics.PurgeMetrics.purged(meters, "soft-delete-purge", table, rows);
-                if (rows > 0) {
-                    purged.put(table, rows);
-                }
-                total += sweepCascade(table, purged);
-            } catch (RuntimeException ex) {
-                // Isolated per table: the tables are independent, so one poisoned FK must not cost
-                // every table after it its retention. Kept and rethrown below so the run still fails.
-                log.error("Soft-delete purge failed on {} (continuing with the remaining tables)", table, ex);
-                if (firstFailure == null) {
-                    firstFailure = ex;
-                }
-            }
-        }
+        Run run = new Run();
+        TenantContext.runAsPlatform(() -> pass(Tier.PLATFORM, cutoff, run));
+        // PHASE 5: this single call becomes a loop — one runAs per silo in platform.tenant_placement
+        // plus this one for whatever is still pooled. Today the pool IS every tenant, so one pass is
+        // the whole fleet; see POOLED_TENANT.
+        TenantContext.runAs(POOLED_TENANT, () -> pass(Tier.TENANT, cutoff, run));
 
-        if (total > 0) {
+        if (run.total > 0) {
             log.info("Soft-delete purge removed {} rows deleted before {} (retention {}): {}",
-                    total, cutoff, properties.retention(), purged);
-        } else if (firstFailure == null) {
+                    run.total, cutoff, properties.retention(), run.purged);
+        } else if (run.firstFailure == null) {
             log.debug("Soft-delete purge found nothing deleted before {}", cutoff);
         }
-        sweepSearchResidue();
-        if (firstFailure != null) {
-            throw firstFailure;
+        // Three platform-tier tables, all named — but the pin still has to be declared, because this
+        // runs after both passes have restored whatever axis the caller had.
+        TenantContext.runAsPlatform(this::sweepSearchResidue);
+        if (run.firstFailure != null) {
+            throw run.firstFailure;
+        }
+    }
+
+    /**
+     * One night's tally, carried across both passes: the log line, the total and the failure that
+     * fails the run are the RUN's, not a pass's. A split table appears once in the map with the two
+     * homes' counts summed — {@code document: 7} is seven document rows gone from this installation,
+     * which is the fact retention promises.
+     */
+    private static final class Run {
+        private final Map<String, Integer> purged = new LinkedHashMap<>();
+        private int total;
+        private RuntimeException firstFailure;
+
+        private void failed(RuntimeException ex) {
+            if (firstFailure == null) {
+                firstFailure = ex;
+            }
+        }
+    }
+
+    /**
+     * Every step of one tier, in {@link #PURGE_ORDER}'s order, then the cascades that belong to that
+     * tier. The pass runs on an axis the caller has already pinned — it opens no transaction and pins
+     * nothing itself, so each batch's borrow picks the axis up on its own.
+     *
+     * <p>A failure on one table is logged and the pass continues, and the run still fails at the end.
+     * That is not politeness: the tables are independent, so one poisoned FK must not cost every table
+     * behind it its retention — and with two passes it must not cost the OTHER TIER its retention
+     * either, which a thrown exception here would.
+     */
+    private void pass(Tier passTier, Instant cutoff, Run run) {
+        for (PurgeStep step : PURGE_ORDER) {
+            if (!step.tier().visitedOn(passTier)) {
+                continue;
+            }
+            try {
+                int rows = purgeTable(step.table(), cutoff);
+                run.total += rows;
+                ug.co.smsone.shared.metrics.PurgeMetrics.purged(meters, "soft-delete-purge", step.table(), rows);
+                if (rows > 0) {
+                    run.purged.merge(step.table(), rows, Integer::sum);
+                }
+            } catch (RuntimeException ex) {
+                log.error("Soft-delete purge failed on {} ({} pass; continuing with the remaining tables)",
+                        step.table(), passTier, ex);
+                run.failed(ex);
+            }
+        }
+        for (Cascade cascade : CASCADES.values()) {
+            if (cascade.tier() != passTier) {
+                continue;
+            }
+            try {
+                run.total += sweepCascade(cascade, run.purged);
+            } catch (RuntimeException ex) {
+                log.error("Soft-delete cascade sweep failed on {} ({} pass)", cascade.childTable(), passTier, ex);
+                run.failed(ex);
+            }
         }
     }
 
@@ -336,7 +501,13 @@ class SoftDeletePurgeJob {
      * producer writes {@code UUID.toString()} for both discriminators ({@code SearchEventListeners}).
      */
     private void sweepSearchResidue() {
-        int removed = sweepResidueOf("user", "person") + sweepResidueOf("organization", "organization");
+        // Three platform-tier tables in one statement (search_document, person, organization) and all
+        // three are named explicitly — ADR 0010 §2. The source tables come from the mapping rather
+        // than as literals because sweepResidueOf catches its own failures: an unqualified name that
+        // resolved to nothing would raise, be logged, and return 0, so the reconciler would stop
+        // un-indexing erased people and say so only in a nightly ERROR line nobody is watching for.
+        int removed = sweepResidueOf("user", tables.qualified("person"))
+                + sweepResidueOf("organization", tables.qualified("organization"));
         ug.co.smsone.shared.metrics.PurgeMetrics.purged(meters, "soft-delete-purge", "search_document", removed);
         if (removed > 0) {
             log.info("Soft-delete purge un-indexed {} search rows whose source rows are gone", removed);
@@ -344,13 +515,14 @@ class SoftDeletePurgeJob {
     }
 
     /**
-     * One discriminator's residue. {@code entityType} and {@code sourceTable} are constants from the
-     * caller — never input — the same rule {@link #purgeTable} follows for its interpolated table name.
+     * One discriminator's residue. {@code entityType} and {@code sourceTable} come from the caller —
+     * a constant and a name off the entity mapping, never input — the same rule {@link #purgeTable}
+     * follows for its interpolated table name.
      */
     private int sweepResidueOf(String entityType, String sourceTable) {
         try {
             return jdbc.update("""
-                    delete from search_document sd
+                    delete from platform.search_document sd
                     where sd.entity_type = ?
                       and not exists (select 1 from %s src where src.id = sd.entity_id::uuid)
                     """.formatted(sourceTable), entityType);
@@ -361,10 +533,11 @@ class SoftDeletePurgeJob {
     }
 
     /**
-     * The {@link Cascade} declared for this table, if any. Reported under the CHILD table's name so the
-     * run's log line says which rows actually went — "user_device: 12" and "user_device_trust: 40" are
-     * two different facts, and collapsing them would hide a reconciler that is quietly removing grants
-     * an event listener should have removed hours earlier.
+     * One {@link Cascade}, on the axis its own {@link Cascade#tier()} named — the caller has already
+     * pinned it. Reported under the CHILD table's name so the run's log line says which rows actually
+     * went — "user_device: 12" and "user_device_trust: 40" are two different facts, and collapsing
+     * them would hide a reconciler that is quietly removing grants an event listener should have
+     * removed hours earlier.
      *
      * <p>Unbatched, unlike {@link #purgeTable}: the anti-join is bounded by the CHILD table (grants
      * outstanding, thousands) rather than by a retention backlog, and a batched delete would need an
@@ -372,14 +545,10 @@ class SoftDeletePurgeJob {
      * locks against live traffic, batch it on the child's own key — do not reach for a {@code limit}
      * with no {@code order by}, which makes successive batches non-deterministic.
      *
-     * <p>Not caught here: a failure propagates to the caller's per-table handler, which logs it, keeps
-     * going, and still fails the run. Same contract as the table's own batches.
+     * <p>Not caught here: a failure propagates to {@link #pass}'s handler, which logs it, keeps going,
+     * and still fails the run. Same contract as the table's own batches.
      */
-    private int sweepCascade(String table, Map<String, Integer> purged) {
-        Cascade cascade = CASCADES.get(table);
-        if (cascade == null) {
-            return 0;
-        }
+    private int sweepCascade(Cascade cascade, Map<String, Integer> purged) {
         int rows = jdbc.update(cascade.sql());
         ug.co.smsone.shared.metrics.PurgeMetrics.purged(meters, "soft-delete-purge", cascade.childTable(), rows);
         if (rows > 0) {
@@ -388,8 +557,25 @@ class SoftDeletePurgeJob {
         return rows;
     }
 
+    /**
+     * {@link #PURGE_ORDER} holds BARE table names — they are the same identifiers the metamodel check
+     * pins them to, and the same values the purge metric is tagged with — so the schema is resolved
+     * here, off the entity mapping, and never written into the list. A hand-kept "these ones are
+     * platform's" list beside the order would be a second copy of the tier assignment that nothing
+     * compares against the first (ADR 0010 §2); {@link MappedTables} reads the answer from
+     * {@code @Table} instead, which {@code PlatformSchemaQualificationTest} pins to
+     * {@code docs/DATA_MODEL.md}.
+     *
+     * <p><b>The {@link Tier} on each step is not a second copy of that.</b> The mapping answers "what
+     * is this table CALLED in SQL"; the tier answers "which PASS reaches it", which the name cannot —
+     * {@code platform.person} would resolve from a tenant-pinned connection too, and the three split
+     * tables have one name and two homes. The two are checked against each other in
+     * {@code SoftDeletePurgeJobIntegrationTest}, which is what stops them drifting apart.
+     */
     private int purgeTable(String table, Instant cutoff) {
-        String sql = DELETE_BATCH.formatted(table, GUARDS.getOrDefault(table, "") + heldGuard(table));
+        String qualified = tables.qualified(table);
+        String sql = DELETE_BATCH.formatted(qualified,
+                GUARDS.getOrDefault(table, "") + heldGuard(qualified));
         int total = 0;
         for (int batch = 0; batch < properties.maxBatches(); batch++) {
             int rows = jdbc.update(sql, Timestamp.from(cutoff), properties.batchSize());

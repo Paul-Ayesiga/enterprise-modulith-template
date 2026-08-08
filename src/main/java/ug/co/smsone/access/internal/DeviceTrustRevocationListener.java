@@ -40,6 +40,22 @@ class DeviceTrustRevocationListener {
 
     private static final Logger log = LoggerFactory.getLogger(DeviceTrustRevocationListener.class);
 
+    /**
+     * The org whose axis this sweep borrows. It names no organization deliberately: an org that has
+     * never been promoted resolves to the shared {@code tenant_pool}, and a UUID in no
+     * {@code organization} row can never resolve to anything else — so this IS the pooled schema's axis,
+     * spelled with the only vocabulary {@code TenantContext} has. Same constant, same reasoning as
+     * {@code MappedSchemaValidator} and {@code WebhookSecretEncryptionMigrator}: one idiom for "the
+     * pool", not three.
+     *
+     * <p>It is the honest shape for this listener specifically, because the grants being deleted belong
+     * to every org that blessed the device and the event carries no {@code orgId} to name one (see
+     * {@link ug.co.smsone.access.DeviceRevoked}). When silos exist (ADR 0010 Phase 5) this stops being
+     * one pass: the loop belongs here, over {@code platform.tenant_placement}, one transaction per home
+     * — which is exactly the shape the class note already argues an event buys us.
+     */
+    private static final java.util.UUID POOLED_TENANT = new java.util.UUID(0L, 0L);
+
     private final UserDeviceTrustRepository deviceTrust;
     private final org.springframework.transaction.support.TransactionTemplate transactions;
 
@@ -64,7 +80,14 @@ class DeviceTrustRevocationListener {
     @Async
     @TransactionalEventListener
     void on(DeviceRevoked event) {
-        TenantContext.runAsPlatform(() -> transactions.executeWithoutResult(tx -> revokeGrants(event)));
+        // A TENANT axis, not the platform one this used to take. user_device_trust is tenant-tier
+        // (ADR 0010 §2) while user_device — the row this event is about — is the platform's, which is
+        // precisely why V53 could not keep a foreign key between them. Through Phase 1 the platform pin
+        // was a no-op because both tables lived in one schema; since Phase 2 a platform axis cannot see
+        // this table at all, so the delete would fail on every revocation with
+        // relation "user_device_trust" does not exist — asynchronously, retried by the outbox, with a
+        // revoked device left trusted in the meantime.
+        TenantContext.runAs(POOLED_TENANT, () -> transactions.executeWithoutResult(tx -> revokeGrants(event)));
     }
 
     /**

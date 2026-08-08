@@ -8,10 +8,10 @@ import java.util.regex.Pattern;
  * Pure naming policy — no Spring, no database reads, so it can be called from anywhere including the
  * connection-borrow path.
  *
- * <p><strong>Phase 1 routes nothing.</strong> Every state except {@link Tenant#ABSENT} resolves to the
- * single schema today's 55 tables already live in; only "no tenant declared" changes behaviour. Phase 2
- * splits that into {@code platform} and {@code tenant_pool}, and Phase 5 sends promoted tenants to
- * their own silo — both are edits to {@link #searchPathFor} alone.
+ * <p><strong>Since Phase 2 this routes for real.</strong> A platform axis reaches {@code platform}, a
+ * tenant axis reaches {@code tenant_pool}, and no axis at all reaches the empty {@code no_tenant}. The
+ * schema a statement lands in is now decided entirely here, which is why this method is the one place
+ * Phase 5 edits to send a promoted tenant to its own silo.
  *
  * <p>{@link #siloSchema} and its guard are written now, ahead of the phase that needs them, because
  * the regex is the only thing standing between a schema name and SQL injection: a {@code search_path}
@@ -34,13 +34,26 @@ public final class TenantSchemas {
      */
     public static final String EXTENSIONS = "ext";
 
-    /**
-     * The schema every routed state resolves to until Phase 2 moves the tables. Named once, here, so
-     * the phase change is a single edit rather than a search across the codebase.
-     */
-    private static final String CURRENT_SCHEMA = "public";
+    /** The platform tier's own schema: the 28 tables one copy of the system shares (ADR 0010 §2). */
+    public static final String PLATFORM = "platform";
 
-    private static final String TENANT_SEARCH_PATH = CURRENT_SCHEMA + ", " + EXTENSIONS;
+    /**
+     * The shared tenant schema. Every organization lives here until it is promoted to a silo, and
+     * promotion is a placement flip rather than a code change — which is the property that makes
+     * extraction rehearsable rather than a one-off (ADR 0010 §1).
+     */
+    public static final String TENANT_POOL = "tenant_pool";
+
+    /**
+     * {@code ext} is on both paths and holds pg_trgm and nothing else. That is what makes a
+     * multi-element {@code search_path} safe here where it usually is not: fallthrough reaches
+     * FUNCTIONS, never another tenant's rows. `public` is deliberately absent from both — it holds
+     * nothing after Phase 2, and depending on it is what would stop a tenant being liftable to its own
+     * database.
+     */
+    private static final String PLATFORM_SEARCH_PATH = PLATFORM + ", " + EXTENSIONS;
+
+    private static final String POOLED_TENANT_SEARCH_PATH = TENANT_POOL + ", " + EXTENSIONS;
 
     /** ADR 0010 §3.1 verbatim. Lower-case hex only: {@code UUID.toString()} never produces anything else. */
     private static final Pattern SILO_SCHEMA = Pattern.compile("^t_[0-9a-f]{32}$");
@@ -81,8 +94,11 @@ public final class TenantSchemas {
             // The org id is deliberately unread in Phase 1. Phase 5 looks it up in
             // platform.tenant_placement and calls siloSchema(orgId) for a SILO row; a pooled tenant
             // keeps this path, which is why promotion is a placement flip and not a code change.
-            case Tenant.Org ignored -> TENANT_SEARCH_PATH;
-            case Tenant.Platform ignored -> TENANT_SEARCH_PATH;
+            // Phase 5 looks the org up in platform.tenant_placement and returns siloSchema(orgId) for
+            // a promoted tenant; an unpromoted one keeps this path. That is why promotion is a row
+            // change and not a deployment.
+            case Tenant.Org ignored -> POOLED_TENANT_SEARCH_PATH;
+            case Tenant.Platform ignored -> PLATFORM_SEARCH_PATH;
             // Never "leave the connection as it is", and never "fall back to platform". Both would
             // serve a tenant-less request from whichever schema the last borrower happened to leave
             // on the connection, which is the failure mode this whole mechanism exists to remove.

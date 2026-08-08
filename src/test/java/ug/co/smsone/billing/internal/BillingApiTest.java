@@ -26,6 +26,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 import ug.co.smsone.testsupport.EdgeSeed;
 
@@ -34,6 +35,13 @@ import ug.co.smsone.testsupport.EdgeSeed;
  * real wire): provisioning is idempotent and audited, a billable subscribe reconciles entitlements
  * through the subscription module's port, payment outcomes flip standing, the callback endpoint
  * refuses a bad token, and invoices proxy for both surfaces.
+ *
+ * <p><strong>The direct reads here declare a tenant axis; the MockMvc calls do not need to.</strong>
+ * {@code billing_account} is tenant-tier and the {@code audit_log} rows asserted below carry a
+ * non-null {@code org_id}, which puts them in the tenant copy of that split table (ADR 0010 §2) — so
+ * a {@code JdbcTemplate} read on the harness's platform pin would answer about the wrong schema. The
+ * request paths pin themselves: {@code /api/v1/orgs/{orgId}/…} through {@code CurrentUserFilter} and
+ * {@code /api/v1/admin/orgs/{orgId}/…} through {@code AdminBillingController}'s own {@code runAs}.
  */
 @AutoConfigureMockMvc
 class BillingApiTest extends AbstractIntegrationTest {
@@ -65,8 +73,8 @@ class BillingApiTest extends AbstractIntegrationTest {
         mockMvc.perform(post("/api/v1/admin/orgs/{orgId}/billing/account", orgId).with(admin()))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.attributes.kbAccountId").value(kbAccountId.toString()));
-        assertThat(jdbc.queryForObject(
-                "select count(*) from billing_account where org_id = ?", Integer.class, orgId)).isEqualTo(1);
+        assertThat(TenantContext.callAs(orgId, () -> jdbc.queryForObject(
+                "select count(*) from billing_account where org_id = ?", Integer.class, orgId))).isEqualTo(1);
 
         // Billable subscribe: Kill Bill says pro-monthly ACTIVE → entitlements land on PRO.
         mockMvc.perform(post("/api/v1/admin/orgs/{orgId}/billing/subscription", orgId)
@@ -108,9 +116,13 @@ class BillingApiTest extends AbstractIntegrationTest {
                                 + kbAccountId + "\"}"))
                 .andExpect(status().isUnauthorized());
 
-        assertThat(jdbc.queryForObject(
+        // The org's axis, not the harness's: audit_log is one of the seven split tables and this row
+        // has a non-null org_id, so it lives in the TENANT copy. Unqualified on a platform pin the name
+        // still resolves — platform.audit_log exists — and the count would come back 0 from a table
+        // that simply is not the one being asserted about.
+        assertThat(TenantContext.callAs(orgId, () -> jdbc.queryForObject(
                 "select count(*) from audit_log where action = 'billing.account_provisioned' and org_id = ?",
-                Integer.class, orgId)).isEqualTo(1);
+                Integer.class, orgId))).isEqualTo(1);
     }
 
     @Test
@@ -235,23 +247,29 @@ class BillingApiTest extends AbstractIntegrationTest {
 
     /** A linked person holding org:read in {@code orgId}. */
     private void seedOrgRead(UUID orgId, String subject) {
-        UUID personId = EdgeSeed.person(jdbc, subject);
-        UUID roleId = UUID.randomUUID();
-        jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
-                + "values (?, ?, 'BILL', 'Bill', false, 0, now())", roleId, orgId);
-        jdbc.update("insert into role_permission (role_id, permission) values (?, 'ORG_READ')", roleId);
-        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+        seedRole(orgId, subject, "BILL", "Bill", "ORG_READ");
     }
 
     /** A linked person holding org:update — the permission the payment-method writes demand. */
     private void seedOrgUpdate(UUID orgId, String subject) {
+        seedRole(orgId, subject, "BILLADM", "BillAdmin", "ORG_UPDATE");
+    }
+
+    /**
+     * The seat, seeded across both tiers. {@code person} and its {@code external_identity} link are
+     * platform-tier and take the harness's own pin; {@code org_role}, {@code role_permission} and
+     * {@code membership} are the TENANT's (ADR 0010 §2), unqualified, and only resolve on that org's
+     * axis. Two spans, because no single pin reaches both.
+     */
+    private void seedRole(UUID orgId, String subject, String code, String name, String permission) {
         UUID personId = EdgeSeed.person(jdbc, subject);
         UUID roleId = UUID.randomUUID();
-        jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
-                + "values (?, ?, 'BILLADM', 'BillAdmin', false, 0, now())", roleId, orgId);
-        jdbc.update("insert into role_permission (role_id, permission) values (?, 'ORG_UPDATE')", roleId);
-        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+        TenantContext.runAs(orgId, () -> {
+            jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
+                    + "values (?, ?, ?, ?, false, 0, now())", roleId, orgId, code, name);
+            jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleId, permission);
+            jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
+                    + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+        });
     }
 }

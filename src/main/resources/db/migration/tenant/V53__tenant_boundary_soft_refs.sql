@@ -1,0 +1,189 @@
+-- ADR 0010 Phase 0: make the tenant boundary REAL, and route nothing.
+--
+-- ADR 0010 splits the 55 tables into a PLATFORM tier (one copy, global — people, devices, the
+-- routing registry, the catalogues) and a TENANT tier (the rows an organization owns and takes with
+-- it). Nothing moves in this file. What it did was remove the five foreign keys that CROSS that
+-- line, because every later phase — `alter table … set schema`, `pg_dump -n t_<hex>`, and finally a
+-- second database — is impossible while they exist. A foreign key is the one thing in Postgres that
+-- cannot span two databases, so cutting them had to come first.
+--
+-- READ THIS BEFORE THE REST OF THE FILE: PHASE 2 MOVED FOUR OF THOSE CUTS TO THE POINT OF CREATION,
+-- so most of what follows is now RATIONALE WITH NO STATEMENT UNDER IT. Phase 2 bisected the
+-- migration set into `db/migration/platform` and `db/migration/tenant`, and a foreign key from this
+-- sequence into the platform tier cannot be created here in the first place — `organization`,
+-- `plan` and `user_device` are not on this sequence's `search_path`, and after Phase 7 they are not
+-- in this database. So V11, V26, V30 and V51 declare those columns as soft refs directly, and this
+-- file has nothing left to drop. The reasoning did NOT move with the statements, deliberately: what
+-- guarantees each relationship once the constraint is gone is the decision worth keeping, and it is
+-- worth keeping HERE, next to the two statements that remain, rather than scattered over four files
+-- that only say "soft ref, platform tier". Each section below names the file that now declares the
+-- column.
+--
+-- WHY THESE FIVE AND NOT THE OTHER TWELVE. AGENTS §1 has always said "no cross-MODULE foreign keys",
+-- and all five of these PASS that rule — they never leave their module. `org_subscription.plan_id →
+-- plan` is entirely inside subscription/; `user_device_trust.device_id → user_device` entirely
+-- inside access/. The module rule was not failing to catch them, it was never looking, because the
+-- tenant boundary is a different partition of the same tables. §1 gained a second clause for exactly
+-- this, and `TenantSchemaSelfContainmentTest` is what enforces it from here on. The other twelve
+-- FKs are intra-module AND intra-tier and travel whole: `role_permission.role_id → org_role` moves
+-- with its tenant, `person_contact.person_id → person` stays on the platform.
+--
+-- FOUR OF THE FIVE WERE PLAIN DROPS. `membership`, `org_role` and `org_group` point at
+-- `organization`, and `org_subscription` points at `plan`; none of them cascades and none of them is
+-- doing anything the application does not already do for itself. They become soft refs — the same
+-- convention this schema already applies 29 times over (`membership.person_id`, every `created_by`).
+-- What guarantees the relationship afterwards is stated per section below, and the short form is:
+-- the tenant schema itself. A row in `t_<hex>.membership` is in that org's schema; that IS the
+-- assertion the FK used to make, and unlike the FK it survives the org moving to its own database.
+--
+-- THE FIFTH WAS NOT A DROP, IT IS A REPLACEMENT, and it is the reason this file is long.
+-- `user_device_trust.device_id → user_device(id) ON DELETE CASCADE` is load-bearing; V51's header
+-- says so in its own words. `user_device` is PLATFORM (a device belongs to a human, not to a tenant)
+-- and `user_device_trust` is TENANT (a grant BY an organization), so the FK crosses and cannot
+-- survive — but the cascade behind it is a security control, and dropping it alone would leave a
+-- revoked device trusted forever. §2 replaces it with three mechanisms, none of which is sufficient
+-- on its own. Read §2 before touching any of them.
+--
+-- APPLIED to the 5.6M-row review database (Postgres 18.4) in one transaction, as Flyway runs it.
+-- Every EXPLAIN quoted below is (ANALYZE, BUFFERS) against that database, warm, repeated until
+-- stable — the method V49/V50/V52 established. Plain `create index`, never `concurrently`: V52's
+-- header derives this and AGENTS §4.6 carries it (a `-- flyway:executeInTransaction=false` comment
+-- is INERT on flyway-core 12.4.0; only a `.sql.conf` sidecar works, and none of these builds is
+-- large enough to want one).
+--
+-- SPLIT (ADR 0010 §4.1): this is the tenant half of V53. Its sibling is db/migration/platform/V53__tenant_boundary_soft_refs.sql.
+
+-- ---------------------------------------------------------------------------------------------
+-- 1. The four plain cuts. Each says what guarantees the relationship once the constraint is gone.
+--    NO STATEMENTS REMAIN IN THIS SECTION — see the header. The columns are declared as soft refs
+--    by tenant/V11 (membership, org_role), tenant/V30 (org_group) and tenant/V26
+--    (org_subscription), each of which points back here.
+-- ---------------------------------------------------------------------------------------------
+
+-- membership.org_id, org_role.org_id, org_group.org_id -> organization(id).
+--
+-- `organization` is the routing registry and ADR 0010 §2.1 deliberately does NOT mirror it into
+-- tenant schemas: a per-tenant copy of a routing row can drift from the authority, and an out-of-date
+-- copy of "is this org suspended" is a worse failure than no copy at all. So these three cannot be
+-- re-pointed at a local table; they become soft refs.
+--
+-- WHAT GUARANTEES THE RELATIONSHIP NOW. Three things, in the order they act. (1) The schema: after
+-- Phase 2 every one of these rows lives in its own org's schema, so "which organization does this
+-- membership belong to" is answered by where the row IS, not by a constraint — and that answer keeps
+-- working after the org moves to its own database, which is precisely what the FK could not do.
+-- (2) The write paths: `OrgProjectionWriter.projectWithOwner` and `MemberService` only ever mint
+-- these rows inside a transaction that has already resolved a real organization, so an org_id
+-- pointing at nothing is not a state the application can produce. (3) `SoftDeletePurgeJob` — which
+-- is where the loss is real and worth naming: the FK's `NO ACTION` used to make purging an
+-- `organization` that still had memberships fail loudly. It now succeeds and leaves orphans behind.
+-- That is not a regression the purge order can fix (it is cross-tier by construction), and it is the
+-- price ADR 0010 §5 accepts; the tenant-schema drop in Phase 5 removes the whole schema at once,
+-- which is the real answer.
+
+-- org_subscription.plan_id -> plan(id).
+--
+-- This one is the clearest statement of why the tier axis is not the module axis: both tables sit in
+-- subscription/, both are written by the same service, and the FK was perfectly sound. It is also
+-- impossible tomorrow. `plan` is a platform CATALOGUE — one price list, curated by the platform,
+-- snapshot-copied into an extracted deployment and then deliberately allowed to diverge (§6, item 4
+-- of the extraction bundle) — while `org_subscription` is the tenant's own row. Cross-SCHEMA the FK
+-- would still work; cross-DATABASE (hop 2) it cannot exist at all, and there is no version of "the
+-- tenant runs on its own Postgres" in which this constraint survives. Cutting it while both tables
+-- were still co-located and the suite could prove nothing broke was the entire point of Phase 0.
+--
+-- WHAT GUARANTEES IT NOW: `SubscriptionService` resolves the plan through the repository before it
+-- writes, so a subscription cannot be created against a plan id that does not exist; and AGENTS §5.2
+-- already names the destiny — a `PlanCatalog` port, which is what an extracted deployment will read
+-- instead of a joined table. The failure this admits is a plan hard-deleted out from under a live
+-- subscription, which `SoftDeletePurgeJob` can now do without complaint. `plan` is not in
+-- PURGE_ORDER (it is not soft-deletable) and nothing else hard-deletes it, so the exposure today is
+-- a hand-written DELETE — loud enough in an audit, and the port is the real fix.
+
+-- ---------------------------------------------------------------------------------------------
+-- 2. user_device_trust: the cascade that was doing security work, replaced by three mechanisms.
+--    FORGET ANY ONE OF THEM AND REVOKED DEVICES STAY TRUSTED.
+-- ---------------------------------------------------------------------------------------------
+
+-- WHAT THE CASCADE WAS FOR. V51's header: "a revoked device must leave no live trust grant behind".
+-- `org_security_policy.require_trusted_device` is enforced on every request of an org that turns it
+-- on, and the enforcement query — `UserDeviceTrustRepository.isTrusted` — joined `user_device` for
+-- three things: `person_id`, `fingerprint`, and `deleted_at is null`. That last predicate is the
+-- control. Revoking a device is a SOFT delete, so the device row stays; the join is what stopped its
+-- surviving grant from continuing to satisfy the policy. The `ON DELETE CASCADE` covered the other
+-- half — the nightly hard delete, thirty days later.
+--
+-- WHAT BREAKS IF YOU ONLY DENORMALIZE. Once the join is gone, nothing in `user_device_trust` can see
+-- `deleted_at`, and the query has no way to ask whether the device is still live. Worse than "a
+-- revoked device keeps passing": `uq_user_device_person_fingerprint_live` is PARTIAL on
+-- `deleted_at is null`, so re-registering a revoked fingerprint mints a BRAND NEW device row with a
+-- new id (DeviceService.register cannot see the dead one — @SQLRestriction hides it). A stale grant
+-- keyed on (org_id, person_id, fingerprint) would then vouch for a device this organization has
+-- never seen, let alone blessed. That is a strictly worse bug than the one V51 fixed.
+--
+-- SO THE INVARIANT MOVES: the grant row's EXISTENCE must mean the device is live. There is no
+-- predicate that can express that any more, so three mechanisms maintain it instead.
+--
+--   (a) THE BACKFILL DELETED, IT DID NOT ONLY COPY — and the Phase 2 split is what removed it, so
+--       read this before concluding the migration forgot a step. The DELETE and the UPDATE that
+--       stood here both read `user_device`, which is platform-tier: a tenant migration cannot join
+--       it, and a tenant DATABASE (Phase 7) will not contain it. On a database built from this
+--       sequence the two statements move zero rows — the table is created empty four statements
+--       earlier — so nothing was lost by dropping them, and `set not null` below is what the
+--       backfill existed to make possible. WHAT THEY SAID IS STILL LOAD-BEARING, because it is the
+--       rule any future backfill of this table must follow: every grant whose device is already
+--       soft-deleted is a row the old join was SUPPRESSING, and copying person_id/fingerprint onto
+--       it does not migrate it — it PROMOTES it, turning a correctly-denied grant into a live one at
+--       deploy time, silently, for every such row at once. Delete those rows; never copy them.
+--   (b) EVENT-DRIVEN CLEANUP — `access.DeviceRevoked` → `DeviceTrustRevocationListener`, which
+--       deletes every org's grant over that device. The fast path, milliseconds after commit, and
+--       the one that still works when the grants live in N tenant schemas and a synchronous delete
+--       from the platform side cannot reach them.
+--   (c) THE RECONCILER — `SoftDeletePurgeJob`'s CASCADES entry for `user_device`, an anti-join that
+--       deletes every grant whose device is not live. It catches what (b) cannot: the compliance
+--       erasure path soft-deletes `user_device` rows by raw SQL and publishes no event, a permanently
+--       failing listener, and any future writer nobody remembers to wire up. ADR 0010 §8 Q2 states
+--       the rule it follows — no projection ships without its reconciler.
+--
+-- The residual window is (b)'s async delivery: a revoked device stays trusted for the milliseconds
+-- between commit and listener, and for at most a night on the paths only (c) reaches. That is the
+-- honest cost, it is written in ADR 0010 §2.1, and it is bounded — where "a stale grant vouches for
+-- a re-registered device forever" would not be.
+
+alter table user_device_trust
+    add column person_id   uuid,
+    add column fingerprint varchar(100);
+
+-- NOT NULL, both. A grant with a null person_id or fingerprint could never match the enforcement
+-- lookup, so it would fail SAFE — and that is exactly why it must be impossible: a row that silently
+-- never matches is a trust grant an admin can see in the UI and the filter will never honour, with
+-- no error anywhere. Loud at write time beats invisible at read time.
+--
+-- Safe without the backfill (a) describes only because the split also removed the FK from V51, so
+-- this sequence never creates a row before this point. If a future migration inserts into
+-- `user_device_trust` before V53, this statement is what will catch it.
+alter table user_device_trust
+    alter column person_id set not null,
+    alter column fingerprint set not null;
+
+-- The cut itself was `alter table user_device_trust drop constraint user_device_trust_device_id_fkey`
+-- and is now V51's business: the constraint is never created, for the reason in the header. Everything
+-- above exists so that its absence does not change what the platform enforces.
+
+-- The enforcement index: (org_id, person_id, fingerprint) is exactly `isTrusted`'s predicate, in
+-- selectivity order, and it makes the check an Index Only Scan — the grant row never has to be
+-- visited at all. Measured on 20,000 grants in one organization (a fleet-managed enterprise, the
+-- shape that stresses the old plan hardest), warm:
+--     before  Nested Loop: uq_user_device_person_fingerprint_live -> user_device_trust_pkey
+--                                                    7 buffers, 0.019 ms
+--     after   Index Only Scan, this index            4 buffers, 0.016 ms
+-- BE HONEST ABOUT THAT NUMBER: it is two index descents becoming one, not a fix for something slow.
+-- The reason this index exists is not speed, it is that the check now touches ONE table — so it can
+-- be answered inside a tenant schema, by a tenant database, with the platform unreachable. 5224 kB
+-- at 50,000 grants.
+create index idx_user_device_trust_enforcement on user_device_trust (org_id, person_id, fingerprint);
+
+-- V51's idx_user_device_trust_org STAYS, and it is now a strict column prefix of the index above —
+-- which V52 §6(a) settles is not by itself a reason to drop one. It serves the reverse question
+-- ("what does this org trust", the admin listing), which scans a whole org's grants rather than
+-- probing one; at 16 bytes an entry against 48 it walks a third of the pages, and the gap grows with
+-- the size of the org. Nothing here changed that trade-off, so nothing here re-litigates it.

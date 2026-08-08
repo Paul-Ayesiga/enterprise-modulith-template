@@ -57,6 +57,24 @@ class SchedulingConfig {
         return new PlatformAxisLockProvider(new JdbcTemplateLockProvider(JdbcTemplateLockProvider.Configuration
                 .builder()
                 .withJdbcTemplate(new JdbcTemplate(dataSource))
+                // PLATFORM-TIER, NAMED EXPLICITLY (ADR 0010 §2 row 46). `shedlock` is infrastructure: it
+                // is never copied and never per-tenant, V4 creates it only in db/migration/platform, and
+                // an extracted deployment that inherited a future `lock_until` would run no jobs at all
+                // while logging nothing (@SchedulerLock skips a same-name relock in silence).
+                //
+                // The qualifier is belt to the axis pin's braces below, and it is the belt that holds if
+                // the braces are ever loosened: ShedLock's table name is a plain string interpolated into
+                // every statement it builds, with no mapping and no validation, so an unqualified name
+                // resolves through whatever search_path the borrowing thread carries. On a tenant axis
+                // that is `tenant_pool`, where there is no `shedlock` table — every scheduled job in the
+                // application would then die on `relation "shedlock" does not exist` in the ShedLock
+                // advice, BEFORE its own body ran and therefore before any pin the job declares.
+                //
+                // Verified against real Postgres, not assumed: PostgresSqlServerTimeStatementsSource
+                // writes `WHERE platform.shedlock.name = :name` (schema.table.column) in both the
+                // ON CONFLICT DO UPDATE clause and the update statement, and all four of its statements
+                // parse and run schema-qualified.
+                .withTableName("platform.shedlock")
                 // DB-server UTC time — instances need no clock agreement
                 .usingDbTime()
                 .build()));

@@ -5,6 +5,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -31,6 +32,25 @@ class WebhookDeliveryWorker implements SmartLifecycle {
     private static final Logger log = LoggerFactory.getLogger(WebhookDeliveryWorker.class);
     private static final int MAX_BACKOFF_SHIFT = 16;
     private static final Duration SHUTDOWN_GRACE = Duration.ofSeconds(20);
+
+    /**
+     * The tenant axis this worker runs on. It names no organization deliberately: an org that has never
+     * been promoted resolves to the shared {@code tenant_pool}, and a UUID in no {@code organization}
+     * row can never resolve to anything else — so this IS the pooled schema's axis, spelled with the
+     * only vocabulary {@code TenantContext} has. Same constant, same reasoning as
+     * {@link WebhookSecretEncryptionMigrator} and {@code MappedSchemaValidator}.
+     *
+     * <p><b>PHASE 3/5 TURNS THIS WORKER INTO A PER-TENANT LOOP, and that is a fairness change, not a
+     * refactor.</b> {@code webhook_delivery} and {@code webhook_subscription} are tenant-tier (ADR 0010
+     * §2), so today's single {@code FOR UPDATE SKIP LOCKED} claim spans every tenant precisely because
+     * every tenant is in one schema. Once a tenant is promoted, one claim covers ONE schema: the
+     * oldest-first ordering that {@link WebhookDeliveryQueue#claim} leans on stops being global, and
+     * fairness becomes a property of the LOOP'S ORDER over homes rather than of the statement. §3.4
+     * gives the shape (iterate the pool plus the silos in {@code platform.tenant_placement}); Phase 3
+     * replaces the sweep with {@code platform.queue_signal} and a two-step claim, so a home with
+     * nothing to do costs nothing to visit — a map, not a search.
+     */
+    private static final UUID POOLED_TENANT = new UUID(0L, 0L);
 
     private final WebhookDeliveryQueue queue;
     private final WebhookSender sender;
@@ -121,11 +141,26 @@ class WebhookDeliveryWorker implements SmartLifecycle {
      * stale-lock reclaim then re-POSTs — the duplicate this design already warns receivers about, but
      * for every delivery rather than after a crash.
      *
-     * <p>PHASE 2: {@code webhook_delivery} is per-tenant, so the single claim becomes a claim per
-     * tenant and each send pins {@code runAs(delivery.orgId())}.
+     * <p><b>Both pins are the TENANT axis since Phase 2, not the platform one.</b>
+     * {@code webhook_delivery} and {@code webhook_subscription} are tenant-tier, so the platform pin
+     * these used to take could not see either table: the claim failed on {@code relation
+     * "webhook_delivery" does not exist} on every poll, which is loud — but the send's pin would have
+     * failed AFTER the POST, leaving a delivered webhook marked PROCESSING and re-POSTed by the
+     * reclaim. See {@link #POOLED_TENANT} for what the constant means and for the per-tenant loop it
+     * becomes.
+     *
+     * <p>The two pins stay separate rather than one wrapping both: the sends run on
+     * {@link #sendExecutor}, and a thread-local does not cross a virtual thread's boundary however the
+     * caller is pinned.
      */
     public int drainOnce() throws InterruptedException {
-        List<ClaimedWebhookDelivery> batch = TenantContext.callAsPlatform(
+        // ONE claim, spanning every tenant — because every tenant is in one schema, not because the
+        // statement crosses tenants. The FOR UPDATE SKIP LOCKED inside claim() picks the globally
+        // oldest due rows; after Phase 5 promotes a tenant, this line becomes a LOOP over homes and
+        // each claim sees one tenant's backlog. Read POOLED_TENANT before changing it: that is where
+        // fairness stops being a property of `order by next_attempt_at` and starts being a property of
+        // the loop, and where the batch size stops meaning what it means today.
+        List<ClaimedWebhookDelivery> batch = TenantContext.callAs(POOLED_TENANT,
                 () -> queue.claim(config.batchSize(), config.staleLock()));
         if (batch.isEmpty()) {
             return 0;
@@ -136,7 +171,10 @@ class WebhookDeliveryWorker implements SmartLifecycle {
             try {
                 executor.submit(() -> {
                     try {
-                        TenantContext.runAsPlatform(() -> deliver(delivery));
+                        // The same axis the row was claimed on — necessarily, since the status write
+                        // has to reach the row the claim found. When this becomes a per-tenant loop the
+                        // axis comes from the loop, which is why the delivery record carries no org.
+                        TenantContext.runAs(POOLED_TENANT, () -> deliver(delivery));
                     } finally {
                         done.countDown();
                     }

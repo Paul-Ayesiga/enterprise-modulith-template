@@ -19,6 +19,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 import ug.co.smsone.testsupport.EdgeSeed;
 
@@ -131,14 +132,25 @@ class ApiKeyAuthTest extends AbstractIntegrationTest {
         String subject = label + "-" + UUID.randomUUID();
         UUID personId = EdgeSeed.person(jdbc, subject);
         UUID roleId = UUID.randomUUID();
-        jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
-                + "values (?, ?, ?, 'KeyRole', false, 0, now())", roleId, orgId,
-                "KEY_" + roleId.toString().substring(0, 8).toUpperCase());
-        for (String permission : permissions) {
-            jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleId, permission);
-        }
-        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+        // The seat is TENANT-tier — org_role, role_permission and membership all are (ADR 0010 §2) —
+        // so it takes one span on this organization's axis. `api_key` itself is platform-tier and is
+        // deliberately NOT seeded here: the key is minted through the REST surface, which resolves it
+        // by name from whichever axis the caller is on.
+        TenantContext.runAs(orgId, () -> {
+            jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
+                    + "values (?, ?, ?, 'KeyRole', false, 0, now())", roleId, orgId,
+                    "KEY_" + roleId.toString().substring(0, 8).toUpperCase());
+            for (String permission : permissions) {
+                jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleId, permission);
+            }
+            jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
+                    + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+            // Qualified, so it lands in the platform schema from inside the tenant's axis — the pair
+            // OrgProjectionWriter writes in one transaction for every real seat (ADR 0010 §2.1).
+            jdbc.update("insert into platform.org_membership_index (person_id, org_id, status) "
+                    + "values (?, ?, 'ACTIVE') on conflict (person_id, org_id) do nothing",
+                    personId, orgId);
+        });
         return member(orgId, subject);
     }
 

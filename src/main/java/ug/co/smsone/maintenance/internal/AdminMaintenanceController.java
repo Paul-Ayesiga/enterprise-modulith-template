@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.shared.web.ResourceObject;
 
 /**
@@ -33,6 +34,19 @@ class AdminMaintenanceController {
     record ScheduleRequest(String orgId, Instant startsAt, Instant endsAt, String mode, String message) {
     }
 
+    /**
+     * <b>The org-targeted case is a cross-tenant write, and it says so (ADR 0010 §2 row 25, §5.15).</b>
+     * A {@code platform-admin} has no organization of their own, so this request runs on the PLATFORM
+     * axis — and {@code maintenance_window} is a split table, so a window carrying an {@code orgId}
+     * saved from here would land in {@code platform.maintenance_window} with a non-null {@code org_id}:
+     * a row whose org disagrees with its schema, invisible to the tenant it was scheduled for and to
+     * every enforcement path that reads it.
+     *
+     * <p>The pin therefore wraps the call rather than sitting inside {@code MaintenanceService}, which is
+     * {@code @Transactional} — the schema is chosen when the connection is borrowed and the transaction
+     * has already borrowed one, which is why {@code TenantContext.set} throws in there. Platform-wide
+     * windows ({@code orgId} null) need no pin: the platform axis is already the right home.
+     */
     @PostMapping
     @Operation(summary = "Schedule a maintenance window",
             description = "`orgId` null = platform-wide. RESTRICT pauses org writes (503 + Retry-After) "
@@ -41,8 +55,12 @@ class AdminMaintenanceController {
     @ResponseStatus(HttpStatus.CREATED)
     ResourceObject schedule(@RequestBody ScheduleRequest request) {
         UUID orgId = request.orgId() == null || request.orgId().isBlank() ? null : UUID.fromString(request.orgId());
-        return MaintenanceResources.toResource(maintenance.schedule(orgId, request.startsAt(),
-                request.endsAt(), request.mode(), request.message()));
+        MaintenanceWindow scheduled = orgId == null
+                ? maintenance.schedule(null, request.startsAt(), request.endsAt(), request.mode(),
+                        request.message())
+                : TenantContext.callAs(orgId, () -> maintenance.schedule(orgId, request.startsAt(),
+                        request.endsAt(), request.mode(), request.message()));
+        return MaintenanceResources.toResource(scheduled);
     }
 
     @GetMapping

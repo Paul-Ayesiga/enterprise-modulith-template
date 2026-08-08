@@ -38,11 +38,55 @@ spring:
       # Statement, which never flips that bit. So this value covers OTHER borrowers (a driver-level
       # setSchema, Hibernate's schema mapper if it were ever enabled) and never the router — the router
       # is correct because it sets the path on every single borrow, not because anything resets it.
-      # `public` and not `platform` on purpose while ADR 0010 is at Phase 1: Flyway migrates through the
-      # RAW pool, and a Hikari schema naming a schema that does not exist yet makes current_schema()
-      # NULL, which Flyway 12 reports as "Unable to determine current schema as search_path is empty".
-      # Flips to `platform` in Phase 2, when that schema exists.
-      schema: ${DB_DEFAULT_SCHEMA:public}
+      # `platform` since Phase 2, and the Phase 1 note about a schema that does not exist yet turned out
+      # not to bite: on a FRESH database Flyway borrows this connection BEFORE it creates the schemas, so
+      # current_schema() really is NULL — but PostgreSQLConnection.doGetCurrentSchema only raises "Unable
+      # to determine current schema as search_path is empty" when `SHOW search_path` is ALSO empty, and
+      # pgjdbc's setSchema has just set it to the literal `platform`. Flyway then falls back to that name,
+      # creates the schema (create-schemas: true) and migrates into it. Verified against flyway-database-
+      # postgresql 12.4.0's own bytecode rather than assumed — the failure mode would have been every
+      # boot, on every fresh database.
+      schema: ${DB_DEFAULT_SCHEMA:platform}
+  flyway:
+    # ADR 0010 Phase 2. There was no spring.flyway block at all until this phase — pure
+    # autoconfiguration onto current_schema() = public, one history table. The migration set is now
+    # TWO sequences (db/migration/platform and db/migration/tenant) that keep ONE global version
+    # counter between them, and only the platform one runs at boot.
+    #
+    # WHICH DATASOURCE. Flyway binds to the bean annotated @FlywayDataSource — the RAW Hikari pool in
+    # shared.persistence.TenantRoutingDataSourceConfig, never the @Primary routing one. The router
+    # sets search_path from TenantContext on every borrow, migration runs with no tenant pinned, and
+    # absent routes to the empty `no_tenant`; Flyway 12.4.0 then fails with "Unable to determine
+    # current schema as search_path is empty". That error string names this exact mistake.
+    locations:
+      # The platform tier: ~29 tables plus the platform copy of the seven split ones. One schema,
+      # ~1 s, advisory-lock-serialized across replicas — unchanged from what boot did before.
+      - classpath:db/migration/platform
+      # TEMPORARY (ADR 0010 Phase 4 deletes this line and the directory). db/migration/tenant does
+      # NOT run at boot: the Helm chart gives a pod ~105 s before the kubelet kills it and Flyway
+      # runs before the servlet container serves, so a per-tenant fan-out at startup is a rollout
+      # that fails as the fleet grows (§4.2). It needs a separate resumable runner, which is Phase 4.
+      # Until then every tenant-tier entity still resolves unqualified against `tenant_pool`, so the
+      # schema has to be complete or nothing works — and Spring Boot autoconfigures exactly ONE
+      # Flyway instance, so there is no second spring.flyway block to point at the tenant sequence.
+      # V9999__tenant_pool.sql is the stand-in: generated from db/migration/tenant by
+      # `scripts/split-migrations.py bootstrap`, replayed into `tenant_pool` as the last migration of
+      # the platform run. It carries no version from the global counter — see its header.
+      - classpath:db/migration/bootstrap
+    # Where `flyway_schema_history` lives, and the search_path the platform migrations run under. The
+    # tenant sequence gets its own history table in its own schema when Phase 4's runner lands, which
+    # is what makes "this silo is two migrations behind" a queryable fact rather than a guess.
+    default-schema: platform
+    # `platform` and `tenant_pool` must exist before anything runs; `ext` and `no_tenant` are also
+    # declared by V54 with `if not exists`, so creating them here is belt and braces rather than a
+    # second source of truth. NOTE `public` is deliberately absent: after this phase it holds nothing
+    # and is on no tenant's path — that is what makes a tenant liftable to its own database.
+    create-schemas: true
+    schemas:
+      - platform
+      - tenant_pool
+      - ext
+      - no_tenant
   jpa:
     hibernate:
       # NONE, never validate: validation runs while the EntityManagerFactory is built, which borrows
@@ -83,6 +127,30 @@ spring:
           writetimeout: ${SMTP_WRITE_TIMEOUT_MS:5000}
   modulith:
     events:
+      jdbc:
+        # ADR 0010 §2 row 9: `event_publication` is PLATFORM-tier. `listener_id` is a Java method
+        # signature and `serialized_event` is a JSON blob — nothing in either is tenant-shaped, nothing
+        # in it travels with an extracted tenant, and V2 creates it only in db/migration/platform.
+        #
+        # THIS KEY IS THE WHOLE PIN, and there is no annotation anywhere to notice if it goes missing.
+        # Modulith's registry is configured, not mapped: JdbcRepositorySettings.getTable() returns the
+        # bare `EVENT_PUBLICATION` when this is unset and `<schema>.EVENT_PUBLICATION` when it is set,
+        # and every one of the repository's statements is built from that one string. Unset, the outbox
+        # writes and reads resolve through whatever search_path the borrowing thread happens to carry —
+        # so a publication raised inside a tenant request would be INSERTed into `tenant_pool`, and
+        # OutboxResubmissionJob (which runs on the platform axis) would never see it again. The outbox
+        # would stop draining for everyone, silently, in a scheduled job.
+        #
+        # Unquoted upper case is deliberate on Modulith's side and safe here: Postgres folds
+        # `platform.EVENT_PUBLICATION` to `platform.event_publication`, which is what V2 creates.
+        schema: platform
+        # Explicit, not trusting the default. Modulith ships DDL for its own registry and will create
+        # the table itself if this is on — unqualified, so it lands in whatever schema the borrowing
+        # connection's search_path happens to start with. Behind the routing DataSource that is
+        # `no_tenant` for any borrow with no axis, and the result is a second, invisible copy of the
+        # outbox that nothing reads. V2 creates this table; nothing else may.
+        schema-initialization:
+          enabled: false
       # OFF, and replaced — not abandoned — by shared.events.OutboxResubmissionJob. Modulith runs this
       # inside afterSingletonsInstantiated(): every incomplete publication, no limit, every listener
       # invoked before the context finishes refreshing, so a backlog is paid for in startup time

@@ -64,6 +64,21 @@ class UsageExportJob {
     // must not run the pass past the lock and into a second instance's concurrent run.
     private static final Duration RUN_DEADLINE = Duration.ofMinutes(25);
 
+    /**
+     * The axis this pass borrows. It names no organization deliberately: an org that has never been
+     * promoted resolves to the shared {@code tenant_pool}, and a UUID in no {@code organization} row
+     * can never resolve to anything else — so this IS the pooled schema's axis, spelled with the only
+     * vocabulary {@code TenantContext} has. Same constant, same reasoning as {@code DunningJob} and
+     * {@code TrialExpiryJob}.
+     *
+     * <p>PHASE 5 makes this a LOOP over {@code platform.tenant_placement}: the backlog scan stays one
+     * statement (it is platform-tier and cross-tenant by design — see {@link #export()}), and it is the
+     * per-org {@code billing_account} read that has to be asked of each home in turn. The natural shape
+     * then is to keep the scan and the grouping exactly as they are and open one span per home around
+     * the org loop, so the fairness ordering below survives the change untouched.
+     */
+    private static final UUID POOLED_TENANT = new UUID(0L, 0L);
+
     private final JdbcTemplate jdbc;
     private final BillingAccountRepository accounts;
     private final KillBillGateway killBill;
@@ -102,21 +117,29 @@ class UsageExportJob {
     }
 
     /**
-     * Declares the platform axis for the pass (ADR 0010 §3.4). Pinned here rather than in {@link #run()}
+     * Declares the axis for the pass (ADR 0010 §3.4). Pinned here rather than in {@link #run()}
      * because a test calls this method directly, and the axis has to be a property of the work, not of
      * how it was triggered.
      *
-     * <p><b>PHASE 2: this is a per-tenant loop already — it just does not say so yet.</b> The backlog
-     * read below scans {@code api_usage_daily} across every org in one statement and then walks
-     * {@code backlog.entrySet()}, one entry per org. Once that table moves to the tenant tier the scan
-     * and the {@link #markExported} write for each org belong inside
-     * {@code TenantContext.runAs(orgId, …)}; the Kill Bill round trip in between does not (it is
-     * remote, and the account mapping in {@code billing_account} is what decides which tier it reads
-     * from). {@link #agedOutDays()} is the other half: a cross-tenant COUNT that becomes a sum over
-     * the loop.
+     * <p><b>One span, and it is the TENANT one — even though this pass is mostly platform work.</b>
+     * The two tiers are not symmetrical in how they are reached. {@code api_usage_daily} is
+     * platform-tier and every statement below names it {@code platform.api_usage_daily}, and a
+     * qualified name resolves from ANY axis: the scan, {@link #markExported} and {@link #agedOutDays()}
+     * are all correct on a tenant's {@code search_path}. {@code billing_account} is tenant-tier and is
+     * reached BARE, which resolves on a tenant axis and nowhere else. So a tenant pin covers both
+     * halves and a platform pin covers only one — the direction of the asymmetry decides the axis.
+     *
+     * <p>The alternative, a platform pin with a nested {@code callAs(orgId)} around each
+     * {@code billing_account} read, is two spans and therefore two connections and two transactions for
+     * work that has no need of either. It buys nothing here: the org read is a single row and shares
+     * nothing with the ledger writes.
+     *
+     * <p>What did NOT move is the ledger. {@code api_usage_daily} stayed platform-tier through the
+     * Phase 2 split deliberately, because the cross-tenant {@code order by day} below is the fairness
+     * property this job is built on and a per-tenant ledger cannot express it (ADR 0010 §2).
      */
     Export export() {
-        return TenantContext.callAsPlatform(this::exportBacklog);
+        return TenantContext.callAs(POOLED_TENANT, this::exportBacklog);
     }
 
     private Export exportBacklog() {
@@ -129,7 +152,7 @@ class UsageExportJob {
         // Both bounds are computed by the database (`current_date`), not by the JVM: mixing the two
         // clocks would move the window's edges independently around midnight.
         List<UsageRow> rows = jdbc.query("""
-                select org_id, day, requests from api_usage_daily
+                select org_id, day, requests from platform.api_usage_daily
                 where exported = false
                   and day < current_date
                   and day >= current_date - cast(? as integer)
@@ -236,7 +259,7 @@ class UsageExportJob {
         for (int i = 0; i < batch.size(); i++) {
             args[i + 1] = Date.valueOf(batch.get(i).date());
         }
-        jdbc.update("update api_usage_daily set exported = true where org_id = ? and day in ("
+        jdbc.update("update platform.api_usage_daily set exported = true where org_id = ? and day in ("
                 + String.join(", ", Collections.nCopies(batch.size(), "?")) + ")", args);
     }
 
@@ -249,7 +272,7 @@ class UsageExportJob {
      */
     private long agedOutDays() {
         Long agedOut = jdbc.queryForObject("""
-                select count(*) from api_usage_daily
+                select count(*) from platform.api_usage_daily
                 where exported = false and day < current_date - cast(? as integer)
                 """, Long.class, maxBacklogDays);
         return agedOut == null ? 0 : agedOut;
@@ -301,7 +324,14 @@ class UsageExportJob {
         }
     }
 
-    /** The org's one billable subscription, or empty when it has no billing account or none ACTIVE. */
+    /**
+     * The org's one billable subscription, or empty when it has no billing account or none ACTIVE.
+     *
+     * <p>{@code billing_account} is tenant-tier (ADR 0010 §2) and is therefore read BARE, on the tenant
+     * axis {@link #export()} pinned around the whole pass. No pin of its own: the org id is a predicate
+     * here, not an axis, and while there is one tenant schema every org's account row is in it. That
+     * distinction is what Phase 5 turns back into a loop — see {@link #POOLED_TENANT}.
+     */
     private Optional<UUID> activeSubscriptionOf(UUID orgId) {
         return accounts.findByOrgId(orgId)
                 .map(account -> killBill.subscriptions(account.getKbAccountId()))

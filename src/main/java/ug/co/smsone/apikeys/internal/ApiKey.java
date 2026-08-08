@@ -11,8 +11,8 @@ import ug.co.smsone.shared.persistence.SoftDeletableEntity;
 
 /** A machine credential. Revocation is soft-delete: the row stays as the audit trail. */
 @Entity
-@Table(name = "api_key")
-@SQLDelete(sql = "update api_key set deleted_at = now(), version = version + 1 where id = ? and version = ?")
+@Table(name = "api_key", schema = "platform")
+@SQLDelete(sql = "update platform.api_key set deleted_at = now(), version = version + 1 where id = ? and version = ?")
 @SQLRestriction("deleted_at is null")
 class ApiKey extends SoftDeletableEntity {
 

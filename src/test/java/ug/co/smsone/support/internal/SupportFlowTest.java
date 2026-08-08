@@ -19,6 +19,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import io.micrometer.core.instrument.MeterRegistry;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 import ug.co.smsone.testsupport.EdgeSeed;
 
@@ -112,8 +113,11 @@ class SupportFlowTest extends AbstractIntegrationTest {
         String ticketId = JsonPath.read(opened.getResponse().getContentAsString(), "$.data.id");
 
         double before = breachedCount();
-        // Age the resolution due date past now so the breach scan catches it.
-        jdbc.update("update ticket set resolution_due_at = now() - interval '1 hour' where id = ?::uuid", ticketId);
+        // Age the resolution due date past now so the breach scan catches it. `ticket` is TENANT-tier
+        // (ADR 0010 §2) and this one was opened through the org route, so it is in the tenant's schema
+        // — the harness's PLATFORM pin cannot see it. `shedlock` is platform-tier and stays on that pin.
+        TenantContext.runAs(orgId, () -> jdbc.update(
+                "update ticket set resolution_due_at = now() - interval '1 hour' where id = ?::uuid", ticketId));
         jdbc.update("update shedlock set lock_until = timestamp '1970-01-01 00:00:00' where name = ?",
                 "support-sla-escalation");
         escalationJob.escalateBreaches();
@@ -181,14 +185,24 @@ class SupportFlowTest extends AbstractIntegrationTest {
         String subject = label + "-" + UUID.randomUUID();
         UUID personId = EdgeSeed.person(jdbc, subject);
         UUID roleId = UUID.randomUUID();
-        jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
-                + "values (?, ?, ?, 'SupRole', false, 0, now())", roleId, orgId,
-                "SUP_" + label.toUpperCase().replace('-', '_'));
-        for (String permission : permissions) {
-            jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleId, permission);
-        }
-        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+        // The seat is TENANT-tier — org_role, role_permission and membership all are (ADR 0010 §2) —
+        // so it takes one span on this organization's axis; the person above is platform-tier and
+        // stays on the harness's PLATFORM pin.
+        TenantContext.runAs(orgId, () -> {
+            jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
+                    + "values (?, ?, ?, 'SupRole', false, 0, now())", roleId, orgId,
+                    "SUP_" + label.toUpperCase().replace('-', '_'));
+            for (String permission : permissions) {
+                jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleId, permission);
+            }
+            jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
+                    + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+            // Qualified, so it lands in the platform schema from inside the tenant's axis — the pair
+            // OrgProjectionWriter writes in one transaction for every real seat (ADR 0010 §2.1).
+            jdbc.update("insert into platform.org_membership_index (person_id, org_id, status) "
+                    + "values (?, ?, 'ACTIVE') on conflict (person_id, org_id) do nothing",
+                    personId, orgId);
+        });
         return new Person(personId, subject);
     }
 

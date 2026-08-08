@@ -101,6 +101,60 @@ class OutboxResubmissionJobIntegrationTest extends AbstractIntegrationTest {
     }
 
     /**
+     * <b>The outbox registry is PLATFORM-tier, and a pass driven from a TENANT still reads it.</b>
+     *
+     * <p>This is ADR 0010 Phase 2's gate for {@code event_publication} (§2 row 9), and it is here rather
+     * than anywhere prettier because of what getting it wrong costs: nothing fails, nothing logs, and
+     * the outbox simply stops draining — for every tenant at once — because the sweep is looking in a
+     * schema where publications were never written. It would surface as unrelated features quietly not
+     * happening, days later.
+     *
+     * <p>Two independent mechanisms have to hold, and both are exercised by the one call:
+     *
+     * <ol>
+     *   <li>{@code spring.modulith.events.jdbc.schema: platform} — the registry's own statements name
+     *       {@code platform.EVENT_PUBLICATION}. There is no annotation to notice if that key goes
+     *       missing; the table name is a plain string Modulith builds every statement from, so unset it
+     *       resolves through whatever {@code search_path} the borrowing thread carries.</li>
+     *   <li>{@code OutboxResubmissionJob.resubmitOnce}'s own {@code TenantContext.callAsPlatform} —
+     *       which is why the assertion is written as "the tenant's axis does not leak in", not merely
+     *       "the query works".</li>
+     * </ol>
+     *
+     * <p>The falsification is real and not theoretical: {@code event_publication} exists ONLY in
+     * {@code platform}. On a tenant's {@code search_path} an unqualified read of it does not return the
+     * wrong rows, it fails outright with {@code relation "event_publication" does not exist} — so this
+     * test goes red loudly the moment either mechanism is removed.
+     */
+    @Test
+    void aPassDrivenFromATenantStillReadsThePlatformRegistry() {
+        TenantContext.callAsPlatform(() -> jdbc.update("delete from platform.event_publication"));
+        settings.put("outbox.tenant-axis.probe." + UUID.randomUUID(), "x", null);
+        Awaitility.await().atMost(Duration.ofSeconds(10))
+                .until(() -> !probeRows().isEmpty() && FailingProbe.invocations.get() >= 1);
+        Map<String, Object> probe = probeRows().get(0);
+        TenantContext.callAsPlatform(() -> jdbc.update("delete from platform.event_publication"));
+        UUID stranded = TenantContext.callAsPlatform(
+                () -> insertIncomplete(probe, Instant.now().minus(Duration.ofMinutes(3))));
+        FailingProbe.invocations.set(0);
+
+        // A tenant on the thread, as a request or an MCP tool call would leave it. Not PLATFORM, and
+        // not absent: absent would prove nothing, because absent routes to no_tenant and fails for a
+        // reason that has nothing to do with this rule.
+        UUID someTenant = UUID.randomUUID();
+        int resubmitted = TenantContext.callAs(someTenant, () -> job.resubmitOnce("tenant-axis"));
+
+        assertThat(resubmitted)
+                .as("the registry is platform-tier: a pass started on a tenant's axis must still find "
+                        + "the publication that was written to platform.event_publication")
+                .isEqualTo(1);
+        assertThat(TenantContext.callAsPlatform(() -> jdbc.queryForObject(
+                "select last_resubmission_date > publication_date from platform.event_publication "
+                        + "where id = ?", Boolean.class, stranded)))
+                .isTrue();
+    }
+
+    /**
      * Pinned because one of its two callers polls: Awaitility evaluates the condition on ITS OWN
      * thread, which no filter and no harness ever pinned, so the borrow routes to the empty
      * {@code no_tenant} schema (ADR 0010 §3.4) — and the wait then times out on a publication that is

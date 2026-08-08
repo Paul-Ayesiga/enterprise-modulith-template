@@ -14,6 +14,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
 /**
@@ -24,6 +25,12 @@ import ug.co.smsone.testsupport.AbstractIntegrationTest;
  *
  * <p>The window is pinned here rather than inherited from the default so the last of those is a real
  * assertion about the property and not about whatever 45 days happens to mean today.
+ *
+ * <p><strong>The fixtures straddle the tiers the job straddles</strong> (ADR 0010 §2). The ledger is
+ * platform-tier and is written {@code platform.api_usage_daily} here for the same reason the job
+ * writes it that way — a qualified name is right from any axis, so the assertion cannot be quietly
+ * reading a different schema than the run did. {@code billing_account} is the tenant's and is seeded
+ * on that org's axis; the harness pins PLATFORM, which is honest for a test thread and cannot see it.
  */
 @TestPropertySource(properties = {
         "app.billing.usage-export.enabled=true",
@@ -154,24 +161,31 @@ class UsageExportJobTest extends AbstractIntegrationTest {
                 .isEqualTo("usage-" + orgId + "-" + first);
     }
 
-    /** An org with a billing account and one ACTIVE Kill Bill subscription; returns its id. */
+    /**
+     * An org with a billing account and one ACTIVE Kill Bill subscription; returns its id.
+     *
+     * <p>The save runs on the org's own axis: {@code billing_account} is tenant-tier and the mapping
+     * declares no schema, so on the harness's platform pin it would resolve inside {@code platform} and
+     * fail on a table that plainly exists elsewhere. Seeding it where the job reads it is also what
+     * makes the "unbillable org" case mean anything — that org gets no such row, deliberately.
+     */
     private UUID billableOrgWithActiveSubscription(UUID orgId) {
         UUID kbAccount = UUID.randomUUID();
         UUID kbSubscription = UUID.randomUUID();
-        accounts.save(BillingAccount.link(orgId, kbAccount));
+        TenantContext.runAs(orgId, () -> accounts.save(BillingAccount.link(orgId, kbAccount)));
         BDDMockito.given(killBill.subscriptions(kbAccount)).willReturn(List.of(
                 new KillBillGateway.KbSubscription(kbSubscription.toString(), "pro-monthly", "ACTIVE")));
         return kbSubscription;
     }
 
     private void usage(UUID orgId, LocalDate day, long requests) {
-        jdbc.update("insert into api_usage_daily (org_id, day, requests) values (?, ?, ?)",
+        jdbc.update("insert into platform.api_usage_daily (org_id, day, requests) values (?, ?, ?)",
                 orgId, Date.valueOf(day), requests);
     }
 
     private boolean exported(UUID orgId, LocalDate day) {
         return Boolean.TRUE.equals(jdbc.queryForObject(
-                "select exported from api_usage_daily where org_id = ? and day = ?",
+                "select exported from platform.api_usage_daily where org_id = ? and day = ?",
                 Boolean.class, orgId, Date.valueOf(day)));
     }
 }

@@ -23,8 +23,8 @@ import ug.co.smsone.shared.persistence.SoftDeletableEntity;
  * adding a second identity provider is now an insert instead of a migration.
  */
 @Entity
-@Table(name = "person")
-@SQLDelete(sql = "update person set deleted_at = now(), version = version + 1 where id = ? and version = ?")
+@Table(name = "person", schema = "platform")
+@SQLDelete(sql = "update platform.person set deleted_at = now(), version = version + 1 where id = ? and version = ?")
 @SQLRestriction("deleted_at is null")
 class Person extends SoftDeletableEntity {
 

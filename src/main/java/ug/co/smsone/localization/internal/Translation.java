@@ -12,8 +12,8 @@ import ug.co.smsone.shared.persistence.SoftDeletableEntity;
 
 /** One translated message: a (locale, key) → value row. Locales are lowercased BCP-47 tags. */
 @Entity
-@Table(name = "translation")
-@SQLDelete(sql = "update translation set deleted_at = now(), version = version + 1 where id = ? and version = ?")
+@Table(name = "translation", schema = "platform")
+@SQLDelete(sql = "update platform.translation set deleted_at = now(), version = version + 1 where id = ? and version = ?")
 @SQLRestriction("deleted_at is null")
 class Translation extends SoftDeletableEntity {
 

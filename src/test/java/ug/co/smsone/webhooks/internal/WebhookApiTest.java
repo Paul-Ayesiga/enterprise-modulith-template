@@ -23,6 +23,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import ug.co.smsone.shared.security.OrgAuthorization;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 import ug.co.smsone.testsupport.EdgeSeed;
 
@@ -35,6 +36,20 @@ import ug.co.smsone.testsupport.EdgeSeed;
  * {@code CurrentUser}, so a {@code hasPermission} stub is never consulted on the request path at all.
  * The caller is a seeded person and the tenant a seeded provider link, because those are what the token
  * and its {@code organization} claim now resolve through.
+ *
+ * <h2>Two axes in one test method, and neither is optional (ADR 0010 §2)</h2>
+ *
+ * <p>What this class seeds on the TEST thread is platform-tier — {@code organization},
+ * {@code external_organization}, {@code person}, {@code external_identity} — and keeps running on the
+ * harness's PLATFORM pin, unchanged. The {@code webhook_delivery} rows the two redelivery tests seed
+ * and read back are TENANT-tier, so those calls declare the org's axis with {@link TenantContext}.
+ * Separate spans rather than one wider pin, because they are separate statements with no transaction
+ * spanning them and the platform half genuinely cannot be reached from a tenant axis: those tables are
+ * addressed bare here, as raw fixture SQL, with no {@code platform.} to make them axis-independent.
+ *
+ * <p>The requests themselves need no pin at all — {@code CurrentUserFilter} pins the caller's
+ * organization before the controller runs — which is the property the redelivery tests quietly prove:
+ * a row seeded on the tenant's axis is the one the route finds.
  */
 @AutoConfigureMockMvc
 class WebhookApiTest extends AbstractIntegrationTest {
@@ -203,21 +218,14 @@ class WebhookApiTest extends AbstractIntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         UUID subscriptionId = UUID.fromString(JsonPath.read(body, "$.data.id"));
-        UUID deliveryId = UUID.randomUUID();
-        jdbc.update("""
-                insert into webhook_delivery (id, subscription_id, org_id, event_type, payload, status,
-                                              attempts, max_attempts, next_attempt_at, last_error, created_at)
-                values (?, ?, ?, 'org.member.added', '{}', 'FAILED', 8, 8, now(), 'receiver answered 500', now())
-                """, deliveryId, subscriptionId, orgId);
+        UUID deliveryId = seedFailedDelivery(orgId, subscriptionId, "receiver answered 500");
 
         mockMvc.perform(post("/api/v1/orgs/{orgId}/webhooks/{id}/deliveries/{deliveryId}/redeliver",
                         orgId, subscriptionId, deliveryId).with(manager))
                 .andExpect(status().isAccepted());
-        Assertions.assertThat(jdbc.queryForObject(
-                        "select status from webhook_delivery where id = ?", String.class, deliveryId))
-                .isEqualTo("PENDING");
-        Assertions.assertThat(jdbc.queryForObject(
-                        "select attempts from webhook_delivery where id = ?", Integer.class, deliveryId))
+        Assertions.assertThat(deliveryStatus(orgId, deliveryId)).isEqualTo("PENDING");
+        Assertions.assertThat(TenantContext.callAs(orgId, () -> jdbc.queryForObject(
+                        "select attempts from webhook_delivery where id = ?", Integer.class, deliveryId)))
                 .isZero(); // a fresh retry cycle, not a resumed one
 
         // The fence: no longer FAILED, so a repeat is a 409 — never a silent double-requeue.
@@ -237,12 +245,7 @@ class WebhookApiTest extends AbstractIntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         UUID subscriptionId = UUID.fromString(JsonPath.read(body, "$.data.id"));
-        UUID deliveryId = UUID.randomUUID();
-        jdbc.update("""
-                insert into webhook_delivery (id, subscription_id, org_id, event_type, payload, status,
-                                              attempts, max_attempts, next_attempt_at, last_error, created_at)
-                values (?, ?, ?, 'org.member.added', '{}', 'FAILED', 8, 8, now(), 'x', now())
-                """, deliveryId, subscriptionId, orgId);
+        UUID deliveryId = seedFailedDelivery(orgId, subscriptionId, "x");
 
         // OrgAuthorization is stubbed only for manager()'s subject — this one resolves to nothing.
         mockMvc.perform(post("/api/v1/orgs/{orgId}/webhooks/{id}/deliveries/{deliveryId}/redeliver",
@@ -250,8 +253,27 @@ class WebhookApiTest extends AbstractIntegrationTest {
                         .with(jwt().jwt(builder -> builder.subject("outsider-" + UUID.randomUUID())
                                 .claim("organization", Map.of("acme", Map.of("id", orgId.toString()))))))
                 .andExpect(status().isForbidden());
-        Assertions.assertThat(jdbc.queryForObject(
-                        "select status from webhook_delivery where id = ?", String.class, deliveryId))
-                .isEqualTo("FAILED");
+        Assertions.assertThat(deliveryStatus(orgId, deliveryId)).isEqualTo("FAILED");
+    }
+
+    /**
+     * A dead-lettered row, written on the OWNING ORG's axis — {@code webhook_delivery} is tenant-tier,
+     * so the harness's PLATFORM pin cannot see the table (ADR 0010 §2). One place rather than two
+     * because both redelivery tests want the same row and the axis is the easy half to forget.
+     */
+    private UUID seedFailedDelivery(UUID orgId, UUID subscriptionId, String lastError) {
+        UUID deliveryId = UUID.randomUUID();
+        TenantContext.runAs(orgId, () -> jdbc.update("""
+                insert into webhook_delivery (id, subscription_id, org_id, event_type, payload, status,
+                                              attempts, max_attempts, next_attempt_at, last_error, created_at)
+                values (?, ?, ?, 'org.member.added', '{}', 'FAILED', 8, 8, now(), ?, now())
+                """, deliveryId, subscriptionId, orgId, lastError));
+        return deliveryId;
+    }
+
+    /** Same axis the row was seeded on, for the same reason. */
+    private String deliveryStatus(UUID orgId, UUID deliveryId) {
+        return TenantContext.callAs(orgId, () -> jdbc.queryForObject(
+                "select status from webhook_delivery where id = ?", String.class, deliveryId));
     }
 }

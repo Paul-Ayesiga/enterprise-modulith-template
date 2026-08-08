@@ -1,6 +1,7 @@
 package ug.co.smsone.webhooks.internal;
 
 import java.time.Clock;
+import java.util.UUID;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,6 +26,18 @@ class WebhookRetentionJob {
     private static final int BATCH_SIZE = 1000;
     private static final int MAX_BATCHES = 100; // bounds one run inside the ShedLock lease
 
+    /**
+     * The tenant axis both halves of this run need. Names no organization deliberately: an org in no
+     * {@code organization} row can only ever resolve to the shared {@code tenant_pool}, so this IS the
+     * pooled schema's axis — the same constant and the same reasoning as
+     * {@link WebhookSecretEncryptionMigrator} and {@code MappedSchemaValidator}.
+     *
+     * <p>PHASE 5 makes this a loop over {@code platform.tenant_placement}: "every org's deliveries"
+     * stops being one schema, and both passes below (the default sweep and the per-override one) run
+     * once per home.
+     */
+    private static final UUID POOLED_TENANT = new UUID(0L, 0L);
+
     private final WebhookDeliveryQueue queue;
     private final WebhookProperties properties;
     private final RetentionOverrides retentionOverrides;
@@ -44,11 +57,12 @@ class WebhookRetentionJob {
     @Scheduled(cron = "${app.scheduler.webhook-retention-cron:0 15 4 * * *}")
     @SchedulerLock(name = "webhook-delivery-retention", lockAtMostFor = "PT30M")
     public void purgeExpiredDeliveries() {
-        // Declares the platform axis: nothing pins one off a request thread. ADR 0010 §3.4.
-        // PHASE 2: the per-org override arm (purgeTerminalBatchForOrg) is already shaped like the loop
-        // this becomes — once webhook_delivery moves to the tenant tier every arm wraps in
-        // TenantContext.runAs(orgId, ...) and the default sweep becomes the loop over the rest.
-        int total = TenantContext.callAsPlatform(() -> RetentionPurges.purge(retentionOverrides,
+        // ONE tenant pin over the whole run, and both things inside it need it for the same reason.
+        // webhook_delivery is tenant-tier (ADR 0010 §2) and so is org_retention_override, which
+        // RetentionPurges reads first to decide who is exempt from the default cutoff — on the platform
+        // axis this job used to take, that read failed before a single row was ever considered.
+        // Nothing here is platform's, so there is no second span to open.
+        int total = TenantContext.callAs(POOLED_TENANT, () -> RetentionPurges.purge(retentionOverrides,
                 RetentionScope.WEBHOOK_DELIVERY, clock.instant(), properties.retention(), BATCH_SIZE, MAX_BATCHES,
                 queue::purgeTerminalBatch, queue::purgeTerminalBatchForOrg));
         ug.co.smsone.shared.metrics.PurgeMetrics.purged(meters, "webhook-delivery-retention", "webhook_delivery", total);

@@ -47,6 +47,22 @@ class ComplianceService {
 
     /** A table an erasure clears, and the column it is keyed by. Constants — never input. */
     private record OwnedTable(String table, String keyColumn) {
+
+        /**
+         * The schema-qualified name the statement is actually built from, and it is not decoration.
+         * Every table in {@link #ERASED_TABLES} is PLATFORM-tier (ADR 0010 §2 — the person graph is
+         * one copy for the whole installation, because a human can belong to many tenants and
+         * therefore to none), while erasure is reached from routes carrying every possible axis:
+         * {@code /api/v1/me/erasure-request} on the caller's own tenant, {@code /admin/compliance}
+         * with no tenant at all. An unqualified name resolves through whatever {@code search_path}
+         * that borrow got, so on a tenant-pinned connection it would look inside {@code tenant_pool},
+         * find nothing, and report five successful updates of zero rows — a legal obligation quietly
+         * discharged against no data. Qualifying makes the statement mean the same thing from every
+         * axis.
+         */
+        String qualified() {
+            return "platform." + table;
+        }
     }
 
     /**
@@ -71,6 +87,10 @@ class ComplianceService {
      * later, and erasure is meant to take effect now. {@code person_profile} and {@code user_device}
      * have no FK at all (V28/V31 — profile is a pre-drawn service seam), so nothing but this list ever
      * reaches them.
+     *
+     * <p>Bare names here, schema added by {@link OwnedTable#qualified()} where the statement is built —
+     * see that method for why every one of them is platform-tier and what an unqualified erasure would
+     * silently do.
      */
     private static final List<OwnedTable> ERASED_TABLES = List.of(
             new OwnedTable("person", "id"),
@@ -200,7 +220,7 @@ class ComplianceService {
         }
         int cleared = 0;
         for (OwnedTable owned : ERASED_TABLES) {
-            cleared += jdbc.update("update " + owned.table() + " set deleted_at = now() "
+            cleared += jdbc.update("update " + owned.qualified() + " set deleted_at = now() "
                     + "where " + owned.keyColumn() + " = ? and deleted_at is null", personId);
         }
         // person_preference is the one thing erasure REMOVES outright, because it is the one thing that
@@ -210,7 +230,7 @@ class ComplianceService {
         // The hold check above has already run, so the only cost is that restoring a person inside the
         // recovery window restores them without their preferences — the right trade against keeping data
         // somebody exercised a legal right to have destroyed.
-        int preferences = jdbc.update("delete from person_preference where person_id = ?", personId);
+        int preferences = jdbc.update("delete from platform.person_preference where person_id = ?", personId);
         request.executed(clock.instant());
         erasures.save(request);
         auditLog.record("compliance.erasure_executed", null, personId.toString(), null,

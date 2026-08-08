@@ -1,0 +1,33 @@
+-- Device trust becomes per-organization. This is the slice V31's header promised:
+--
+--   "KNOWN MODELLING BUG, recorded here and fixed in its own slice, NOT by this rename: the header
+--    says 'whether the ORG trusts it' and there is no org column, while
+--    org_security_policy.require_trusted_device is per-org — so a device trusted inside org A
+--    satisfies org B's rule for the same person."
+--
+-- It was worse in practice than that note implies, because nothing constrained WHO could grant it.
+-- SecurityPolicyService.setDeviceTrust took an orgId, used it only for the audit line, and resolved the
+-- device by (deviceId, personId) with no tenant predicate at all — so an org:update holder in any org
+-- could flip the flag on any person's device platform-wide, and the flag then satisfied every org's
+-- policy. Self-signup is open (SecurityConfig permits /api/v1/signup) and a new org's creator is OWNER
+-- with every permission, so the cheapest attack needed no guessed identifiers whatsoever: make your own
+-- org, bless your own device with your own ids, and walk through a different tenant's
+-- require_trusted_device — a control that tenant deliberately turned on.
+--
+-- Absence of a row is the absence of trust, so revoking is a delete and no row means "not trusted" for
+-- an org that never granted it. That is the direction a security default should fail in; a boolean
+-- column defaults to a value, a missing row cannot.
+--
+-- THE REPLACEMENT TABLE IS THE TENANT HALF'S, and that is the whole point of the tier split: a grant
+-- is made BY an organization, so it travels with that organization, while the device it names belongs
+-- to a human and stays here. This half therefore does one thing — remove the column the new table
+-- replaces. Its shape, the no-backfill decision and the foreign key V53 later cuts are all written up
+-- in the sibling.
+--
+-- SPLIT (ADR 0010 §4.1): this is the platform half of V51. Its sibling is db/migration/tenant/V51__device_trust_per_org.sql.
+
+-- The flag it replaces. Dropping rather than leaving it dormant is the point: two sources of truth for
+-- "is this device trusted" is how the enforcement filter and the admin surface drift apart, and a
+-- lingering column is the one a future reader would believe.
+alter table user_device
+    drop column trusted;

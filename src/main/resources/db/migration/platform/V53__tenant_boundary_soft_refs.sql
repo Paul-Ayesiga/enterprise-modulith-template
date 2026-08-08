@@ -1,0 +1,103 @@
+-- ADR 0010 Phase 0: make the tenant boundary REAL, and route nothing.
+--
+-- ADR 0010 splits the 55 tables into a PLATFORM tier (one copy, global — people, devices, the
+-- routing registry, the catalogues) and a TENANT tier (the rows an organization owns and takes with
+-- it). V53 cut the five foreign keys that CROSS that line, because every later phase —
+-- `alter table … set schema`, `pg_dump -n t_<hex>`, and finally a second database — is impossible
+-- while they exist. All five of them hung off tenant-tier tables, so they and their reasoning are in
+-- the tenant half; read it before adding a foreign key anywhere near this boundary.
+--
+-- WHAT IS LEFT HERE is section 3: the three org_id-leading indexes ADR 0010 §4.1 found missing on
+-- platform-tier tables, and section 4's record of the fourth that was measured and rejected. They are
+-- platform-tier and stay platform-tier even though every one of them serves a per-TENANT question —
+-- which is the shape ADR 0010 §2 keeps producing: `notification_delivery`, `impersonation_session`
+-- and `signup_request` all carry an org_id and none of them travels with the org.
+--
+-- APPLIED to the 5.6M-row review database (Postgres 18.4) in one transaction, as Flyway runs it.
+-- Every EXPLAIN quoted below is (ANALYZE, BUFFERS) against that database, warm, repeated until
+-- stable — the method V49/V50/V52 established. Plain `create index`, never `concurrently`: V52's
+-- header derives this and AGENTS §4.6 carries it (a `-- flyway:executeInTransaction=false` comment
+-- is INERT on flyway-core 12.4.0; only a `.sql.conf` sidecar works, and none of these builds is
+-- large enough to want one).
+--
+-- SPLIT (ADR 0010 §4.1): this is the platform half of V53. Its sibling is db/migration/tenant/V53__tenant_boundary_soft_refs.sql.
+
+-- ---------------------------------------------------------------------------------------------
+-- 3. The org_id-leading indexes ADR 0010 §4.1 found missing. A tenant query filters org_id FIRST —
+--    that is true of the promotion copy (`create table as select … where org_id = ?`), of the
+--    per-tenant claim Phase 3 builds, and of the nightly assertion §1 describes for catching a
+--    misrouted write. Each of the three below turns a full scan into an index probe; the fourth
+--    candidate was measured and REJECTED (§4).
+-- ---------------------------------------------------------------------------------------------
+
+-- notification_delivery. The worst of the four by a wide margin, and the one ADR 0010 quotes.
+-- 300,000 rows / 79 MB, 5,000 distinct orgs, and NOT ONE index mentions org_id — both existing
+-- indexes are partial on `status`, so `where org_id = ?` cannot use either:
+--     before  Parallel Seq Scan   6611 buffers, 99,980 rows discarded per worker, 10.2 / 11.0 ms
+--     after   Index Scan            63 buffers,                                    0.028 ms
+-- 105x the buffers.
+--
+-- PLAIN (org_id), NOT (org_id, created_at desc) — measured both, and the composite is worth nothing
+-- here: 64 buffers / 0.023 ms for 12 MB, against 63 buffers / 0.028 ms for 2144 kB. The reason the
+-- narrow one is so small is btree deduplication over 5,000 distinct values in 300,000 rows; adding a
+-- timestamp defeats the deduplication and sextuples the index to buy noise. If Phase 3's two-step
+-- claim later wants an ordering column it should be `next_attempt_at` with the claim's partial
+-- predicate, not `created_at` — a different index, decided with that statement in hand.
+--
+-- NAME THE READER, because V52's rule is that an index's worth is a fact about statements: there is
+-- no org-leading reader in the code TODAY. `NotificationDeliveryQueue.claim` is a cluster-wide
+-- SKIP LOCKED sweep and the mart reads platform-wide. It ships now anyway, and deliberately: the
+-- statement it serves is the extraction drain (§6 item 11) and Phase 3's per-tenant claim, both of
+-- which run under a freeze window, and building 2 MB of index over 300k rows during that window is
+-- the one cost this file can pay in advance for free. This is the same shape as V52 §3's
+-- idx_org_group_role_fk, whose only reader is Postgres's own RI trigger — an index with no `select`
+-- behind it is not automatically dead weight, but it does owe the reader this paragraph.
+create index idx_notification_delivery_org on notification_delivery (org_id);
+
+-- impersonation_session. 20,000 rows, both existing indexes lead with actor_person_id (the operator),
+-- which is the right key for "what has this operator done" and useless for "who reached into this
+-- org". 40 rows of 20,000:
+--     before  Seq Scan     400 buffers, 19,960 rows discarded, 0.949 ms
+--     after   Index Scan     4 buffers,                        0.011 ms
+-- 100x, for 160 kB. The reader that makes this more than groundwork is the one ADR 0010 §5 item 5
+-- names: `impersonation_session` stays PLATFORM while the tenant's audit rows carry `impersonation_id`,
+-- so extracting an org has to pull the sessions naming it or its audit trail loses the operator's
+-- stated reason. That extract is `where org_id = ?`.
+create index idx_impersonation_session_org on impersonation_session (org_id);
+
+-- signup_request. NOT MEASURED, and stated rather than dressed up: the table is EMPTY in the review
+-- database (0 rows), so there is no plan to quote and no ratio to claim. It is here on the shape of
+-- the table, not on a number — `org_id` has no index of any kind, and the column's whole purpose is
+-- the completion link (`SignupRequest.completed(orgId, …)`, set at completion because the row exists
+-- before its tenant does, ADR 0010 §2 row 47). "Which signup produced this organization" is the
+-- question a support investigation and the extraction bundle both ask, and today it is a seq scan on
+-- a table that grows with every signup attempt forever.
+--
+-- PLAIN, not partial on `where org_id is not null`, even though most in-flight rows carry a null.
+-- V52 §6(b)'s trap is the reason: a partial index is invisible to a query that does not prove its
+-- predicate, and the saving here is a few kB on a table with no rows in it. Not worth a proof
+-- obligation on every future reader.
+create index idx_signup_request_org on signup_request (org_id);
+
+-- ---------------------------------------------------------------------------------------------
+-- 4. NOT DONE: feature_flag_org_override. ADR 0010 §4.1 lists it as a fourth missing index; it was
+--    measured and it is already covered. Recorded here so the next audit does not re-propose it
+--    from the schema — where it looks obviously missing, because the org_id it needs is the SECOND
+--    column of somebody else's unique constraint.
+-- ---------------------------------------------------------------------------------------------
+
+-- `feature_flag_org_override_flag_key_org_id_key` is UNIQUE (flag_key, org_id) — org_id is not the
+-- leading column, which on any Postgres before 18 would have made it useless for `where org_id = ?`.
+-- On 18.4 it is not: the planner SKIP SCANS the leading column and answers from that index.
+--     existing unique index (skip scan)   17 buffers, 0.072 ms
+--     a dedicated (org_id) index           3 buffers, 0.007 ms   (+72 kB)
+-- A 5.7x buffer ratio that looks like the other three until you notice the units. The deciding
+-- number is the floor: with every index-scan method disabled the whole table is a 21-buffer /
+-- 0.052 ms sequential scan, because it is 2,000 rows in 168 kB. There is nothing here for an index
+-- to save — the worst plan Postgres can pick is already faster than the best plan on the tables
+-- above, and 100 distinct flag_keys is what the skip scan costs, on a catalogue curated by hand.
+--
+-- WHAT WOULD CHANGE THIS: flag_key cardinality, not row count. The skip scan pays one descent per
+-- distinct leading value, so a few thousand flags would make it linear where a dedicated index is
+-- constant. Re-measure if the flag catalogue ever grows an order of magnitude; do not re-propose
+-- this on the grounds that org_id "has no index", because it does — it is just not first.

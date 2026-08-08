@@ -1,0 +1,101 @@
+-- BOTH DIRECTIONS ARE THE SAME MISTAKE. V49 and V50 found indexes that do not do the job their name
+-- implies; this file finds jobs whose index never existed and indexes whose job stopped existing. What
+-- ties all five together is that NOT ONE of them can be settled by reading the schema — an index's
+-- worth is a fact about the statements that run against it, not about the columns it covers. So each
+-- section names the statement, and §6 records the two proposals that did NOT survive being measured,
+-- because the next audit will re-propose both from the schema alone.
+--
+-- PLAIN `create index` / `drop index`, NOT `concurrently`. V50's header derives this at length and
+-- AGENTS §4.6 now carries it: a `-- flyway:executeInTransaction=false` comment is INERT on
+-- flyway-core 12.4.0 (script metadata comes only from a sidecar `V<n>__<name>.sql.conf`), so the
+-- transaction would stay and every CONCURRENTLY statement would abort at context startup. This whole
+-- file applied to the seeded database, inside one transaction as Flyway runs it, in 330 ms: 161 ms
+-- the event_inbox build over 500k rows, 24 ms the idempotency_key build over 100k, 3.5 ms org_group,
+-- both removals under a millisecond, and 140 ms the COMMIT itself flushing the new index files.
+-- Revisit when a table here grows by an order of magnitude; the sidecar is the mechanism that
+-- actually works.
+--
+-- SPLIT (ADR 0010 §4.1): this is the tenant half of V52. Its sibling is db/migration/platform/V52__index_corrections.sql.
+
+-- ---------------------------------------------------------------------------------------------
+-- 3. A TOTAL index for an FK cascade check — V50 §3's rule, applied to the one child of org_role
+--    that had nothing. THE `where deleted_at is null` PREDICATE IS DELIBERATELY ABSENT AND MUST STAY
+--    ABSENT: Postgres cannot use a PARTIAL index to satisfy a referential-integrity check, because
+--    the RI probe is a bare equality on the key with no `deleted_at` qual for the planner to match
+--    the predicate against.
+-- ---------------------------------------------------------------------------------------------
+
+-- org_role has three children — membership.role_id, org_group.role_id, role_permission.role_id — and
+-- the first and third were already covered (idx_membership_role from V11; role_permission's own
+-- primary key leads with role_id). org_group had nothing at all, which makes the other two a control
+-- group inside the very same statement. SoftDeletePurgeJob's actual org_role batch, 500 rows:
+--     before   org_group_role_id_fkey  66.8 / 70.8 ms     Execution Time 79.9 / 78.6 ms
+--              membership_role_id_fkey  6.5 /  5.3 ms  |  role_permission  4.4 / 0.9 ms   (controls)
+--     after    org_group_role_id_fkey   6.8 ms            Execution Time 16.5 ms
+--              membership_role_id_fkey  6.8 ms         |  role_permission  1.3 ms
+-- 10x on the trigger, 4.8x on the batch, and the shape of the before-picture is the tell: ONE of
+-- three identical-looking FK checks costing 84-90% of the statement.
+--
+-- org_group holds 5000 rows today, so read the ratio, not the milliseconds — the ratio is
+-- (roles purged x rows in org_group) and only one of those two numbers ever shrinks.
+--
+-- THIS INDEX HAS NO QUERY READER, AND THAT IS NOT A DEFECT — it is the point, and it is what will
+-- make it look deletable. Nothing in the application filters org_group by role_id: OrgGroupRepository
+-- declares `existsByRoleId`, but NOTHING CALLS IT (RoleService guards role deletion on
+-- MembershipRepository.existsByRoleId — a different repository on a different table), so even that
+-- would-be reader issues no SQL. The only caller is Postgres's own RI trigger. An audit conducted the
+-- way V49 was conducted — "name the query this index serves" — finds nothing here and concludes dead
+-- weight; pg_stat_user_indexes is not the tiebreaker either, because RI probes only run when the
+-- nightly purge runs, so a freshly restored environment shows a perfectly credible idx_scan = 0. The
+-- `_fk` suffix is the load-bearing part of the name, exactly as in V50 §3.
+create index idx_org_group_role_fk on org_group (role_id);
+
+-- ---------------------------------------------------------------------------------------------
+-- 5. payment.merchant_reference's UNIQUE — a uniqueness guarantee the primary key already gives,
+--    bought a second time for 11 MB. AND: THE SEEDED DATA DOES NOT SHOW THIS. Read on.
+-- ---------------------------------------------------------------------------------------------
+
+-- Payment.java line 92 is the only assignment to the field in the codebase — there is no setter and
+-- no second writer:
+--     payment.merchantReference = payment.id.toString();
+-- V40's own header says the same in prose ("our payment id stringified"). So the column is a
+-- lossless function of the primary key, and payment_pkey already makes it unique; the UNIQUE
+-- constraint can only ever reject a row payment_pkey would have rejected first.
+--
+-- THE HONEST CAVEAT, stated rather than buried: the review database does NOT reproduce that
+-- derivation. Its payments carry synthetic references ('ref-1', 'ref-2', …) and 0 of 200000 rows
+-- satisfy `merchant_reference = id::text`. So this drop rests on the code — one assignment site,
+-- grepped — and NOT on the data, and anyone re-checking it against the seed will find the claim
+-- looking false. Check Payment.initiate, not a `select`.
+--
+-- Nothing reads the column either. The Pesapal IPN and browser callback both resolve by
+-- gateway_reference (PaymentService.refreshByGatewayReference, served by idx_payment_gateway_ref);
+-- the OrderMerchantReference parameter is echoed straight back into the acknowledgment body and never
+-- used for a lookup. pg_stat_user_indexes: 0 scans.
+--
+-- Worth 11 MB against a 31 MB heap, plus a probe-and-insert into a 36-character key on every payment
+-- initiation. WAL per payment insert, three alternating pairs of 5000 inserts, full_page_writes off:
+--     571.0 / 565.1 / 567.3 bytes  ->  429.5 / 430.2 / 426.6 bytes    (24.5%)
+--
+-- `alter table … drop constraint`, not `drop index`: V40 declared it inline as `varchar(50) not null
+-- unique`, so payment_merchant_reference_key is a CONSTRAINT with an index under it, and `drop index`
+-- on it fails. `not null` stays — the column is still written and still returned.
+alter table payment drop constraint payment_merchant_reference_key;
+
+-- ---------------------------------------------------------------------------------------------
+-- 6. NOT DONE, and recorded so the next audit does not spend the afternoon rediscovering them. Both
+--    were proposed on the schema, and the schema was not wrong about either — it was just not the
+--    whole question. (a) is about `translation` and lives in the platform half.
+-- ---------------------------------------------------------------------------------------------
+
+-- (b) Plain document(org_id) and ticket(org_id). NOT ADDED — the query was fixed instead, in this
+--     same run, which is the right end of the problem. OrgExportService's extracts used to read
+--     `select * from <t> where org_id = ? limit 1000` with no `deleted_at is null`, and a partial
+--     index is invisible to a query that does not prove its predicate, so both fell to parallel seq
+--     scans. They now carry the predicate (and an explicit ORDER BY, for reproducibility of a legal
+--     artifact) and land on the indexes V23/V36 already built:
+--         document   Parallel Seq Scan 3964 buffers, 28.1 ms  ->  idx_document_org_recent  5 buffers, 0.60 ms
+--         ticket     Parallel Seq Scan 4251 buffers, 31.0 ms  ->  idx_ticket_org           4 buffers, 0.73 ms
+--     Two plain indexes here would have cost ~22 MB to make a wrong query fast, and would then have
+--     had to be dropped again once the query was written properly. An index is not the remedy for a
+--     predicate somebody forgot.

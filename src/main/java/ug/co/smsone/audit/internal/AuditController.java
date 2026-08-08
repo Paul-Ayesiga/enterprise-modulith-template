@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import ug.co.smsone.shared.error.ValidationException;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.shared.web.ApiSource;
 import ug.co.smsone.shared.web.CursorPageRequest;
 import ug.co.smsone.shared.web.ResourceObject;
@@ -48,13 +49,30 @@ class AuditController {
             Instant occurredAt, Instant recordedAt) {
     }
 
+    /**
+     * <b>The semantics changed with ADR 0010 Phase 2, and the change is visible on this endpoint.</b>
+     * {@code audit_log} is a split table: an org's rows live in that org's schema and the platform-level
+     * rows live in {@code platform}. So this view is no longer one query over everything.
+     *
+     * <ul>
+     *   <li>No {@code org} filter — the PLATFORM-level trail: impersonation lifecycle, platform key
+     *       mint and revoke, settings and feature-flag changes. Not a cross-tenant union, which cannot
+     *       exist once a tenant is a schema (and, after Phase 7, a different database) of its own.</li>
+     *   <li>{@code ?org=<uuid>} — that tenant's own trail, read on that tenant's axis. This is a
+     *       deliberate cross-tenant read by a {@code platform-support} operator, and it reads like one:
+     *       {@code TenantContext.callAs} is the same shape ADR 0010 §5.15 requires for a cross-tenant
+     *       admin write. It must wrap the call rather than sit inside the service, because the pin has
+     *       to happen before the read-only transaction chooses its connection.</li>
+     * </ul>
+     */
     @GetMapping("/api/v1/audit")
     @Operation(summary = "Search the platform-wide audit trail",
             description = """
                     Newest first, narrowed by any combination of `org`, `action` and an ISO-8601 \
-                    `from`/`to` instant window. For a row written inside an impersonation session \
-                    `actorPersonId` is the accountable operator and `onBehalfOfPersonId` is the \
-                    identity they wore.""")
+                    `from`/`to` instant window. Without `org` this is the platform-level trail (events \
+                    that belong to no tenant); with `org` it is that organization's own trail. For a row \
+                    written inside an impersonation session `actorPersonId` is the accountable operator \
+                    and `onBehalfOfPersonId` is the identity they wore.""")
     @PreAuthorize("hasRole('platform-support')")
     WindowedResult<ResourceObject> platform(
             @RequestParam(required = false) UUID org,
@@ -62,7 +80,10 @@ class AuditController {
             @RequestParam(required = false) String from,
             @RequestParam(required = false) String to,
             CursorPageRequest page) {
-        return query(org, action, from, to, page);
+        if (org == null) {
+            return query(null, action, from, to, page);
+        }
+        return TenantContext.callAs(org, () -> query(org, action, from, to, page));
     }
 
     @GetMapping("/api/v1/orgs/{orgId}/audit")

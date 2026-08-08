@@ -1,0 +1,30 @@
+-- V1: schema baseline, and the root of the PLATFORM sequence.
+-- Intentionally empty: tables land with the modules that own them (modules own their data).
+-- Flyway records this migration so every later change is versioned from a common root.
+--
+-- THIS DIRECTORY IS THE PLATFORM TIER (ADR 0010 §2, Phase 2). Everything here is created in the
+-- `platform` schema — one copy, global, never per-tenant: people, devices, the routing registry
+-- (`organization`, `external_organization`), the catalogues (`plan`, `setting`, `translation`,
+-- `sla_policy`) and the framework tables (`event_publication`, `shedlock`, `idempotency_key`).
+-- Spring Boot's autoconfigured Flyway runs exactly this directory at boot, against the RAW Hikari
+-- pool (`@FlywayDataSource`) — never the routing DataSource, which would hand Flyway the empty
+-- `no_tenant` schema and produce "Unable to determine current schema as search_path is empty".
+--
+-- THE COUNTER RULE IS UNCHANGED AND ONE LINE LONGER (AGENTS §4.5): one global counter across BOTH
+-- directories, and a new migration takes the next global number and lands in exactly ONE of them.
+-- "V54 is taken" keeps meaning what it has always meant. Numbers are NOT contiguous within a
+-- directory and never will be — Flyway does not require it, each sequence simply has gaps where the
+-- other tier's migrations are, and each keeps its own `flyway_schema_history` in its own schema.
+-- Renumbering to close a gap would falsify the 412 references to version numbers in prose across
+-- this repo ("V17's rule", "the reason given in V10's header"), which is why it is forbidden here
+-- and not merely discouraged.
+--
+-- A V-NUMBER PRESENT IN BOTH DIRECTORIES is a migration that was bisected, and there are nineteen —
+-- generated, never hand-listed, by `scripts/split-migrations.py`. Twelve of them divide (V11's
+-- `organization` here, its `org_role` there); seven touch only the split tables of ADR 0010 §2
+-- (`audit_log`, `document`, `exchange_job`, `exchange_job_error`, `integration`,
+-- `integration_setting`, `maintenance_window`) and are therefore IDENTICAL in both — same table,
+-- two homes, routed at runtime on `org_id` nullability. Each half of a bisected migration carries a
+-- `SPLIT (ADR 0010 §4.1)` line naming its sibling.
+--
+-- SPLIT (ADR 0010 §4.1): this is the platform half of V1. Its sibling is db/migration/tenant/V1__baseline.sql.

@@ -15,8 +15,8 @@ import ug.co.smsone.shared.persistence.SoftDeletableEntity;
  * capture through it. A parallel test fixture would duplicate exactly this shape.
  */
 @Entity
-@Table(name = "setting")
-@SQLDelete(sql = "update setting set deleted_at = now(), version = version + 1 where id = ? and version = ?")
+@Table(name = "setting", schema = "platform")
+@SQLDelete(sql = "update platform.setting set deleted_at = now(), version = version + 1 where id = ? and version = ?")
 @SQLRestriction("deleted_at is null")
 public class Setting extends SoftDeletableEntity {
 

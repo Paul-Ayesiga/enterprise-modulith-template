@@ -45,7 +45,7 @@ class SchedulerController {
     @PreAuthorize("hasRole('platform-support')")
     List<ResourceObject> list() {
         return jdbc.query(
-                "select name, lock_until, locked_at, locked_by from shedlock order by locked_at desc",
+                "select name, lock_until, locked_at, locked_by from platform.shedlock order by locked_at desc",
                 (rs, rowNum) -> new ResourceObject(rs.getString("name"), RESOURCE_TYPE,
                         new LockAttributes(
                                 rs.getString("name"),

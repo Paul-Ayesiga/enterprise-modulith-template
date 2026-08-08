@@ -21,6 +21,7 @@ import ug.co.smsone.identity.PersonProvisioning;
 import ug.co.smsone.identity.ProvisionedPerson;
 import ug.co.smsone.identity.ProviderOrgMembership;
 import ug.co.smsone.mcp.internal.McpTestSupport;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 import ug.co.smsone.testsupport.EdgeSeed;
 
@@ -36,6 +37,14 @@ import ug.co.smsone.testsupport.EdgeSeed;
  * invite REFUSES outright without one (a member attached to nothing would hold access nowhere), and
  * remove needs it to unlink at the provider — so an org without its {@code external_organization}
  * row exercises neither rule.
+ *
+ * <p><b>The seed declares the tenant axis; the tool calls must not</b> (ADR 0010 §3.4).
+ * {@code org_role}, {@code role_permission} and {@code membership} are tenant-tier and addressed bare,
+ * and the harness pins PLATFORM, so every fixture and every verification against them says
+ * {@link #inOrg}. The {@code client.callTool(...)} in between is deliberately bare: the axis on THAT
+ * side is {@code McpToolDispatcher}'s, taken from the key's own organization before it opens a
+ * transaction, and that is the thing under test. {@code api_key} and {@code external_organization} are
+ * platform-tier, so seeding a key or an org needs nothing.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class McpMemberWriteToolsTest extends AbstractIntegrationTest {
@@ -65,10 +74,20 @@ class McpMemberWriteToolsTest extends AbstractIntegrationTest {
         return EdgeSeed.organization(jdbc, "kc-org-" + distinct, distinct);
     }
 
+    /** Anything touching this tenant's own tables from the test thread — see the class note. */
+    private <T> T inOrg(UUID orgId, java.util.function.Supplier<T> work) {
+        return TenantContext.callAs(orgId, work);
+    }
+
+    /** @see #inOrg — the same declaration for a fixture that returns nothing. */
+    private void inOrgDo(UUID orgId, Runnable work) {
+        TenantContext.runAs(orgId, work);
+    }
+
     @Test
     void aKeyWithInvitePermissionInvitesWithinItsMintedSubset() {
         UUID orgId = linkedOrg("inv");
-        McpTestSupport.seedRole(jdbc, orgId, "MEMBER", "org:read");
+        inOrgDo(orgId, () -> McpTestSupport.seedRole(jdbc, orgId, "MEMBER", "org:read"));
         McpTestSupport.SeededKey key = McpTestSupport.seedOrgKey(jdbc, orgId, "inviter",
                 "member:invite", "org:read");
         UUID invited = UUID.randomUUID();
@@ -85,9 +104,9 @@ class McpMemberWriteToolsTest extends AbstractIntegrationTest {
 
             // Attaching at the provider goes through identity, which owns the subject the call needs.
             then(providerOrgMembership).should().attach(eq(invited), any());
-            Integer memberships = jdbc.queryForObject(
+            Integer memberships = inOrg(orgId, () -> jdbc.queryForObject(
                     "select count(*) from membership where org_id = ? and person_id = ?",
-                    Integer.class, orgId, invited);
+                    Integer.class, orgId, invited));
             assertThat(memberships).isEqualTo(1);
         }
     }
@@ -96,7 +115,7 @@ class McpMemberWriteToolsTest extends AbstractIntegrationTest {
     void aKeyCannotGrantARoleBeyondItsMintedSubset() {
         UUID orgId = linkedOrg("esc");
         // The role carries a permission the KEY does not hold — granting it would be escalation.
-        McpTestSupport.seedRole(jdbc, orgId, "ADMINISH", "org:read", "member:remove");
+        inOrgDo(orgId, () -> McpTestSupport.seedRole(jdbc, orgId, "ADMINISH", "org:read", "member:remove"));
         McpTestSupport.SeededKey key = McpTestSupport.seedOrgKey(jdbc, orgId, "capped",
                 "member:invite", "org:read");
 
@@ -116,7 +135,7 @@ class McpMemberWriteToolsTest extends AbstractIntegrationTest {
     @Test
     void aKeyWithoutThePermissionNeverReachesProvisioning() {
         UUID orgId = linkedOrg("den");
-        McpTestSupport.seedRole(jdbc, orgId, "MEMBER", "org:read");
+        inOrgDo(orgId, () -> McpTestSupport.seedRole(jdbc, orgId, "MEMBER", "org:read"));
         McpTestSupport.SeededKey key = McpTestSupport.seedOrgKey(jdbc, orgId, "reader", "org:read");
 
         try (McpSyncClient client = McpTestSupport.client(port, Map.of("X-Api-Key", key.presented()))) {
@@ -134,12 +153,14 @@ class McpMemberWriteToolsTest extends AbstractIntegrationTest {
     void memberRemoveEndsTheMembershipAndUnlinksKeycloak() {
         UUID orgId = linkedOrg("rem");
         // An OWNER member must remain — remove() protects the last owner; the target is a MEMBER.
-        UUID ownerRole = McpTestSupport.seedRole(jdbc, orgId, "OWNER", "org:read", "member:remove");
-        UUID memberRole = McpTestSupport.seedRole(jdbc, orgId, "MEMBER", "org:read");
         UUID owner = EdgeSeed.person(jdbc, "owner-" + UUID.randomUUID());
         UUID gone = EdgeSeed.person(jdbc, "leaver-" + UUID.randomUUID());
-        McpTestSupport.seedMembership(jdbc, orgId, owner, ownerRole);
-        McpTestSupport.seedMembership(jdbc, orgId, gone, memberRole);
+        inOrgDo(orgId, () -> {
+            UUID ownerRole = McpTestSupport.seedRole(jdbc, orgId, "OWNER", "org:read", "member:remove");
+            UUID memberRole = McpTestSupport.seedRole(jdbc, orgId, "MEMBER", "org:read");
+            McpTestSupport.seedMembership(jdbc, orgId, owner, ownerRole);
+            McpTestSupport.seedMembership(jdbc, orgId, gone, memberRole);
+        });
         McpTestSupport.SeededKey key = McpTestSupport.seedOrgKey(jdbc, orgId, "remover",
                 "member:remove", "org:read");
 
@@ -151,10 +172,10 @@ class McpMemberWriteToolsTest extends AbstractIntegrationTest {
             assertThat(result.isError())
                     .as(McpTestSupport.textOf(result)).isNotEqualTo(Boolean.TRUE);
 
-            Integer live = jdbc.queryForObject("""
+            Integer live = inOrg(orgId, () -> jdbc.queryForObject("""
                     select count(*) from membership
                     where org_id = ? and person_id = ? and deleted_at is null
-                    """, Integer.class, orgId, gone);
+                    """, Integer.class, orgId, gone));
             assertThat(live).isZero();
             then(providerOrgMembership).should().detach(eq(gone), any());
         }

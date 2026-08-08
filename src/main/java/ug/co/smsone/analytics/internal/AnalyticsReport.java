@@ -25,14 +25,19 @@ import java.util.Optional;
  * {@code webhook_subscription}, {@code translation}, {@code document}, {@code exchange_schedule},
  * {@code org_subscription}, {@code billing_account}, {@code person_profile}, {@code api_key}, {@code org_group}, {@code user_device}, {@code org_security_policy}, {@code integration}, {@code maintenance_window} and {@code ticket}; {@code notification_delivery} is not one of them.
  *
- * <p><b>PHASE 2 (ADR 0010): every {@code sourceSql} here reads a PLATFORM table while running on the
- * CALLER's axis.</b> {@code person} and {@code notification_delivery} are both platform-tier (§2), but
- * the refresh borrows its connection on whatever axis the request pinned — a tenant's, for an org
- * admin asking for a report. Today that is harmless because every axis resolves to the same schema;
- * once {@code platform} and {@code tenant_pool} are separate, an unqualified {@code from person} on a
- * tenant path resolves to nothing. These two statements are the ones to schema-qualify (or to run
- * inside a {@code TenantContext.runAsPlatform(…)} in {@code AnalyticsReportService}) when the tables
- * move; a report over a tenant-tier table would instead need a refresh per tenant.
+ * <p><b>Every {@code sourceSql} here reads a PLATFORM table while running on the CALLER's axis, so
+ * both are schema-qualified</b> (ADR 0010 §2). {@code person} and {@code notification_delivery} are
+ * platform-tier, but the refresh borrows its connection on whatever axis the request pinned — a
+ * tenant's, for an org admin asking for a report — and an unqualified {@code from person} on a tenant
+ * path resolves to nothing at all. Qualifying is the fix rather than wrapping the refresh in
+ * {@code TenantContext.runAsPlatform(…)}, because the pin would have to reach inside
+ * {@code DuckDbAnalyticsEngine.materializeFromPostgres}, which borrows its own Postgres connection
+ * for the streaming read.
+ *
+ * <p>A report over a TENANT-tier table is a different problem and is deliberately not attempted here:
+ * its {@code sourceSql} would be unqualified by the same rule, so one mart could only ever hold one
+ * tenant's rows, and the answer is a refresh per tenant with the tenant in the mart's key — not a
+ * schema prefix.
  */
 enum AnalyticsReport {
 
@@ -41,13 +46,13 @@ enum AnalyticsReport {
     // the source table is the one thing here worth checking against a migration.
     PEOPLE_BY_STATUS("users-by-status",
             "Provisioned people grouped by lifecycle status",
-            "select status from person where deleted_at is null",
+            "select status from platform.person where deleted_at is null",
             "mart_users_by_status",
             "select status, count(*) as total from mart_users_by_status group by status order by total desc"),
 
     DELIVERY_OUTCOMES("delivery-outcomes",
             "Notification deliveries grouped by channel and status",
-            "select channel, status from notification_delivery",
+            "select channel, status from platform.notification_delivery",
             "mart_delivery_outcomes",
             "select channel, status, count(*) as total from mart_delivery_outcomes "
                     + "group by channel, status order by channel, status");

@@ -15,7 +15,7 @@ import ug.co.smsone.shared.persistence.BaseEntity;
  * neutral name; V8 renamed it and this field says the same thing the column now does.
  */
 @Entity
-@Table(name = "in_app_notification")
+@Table(name = "in_app_notification", schema = "platform")
 class InAppNotification extends BaseEntity {
 
     @Column(name = "person_id", nullable = false)

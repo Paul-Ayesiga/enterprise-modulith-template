@@ -149,10 +149,12 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
      * declared here rather than in {@link #runLoop()} because tests drive this method directly. The
      * sends are pinned separately: see {@link #processBatch}.
      *
-     * <p>PHASE 2: {@code notification_delivery} carries an {@code org_id}, so a queue that has moved to
-     * the tenant tier can no longer be claimed with one statement. This becomes a claim per tenant —
-     * and the {@code SKIP LOCKED} fairness the design leans on becomes a property of the loop's order,
-     * not of the statement.
+     * <p><b>Phase 2 left this pin PLATFORM, and that is the tier decision rather than an oversight.</b>
+     * {@code notification_delivery} carries an {@code org_id} but stayed platform-tier (ADR 0010 §2):
+     * it is pure transport claimed by a cluster-wide sweep on a one-second poll, and per-tenant queues
+     * would make an empty discovery pass cost more than the poll interval itself. So this claim really
+     * is one statement over one table, and it stays one after Phase 5 — unlike the webhook and exchange
+     * queues, whose rows ARE the tenant's and which do become per-tenant loops.
      */
     public int drainOnce() throws InterruptedException {
         int total = 0;
@@ -182,9 +184,13 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
      * connection on this thread, so without the pin the send would succeed and the row would never be
      * marked.
      *
-     * <p>PHASE 2: the delivery carries {@code orgId}, so this pin becomes
-     * {@code TenantContext.runAs(delivery.orgId(), …)} — with the null case (platform-addressed
-     * notifications) staying on PLATFORM.
+     * <p><b>PLATFORM, and every table this task reaches is one</b> (ADR 0010 §2):
+     * {@code notification_delivery} for the status write and {@code in_app_notification} for the in-app
+     * channel. The one org-specific read on the path — {@code Integrations.resolve}, which picks the
+     * recipient org's SMS provider over the platform default — NAMES both homes precisely so that it
+     * answers the same thing from this thread; that exception is documented at {@code IntegrationsImpl}
+     * and this worker is the caller it was written for. Re-pinning to {@code delivery.orgId()} here
+     * would buy nothing and cost the status write its own table.
      */
     private void processBatch(List<ClaimedDelivery> batch) throws InterruptedException {
         CountDownLatch done = new CountDownLatch(batch.size());

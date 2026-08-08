@@ -1,7 +1,6 @@
 package ug.co.smsone.shared.persistence;
 
 import jakarta.persistence.EntityManager;
-import jakarta.persistence.Table;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -74,14 +73,13 @@ public class SoftDeleteRecovery {
         }
     }
 
+    /**
+     * The entity's table as raw SQL must name it — schema-qualified when the mapping declares one, so
+     * a restore of a PLATFORM-tier row is correct on a connection pinned to a tenant (ADR 0010 §2).
+     * Unqualified it would resolve through {@code search_path}, find the tenant schema, and update
+     * zero rows — which this method's caller reports as a concurrent restore rather than as a bug.
+     */
     private static String tableOf(Class<?> type) {
-        Table table = type.getAnnotation(Table.class);
-        if (table == null || table.name().isBlank()) {
-            // Every soft-deletable entity in this codebase names its table explicitly; falling back to
-            // a derived name would guess, and guessing wrong here reads rows from the wrong table.
-            throw new IllegalStateException(
-                    type.getSimpleName() + " must declare @Table(name = ...) to be recoverable.");
-        }
-        return table.name();
+        return MappedTables.qualified(type);
     }
 }

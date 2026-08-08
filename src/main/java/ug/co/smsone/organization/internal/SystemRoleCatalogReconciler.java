@@ -31,13 +31,18 @@ class SystemRoleCatalogReconciler implements ApplicationRunner {
     }
 
     /**
-     * <b>PHASE 2 MAKES THIS THE PER-TENANT LOOP IT ALREADY LOOKS LIKE.</b> The scan over
-     * {@code organization} is platform-tier and stays on this pin; {@code roleSeeder.seedSystemRoles}
-     * writes {@code org_role} and {@code role_permission}, which are the tenant's — so that call moves
-     * inside {@code TenantContext.runAs(organization.getId(), …)} and the per-org failure isolation
-     * below becomes per-tenant failure isolation, unchanged. Note the ordering constraint that creates:
-     * the {@link WindowIterator} must stay on the platform axis while it pages, so the runAs has to
-     * wrap the seed call and nothing wider.
+     * <b>Two pinned spans, because this pass genuinely spans both tiers</b> (ADR 0010 §2). The scan
+     * over {@code organization} is platform-tier and runs on the pin taken here;
+     * {@code roleSeeder.seedSystemRoles} writes {@code org_role} and {@code role_permission}, which are
+     * the TENANT's, so it runs on that tenant's own axis inside {@link #reconcileEveryOrg}. One wider
+     * pin cannot serve both: a platform axis cannot see {@code org_role} at all, and a tenant axis
+     * would page the org table from inside one tenant's schema.
+     *
+     * <p>Note the ordering constraint that creates, and it is why the {@code runAs} wraps the seed call
+     * and nothing wider: the {@link WindowIterator} keeps reading pages BETWEEN seeds, so it must find
+     * the platform axis restored each time round the loop. The per-org failure isolation below is
+     * per-tenant failure isolation now, unchanged — one tenant whose schema is unreachable must not
+     * cost every tenant after it its reconciliation.
      */
     @Override
     public void run(ApplicationArguments args) {
@@ -58,7 +63,11 @@ class SystemRoleCatalogReconciler implements ApplicationRunner {
         while (all.hasNext()) {
             Organization organization = all.next();
             try {
-                roleSeeder.seedSystemRoles(organization.getId());
+                // The tenant's own axis: org_role and role_permission are TENANT-tier, so the seeder's
+                // unqualified writes mean "this tenant's schema" and nothing else can say which one.
+                // runAs and not a bare set(): it restores the platform axis the iterator above pages on.
+                TenantContext.runAs(organization.getId(),
+                        () -> roleSeeder.seedSystemRoles(organization.getId()));
             } catch (RuntimeException ex) {
                 log.error("System-role catalog reconciliation failed for org {} ({}): {}",
                         organization.getId(), organization.getAlias(), ex.toString());

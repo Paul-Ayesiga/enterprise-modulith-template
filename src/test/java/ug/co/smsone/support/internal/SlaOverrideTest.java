@@ -23,6 +23,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 import ug.co.smsone.testsupport.EdgeSeed;
 
@@ -34,6 +35,13 @@ import ug.co.smsone.testsupport.EdgeSeed;
  * resolves through, and the member is a {@code person} plus the {@code external_identity} link the
  * token's (iss, sub) resolves through — opening a ticket needs a person, so a token that reaches none
  * is refused before any SLA is consulted.
+ *
+ * <p><strong>This class is exactly the straddle the SLA path is built on</strong> (ADR 0010 §2).
+ * {@code org_sla_override} and {@code ticket} are the tenant's; {@code sla_policy}, the seeded default
+ * the fallback assertion is about, is platform-tier and names its schema in the mapping. So both halves
+ * of "override, then fall back" resolve under a single tenant axis — which is what the admin routes pin
+ * and what the two direct reads here pin. The organization and person rows are platform-tier and take
+ * the harness's own pin.
  */
 @AutoConfigureMockMvc
 class SlaOverrideTest extends AbstractIntegrationTest {
@@ -85,8 +93,11 @@ class SlaOverrideTest extends AbstractIntegrationTest {
                         .with(member(orgId, operator)))
                 .andExpect(status().isCreated()).andReturn();
         String ticketId = JsonPath.read(opened.getResponse().getContentAsString(), "$.data.id");
-        Timestamp due = jdbc.queryForObject(
-                "select resolution_due_at from ticket where id = ?::uuid", Timestamp.class, ticketId);
+        // The org's axis: `ticket` is tenant-tier and unqualified, so on the harness's platform pin this
+        // read would resolve inside `platform` — a table that is not there, rather than one holding the
+        // row the request just wrote.
+        Timestamp due = TenantContext.callAs(orgId, () -> jdbc.queryForObject(
+                "select resolution_due_at from ticket where id = ?::uuid", Timestamp.class, ticketId));
         return due.toInstant();
     }
 
@@ -122,19 +133,31 @@ class SlaOverrideTest extends AbstractIntegrationTest {
      * exists on the {@code external_identity} link {@link EdgeSeed#person} writes beside the person,
      * and is made unique per seed because that link is unique per (provider, issuer, subject) across
      * the whole shared container.
+     *
+     * <p>The person and their identity link are platform-tier and take the harness's pin; the seat
+     * itself — {@code org_role}, {@code role_permission}, {@code membership} — is the tenant's and is
+     * written on that org's axis, beside the routing row every real membership carries.
      */
     private String seedMember(UUID orgId, String label, String... permissions) {
         String subject = label + "-" + UUID.randomUUID();
         UUID personId = EdgeSeed.person(jdbc, subject);
         UUID roleId = UUID.randomUUID();
-        jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
-                + "values (?, ?, ?, 'SlaRole', false, 0, now())", roleId, orgId,
-                "SLA_" + label.toUpperCase().replace('-', '_'));
-        for (String permission : permissions) {
-            jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleId, permission);
-        }
-        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+        TenantContext.runAs(orgId, () -> {
+            jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
+                    + "values (?, ?, ?, 'SlaRole', false, 0, now())", roleId, orgId,
+                    "SLA_" + label.toUpperCase().replace('-', '_'));
+            for (String permission : permissions) {
+                jdbc.update("insert into role_permission (role_id, permission) values (?, ?)",
+                        roleId, permission);
+            }
+            jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
+                    + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+            // Qualified, so it lands in `platform` from inside the tenant's axis — the pair
+            // MemberService and OrgProjectionWriter write in one transaction (ADR 0010 §2.1).
+            jdbc.update("insert into platform.org_membership_index (person_id, org_id, status) "
+                    + "values (?, ?, 'ACTIVE') on conflict (person_id, org_id) do nothing",
+                    personId, orgId);
+        });
         return subject;
     }
 }

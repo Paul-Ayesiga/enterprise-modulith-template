@@ -31,7 +31,7 @@ import ug.co.smsone.shared.persistence.BaseEntity;
  * decides that on read, which is why expiry needs no sweep job.
  */
 @Entity
-@Table(name = "impersonation_session")
+@Table(name = "impersonation_session", schema = "platform")
 class ImpersonationSession extends BaseEntity {
 
     @Column(name = "actor_person_id", nullable = false, updatable = false)

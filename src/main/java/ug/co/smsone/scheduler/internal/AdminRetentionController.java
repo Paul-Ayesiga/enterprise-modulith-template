@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import ug.co.smsone.shared.error.ValidationException;
 import ug.co.smsone.shared.retention.RetentionScope;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.shared.web.ResourceObject;
 
 /**
@@ -23,6 +24,13 @@ import ug.co.smsone.shared.web.ResourceObject;
  * different schedule than the platform default — a data-retention contract, typically. Consulted by
  * the retention jobs. Reads are platform-support, writes platform-admin (a retention commitment),
  * and every change is audited. Scope on the wire is kebab-case: `webhook-delivery`, `exchange-job`.
+ *
+ * <p><b>Every route here is a cross-tenant reach, and every one of them says so</b> (ADR 0010 §5.15).
+ * A {@code platform-admin} has no organization of their own, so these requests run on the PLATFORM
+ * axis — and {@code org_retention_override} is tenant-tier, where the platform axis cannot see it at
+ * all. The pin wraps the call rather than sitting inside {@link RetentionOverridesImpl}, whose methods
+ * are {@code @Transactional}: the schema is chosen when the connection is borrowed and the transaction
+ * has already borrowed one, which is why {@code TenantContext.set} throws in there.
  */
 @RestController
 @RequestMapping("/api/v1/admin/orgs/{orgId}/retention")
@@ -49,7 +57,8 @@ class AdminRetentionController {
             description = "Scopes not listed use the platform default retention for that log.")
     @PreAuthorize("hasRole('platform-support')")
     List<ResourceObject> list(@PathVariable UUID orgId) {
-        return overrides.list(orgId).stream().map(AdminRetentionController::toResource).toList();
+        return TenantContext.callAs(orgId, () -> overrides.list(orgId)).stream()
+                .map(AdminRetentionController::toResource).toList();
     }
 
     @PutMapping("/{scope}")
@@ -64,7 +73,8 @@ class AdminRetentionController {
         if (days <= 0) {
             throw new ValidationException("days must be a positive number.");
         }
-        return toResource(overrides.set(orgId, resolve(scope), days));
+        String resolved = resolve(scope);
+        return toResource(TenantContext.callAs(orgId, () -> overrides.set(orgId, resolved, days)));
     }
 
     @DeleteMapping("/{scope}")
@@ -72,7 +82,8 @@ class AdminRetentionController {
     @PreAuthorize("hasRole('platform-admin')")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     void clear(@PathVariable UUID orgId, @PathVariable String scope) {
-        overrides.clear(orgId, resolve(scope));
+        String resolved = resolve(scope);
+        TenantContext.runAs(orgId, () -> overrides.clear(orgId, resolved));
     }
 
     private static String resolve(String scope) {

@@ -31,7 +31,7 @@ class UsageSummariesImpl implements UsageSummaries {
         LocalDate to = LocalDate.ofInstant(clock.instant(), ZoneOffset.UTC);
         LocalDate from = to.minusDays(window - 1L);
         List<DailyUsage> byDay = jdbc.query("""
-                select day, requests from api_usage_daily
+                select day, requests from platform.api_usage_daily
                 where org_id = ? and day between ? and ?
                 order by day
                 """,

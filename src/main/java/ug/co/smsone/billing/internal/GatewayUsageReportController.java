@@ -105,7 +105,7 @@ class GatewayUsageReportController {
         // second time") the first time one flush carries the same org twice, e.g. the same UUID
         // presented in two casings. Keep the batch, not the multi-row insert.
         jdbc.batchUpdate("""
-                insert into api_usage_daily (org_id, day, requests)
+                insert into platform.api_usage_daily (org_id, day, requests)
                 values (?, ?, ?)
                 on conflict (org_id, day)
                 do update set requests = api_usage_daily.requests + excluded.requests

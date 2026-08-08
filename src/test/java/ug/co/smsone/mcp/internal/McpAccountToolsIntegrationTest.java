@@ -14,6 +14,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.jdbc.core.JdbcTemplate;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
 /**
@@ -21,6 +22,13 @@ import ug.co.smsone.testsupport.AbstractIntegrationTest;
  * pagination on the wire), subscription standing (FREE fallback), and the usage ledger aggregate.
  * Member WRITE tools are covered in {@code organization.internal.McpMemberWriteToolsTest}, which
  * can stub the Keycloak gateway.
+ *
+ * <p><b>The fixtures straddle the tenancy tiers, so each seed names its own</b> (ADR 0010 §2). The
+ * harness pins PLATFORM, which is right for {@code organization}, {@code api_key} and
+ * {@code api_usage_daily}; {@code org_role} and {@code membership} are the tenant's and are seeded inside
+ * a {@code TenantContext.runAs(orgId, …)} span. The pin is declared HERE rather than pushed down into
+ * {@code McpTestSupport} on purpose: {@code runAs} restores whatever the caller had, so it stays correct
+ * whether or not that shared helper grows an axis of its own.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class McpAccountToolsIntegrationTest extends AbstractIntegrationTest {
@@ -52,10 +60,14 @@ class McpAccountToolsIntegrationTest extends AbstractIntegrationTest {
             // The dispatcher audits every mutation, and the row has to survive BOTH halves of the
             // question a tenant asks it. queryForMap throws unless exactly one row matched, so the
             // lookup itself is the "audited exactly once" claim; the two assertions are the rest.
-            Map<String, Object> audited = jdbc.queryForMap("""
+            // On the TENANT's axis: audit_log is split and routed on org_id (ADR 0010 §2), so a row
+            // carrying an org is that tenant's compliance record and was written into the tenant home.
+            // Read from the harness's platform pin this finds platform.audit_log — a real table with none
+            // of these rows in it, so the failure would be an empty result rather than a missing relation.
+            Map<String, Object> audited = TenantContext.callAs(orgId, () -> jdbc.queryForMap("""
                     select actor_person_id, to_state from audit_log
                     where action = 'mcp.tool_invoked' and org_id = ? and target = 'org_update'
-                    """, orgId);
+                    """, orgId));
             // Attribution is a person.id now (V13's actor_person_id) and a machine key is answerable
             // to NOBODY, so it is NULL: a fabricated uuid here would be a synthetic human in the one
             // table whose job is to say who acted.
@@ -73,10 +85,13 @@ class McpAccountToolsIntegrationTest extends AbstractIntegrationTest {
     void membersListPaginatesWithTheHouseCursors() {
         UUID orgId = UUID.randomUUID();
         McpTestSupport.seedOrg(jdbc, orgId, "page-" + orgId.toString().substring(0, 8), "Paged");
-        UUID roleId = McpTestSupport.seedRole(jdbc, orgId, "MEMBER", "org:read");
-        for (int i = 0; i < 3; i++) {
-            McpTestSupport.seedMembership(jdbc, orgId, UUID.randomUUID(), roleId);
-        }
+        // org_role and membership are tenant-tier; the organization row above is the platform's.
+        TenantContext.runAs(orgId, () -> {
+            UUID roleId = McpTestSupport.seedRole(jdbc, orgId, "MEMBER", "org:read");
+            for (int i = 0; i < 3; i++) {
+                McpTestSupport.seedMembership(jdbc, orgId, UUID.randomUUID(), roleId);
+            }
+        });
         McpTestSupport.SeededKey key = McpTestSupport.seedOrgKey(jdbc, orgId, "members", "member:read");
 
         try (McpSyncClient client = McpTestSupport.client(port, Map.of("X-Api-Key", key.presented()))) {
@@ -100,7 +115,9 @@ class McpAccountToolsIntegrationTest extends AbstractIntegrationTest {
     void rolesListShowsPermissionBundlesReadOnly() {
         UUID orgId = UUID.randomUUID();
         McpTestSupport.seedOrg(jdbc, orgId, "roles-" + orgId.toString().substring(0, 8), "Roles");
-        McpTestSupport.seedRole(jdbc, orgId, "AUDITOR", "org:read", "audit:read");
+        // org_role is tenant-tier — the org's own grants, not platform reference data.
+        TenantContext.runAs(orgId, () -> McpTestSupport.seedRole(jdbc, orgId, "AUDITOR", "org:read",
+                "audit:read"));
         McpTestSupport.SeededKey key = McpTestSupport.seedOrgKey(jdbc, orgId, "roles", "role:read");
 
         try (McpSyncClient client = McpTestSupport.client(port, Map.of("X-Api-Key", key.presented()))) {

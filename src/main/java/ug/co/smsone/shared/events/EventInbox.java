@@ -27,7 +27,7 @@ public class EventInbox {
     /** True exactly once per (listener, message) — false means already processed, skip. */
     public boolean recordIfNew(String listenerId, String messageId) {
         int inserted = jdbcTemplate.update("""
-                insert into event_inbox (listener_id, message_id, processed_at)
+                insert into platform.event_inbox (listener_id, message_id, processed_at)
                 values (?, ?, ?) on conflict do nothing
                 """, listenerId, messageId, Timestamp.from(clock.instant()));
         return inserted == 1;
@@ -48,8 +48,8 @@ public class EventInbox {
      */
     public int purgeProcessedBatch(java.time.Instant cutoff, int batchSize) {
         return jdbcTemplate.update("""
-                delete from event_inbox where (listener_id, message_id) in (
-                    select listener_id, message_id from event_inbox
+                delete from platform.event_inbox where (listener_id, message_id) in (
+                    select listener_id, message_id from platform.event_inbox
                     where processed_at < ?
                     order by processed_at
                     limit ?)

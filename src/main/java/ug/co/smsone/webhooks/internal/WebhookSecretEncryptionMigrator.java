@@ -31,6 +31,18 @@ class WebhookSecretEncryptionMigrator implements ApplicationRunner {
     /** Rows per round trip. Small enough that a boot is never blocked on one huge statement. */
     private static final int BATCH = 500;
 
+    /**
+     * The org whose axis the sweep borrows. It names no organization deliberately: an org that has
+     * never been promoted resolves to the shared {@code tenant_pool}, and a UUID in no
+     * {@code organization} row can never resolve to anything else — so this IS the pooled schema's
+     * axis, spelled with the only vocabulary {@code TenantContext} has. Same constant, same reasoning
+     * as {@code MappedSchemaValidator}: one idiom for "the pool", not two.
+     *
+     * <p>When silos exist (ADR 0010 Phase 5) this stops being one pass. The loop belongs here, over
+     * {@code platform.tenant_placement}, with the keyset cursor restarting inside each schema.
+     */
+    private static final UUID POOLED_TENANT = new UUID(0L, 0L);
+
     private final JdbcTemplate jdbc;
     private final SecretCipher cipher;
 
@@ -40,21 +52,24 @@ class WebhookSecretEncryptionMigrator implements ApplicationRunner {
     }
 
     /**
-     * Declares the platform axis (ADR 0010 §3.4). An {@code ApplicationRunner} runs on the boot thread
+     * Declares a tenant axis (ADR 0010 §3.4). An {@code ApplicationRunner} runs on the boot thread
      * with no request behind it, and this one goes straight to a {@code JdbcTemplate} on the routing
      * {@code DataSource} — so without the pin its very first probe fails on
      * {@code relation "webhook_subscription" does not exist}, on every boot, before the application is
      * ready. That failure would be loud, which is the design working; the pin is what makes it not
      * happen.
      *
-     * <p>PHASE 2: {@code webhook_subscription} is tenant-tier, so once the tables split this becomes a
-     * pass per tenant — {@code runAs(orgId)} around the paged walk, with the keyset cursor restarting
-     * inside each. A one-way migrator is exactly the shape that has to be revisited then, because
-     * "every row" stops being a single query.
+     * <p>Since Phase 2 the pin is a TENANT axis rather than a platform one, because
+     * {@code webhook_subscription} moved with its tier. Today that is one schema and one pass; when
+     * silos exist it becomes a pass each, and a one-way migrator is exactly the shape that has to be
+     * revisited then, because "every row" stops being a single query. See {@link #POOLED_TENANT} for
+     * which tenant's axis "a tenant axis" means here.
      */
     @Override
     public void run(ApplicationArguments args) {
-        TenantContext.runAsPlatform(this::encryptLegacySecrets);
+        // The TENANT axis, not the platform one: webhook_subscription is tenant-tier (ADR 0010 §2), so
+        // the platform pin this used to take could not see the table at all once Phase 2 split them.
+        TenantContext.runAs(POOLED_TENANT, this::encryptLegacySecrets);
     }
 
     private void encryptLegacySecrets() {

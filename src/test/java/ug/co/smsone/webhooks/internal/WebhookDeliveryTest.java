@@ -22,6 +22,21 @@ import ug.co.smsone.testsupport.AbstractIntegrationTest;
  * The webhook delivery pipeline against a REAL local receiver: fan-out enqueues, the worker signs and
  * POSTs, a 2xx marks DELIVERED, and a 5xx is retried with backoff until dead-lettered. Verifies the
  * HMAC-SHA256 signature and headers the receiver sees.
+ *
+ * <p><b>Everything this class touches is TENANT-tier</b> — {@code webhook_subscription} and
+ * {@code webhook_delivery} both (ADR 0010 §2) — so every call that reaches the database is pinned to
+ * the org it is about, with {@code TenantContext.runAs/callAs(orgId, …)}. The harness pins PLATFORM,
+ * where neither table resolves at all; the service calls need it too, because the pin has to be
+ * declared before their {@code @Transactional} boundary borrows a connection.
+ *
+ * <p>The org ids here are bare uuids with no {@code organization} row behind them, and that keeps
+ * working: an org that was never promoted resolves to {@code tenant_pool}, and one that does not exist
+ * can only ever be unpromoted. The subscription rows are the tenancy this test needs; the routing
+ * registry is not.
+ *
+ * <p>{@code worker.drainOnce()} is deliberately NOT pinned anywhere below. Declaring its own axis is
+ * the worker's obligation (ADR 0010 §3.4) and this class is where it is really tested — the poller is
+ * a thread the worker starts itself, which no filter and no {@code TaskDecorator} ever covers.
  */
 class WebhookDeliveryTest extends AbstractIntegrationTest {
 
@@ -62,13 +77,15 @@ class WebhookDeliveryTest extends AbstractIntegrationTest {
         server.start();
         try {
             UUID orgId = UUID.randomUUID();
-            WebhookSubscriptionService.CreatedSubscription created = subscriptions.create(orgId,
-                    "http://127.0.0.1:" + server.getAddress().getPort() + "/hook", Set.of("org.member.added"));
+            WebhookSubscriptionService.CreatedSubscription created = TenantContext.callAs(orgId,
+                    () -> subscriptions.create(orgId,
+                            "http://127.0.0.1:" + server.getAddress().getPort() + "/hook",
+                            Set.of("org.member.added")));
             WebhookSubscription subscription = created.subscription();
 
-            dispatcher.dispatch("m-" + UUID.randomUUID(), orgId, "org.member.added",
-                    WebhookPayload.of("org.member.added", orgId, Instant.now())
-                            .with("subject", "kc-newbie").with("role", "MEMBER"));
+            TenantContext.runAs(orgId, () -> dispatcher.dispatch("m-" + UUID.randomUUID(), orgId,
+                    "org.member.added", WebhookPayload.of("org.member.added", orgId, Instant.now())
+                            .with("subject", "kc-newbie").with("role", "MEMBER")));
             worker.drainOnce();
 
             assertThat(body.get()).contains("org.member.added").contains("kc-newbie").contains("MEMBER");
@@ -77,7 +94,7 @@ class WebhookDeliveryTest extends AbstractIntegrationTest {
             // and the receiver-side check proves the sender decrypts before signing.
             assertThat(signature.get()).isEqualTo("sha256=" + WebhookSigner.sign(created.plainSecret(), body.get()));
             assertThat(subscription.getSecret()).startsWith("enc:v1:");
-            assertThat(deliveryStatus(subscription.getId())).isEqualTo("DELIVERED");
+            assertThat(deliveryStatus(orgId, subscription.getId())).isEqualTo("DELIVERED");
         } finally {
             server.stop(0);
         }
@@ -96,27 +113,31 @@ class WebhookDeliveryTest extends AbstractIntegrationTest {
         server.start();
         try {
             UUID orgId = UUID.randomUUID();
-            WebhookSubscription subscription = subscriptions.create(orgId,
-                    "http://127.0.0.1:" + server.getAddress().getPort() + "/flaky", Set.of("org.status_changed")).subscription();
+            WebhookSubscription subscription = TenantContext.callAs(orgId, () -> subscriptions.create(orgId,
+                    "http://127.0.0.1:" + server.getAddress().getPort() + "/flaky",
+                    Set.of("org.status_changed"))).subscription();
 
-            dispatcher.dispatch("m-" + UUID.randomUUID(), orgId, "org.status_changed",
-                    WebhookPayload.of("org.status_changed", orgId, Instant.now()).with("status", "SUSPENDED"));
+            TenantContext.runAs(orgId, () -> dispatcher.dispatch("m-" + UUID.randomUUID(), orgId,
+                    "org.status_changed",
+                    WebhookPayload.of("org.status_changed", orgId, Instant.now()).with("status", "SUSPENDED")));
 
             // Fast-forward the backoff and drain until dead-lettered (max-attempts default = 5).
             // Everything in this block runs on Awaitility's own thread, which carries no tenant axis
-            // (ADR 0010 §3.4): the fast-forward declares one, and the drain deliberately does not —
-            // that is the worker's own obligation and this is the one place it is really tested.
+            // (ADR 0010 §3.4): the fast-forward declares one — the TENANT's, since that is where the
+            // row is — and the drain deliberately does not, because that is the worker's own
+            // obligation and this is the one place it is really tested.
             await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
-                TenantContext.runAsPlatform(() -> jdbc.update(
+                TenantContext.runAs(orgId, () -> jdbc.update(
                         "update webhook_delivery set next_attempt_at = now() where subscription_id = ?",
                         subscription.getId()));
                 worker.drainOnce();
-                assertThat(deliveryStatus(subscription.getId())).isEqualTo("FAILED");
+                assertThat(deliveryStatus(orgId, subscription.getId())).isEqualTo("FAILED");
             });
             assertThat(hits.get()).isEqualTo(5);
-            assertThat(jdbc.queryForObject(
+            Integer responseStatus = TenantContext.callAs(orgId, () -> jdbc.queryForObject(
                     "select response_status from webhook_delivery where subscription_id = ?",
-                    Integer.class, subscription.getId())).isEqualTo(503);
+                    Integer.class, subscription.getId()));
+            assertThat(responseStatus).isEqualTo(503);
             assertThat(deadLettered()).as("the give-up is counted, not just logged")
                     .isEqualTo(deadLetteredBefore + 1);
         } finally {
@@ -143,18 +164,22 @@ class WebhookDeliveryTest extends AbstractIntegrationTest {
         server.start();
         try {
             UUID orgId = UUID.randomUUID();
-            WebhookSubscription subscription = subscriptions.create(orgId,
-                    "http://127.0.0.1:" + server.getAddress().getPort() + "/revoked", Set.of("org.member.added")).subscription();
-            dispatcher.dispatch("m-" + UUID.randomUUID(), orgId, "org.member.added",
-                    WebhookPayload.of("org.member.added", orgId, Instant.now()).with("subject", "kc-newbie"));
+            WebhookSubscription subscription = TenantContext.callAs(orgId, () -> subscriptions.create(orgId,
+                    "http://127.0.0.1:" + server.getAddress().getPort() + "/revoked",
+                    Set.of("org.member.added"))).subscription();
+            TenantContext.runAs(orgId, () -> dispatcher.dispatch("m-" + UUID.randomUUID(), orgId,
+                    "org.member.added",
+                    WebhookPayload.of("org.member.added", orgId, Instant.now()).with("subject", "kc-newbie")));
 
-            subscriptions.delete(orgId, subscription.getId());
+            TenantContext.runAs(orgId, () -> subscriptions.delete(orgId, subscription.getId()));
             worker.drainOnce();
 
             assertThat(hits.get()).isZero();
-            assertThat(deliveryStatus(subscription.getId())).isEqualTo("FAILED");
-            assertThat(jdbc.queryForObject("select last_error from webhook_delivery where subscription_id = ?",
-                    String.class, subscription.getId())).isEqualTo("subscription deleted");
+            assertThat(deliveryStatus(orgId, subscription.getId())).isEqualTo("FAILED");
+            String lastError = TenantContext.callAs(orgId, () -> jdbc.queryForObject(
+                    "select last_error from webhook_delivery where subscription_id = ?",
+                    String.class, subscription.getId()));
+            assertThat(lastError).isEqualTo("subscription deleted");
         } finally {
             server.stop(0);
         }
@@ -169,17 +194,22 @@ class WebhookDeliveryTest extends AbstractIntegrationTest {
     @Test
     void aPendingDeliveryForADeletedSubscriptionIsNeverClaimed() throws Exception {
         UUID orgId = UUID.randomUUID();
-        WebhookSubscription subscription = subscriptions.create(orgId,
-                "http://127.0.0.1:1/unreachable", Set.of("org.member.added")).subscription();
-        dispatcher.dispatch("m-" + UUID.randomUUID(), orgId, "org.member.added",
-                WebhookPayload.of("org.member.added", orgId, Instant.now()).with("subject", "kc-newbie"));
-        jdbc.update("update webhook_subscription set deleted_at = now() where id = ?", subscription.getId());
+        WebhookSubscription subscription = TenantContext.callAs(orgId, () -> subscriptions.create(orgId,
+                "http://127.0.0.1:1/unreachable", Set.of("org.member.added"))).subscription();
+        TenantContext.runAs(orgId, () -> {
+            dispatcher.dispatch("m-" + UUID.randomUUID(), orgId, "org.member.added",
+                    WebhookPayload.of("org.member.added", orgId, Instant.now()).with("subject", "kc-newbie"));
+            jdbc.update("update webhook_subscription set deleted_at = now() where id = ?", subscription.getId());
+        });
 
         worker.drainOnce();
 
-        assertThat(deliveryStatus(subscription.getId())).isEqualTo("PENDING"); // never claimed, never attempted
-        assertThat(jdbc.queryForObject("select attempts from webhook_delivery where subscription_id = ?",
-                Integer.class, subscription.getId())).isZero();
+        // never claimed, never attempted
+        assertThat(deliveryStatus(orgId, subscription.getId())).isEqualTo("PENDING");
+        Integer attempts = TenantContext.callAs(orgId, () -> jdbc.queryForObject(
+                "select attempts from webhook_delivery where subscription_id = ?",
+                Integer.class, subscription.getId()));
+        assertThat(attempts).isZero();
     }
 
     /**
@@ -199,20 +229,25 @@ class WebhookDeliveryTest extends AbstractIntegrationTest {
         server.start();
         try {
             UUID orgId = UUID.randomUUID();
-            WebhookSubscription subscription = subscriptions.create(orgId,
-                    "http://127.0.0.1:" + server.getAddress().getPort() + "/paused", Set.of("org.member.added")).subscription();
-            dispatcher.dispatch("m-" + UUID.randomUUID(), orgId, "org.member.added",
-                    WebhookPayload.of("org.member.added", orgId, Instant.now()).with("subject", "kc-newbie"));
-            jdbc.update("update webhook_subscription set status = 'DISABLED' where id = ?", subscription.getId());
+            WebhookSubscription subscription = TenantContext.callAs(orgId, () -> subscriptions.create(orgId,
+                    "http://127.0.0.1:" + server.getAddress().getPort() + "/paused",
+                    Set.of("org.member.added"))).subscription();
+            TenantContext.runAs(orgId, () -> {
+                dispatcher.dispatch("m-" + UUID.randomUUID(), orgId, "org.member.added",
+                        WebhookPayload.of("org.member.added", orgId, Instant.now()).with("subject", "kc-newbie"));
+                jdbc.update("update webhook_subscription set status = 'DISABLED' where id = ?",
+                        subscription.getId());
+            });
 
             worker.drainOnce();
             assertThat(hits.get()).as("a paused subscription must not be POSTed").isZero();
-            assertThat(deliveryStatus(subscription.getId())).isEqualTo("PENDING");
+            assertThat(deliveryStatus(orgId, subscription.getId())).isEqualTo("PENDING");
 
-            jdbc.update("update webhook_subscription set status = 'ACTIVE' where id = ?", subscription.getId());
+            TenantContext.runAs(orgId, () -> jdbc.update(
+                    "update webhook_subscription set status = 'ACTIVE' where id = ?", subscription.getId()));
             worker.drainOnce();
             assertThat(hits.get()).as("re-enabling resumes what was queued").isEqualTo(1);
-            assertThat(deliveryStatus(subscription.getId())).isEqualTo("DELIVERED");
+            assertThat(deliveryStatus(orgId, subscription.getId())).isEqualTo("DELIVERED");
         } finally {
             server.stop(0);
         }
@@ -247,34 +282,40 @@ class WebhookDeliveryTest extends AbstractIntegrationTest {
         server.start();
         try {
             UUID pausedOrg = UUID.randomUUID();
-            WebhookSubscription paused = subscriptions.create(pausedOrg,
+            WebhookSubscription paused = TenantContext.callAs(pausedOrg, () -> subscriptions.create(pausedOrg,
                     "http://127.0.0.1:" + server.getAddress().getPort() + "/never",
-                    Set.of("org.member.added")).subscription();
-            for (int i = 0; i < batchSize + 10; i++) {
-                dispatcher.dispatch("starve-" + UUID.randomUUID(), pausedOrg, "org.member.added",
-                        WebhookPayload.of("org.member.added", pausedOrg, Instant.now()));
-            }
-            jdbc.update("update webhook_subscription set status = 'DISABLED' where id = ?", paused.getId());
-            // Age them so they sort to the head of the queue — the position that did the damage.
-            jdbc.update("update webhook_delivery set next_attempt_at = now() - interval '1 day' "
-                    + "where subscription_id = ?", paused.getId());
+                    Set.of("org.member.added"))).subscription();
+            TenantContext.runAs(pausedOrg, () -> {
+                for (int i = 0; i < batchSize + 10; i++) {
+                    dispatcher.dispatch("starve-" + UUID.randomUUID(), pausedOrg, "org.member.added",
+                            WebhookPayload.of("org.member.added", pausedOrg, Instant.now()));
+                }
+                jdbc.update("update webhook_subscription set status = 'DISABLED' where id = ?", paused.getId());
+                // Age them so they sort to the head of the queue — the position that did the damage.
+                jdbc.update("update webhook_delivery set next_attempt_at = now() - interval '1 day' "
+                        + "where subscription_id = ?", paused.getId());
+            });
 
+            // A different org — and, while the pool is one schema, the same queue. That is exactly the
+            // starvation this test is about: the two tenants' rows compete for one claim's LIMIT.
             UUID healthyOrg = UUID.randomUUID();
-            WebhookSubscription healthy = subscriptions.create(healthyOrg,
+            WebhookSubscription healthy = TenantContext.callAs(healthyOrg, () -> subscriptions.create(healthyOrg,
                     "http://127.0.0.1:" + server.getAddress().getPort() + "/healthy",
-                    Set.of("org.member.added")).subscription();
-            dispatcher.dispatch("healthy-" + UUID.randomUUID(), healthyOrg, "org.member.added",
-                    WebhookPayload.of("org.member.added", healthyOrg, Instant.now()));
+                    Set.of("org.member.added"))).subscription();
+            TenantContext.runAs(healthyOrg, () -> dispatcher.dispatch("healthy-" + UUID.randomUUID(),
+                    healthyOrg, "org.member.added",
+                    WebhookPayload.of("org.member.added", healthyOrg, Instant.now())));
 
             worker.drainOnce();
 
             assertThat(healthyHits.get())
                     .as("a paused tenant's backlog must not block a healthy tenant's delivery")
                     .isEqualTo(1);
-            assertThat(deliveryStatus(healthy.getId())).isEqualTo("DELIVERED");
-            assertThat(jdbc.queryForObject(
+            assertThat(deliveryStatus(healthyOrg, healthy.getId())).isEqualTo("DELIVERED");
+            Integer consumed = TenantContext.callAs(pausedOrg, () -> jdbc.queryForObject(
                     "select count(*) from webhook_delivery where subscription_id = ? and status <> 'PENDING'",
-                    Integer.class, paused.getId()))
+                    Integer.class, paused.getId()));
+            assertThat(consumed)
                     .as("the paused subscription's rows stay PENDING — paused, not consumed")
                     .isZero();
         } finally {
@@ -300,27 +341,30 @@ class WebhookDeliveryTest extends AbstractIntegrationTest {
         server.start();
         try {
             UUID orgId = UUID.randomUUID();
-            WebhookSubscription subscription = subscriptions.create(orgId,
+            WebhookSubscription subscription = TenantContext.callAs(orgId, () -> subscriptions.create(orgId,
                     "http://127.0.0.1:" + server.getAddress().getPort() + "/stale",
-                    Set.of("org.member.added")).subscription();
+                    Set.of("org.member.added"))).subscription();
 
-            // One delivery that a crashed instance left holding the lock.
-            dispatcher.dispatch("stale-" + UUID.randomUUID(), orgId, "org.member.added",
-                    WebhookPayload.of("org.member.added", orgId, Instant.now()));
-            jdbc.update("update webhook_delivery set status = 'PROCESSING', "
-                    + "locked_at = now() - interval '1 hour' where subscription_id = ?", subscription.getId());
-
-            // A deep PENDING backlog in front of it, all newer.
-            for (int i = 0; i < 60; i++) {
-                dispatcher.dispatch("backlog-" + UUID.randomUUID(), orgId, "org.member.added",
+            TenantContext.runAs(orgId, () -> {
+                // One delivery that a crashed instance left holding the lock.
+                dispatcher.dispatch("stale-" + UUID.randomUUID(), orgId, "org.member.added",
                         WebhookPayload.of("org.member.added", orgId, Instant.now()));
-            }
+                jdbc.update("update webhook_delivery set status = 'PROCESSING', "
+                        + "locked_at = now() - interval '1 hour' where subscription_id = ?", subscription.getId());
+
+                // A deep PENDING backlog in front of it, all newer.
+                for (int i = 0; i < 60; i++) {
+                    dispatcher.dispatch("backlog-" + UUID.randomUUID(), orgId, "org.member.added",
+                            WebhookPayload.of("org.member.added", orgId, Instant.now()));
+                }
+            });
 
             worker.drainOnce();
 
-            assertThat(jdbc.queryForObject(
+            Integer stranded = TenantContext.callAs(orgId, () -> jdbc.queryForObject(
                     "select count(*) from webhook_delivery where subscription_id = ? and status = 'PROCESSING' "
-                            + "and locked_at < now() - interval '30 minutes'", Integer.class, subscription.getId()))
+                            + "and locked_at < now() - interval '30 minutes'", Integer.class, subscription.getId()));
+            assertThat(stranded)
                     .as("the stale in-flight row must be reclaimed, not stranded behind the backlog")
                     .isZero();
         } finally {
@@ -329,14 +373,18 @@ class WebhookDeliveryTest extends AbstractIntegrationTest {
     }
 
     /**
-     * Pinned because one caller reads it from inside {@code await().untilAsserted(…)}, and Awaitility
-     * polls on ITS OWN thread — never pinned by the harness, so the borrow routes to the empty
-     * {@code no_tenant} schema and the read fails with {@code relation "webhook_delivery" does not
-     * exist} instead of returning a status (ADR 0010 §3.4). Declared here rather than at that one call
-     * site so every reader of this row goes through the same axis.
+     * Pinned twice over. {@code webhook_delivery} is TENANT-tier, so the org is what the read needs —
+     * and one caller reads it from inside {@code await().untilAsserted(…)}, where Awaitility polls on
+     * ITS OWN thread and the harness has pinned nothing at all, so the borrow would route to the empty
+     * {@code no_tenant} schema (ADR 0010 §3.4). Declared here rather than at that one call site so
+     * every reader of this row goes through the same axis.
+     *
+     * <p>{@code orgId} is a parameter rather than a field because the starvation test deliberately has
+     * two of them, and reading one tenant's row on the other's axis is precisely the mistake this whole
+     * mechanism exists to make impossible.
      */
-    private String deliveryStatus(UUID subscriptionId) {
-        return TenantContext.callAsPlatform(() -> jdbc.queryForObject(
+    private String deliveryStatus(UUID orgId, UUID subscriptionId) {
+        return TenantContext.callAs(orgId, () -> jdbc.queryForObject(
                 "select status from webhook_delivery where subscription_id = ? order by created_at desc limit 1",
                 String.class, subscriptionId));
     }

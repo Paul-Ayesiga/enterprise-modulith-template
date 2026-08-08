@@ -25,8 +25,8 @@ import ug.co.smsone.shared.persistence.SoftDeletableEntity;
  * exists to forbid. Providers with no issuer URL write a canonical constant, never null.
  */
 @Entity
-@Table(name = "external_identity")
-@SQLDelete(sql = "update external_identity set deleted_at = now(), version = version + 1 "
+@Table(name = "external_identity", schema = "platform")
+@SQLDelete(sql = "update platform.external_identity set deleted_at = now(), version = version + 1 "
         + "where id = ? and version = ?")
 @SQLRestriction("deleted_at is null")
 class ExternalIdentity extends SoftDeletableEntity {

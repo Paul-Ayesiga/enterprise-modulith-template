@@ -16,8 +16,8 @@ import ug.co.smsone.shared.persistence.SoftDeletableEntity;
  * module and this table is not (V31 says so in its own header).
  */
 @Entity
-@Table(name = "user_device")
-@SQLDelete(sql = "update user_device set deleted_at = now(), version = version + 1 where id = ? and version = ?")
+@Table(name = "user_device", schema = "platform")
+@SQLDelete(sql = "update platform.user_device set deleted_at = now(), version = version + 1 where id = ? and version = ?")
 @SQLRestriction("deleted_at is null")
 class UserDevice extends SoftDeletableEntity {
 

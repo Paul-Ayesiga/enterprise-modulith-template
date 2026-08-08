@@ -15,6 +15,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.stereotype.Component;
 import ug.co.smsone.shared.error.UnauthorizedException;
+import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
  * The identity resolution layer, and the ONLY one. A validated credential arrives here and leaves as a
@@ -39,16 +40,22 @@ import ug.co.smsone.shared.error.UnauthorizedException;
  * warms it on the way in; the warm-up is what keeps the JPA auditor from issuing a query in the middle of
  * a flush.
  *
- * <p><b>Resolution straddles both tenancy tiers, and Phase 1 hides that.</b> Every caller pins PLATFORM
- * around this class (ADR 0010 §3.4) because the identity half is platform-tier — {@code external_identity}
- * (§2 table 13), {@code person} (37), {@code external_organization} (14), {@code organization} (35). But
- * {@link #permissions} reaches {@code membership} (26), {@code org_role} (31) and {@code role_permission}
- * (43), and all three are TENANT tier. Today that is invisible: every table lives in one schema and both
- * halves resolve identically. From Phase 2 they do not, and a single flat PLATFORM pin around
- * {@code currentUser()} will read the identity half correctly and fail on the permission half. The shape
- * this has to become is two axes in sequence — resolve person and org on PLATFORM, then
- * {@code callAs(orgId, …)} for the permission set — which is only expressible once the org is known, i.e.
- * inside this class rather than at the four call sites that pin around it.
+ * <p><b>Resolution straddles both tenancy tiers, and since Phase 2 it says so.</b> Every caller pins
+ * PLATFORM around this class (ADR 0010 §3.4) because the identity half is platform-tier —
+ * {@code external_identity} (§2 table 13), {@code person} (37), {@code external_organization} (14),
+ * {@code organization} (35). But {@link #permissions} reaches {@code membership} (26), {@code org_role}
+ * (31) and {@code role_permission} (43), and all three are TENANT tier. Through Phase 1 that was
+ * invisible, because every table lived in one schema and both halves resolved identically; Phase 2 moved
+ * them, and a single flat PLATFORM pin around {@code currentUser()} now reads the identity half correctly
+ * and fails on the permission half with {@code relation "membership" does not exist} — which at the edge
+ * becomes a 500 on a request that should have been a plain 403.
+ *
+ * <p>So resolution is <b>two axes in sequence, not one wider pin</b>: person and organization on the
+ * caller's PLATFORM axis, then {@code callAs(orgId, …)} for the permission set alone. The second axis is
+ * only expressible once the org is known, which is why it lives here rather than at the four call sites
+ * that pin around this class — and why widening their pin would be the wrong repair, since a tenant axis
+ * over the whole method would be a lie about {@code person} and a promoted tenant would then look for the
+ * person graph in its own silo.
  */
 @Component
 public class CurrentUserProvider {
@@ -250,13 +257,31 @@ public class CurrentUserProvider {
      * What this person may do inside this organization. Empty — never null, never "all" — when either
      * half is missing or no policy is wired: the caller then holds no org authority, which is the same
      * answer {@link ApiPermissionEvaluator} used to reach by default-denying on an absent port.
+     *
+     * <p><b>The TENANT half of the resolution</b> (see the class note). {@code membership},
+     * {@code org_role} and {@code role_permission} are tenant-tier, so this read — and only this read —
+     * runs on the organization's own axis; everything else {@code currentUser()} touches is platform-tier
+     * and stays on the caller's PLATFORM pin. {@code callAs} rather than {@code set}: it restores the
+     * caller's axis in a {@code finally}, so {@code CurrentUserFilter} still decides for itself what the
+     * rest of the chain runs on, and nothing is left pinned when the permission read throws.
+     *
+     * <p>The org is known by now and never null here, so this is a real tenant axis rather than the pooled
+     * probe the org-less sweeps use — it routes a promoted tenant correctly for free at Phase 5, which a
+     * schema name written into a query could not.
+     *
+     * <p>It also has to be pinned OUTSIDE any transaction, which it is: {@code CurrentUserFilter} and
+     * {@code McpToolDispatcher} both warm the memo above before opening one, so the only callers that
+     * reach this method from inside a transaction — {@code AuditLogImpl} on every flush — are served the
+     * memo and never get here. If that ever stops being true, {@code TenantContext} says so loudly rather
+     * than pinning a connection that is already bound.
      */
     private Set<String> permissions(UUID personId, UUID organizationId) {
         OrgAuthorization authz = orgAuthorization.getIfAvailable();
         if (authz == null || personId == null || organizationId == null) {
             return Set.of();
         }
-        Set<String> permissions = authz.permissions(personId, organizationId);
+        Set<String> permissions =
+                TenantContext.callAs(organizationId, () -> authz.permissions(personId, organizationId));
         return permissions == null ? Set.of() : permissions;
     }
 

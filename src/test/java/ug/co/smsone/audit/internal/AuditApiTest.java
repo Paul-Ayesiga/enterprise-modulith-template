@@ -20,6 +20,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import ug.co.smsone.shared.security.OrgAuthorization;
+import ug.co.smsone.shared.tenancy.SplitTables;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 import ug.co.smsone.testsupport.EdgeSeed;
 
@@ -52,8 +53,13 @@ class AuditApiTest extends AbstractIntegrationTest {
      * the same actor makes the assertion independent of which of the two lands first.
      */
     private void seed(UUID orgId, String action, String target, UUID actorPersonId) {
-        jdbc.update("""
-                insert into audit_log
+        // NAMES THE HOME, exactly as AuditLogImpl does (ADR 0010 §2: audit_log is a split table). The
+        // harness pins PLATFORM on the test thread, so an unqualified insert would put every row —
+        // org-scoped ones included — in `platform.audit_log`, and the org-scoped read below runs on the
+        // TENANT axis and would find none of them. Seeding through the same rule the writer uses is
+        // what keeps this test a test of the query rather than of the fixture.
+        jdbc.update("insert into " + SplitTables.homeOf(orgId) + """
+                .audit_log
                     (id, org_id, action, actor_person_id, target, from_state, to_state, occurred_at,
                      version, created_at)
                 values (?, ?, ?, ?, ?, ?, ?, now(), 0, now())

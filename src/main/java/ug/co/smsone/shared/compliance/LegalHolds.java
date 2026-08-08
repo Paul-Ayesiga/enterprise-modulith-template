@@ -14,8 +14,8 @@ import java.util.UUID;
  * V34 warns about: it does not throw, it just resumes deleting data a court said to keep.
  *
  * <p>There is deliberately NO org half. Org-scoped holds ARE enforced — but by
- * {@code SoftDeletePurgeJob.heldGuard()}, which folds {@code not exists (select 1 from legal_hold …
- * where h.org_id = <table>.<col>)} straight into each purge statement so the guard is part of the
+ * {@code SoftDeletePurgeJob.heldGuard()}, which folds {@code not exists (select 1 from
+ * platform.legal_hold … where h.org_id = <table>.<col>)} straight into each purge statement so the guard is part of the
  * DELETE rather than a separate round trip per row. A Java-side {@code orgHeld(UUID)} would be a
  * second, weaker way to ask the same question, and every caller that needs it is the purge job.
  */

@@ -27,6 +27,18 @@ class ExchangeScheduleFiringJob {
     private static final Logger log = LoggerFactory.getLogger(ExchangeScheduleFiringJob.class);
     private static final int BATCH = 50;
 
+    /**
+     * The tenant axis this pass runs on. Names no organization deliberately: an org in no
+     * {@code organization} row can only ever resolve to the shared {@code tenant_pool}, so this IS the
+     * pooled schema's axis — the same constant and reasoning as {@code MappedSchemaValidator} and
+     * {@code WebhookSecretEncryptionMigrator}.
+     *
+     * <p>PHASE 5 makes this a loop over {@code platform.tenant_placement}, one transaction per home,
+     * and the {@link #BATCH} cap becomes per-home rather than global — which is a fairness change: due
+     * schedules are ordered within a home from then on, not across the installation.
+     */
+    private static final UUID POOLED_TENANT = new UUID(0L, 0L);
+
     private final ExchangeScheduleRepository schedules;
     private final ExchangeJobStore store;
     private final HandlerRegistry handlers;
@@ -57,10 +69,10 @@ class ExchangeScheduleFiringJob {
      *
      * <p><b>No {@code @Transactional} here any more, and the {@link TransactionTemplate} below is why.</b>
      * The schema is chosen when the connection is borrowed, so the tenant axis has to be declared
-     * BEFORE the transaction opens — and {@link TenantContext#setPlatform()} throws if it is not (ADR
-     * 0010 §3.2). An annotation on this method would put the transaction outside anything the body can
-     * do, leaving the borrow on {@code no_tenant}. {@link #fireDueSchedules()} lost its annotation for
-     * the same reason — it is invoked directly, off any request, so it has to declare its own axis too.
+     * BEFORE the transaction opens — and {@code TenantContext.set} throws if it is not (ADR 0010 §3.2).
+     * An annotation on this method would put the transaction outside anything the body can do, leaving
+     * the borrow on {@code no_tenant}. {@link #fireDueSchedules()} lost its annotation for the same
+     * reason — it is invoked directly, off any request, so it has to declare its own axis too.
      */
     @Scheduled(cron = "${app.scheduler.exchange-schedule-cron:30 * * * * *}")
     @SchedulerLock(name = "exchange-schedule-fire", lockAtMostFor = "PT5M")
@@ -71,13 +83,21 @@ class ExchangeScheduleFiringJob {
         fireDueSchedules();
     }
 
-    /** Same pin, same boundary — see {@link #scheduledFire()}; this is the entry without the ShedLock. */
+    /**
+     * Same pin, same boundary — see {@link #scheduledFire()}; this is the entry without the ShedLock.
+     *
+     * <p><b>A TENANT axis since Phase 2, not the platform one it used to take.</b> Everything this pass
+     * reads is the tenant's: {@code exchange_schedule} is tenant-tier (ADR 0010 §2), and so are the
+     * {@code membership}, {@code org_role} and {@code role_permission} rows behind
+     * {@code authorization.hasPermission} — which is the check that decides whether a schedule is still
+     * allowed to fire. On the platform axis none of them resolve, so every schedule in the installation
+     * silently stopped firing. The one write that leaves this tier, {@code store.submit}, names its own
+     * home and is correct from here for exactly that reason.
+     */
     public void fireDueSchedules() {
-        // Declares the platform axis, then opens the transaction inside it. ADR 0010 §3.4.
-        // PHASE 2: lockDue() selects due schedules across every tenant. When exchange_schedule moves
-        // to the tenant tier this becomes a loop — one runAs(orgId) + transaction per tenant — and the
-        // BATCH cap becomes per-tenant rather than global.
-        TenantContext.runAsPlatform(() -> transactions.executeWithoutResult(tx -> doFire()));
+        // The axis first, then the transaction inside it: the schema is chosen when the connection is
+        // borrowed and the transaction has already borrowed one. ADR 0010 §3.2/§3.4.
+        TenantContext.runAs(POOLED_TENANT, () -> transactions.executeWithoutResult(tx -> doFire()));
     }
 
     private void doFire() {

@@ -12,12 +12,20 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.jdbc.core.JdbcTemplate;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
 /**
  * Phase 2: the full webhook management surface over the real loop — create (secret shown once,
  * URL-guarded), read (secret masked), update-wholesale, rotate, the delivery log, redelivery of a
  * dead-lettered row (fenced: only FAILED), and delete-with-surviving-log.
+ *
+ * <p>The tools are driven over HTTP, so their axis is the MCP dispatcher's: it pins the key's
+ * organization before the tool runs (ADR 0010 §3.2), which is why nothing about the {@code client()}
+ * calls below changed. The FIXTURES are the part that has to say it out loud —
+ * {@code webhook_delivery} is tenant-tier and the {@code api_key} row the client authenticates with is
+ * the platform's, so the two seeds run on different axes. Only the delivery seed needs a pin; the key
+ * seed keeps the harness's PLATFORM one.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class McpWebhookToolsIntegrationTest extends AbstractIntegrationTest {
@@ -111,8 +119,10 @@ class McpWebhookToolsIntegrationTest extends AbstractIntegrationTest {
             Map<String, Object> requeued = call(client, "webhook_redeliver",
                     Map.of("subscription_id", id, "delivery_id", deliveryId.toString()));
             assertThat(requeued).containsEntry("requeued", deliveryId.toString());
-            assertThat(jdbc.queryForObject(
-                    "select status from webhook_delivery where id = ?", String.class, deliveryId))
+            // The org's axis, not the harness's: the tool wrote this row inside the tenant's schema and
+            // that is the only place it can be read back from (ADR 0010 §2).
+            assertThat(TenantContext.callAs(orgId, () -> jdbc.queryForObject(
+                    "select status from webhook_delivery where id = ?", String.class, deliveryId)))
                     .isEqualTo("PENDING");
 
             // The fence: a second redeliver finds the row no longer FAILED and reports the conflict.
@@ -152,13 +162,18 @@ class McpWebhookToolsIntegrationTest extends AbstractIntegrationTest {
         return McpTestSupport.client(port, Map.of("X-Api-Key", key.presented()));
     }
 
+    /**
+     * A dead-lettered row for the tool to find, written where the tool will look for it: on this
+     * class's org axis, because {@code webhook_delivery} is tenant-tier and the harness pins PLATFORM,
+     * which cannot see the table at all (ADR 0010 §2).
+     */
     private UUID seedFailedDelivery(UUID subscriptionId) {
         UUID deliveryId = UUID.randomUUID();
-        jdbc.update("""
+        TenantContext.runAs(orgId, () -> jdbc.update("""
                 insert into webhook_delivery (id, subscription_id, org_id, event_type, payload, status,
                                               attempts, max_attempts, next_attempt_at, last_error, created_at)
                 values (?, ?, ?, ?, '{}', 'FAILED', 8, 8, now(), 'receiver answered 500', now())
-                """, deliveryId, subscriptionId, orgId, EVENT);
+                """, deliveryId, subscriptionId, orgId, EVENT));
         return deliveryId;
     }
 

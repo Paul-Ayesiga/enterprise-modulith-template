@@ -27,6 +27,7 @@ _Others_
 * `u.c.s.s.idempotency.IdempotencyStore`
 * `u.c.s.s.persistence.DbDialect`
 * `u.c.s.s.persistence.JpaAuditingConfig`
+* `u.c.s.s.persistence.MappedTables`
 * `u.c.s.s.persistence.SoftDeleteRecovery`
 * `u.c.s.s.ratelimit.DistributedRateLimiter`
 * `u.c.s.s.ratelimit.RateLimitFilter`

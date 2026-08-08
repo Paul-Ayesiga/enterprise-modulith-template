@@ -1,0 +1,140 @@
+-- Five index corrections in two directions: three go onto purge paths that had nothing at all
+-- (§1, §2, §3), and two come off write paths where nothing reads them any more (§4, §5). Same method
+-- as V49/V50: every number below is EXPLAIN (ANALYZE, BUFFERS) against a seeded throwaway
+-- Postgres 18.4 — the same 5.6M-row database V50's header describes, plus a 500k-row event_inbox
+-- seeded for §1 because the shipped one is empty — warm cache, repeated until stable, and quoted next
+-- to the statement it justifies.
+--
+-- BOTH DIRECTIONS ARE THE SAME MISTAKE. V49 and V50 found indexes that do not do the job their name
+-- implies; this file finds jobs whose index never existed and indexes whose job stopped existing. What
+-- ties all five together is that NOT ONE of them can be settled by reading the schema — an index's
+-- worth is a fact about the statements that run against it, not about the columns it covers. So each
+-- section names the statement, and §6 records the two proposals that did NOT survive being measured,
+-- because the next audit will re-propose both from the schema alone.
+--
+-- PLAIN `create index` / `drop index`, NOT `concurrently`. V50's header derives this at length and
+-- AGENTS §4.6 now carries it: a `-- flyway:executeInTransaction=false` comment is INERT on
+-- flyway-core 12.4.0 (script metadata comes only from a sidecar `V<n>__<name>.sql.conf`), so the
+-- transaction would stay and every CONCURRENTLY statement would abort at context startup. This whole
+-- file applied to the seeded database, inside one transaction as Flyway runs it, in 330 ms: 161 ms
+-- the event_inbox build over 500k rows, 24 ms the idempotency_key build over 100k, 3.5 ms org_group,
+-- both removals under a millisecond, and 140 ms the COMMIT itself flushing the new index files.
+-- Revisit when a table here grows by an order of magnitude; the sidecar is the mechanism that
+-- actually works.
+--
+-- SPLIT (ADR 0010 §4.1): this is the platform half of V52. Its sibling is db/migration/tenant/V52__index_corrections.sql.
+
+-- ---------------------------------------------------------------------------------------------
+-- 1. event_inbox.processed_at — the nightly purge batches, and batching WITHOUT an index on the
+--    ordering column is not a fix, it is a multiplier.
+-- ---------------------------------------------------------------------------------------------
+
+-- EventInbox.purgeProcessedBatch issues, up to MAX_BATCHES = 100 times per nightly run:
+--     delete from event_inbox where (listener_id, message_id) in (
+--         select listener_id, message_id from event_inbox
+--         where processed_at < ? order by processed_at limit 1000)
+-- The outer delete was never the problem — it drives event_inbox_pkey from whatever the sub-select
+-- returns, 1000 lookups, bounded. The sub-select was, and the `order by` is what made it unbounded:
+-- with nothing on processed_at, "the thousand oldest" can only be found by reading EVERY row past the
+-- cutoff and top-N sorting it. Measured on 500k rows with 267k past a 14-day cutoff:
+--     Seq Scan (266987 rows) -> top-N heapsort -> Limit    5682 buffers, 47.1 ms   (scan node)
+--     whole statement                                     11682 buffers, 61.9 ms   (133 ms cold)
+-- With the index the scan IS the order, so LIMIT 1000 stops it at 1000 rows instead of end-of-table:
+--     Index Scan (1000 rows) -> Limit                       1005 buffers,  0.29 ms  (scan node)
+--     whole statement                                       7005 buffers, 15.6 ms
+-- 5.7x fewer buffers on the statement, 160x on the part the index touches. Per batch — so at this
+-- backlog the run's 100 batches go from ~6.2 s of scanning to ~1.6 s, and the gap widens with the
+-- table because the old shape is O(rows past cutoff) per batch while the new one is O(1000).
+--
+-- The trap the numbers hide: deleting 1000 rows per batch barely shrinks the next batch's scan, so a
+-- purge that falls behind gets SLOWER per row purged, not faster. That is the failure mode this
+-- prevents, and it is invisible until the backlog is large enough to matter.
+create index idx_event_inbox_processed on event_inbox (processed_at);
+
+-- ---------------------------------------------------------------------------------------------
+-- 2. idempotency_key.created_at — the same shape one table over, and READ §2's second half BEFORE
+--    deciding this index is unused. It is worthless against the statement that stood here
+--    yesterday, and necessary against the one that stands here now.
+-- ---------------------------------------------------------------------------------------------
+
+-- IdempotencyStore.purgeBatch is now the inbox's shape: `... in (select principal, idem_key from
+-- idempotency_key where created_at < ? order by created_at limit 1000)`, up to 100 batches a night.
+-- Measured on a 100k-row clone (41 MB heap, created_at correlated 1.000 as it is in life — rows are
+-- appended in time order — and 50% of the table past the cutoff, which is the steady state the
+-- defaults produce; see below):
+--     Seq Scan (50006 rows) -> top-N heapsort -> Limit    5264 buffers,  9.3 ms   (scan node)
+--     whole statement                                    10264 buffers, 16.1 ms   (23.1 ms cold)
+--     Index Scan (1000 rows) -> Limit                       57 buffers,  0.11 ms  (scan node)
+--     whole statement                                     5057 buffers,  2.37 ms
+-- 92x on the scan node's buffers, 6.8x on the statement, per batch.
+--
+-- NOW THE PART THAT MATTERS TO WHOEVER AUDITS THIS NEXT. Until this run, the purge was ONE unbatched
+-- `delete from idempotency_key where created_at < ?`, and against THAT statement this index is worth
+-- exactly nothing — not "a little", nothing, and it was measured rather than assumed. Retention
+-- defaults to 1 day and the job runs nightly, so at each run the table holds roughly two windows and
+-- the sweep takes the older half: ~50% selectivity, at which Postgres picks a Seq Scan with the index
+-- sitting right there. Pushing selectivity down to 12.5% (a 7-day retention) and then to 1% did not
+-- change the plan, and neither did rebuilding created_at to a 0.9996 correlation. A bare range
+-- predicate over a large fraction of a table is a sequential scan and no index changes that.
+--
+-- What changed is not the data, the size or the selectivity — it is the ORDER BY … LIMIT. That is
+-- what turns "half the table" into "the thousand oldest", and an ordered read of a thousand rows is
+-- the one shape a btree wins outright. So: this index is load-bearing for the batched purge and
+-- DEAD WEIGHT for the unbatched one. If a future change ever un-batches it, drop this index in the
+-- same commit — and if it stays batched, do not drop this index because the old statement's numbers
+-- said it did nothing.
+create index idx_idempotency_key_created on idempotency_key (created_at);
+
+-- ---------------------------------------------------------------------------------------------
+-- 4. idx_person_name — 10 MB serving nothing, and the interesting cost is not the 10 MB.
+-- ---------------------------------------------------------------------------------------------
+
+-- V10 created it to sort the person listing by display name. That listing never shipped that way:
+-- PersonAccessService.LIST_SORT is (created_at desc, id desc) and lands on idx_person_recent, and
+-- nothing anywhere filters, sorts or joins on formatted_name. Checked rather than assumed, because
+-- this run ADDS a name API — GET/PATCH /admin/users/{id}(/name) and PATCH /me/name — and a name
+-- SEARCH would have kept the index. It reads and writes the column and projects it into the payload;
+-- it never looks a person up by it. The admin search projection indexes e-mail only
+-- (SearchEventListeners writes `event.email()` as both the title and the body of a `user` row), so
+-- that is not a hidden reader either. pg_stat_user_indexes agrees: 0 scans against 57 on
+-- idx_person_recent and 2.49M on person_pkey. The one plan that uses it is an equality on
+-- formatted_name, which no code issues.
+--
+-- The storage is 10 MB against a 26 MB heap. The reason to act on it is the write path, and the
+-- mechanism is worth stating because dropping ONE index here removes the maintenance of FOUR:
+-- an UPDATE can be HOT (heap-only, no index touched at all) only when no INDEXED column changes.
+-- With this index, `update person set formatted_name = ?, updated_at = ?` — the name PATCH's entire
+-- statement — changes an indexed column, so it is never HOT and must post new entries into
+-- person_pkey, idx_person_recent, idx_person_scan and this one. Without it, formatted_name is
+-- indexed by nothing, updated_at is indexed by nothing, and the same statement touches no index.
+-- Over 2000 single-row name PATCHes, alternating arms on disjoint row ranges, each arm starting from
+-- a CHECKPOINT:
+--     HOT updates    0 / 2000  ->  1678 / 2000
+--     WAL per update 570 / 582 / 577 / 592 bytes  ->  277 / 280 / 273 bytes    (~52%)
+-- full_page_writes was off FOR THE MEASUREMENT ONLY, for the reason V50 §4 records: an FPI is 8 kB
+-- against a ~130-byte row, so with it on the result turns on whether a checkpoint lands mid-run. 52%
+-- is the intrinsic figure; in production FPIs dilute the share.
+drop index idx_person_name;
+
+-- ---------------------------------------------------------------------------------------------
+-- 6. NOT DONE, and recorded so the next audit does not spend the afternoon rediscovering them. Both
+--    were proposed on the schema, and the schema was not wrong about either — it was just not the
+--    whole question. (b) is about `document` and `ticket` and lives in the tenant half.
+-- ---------------------------------------------------------------------------------------------
+
+-- (a) idx_translation_locale on translation (locale) where deleted_at is null. KEPT.
+--     It is exactly what it was called: a strict column prefix of uq_translation_locale_key
+--     (locale, msg_key) carrying an identical partial predicate, so the wider index can ANSWER
+--     everything the narrower one answers. Answering is not the test. TranslationRepository
+--     .findByLocale is a live reader — the whole-bundle load behind every TranslationBundles cache
+--     miss — and TranslationService.list filters on the same column. Measured, one locale of 5000
+--     keys:
+--         idx_translation_locale       229 buffers, 0.31-0.41 ms
+--         uq_translation_locale_key   1144 buffers, 0.40-0.42 ms
+--     5x the buffers, and the cause is ORDER, not width: a btree stores equal keys in TID order, so
+--     scanning (locale) walks the heap forwards and touches each of the 224 heap pages about once,
+--     while scanning (locale, msg_key) returns rows in msg_key order — uncorrelated with the heap —
+--     and touches a page per row. The gap therefore grows with the number of keys in a locale, and
+--     the wall-clock tie here only holds because the whole table is 1.8 MB and entirely cached. For
+--     144 kB, on a table admins write to by hand, there is nothing to win.
+--

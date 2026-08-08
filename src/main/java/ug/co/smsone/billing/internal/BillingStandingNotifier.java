@@ -7,11 +7,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.modulith.events.ApplicationModuleListener;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.event.TransactionalEventListener;
 import ug.co.smsone.notification.NotificationRequest;
 import ug.co.smsone.notification.Notifications;
 import ug.co.smsone.notification.Recipient;
 import ug.co.smsone.organization.OrgContacts;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.subscription.SubscriptionChanged;
 
 /**
@@ -34,7 +37,13 @@ class BillingStandingNotifier {
         this.notifications = notifications;
     }
 
-    @ApplicationModuleListener
+    /**
+     * {@code @Async} + {@code @TransactionalEventListener} rather than
+     * {@link ApplicationModuleListener}, so the tenant axis can be declared before a connection is
+     * borrowed — see {@link #send}, which resolves the owners out of tenant-tier tables.
+     */
+    @Async
+    @TransactionalEventListener
     void on(SubscriptionChanged event) {
         String subject;
         String body;
@@ -58,13 +67,21 @@ class BillingStandingNotifier {
         send(event.orgId(), subject, body);
     }
 
+    /**
+     * Resolving the owners is TENANT work: {@code OrgContacts.ownerEmails} walks {@code org_role} and
+     * {@code membership}, both tenant-tier (ADR 0010 §2), before it reaches the platform-tier person
+     * rows their mapping names explicitly. So the whole lookup runs on the org's axis, which is the
+     * one the event carries. The dispatch is left outside it on purpose: a notification is the
+     * platform's queue, and this method has already turned the tenant's rows into plain addresses.
+     */
     private void send(UUID orgId, String subject, String body) {
         OrgContacts directory = contacts.getIfAvailable();
         Notifications sender = notifications.getIfAvailable();
         if (directory == null || sender == null) {
             return;
         }
-        List<Recipient> owners = directory.ownerEmails(orgId).stream().map(Recipient::email).toList();
+        List<Recipient> owners = TenantContext.callAs(orgId,
+                () -> directory.ownerEmails(orgId).stream().map(Recipient::email).toList());
         if (owners.isEmpty()) {
             log.warn("Standing change for org {} but no owner email to notify", orgId);
             return;

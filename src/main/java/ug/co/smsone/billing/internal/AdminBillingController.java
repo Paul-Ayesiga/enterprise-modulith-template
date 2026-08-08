@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.shared.web.ResourceObject;
 
 /**
@@ -19,6 +20,19 @@ import ug.co.smsone.shared.web.ResourceObject;
  * money state, put it on a billable plan, browse its invoices. Entitlements still move only
  * through the subscription module — this surface drives Kill Bill, and Kill Bill's state
  * reconciles back. Class-level {@code /api/v1/admin} mapping keeps it out of the X-Impersonate docs.
+ *
+ * <p><strong>Every route here enters the tenant explicitly, and that is not optional.</strong>
+ * {@code /api/v1/admin/orgs/{orgId}/…} is deliberately NOT matched by {@code CurrentUserFilter}'s
+ * org-scoped pattern — the caller is a platform operator who has no organization and never will — so
+ * the request arrives on the PLATFORM axis. Both tables behind this surface are TENANT-tier:
+ * {@code billing_account} is the org's Kill Bill linkage and {@code org_subscription} is what
+ * {@code reconcile} writes through the subscription port (ADR 0010 §2). This is the cross-tenant
+ * admin write ADR 0010 §5.15 describes, and {@link TenantContext#runAs} is how it is supposed to
+ * read at the call site: a deliberate capability, spelled out.
+ *
+ * <p>The pin wraps the Kill Bill round trips too. That costs nothing — a pin is a thread-local, not a
+ * connection — and splitting it to exclude the remote calls would only add spans that have to be
+ * re-entered for the row write on the other side.
  */
 @RestController
 @RequestMapping("/api/v1/admin")
@@ -44,7 +58,7 @@ class AdminBillingController {
     @PreAuthorize("hasRole('platform-admin')")
     @ResponseStatus(HttpStatus.CREATED)
     ResourceObject provision(@PathVariable UUID orgId) {
-        BillingAccount account = billing.provision(orgId);
+        BillingAccount account = TenantContext.callAs(orgId, () -> billing.provision(orgId));
         return new ResourceObject(orgId.toString(), "billing-account",
                 new AccountAttributes(account.getKbAccountId().toString()));
     }
@@ -54,7 +68,7 @@ class AdminBillingController {
             description = "Balance and live Kill Bill subscriptions, read straight from Kill Bill.")
     @PreAuthorize("hasRole('platform-support')")
     ResourceObject view(@PathVariable UUID orgId) {
-        return BillingResources.toResource(billing.view(orgId));
+        return BillingResources.toResource(TenantContext.callAs(orgId, () -> billing.view(orgId)));
     }
 
     @PostMapping("/orgs/{orgId}/billing/subscription")
@@ -66,8 +80,10 @@ class AdminBillingController {
     @PreAuthorize("hasRole('platform-admin')")
     @ResponseStatus(HttpStatus.ACCEPTED)
     ResourceObject subscribe(@PathVariable UUID orgId, @RequestBody SubscribeRequest request) {
-        billing.subscribe(orgId, request.plan());
-        return BillingResources.toResource(billing.view(orgId));
+        return BillingResources.toResource(TenantContext.callAs(orgId, () -> {
+            billing.subscribe(orgId, request.plan());
+            return billing.view(orgId);
+        }));
     }
 
     @GetMapping("/orgs/{orgId}/billing/invoices")
@@ -75,6 +91,6 @@ class AdminBillingController {
             description = "Proxied from Kill Bill, un-paged — the billing UI of record is Kaui.")
     @PreAuthorize("hasRole('platform-support')")
     List<ResourceObject> invoices(@PathVariable UUID orgId) {
-        return BillingResources.toInvoiceResources(billing.invoices(orgId));
+        return BillingResources.toInvoiceResources(TenantContext.callAs(orgId, () -> billing.invoices(orgId)));
     }
 }

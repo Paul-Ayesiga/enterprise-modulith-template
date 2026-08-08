@@ -131,9 +131,16 @@ class SearchQueryService {
         }
 
         String matchSql = match.toString();
-        String from = fts
-                ? "search_document d, websearch_to_tsquery('simple', ?) query"
-                : "search_document d";
+        // The `from` keyword is inside the fragment, not concatenated on at each use site, and that is
+        // deliberate: PlatformSchemaQualificationTest reads table names out of source literals by the
+        // keyword that introduces them, so a bare `platform.search_document d` sitting on its own would
+        // be invisible to the one check that stops this statement from losing its schema. The index is
+        // platform-tier (ADR 0010 §2 — person docs have no org, and uq_search_entity has no org column)
+        // while this method serves tenant-pinned requests, so unqualified it would resolve into
+        // tenant_pool and every search would return nothing.
+        String fromClause = fts
+                ? "from platform.search_document d, websearch_to_tsquery('simple', ?) query"
+                : "from platform.search_document d";
         String headline = fts
                 ? "ts_headline('simple', hit.body, hit.query, 'MaxFragments=1, MaxWords=18, MinWords=6')"
                 : "left(hit.body, 160)";
@@ -147,16 +154,16 @@ class SearchQueryService {
         // the query, not the pagination, was wrong. Never applied to the tenant path.
         boolean capped = platformWide && orgScope == null;
         String scan = capped
-                ? "(select d.id, d.org_id, d.entity_type, d.entity_id, d.title, d.body"
+                ? "from (select d.id, d.org_id, d.entity_type, d.entity_id, d.title, d.body"
                         + (fts ? ", d.tsv, query" : "")
-                        + " from " + from + " where " + matchSql + " limit " + CANDIDATE_CAP + ") d"
-                : from;
+                        + " " + fromClause + " where " + matchSql + " limit " + CANDIDATE_CAP + ") d"
+                : fromClause;
         String predicate = capped
                 ? keyset
                 : matchSql + (keyset.isEmpty() ? "" : " and " + keyset);
         String inner = "select d.id, d.org_id, d.entity_type, d.entity_id, d.title, d.body, "
                 + (fts ? "query, " : "")
-                + rankExpr + " as rank from " + scan
+                + rankExpr + " as rank " + scan
                 + (predicate.isEmpty() ? "" : " where " + predicate)
                 + " order by rank desc, d.id desc limit ?";
         params.add(limit);

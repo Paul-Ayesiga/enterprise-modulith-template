@@ -16,6 +16,14 @@ import ug.co.smsone.shared.web.CursorPageRequest;
  * The query side of the audit trail, split from the controller so the read runs inside a
  * {@code readOnly} service transaction (§3.1/§4.3) — the controller keeps only parameter parsing
  * and resource mapping.
+ *
+ * <p><b>It reads whichever copy of {@code audit_log} the caller's axis names, and that is the whole
+ * routing</b> (ADR 0010 §2 row 3). {@link AuditEntry} is mapped unqualified, so an org-scoped request —
+ * pinned to its tenant by {@code CurrentUserFilter} — resolves that tenant's trail, and a platform
+ * request resolves the platform-level rows. The one caller that has to cross is
+ * {@code AuditController.platform(?org=…)}, which pins the tenant around this call rather than in here:
+ * the pin must precede the transaction that borrows the connection. The WRITE side cannot use the axis
+ * at all and says why — {@link AuditLogImpl}.
  */
 @Service
 @Transactional(readOnly = true)
@@ -28,7 +36,7 @@ class AuditQueryService {
      * walked {@code idx_audit_org_created} from the newest row and threw away everything outside the
      * range, which for a narrow window far in the past means reading the org's whole history to fill
      * one page. The two timestamps track each other closely in practice ({@code created_at} is
-     * {@code @CreatedDate}, {@code occurred_at} is passed to {@code AuditEntry.of}), which is exactly
+     * {@code @CreatedDate}, {@code occurred_at} is the same instant {@code AuditLogImpl} writes), which is exactly
      * why the mismatch looked fine in testing and only bites on real volume.
      *
      * <p>{@code occurredAt} is also the more honest key for an audit trail: callers asked when the thing

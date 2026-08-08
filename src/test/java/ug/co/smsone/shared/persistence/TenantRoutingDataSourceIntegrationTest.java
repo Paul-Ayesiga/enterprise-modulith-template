@@ -24,13 +24,15 @@ import ug.co.smsone.testsupport.AbstractIntegrationTest;
 import ug.co.smsone.testsupport.NoTenantAxis;
 
 /**
- * The routing seam against a real pool and a real Postgres (ADR 0010 §3.1, Phase 1 gate).
+ * The routing seam against a real pool and a real Postgres (ADR 0010 §3.1).
  *
- * <p>Phase 1 moves no table, so the tenant and platform axes both resolve to today's schema and there
- * is no cross-tenant read to catch yet. What is provable now, and what this class pins, is the
- * mechanism itself: the path is set on <em>every</em> borrow, absence resolves to an empty schema
- * rather than to whatever the connection was last left on, and pinning a tenant inside a transaction
- * fails instead of silently doing nothing.
+ * <p>Through Phase 1 the two axes resolved to the same schema, so all this class could pin was the
+ * mechanism: the path is set on <em>every</em> borrow, absence resolves to an empty schema rather than
+ * to whatever the connection was last left on, and pinning a tenant inside a transaction fails instead
+ * of silently doing nothing. Phase 2 moved the tables, so the same mechanism now has a consequence that
+ * can be read off the database — the axis decides which schema answers, and
+ * {@link #eachAxisReachesItsOwnTierAndAQualifiedNameReachesThePlatformFromEither()} is the test that
+ * says so with real tables rather than with a string comparison.
  *
  * <p>Every test below states the axis it wants as its first line, so nothing here depends on what the
  * harness would have left on the thread — but the opt-out is not therefore decoration. This is the one
@@ -82,34 +84,90 @@ class TenantRoutingDataSourceIntegrationTest extends AbstractIntegrationTest {
                 .isEqualTo("no_tenant");
     }
 
+    /**
+     * One table from EACH tier, because since Phase 2 they fail differently and a single probe would
+     * only catch one of the two fallbacks. If absence ever started resolving to {@code platform},
+     * {@code organization} would resolve and {@code org_role} would not; if it resolved to
+     * {@code tenant_pool}, exactly the reverse. Naming one table would leave half of that hole open,
+     * which is the shape of a fail-closed test that quietly stops closing.
+     */
     @Test
     void withoutATenantAnUnqualifiedTableIsUnreachableRatherThanSomebodyElsesRows() {
         TenantContext.clear();
 
+        // Read off the ROOT cause, not the message. Since Spring Framework 6 a BadSqlGrammarException's
+        // own message is task + SQL and nothing else — the driver's sentence is only in the cause — so
+        // `hasMessageContaining("does not exist")` on the wrapper would be false however the statement
+        // failed. The relation is named as well, so this stays an assertion about THAT table being
+        // unreachable rather than about some SQL error having happened.
         assertThatThrownBy(() -> jdbcTemplate.queryForObject("select count(*) from organization", Long.class))
                 .isInstanceOf(BadSqlGrammarException.class)
-                // Read off the ROOT cause, not the message. Since Spring Framework 6 a
-                // BadSqlGrammarException's own message is task + SQL and nothing else — the driver's
-                // sentence is only in the cause — so `hasMessageContaining("does not exist")` on the
-                // wrapper would be false however the statement failed, and would keep being false if
-                // absence ever started resolving to a schema where the table DOES exist. The relation is
-                // named as well, so this stays an assertion about `organization` being unreachable rather
-                // than about some SQL error having happened.
                 .rootCause()
                 .hasMessageContaining("relation \"organization\" does not exist");
+
+        assertThatThrownBy(() -> jdbcTemplate.queryForObject("select count(*) from org_role", Long.class))
+                .isInstanceOf(BadSqlGrammarException.class)
+                .rootCause()
+                .hasMessageContaining("relation \"org_role\" does not exist");
+    }
+
+    /**
+     * The Phase 2 split, proved against real tables rather than against the router's own string. A
+     * tenant-tier table is reached BARE and only resolves on a tenant axis; a platform-tier one is
+     * reached BY NAME and therefore resolves from either — and that second property is what lets a
+     * write spanning both tiers stay ONE pinned span on ONE connection, and so one transaction.
+     *
+     * <p>The bare platform-tier read failing on the tenant axis is the important negative. It is not a
+     * theoretical tidiness: that is precisely what a forgotten {@code platform.} prefix does at runtime,
+     * and every shape it takes downstream is quiet — an {@code UPDATE} matching zero rows, a
+     * {@code NOT EXISTS} guard excluding nothing. {@code PlatformSchemaQualificationTest} is what stops
+     * one being written; this is what proves the database really does behave the way that test assumes.
+     */
+    @Test
+    void eachAxisReachesItsOwnTierAndAQualifiedNameReachesThePlatformFromEither() {
+        TenantContext.set(UUID.randomUUID());
+        assertThat(jdbcTemplate.queryForObject("select count(*) from org_role", Long.class))
+                .as("a tenant-tier table is bare and the tenant axis is what places it")
+                .isNotNull();
+        assertThatThrownBy(() -> jdbcTemplate.queryForObject("select count(*) from organization", Long.class))
+                .as("`platform` is on no tenant's path, so a forgotten qualifier resolves to nothing")
+                .isInstanceOf(BadSqlGrammarException.class)
+                .rootCause()
+                .hasMessageContaining("relation \"organization\" does not exist");
+        assertThat(jdbcTemplate.queryForObject("select count(*) from platform.organization", Long.class))
+                .as("named, the platform tier is reachable from a tenant-pinned connection — which is "
+                        + "what keeps a cross-tier write in one transaction")
+                .isNotNull();
+
+        TenantContext.set(Tenant.PLATFORM);
+        assertThat(jdbcTemplate.queryForObject("select count(*) from platform.organization", Long.class))
+                .isNotNull();
+        assertThatThrownBy(() -> jdbcTemplate.queryForObject("select count(*) from org_role", Long.class))
+                .as("the platform axis must not reach the pool, or a promoted tenant's rows would be "
+                        + "read out of the schema it was promoted out of")
+                .isInstanceOf(BadSqlGrammarException.class)
+                .rootCause()
+                .hasMessageContaining("relation \"org_role\" does not exist");
     }
 
     @Test
     void aPinnedAxisPutsTheExtensionSchemaOnThePathSoTrigramSearchStillResolves() throws SQLException {
         TenantContext.set(UUID.randomUUID());
-        assertThat(borrow().searchPath()).isEqualTo("public, ext");
+        Borrow tenant = borrow();
+        assertThat(tenant.searchPath()).isEqualTo("tenant_pool, ext");
+        // current_schema() is the FIRST resolvable element, so it is what pins the order: `ext, <tenant>`
+        // would satisfy any assertion about the path containing both and would then create every
+        // unqualified table in the extension schema.
+        assertThat(tenant.currentSchema()).isEqualTo("tenant_pool");
 
         TenantContext.set(Tenant.PLATFORM);
-        assertThat(borrow().searchPath()).isEqualTo("public, ext");
+        Borrow platform = borrow();
+        assertThat(platform.searchPath()).isEqualTo("platform, ext");
+        assertThat(platform.currentSchema()).isEqualTo("platform");
 
-        // pg_trgm lives in `ext`, off `public`. SearchQueryService's word_similarity() and V22's
-        // gin_trgm_ops resolve only because that schema is on the path — the one thing a single-element
-        // path (what Hibernate's schema_mapper would set) silently breaks.
+        // pg_trgm lives in `ext` since V54 moved it off `public`. SearchQueryService's word_similarity()
+        // and V22's gin_trgm_ops resolve only because that schema is on the path — the one thing a
+        // single-element path (what Hibernate's schema_mapper would set) silently breaks.
         assertThat(jdbcTemplate.queryForObject("select word_similarity('smson', 'smsone')", Float.class))
                 .isNotNull()
                 .isGreaterThan(0.0f);
@@ -121,7 +179,7 @@ class TenantRoutingDataSourceIntegrationTest extends AbstractIntegrationTest {
         TenantContext.setPlatform();
         try (Connection first = dataSource.getConnection()) {
             backendPid = queryInt(first, "select pg_backend_pid()");
-            assertThat(queryString(first, "select current_setting('search_path')")).isEqualTo("public, ext");
+            assertThat(queryString(first, "select current_setting('search_path')")).isEqualTo("platform, ext");
             // Leave it dirty on the way back to the pool, the way a caller that set its own path would.
             // Nothing cleans this up: a raw SET never flips Hikari's DIRTY_BIT_SCHEMA, so its
             // reset-on-close does not fire. Correctness comes from the next borrow, not from a reset.

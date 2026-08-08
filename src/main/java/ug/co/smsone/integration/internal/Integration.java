@@ -15,7 +15,20 @@ import org.hibernate.annotations.SQLDelete;
 import org.hibernate.annotations.SQLRestriction;
 import ug.co.smsone.shared.persistence.SoftDeletableEntity;
 
-/** A provider configuration for one capability, at platform-default (orgId null) or org scope. */
+/**
+ * A provider configuration for one capability, at platform-default (orgId null) or org scope.
+ *
+ * <p><b>Split table (ADR 0010 §2 rows 22–23): null {@code org_id} means PLATFORM DEFAULT</b> — the
+ * configuration every org without an override of its own resolves to — and not "unknown tenant". The
+ * defaults live in {@code platform}, an org's overrides in that org's schema, and
+ * {@code integration_setting} has no {@code org_id} of its own: it follows its parent into whichever
+ * home the parent is in, which is why the {@code @CollectionTable} below stays unqualified too.
+ *
+ * <p>This mapping is unqualified on purpose, so both scopes are reached on the axis that owns them:
+ * the admin surface runs on the platform axis and resolves {@code platform.integration}, the org
+ * surface runs on the tenant's axis and resolves theirs. The only read that has to span both homes at
+ * once is {@link IntegrationsImpl#resolve}, and it names the platform schema rather than switching axis.
+ */
 @Entity
 @Table(name = "integration")
 @SQLDelete(sql = "update integration set deleted_at = now(), version = version + 1 where id = ? and version = ?")

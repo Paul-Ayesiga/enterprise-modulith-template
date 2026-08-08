@@ -16,6 +16,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 import ug.co.smsone.testsupport.EdgeSeed;
 
@@ -77,19 +78,27 @@ class AccessPolicyForwardedIpTest extends AbstractIntegrationTest {
      * The org member whose token these requests carry: a person the edge resolves through
      * {@code external_identity}, a role holding the permissions the endpoints ask for, and the
      * membership that ties the two to {@code orgId}. Returns the token that resolves to them.
+     *
+     * <p>Two spans, because the fixture straddles the tiers (ADR 0010 §2): {@code person} and
+     * {@code external_identity} are the platform's — a human is one row however many orgs they sit in —
+     * while {@code org_role}, {@code role_permission} and {@code membership} are the tenant's, and on the
+     * harness's PLATFORM pin they would be looked for in a schema that does not hold them.
      */
     private RequestPostProcessor seedMember(UUID orgId, String label) {
         String subject = label + "-" + UUID.randomUUID();
-        UUID personId = EdgeSeed.person(jdbc, subject);
+        UUID personId = EdgeSeed.person(jdbc, subject);   // PLATFORM half, on the harness pin
         UUID roleId = UUID.randomUUID();
-        jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
-                + "values (?, ?, ?, 'FwdRole', false, 0, now())", roleId, orgId,
-                "FWD_" + roleId.toString().substring(0, 8).toUpperCase());
-        for (String permission : new String[] {"ORG_READ", "ORG_UPDATE", "SUBSCRIPTION_READ"}) {
-            jdbc.update("insert into role_permission (role_id, permission) values (?, ?)", roleId, permission);
-        }
-        jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
-                + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+        TenantContext.runAs(orgId, () -> {                // TENANT half, on the org's own axis
+            jdbc.update("insert into org_role (id, org_id, code, name, system_role, version, created_at) "
+                    + "values (?, ?, ?, 'FwdRole', false, 0, now())", roleId, orgId,
+                    "FWD_" + roleId.toString().substring(0, 8).toUpperCase());
+            for (String permission : new String[] {"ORG_READ", "ORG_UPDATE", "SUBSCRIPTION_READ"}) {
+                jdbc.update("insert into role_permission (role_id, permission) values (?, ?)",
+                        roleId, permission);
+            }
+            jdbc.update("insert into membership (id, org_id, person_id, role_id, status, version, created_at) "
+                    + "values (?, ?, ?, ?, 'ACTIVE', 0, now())", UUID.randomUUID(), orgId, personId, roleId);
+        });
         return member(orgId, subject);
     }
 
