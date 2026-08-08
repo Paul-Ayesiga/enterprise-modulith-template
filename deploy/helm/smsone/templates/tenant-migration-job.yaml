@@ -1,0 +1,98 @@
+{{- if .Values.tenantMigration.enabled }}
+# ADR 0010 §4.2, §7 Phase 4 — the per-tenant migration fan-out, as a Job that runs to completion
+# BEFORE the modulith Deployment is touched.
+#
+# WHY A JOB AND NOT BOOT. modulith.yaml has no startupProbe, and its livenessProbe
+# (initialDelaySeconds 60, periodSeconds 15, failureThreshold 3) gives a pod ~105 s before the kubelet
+# kills it — while Flyway runs before the servlet container serves. A fan-out at startup is a rollout
+# that works until the fleet grows and then fails with every replica crash-looping mid-migration. It
+# would also put the code and the schema on one clock, and ADR 0010 §4.4 needs them on two: a tenant
+# migration ships in release N, the code that reads it no earlier than N+1.
+#
+# WHY IT BLOCKS THE ROLLOUT (ADR 0010 §8 Q7's default). helm.sh/hook: pre-install,pre-upgrade makes
+# Helm apply this Job and WAIT for it before rendering anything else; a non-zero exit fails the
+# release with the modulith Deployment untouched. Running the two concurrently instead would make the
+# 503 version-floor check load-bearing in production rather than a backstop, which is a much worse
+# place to find a bug in it. Argo CD maps Helm hooks onto its own PreSync phase, so the GitOps path
+# (deploy/argocd) gets the same ordering from the same annotation — the argocd.argoproj.io ones below
+# are explicit rather than inferred.
+#
+# WHY THE PLATFORM SEQUENCE RUNS HERE TOO. The runner applies db/migration/platform first, serially.
+# On a live database that is an idempotent no-op; on a FRESH one it is what creates `platform`,
+# `tenant_pool`, `ext`, `no_tenant` and platform.tenant_placement — none of which exist before the
+# first app pod has ever started, and all of which the tenant fan-out needs. The application still
+# runs the same sequence at boot; Flyway's advisory lock makes the overlap safe.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-tenant-migration
+  labels:
+    app.kubernetes.io/name: tenant-migration
+    {{- include "smsone.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    # Before every other hook this chart might grow: nothing else should touch a database whose tenant
+    # schemas are mid-migration.
+    "helm.sh/hook-weight": "-5"
+    # Deleted only when the NEXT release creates its replacement, never on success. That is deliberate:
+    # `kubectl logs job/<release>-tenant-migration` is where the manifest lives, and a hook that
+    # cleaned up after itself would delete the record of what the last deploy migrated.
+    "helm.sh/hook-delete-policy": before-hook-creation
+    "argocd.argoproj.io/hook": PreSync
+    "argocd.argoproj.io/hook-delete-policy": BeforeHookCreation
+spec:
+  # The runner is idempotent in every mode, so a retry is safe — and a retry is the right response to
+  # the transient case (a failover mid-fan-out). It is NOT the response to a bad migration, which will
+  # fail identically on every attempt and should fail the release quickly.
+  backoffLimit: {{ .Values.tenantMigration.backoffLimit }}
+  # A ceiling, not a target. Full replay of the tenant sequence into a fresh schema is ~200-330 ms and
+  # flat as the fleet grows (measured at 20/100/300 schemas), so this is orders of magnitude of
+  # headroom; it exists so a Job wedged on a lock cannot block a release forever.
+  activeDeadlineSeconds: {{ .Values.tenantMigration.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tenant-migration
+        {{- include "smsone.labels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      # Same reason as modulith.yaml: the injected {SVC}_PORT=tcp://ip:port variables shadow the app's
+      # own POSTGRES_PORT placeholder and break int-binding.
+      enableServiceLinks: false
+      containers:
+        - name: tenant-migration
+          # The SAME image as the release being rolled out — that is the point. The scripts this Job
+          # applies are byte-for-byte the ones the incoming binary will read.
+          image: {{ include "smsone.image" (dict "root" . "name" "modulith") }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          # Overrides the image's `java -jar` entry point. PropertiesLauncher is packaged into every
+          # Spring Boot fat jar and is how a second main() in the same jar is reached; loader.main names
+          # it, and the jar's own BOOT-INF classpath is assembled exactly as it is for the application.
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              exec java $JAVA_OPTS \
+                -Dlogback.configurationFile=logback-tenant-migration.xml \
+                -cp /app.jar \
+                -Dloader.main=ug.co.smsone.shared.persistence.TenantMigrationJob \
+                org.springframework.boot.loader.launch.PropertiesLauncher \
+                --mode={{ .Values.tenantMigration.mode }} \
+                --workers={{ .Values.tenantMigration.workers }}
+          env:
+            # Deliberately the same variables modulith.yaml sets, read from the same Secret. The Job
+            # needs the database and nothing else — no Keycloak, no Valkey, no object store — because
+            # it runs a main() rather than the application context.
+            - { name: POSTGRES_HOST, value: {{ .Values.postgres.host | quote }} }
+            - { name: POSTGRES_PORT, value: {{ .Values.postgres.port | quote }} }
+            - { name: POSTGRES_DB, value: {{ .Values.postgres.database | quote }} }
+            - name: POSTGRES_USER
+              valueFrom: { secretKeyRef: { name: {{ .Values.credentials.secretName }}, key: postgres-user } }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.credentials.secretName }}, key: postgres-password } }
+            - { name: JAVA_OPTS, value: {{ .Values.tenantMigration.javaOpts | quote }} }
+            {{- with .Values.tenantMigration.env }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.tenantMigration.resources | nindent 12 }}
+{{- end }}

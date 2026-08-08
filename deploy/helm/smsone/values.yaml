@@ -55,6 +55,31 @@ modulith:
     requests: { cpu: 500m, memory: 1Gi }
     limits: { memory: 2Gi }
 
+# ADR 0010 Phase 4. A pre-install/pre-upgrade hook Job that applies db/migration/platform and then
+# fans the tenant sequence out across tenant_pool and every silo, BEFORE the modulith rollout. It runs
+# the same image as the release it precedes, so the scripts it applies are the ones the incoming binary
+# will read. Turning it off means tenant schemas are migrated by hand — there is no boot-time fallback,
+# by design (see the Job template's header and ADR 0010 §4.2).
+tenantMigration:
+  enabled: true
+  # migrate | repair | info. `repair` clears a wedged schema's success=false history row and then
+  # migrates it; `info` writes nothing and is how you answer "is 100% of the fleet at version N" before
+  # shipping the code that depends on N (ADR 0010 §4.4).
+  mode: migrate
+  # ADR 0010 §4.2's measured range is 8-16. The pool is sized from this automatically (2N+2 — Flyway
+  # holds two connections per schema), so raising it raises the load on Postgres' max_connections too.
+  workers: 8
+  # One retry: the transient case (a failover mid-fan-out) is worth retrying and every mode is
+  # idempotent. A bad migration fails identically on the retry and then fails the release, which is the
+  # intended outcome.
+  backoffLimit: 1
+  activeDeadlineSeconds: 900
+  javaOpts: "-Xms128m -Xmx512m -XX:+UseSerialGC"
+  env: []                    # extra env — [{name: ..., value: ...}]
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { memory: 768Mi }
+
 gateway:
   enabled: true
   replicas: 2

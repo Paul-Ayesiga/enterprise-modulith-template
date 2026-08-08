@@ -326,12 +326,12 @@ step by step; copy that reasoning, not just the shape.
 
 ### 4.5 Migrations
 
-- `src/main/resources/db/migration/V<n>__<snake_name>.sql`. **V52 is taken (index corrections) and
-  V53 is claimed by ADR 0010 Phase 0 — the cross-tier FK cut, the `user_device_trust` denormalization
-  and the missing `org_id` indexes — so the next free number is V54.** Never edit an applied
-  migration; never renumber. One global counter, and it is this line: claim a number by writing the
-  file *and* moving this line in the same change-set. Two people deriving "next free" from `ls` in the
-  same hour is how one number gets written twice.
+- `src/main/resources/db/migration/{platform,tenant}/V<n>__<snake_name>.sql`. **V57 is taken
+  (`platform.tenant_placement`, ADR 0010 Phase 4's registry) — so the next free number is V58.** Never
+  edit an applied migration; never renumber. One global counter across BOTH directories, and it is
+  this line: claim a number by writing the file *and* moving this line in the same change-set, and
+  land the file in exactly one directory. Two people deriving "next free" from `ls` in the same hour
+  is how one number gets written twice.
 - `ddl-auto: validate`. The schema is the migration's job, always.
 - Head the file with a comment explaining the *decision*, not the statements — `V17__soft_delete.sql`
   and `V11__organization_rbac.sql` are the reference voice.

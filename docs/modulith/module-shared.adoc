@@ -45,6 +45,10 @@ _Others_
 * `u.c.s.s.security.McpTokenAuthorizationManager`
 * `u.c.s.s.security.OrgMdcFilter`
 * `u.c.s.s.security.SecurityConfig`
+* `u.c.s.s.tenancy.TenantSchemaFloor`
+* `u.c.s.s.tenancy.placement.TenantPlacements`
+* `u.c.s.s.tenancy.placement.TenantProvisioner`
+* `u.c.s.s.tenancy.placement.TenantSchemaMigrator`
 * `u.c.s.s.web.ApiMetaFactory`
 * `u.c.s.s.web.CursorPageRequestArgumentResolver`
 * `u.c.s.s.web.EnvelopeErrorWriter`

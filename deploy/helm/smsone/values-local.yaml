@@ -78,6 +78,17 @@ gateway:
     requests: { cpu: 150m, memory: 256Mi }
     limits: { memory: 512Mi }
 
+# The pre-upgrade migration Job. Kept ENABLED — it is what builds `tenant_pool` at all, so a local
+# cluster without it comes up with the platform schema and pods that fail their post-ready schema check.
+# Trimmed like everything else here: the fleet is one schema on an 8 GB VM, so two workers and a small
+# heap. It runs before the app pods and exits, so it never competes with them for the node's memory.
+tenantMigration:
+  workers: 2
+  javaOpts: "-Xms64m -Xmx256m -XX:+UseSerialGC"
+  resources:
+    requests: { cpu: 150m, memory: 192Mi }
+    limits: { memory: 384Mi }
+
 # The two Next.js portals are deferred locally (K8S_LOCAL_PLAN §8) — no images in this loop.
 developerPortal:
   enabled: false

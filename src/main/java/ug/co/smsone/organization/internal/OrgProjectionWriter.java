@@ -6,6 +6,8 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import ug.co.smsone.organization.OrganizationRegistered;
+import ug.co.smsone.shared.tenancy.placement.TenantPlacements;
+import ug.co.smsone.shared.tenancy.placement.TenantProvisioner;
 
 /**
  * Writes the local tenant atomically: the {@code organization} row, its link to the provider
@@ -14,6 +16,12 @@ import ug.co.smsone.organization.OrganizationRegistered;
  * {@code @Transactional} boundary is applied by the proxy (a self-invoked {@code @Transactional}
  * method would be a no-op). Called only after the provider-side steps succeed, so a mid-flight failure
  * leaves no partial local state.
+ *
+ * <p>Since ADR 0010 Phase 4 the placement row in {@code platform.tenant_placement} joins that same
+ * write, and it is also what decides whether {@code OrganizationRegistered} is published at all — see
+ * {@link #announce}. Under a silo policy the organization row is claimed one transaction earlier by
+ * {@link #reserve}, so that the schema named after it can be built before the tenant is announced
+ * (ADR 0010 §4.3); the pooled default never splits the write.
  *
  * <h2>Which axis this write runs on (ADR 0010 §2, §3.2)</h2>
  *
@@ -57,11 +65,14 @@ class OrgProjectionWriter {
     private final RoleRepository roles;
     private final MembershipRepository memberships;
     private final OrgMembershipIndex membershipIndex;
+    private final TenantPlacements placements;
+    private final TenantProvisioner provisioner;
     private final ApplicationEventPublisher events;
     private final Clock clock;
 
     OrgProjectionWriter(OrganizationRepository organizations, OrgResolver orgResolver, RoleSeeder roleSeeder,
             RoleRepository roles, MembershipRepository memberships, OrgMembershipIndex membershipIndex,
+            TenantPlacements placements, TenantProvisioner provisioner,
             ApplicationEventPublisher events, Clock clock) {
         this.organizations = organizations;
         this.orgResolver = orgResolver;
@@ -69,6 +80,8 @@ class OrgProjectionWriter {
         this.roles = roles;
         this.memberships = memberships;
         this.membershipIndex = membershipIndex;
+        this.placements = placements;
+        this.provisioner = provisioner;
         this.events = events;
         this.clock = clock;
     }
@@ -112,10 +125,7 @@ class OrgProjectionWriter {
      */
     @Transactional
     Organization projectWithOwner(String externalOrgId, String alias, String name, UUID ownerPersonId) {
-        Organization organization = orgResolver.organizationIdOfKeycloakOrg(externalOrgId)
-                .flatMap(organizations::findById)
-                .or(() -> organizations.findByAlias(alias))
-                .orElseGet(() -> register(alias, name));
+        Organization organization = getOrCreate(externalOrgId, alias, name);
         orgResolver.linkKeycloakOrg(organization.getId(), externalOrgId, alias);
         UUID orgId = organization.getId();
         roleSeeder.seedSystemRoles(orgId); // idempotent; joins this transaction
@@ -130,18 +140,68 @@ class OrgProjectionWriter {
         // to more than one, and therefore no other way in. Unconditional, like saveMembership's, so a
         // re-adopted tenant (a Keycloak org that survived a local reset) also gets its row.
         membershipIndex.record(orgId, ownerPersonId, owner.getStatus());
+        announce(orgId, alias);
         return organization;
     }
 
     /**
-     * {@code OrganizationRegistered} is published here rather than registered on the aggregate, because
-     * the tenant key it carries does not exist until the row does — Hibernate assigns the id at persist.
-     * Publishing inside this transaction is indistinguishable to listeners: {@code @ApplicationModuleListener}
-     * is an after-commit listener either way.
+     * Claims a home for a tenant that is about to be created, and nothing else: the
+     * {@code organization} row and its provider link, both platform-tier, both reached by name — so
+     * this runs on ANY axis and takes no tenant pin.
+     *
+     * <p><strong>It exists for exactly one reason and it is an ordering one</strong> (ADR 0010 §4.3).
+     * Under a silo policy the schema is NAMED after the tenant, so the tenant's id has to exist before
+     * the schema can be built — and the schema has to be built before {@link #projectWithOwner} runs,
+     * because that is the write that announces the tenant. This is the "learn the id" half, its own
+     * transaction, publishing nothing.
+     *
+     * <p>The window it opens is real and is the price of the silo policy: a crash between this commit
+     * and {@code projectWithOwner}'s leaves an organization with no owner. It is bounded and it is
+     * <em>visible</em> — {@code platform.tenant_placement} says PROVISIONING for that org, which is a
+     * queryable fact rather than a row nobody can tell apart from a healthy one — and every step of
+     * the sequence is get-or-create, so the retry heals it. The pooled default never opens the window
+     * at all; there, {@code projectWithOwner} is still the single atomic transaction it always was.
      */
-    private Organization register(String alias, String name) {
-        Organization organization = organizations.save(Organization.register(alias, name));
-        events.publishEvent(new OrganizationRegistered(organization.getId(), alias, clock.instant()));
+    @Transactional
+    Organization reserve(String externalOrgId, String alias, String name) {
+        Organization organization = getOrCreate(externalOrgId, alias, name);
+        orgResolver.linkKeycloakOrg(organization.getId(), externalOrgId, alias);
         return organization;
+    }
+
+    private Organization getOrCreate(String externalOrgId, String alias, String name) {
+        return orgResolver.organizationIdOfKeycloakOrg(externalOrgId)
+                .flatMap(organizations::findById)
+                .or(() -> organizations.findByAlias(alias))
+                .orElseGet(() -> organizations.save(Organization.register(alias, name)));
+    }
+
+    /**
+     * Publishes {@code OrganizationRegistered} — once per tenant, ever — and lets the placement
+     * registry be the thing that decides whether this is that once (ADR 0010 §4.3).
+     *
+     * <p><strong>The question used to be "did Hibernate just insert the row?"</strong> and it could no
+     * longer be asked: under a silo policy the row is inserted by {@link #reserve}, a transaction and a
+     * schema build earlier, so by the time the tenant is ready to be announced nothing in this method
+     * remembers that it was new. Worse, it is not a question that survives a crash — a retry that finds
+     * the row already there would decline to announce a tenant nobody ever announced.
+     *
+     * <p>{@link TenantPlacements#announce} answers a durable question instead: it transitions the
+     * placement into ACTIVE and reports whether THIS call is the one that made the transition. A
+     * re-adopt of an already-serving tenant gets false and publishes nothing; a retry of a tenant that
+     * was reserved but never announced gets true, which is the correct and previously impossible
+     * answer. Two concurrent creates cannot both get true — the row is locked for the duration of the
+     * one statement, so the loser sees ACTIVE and stands down. That matters because this event fans
+     * out to a trial, a billing account and a search document.
+     *
+     * <p>Inside this transaction, deliberately: under the pooled policy the placement row is the ONLY
+     * new fact a signup produces, so it commits with the organization, its roles and its first
+     * membership or not at all. {@code @ApplicationModuleListener} is an after-commit listener either
+     * way, so listeners cannot tell that publication moved.
+     */
+    private void announce(UUID orgId, String alias) {
+        if (placements.announce(orgId, provisioner.homeFor(orgId))) {
+            events.publishEvent(new OrganizationRegistered(orgId, alias, clock.instant()));
+        }
     }
 }

@@ -1,0 +1,12 @@
+-- TEST FIXTURE, NOT A MIGRATION — see ../wedge/V9001__fixture_first.sql's header.
+--
+-- The sidecar beside this file (V9101__fixture_concurrently.sql.conf) is the ONLY thing on
+-- flyway-core 12.4.0 that can set executeInTransaction=false: SqlScriptMetadata.getMetadataResource
+-- asks the resource provider for `<script>.sql.conf` and the string `flyway:` appears nowhere in the
+-- parser, so the header-comment form every other project uses is inert here (AGENTS §4.6).
+--
+-- MigrationScriptsTest hands this directory to MigrationScripts.fromClasspath(..., true) and asserts
+-- it refuses to build. Nothing ever executes this SQL; the statement is real only so the fixture looks
+-- like the mistake it is standing in for — the CREATE INDEX CONCURRENTLY that cannot run inside
+-- Flyway's transaction and is therefore the reason somebody reaches for the sidecar in the first place.
+create index concurrently idx_fixture_never_applied on fixture_first (id);

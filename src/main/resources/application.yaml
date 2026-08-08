@@ -59,23 +59,22 @@ spring:
     # absent routes to the empty `no_tenant`; Flyway 12.4.0 then fails with "Unable to determine
     # current schema as search_path is empty". That error string names this exact mistake.
     locations:
-      # The platform tier: ~29 tables plus the platform copy of the seven split ones. One schema,
-      # ~1 s, advisory-lock-serialized across replicas — unchanged from what boot did before.
+      # The platform tier, and NOTHING else. One schema, ~1 s, advisory-lock-serialized across
+      # replicas — unchanged from what boot did before.
+      #
+      # db/migration/tenant is absent on purpose and must stay absent. Phase 2 kept a generated
+      # `db/migration/bootstrap/V9999__tenant_pool.sql` here as a stand-in that replayed the tenant
+      # sequence into `tenant_pool` from inside the platform run; Phase 4 deleted it, its directory
+      # and this entry, because the runner it stood in for now exists —
+      # shared.persistence.TenantMigrationRunner, launched by TenantMigrationJob from the Kubernetes
+      # Job in deploy/helm/smsone/templates/tenant-migration-job.yaml, which runs to completion
+      # BEFORE the app rollout. Adding the tenant location back would put a per-tenant fan-out inside
+      # the ~105 s the Helm chart's liveness settings give a pod, and would put the code and the
+      # schema back on one clock, which ADR 0010 §4.4 needs on two.
       - classpath:db/migration/platform
-      # TEMPORARY (ADR 0010 Phase 4 deletes this line and the directory). db/migration/tenant does
-      # NOT run at boot: the Helm chart gives a pod ~105 s before the kubelet kills it and Flyway
-      # runs before the servlet container serves, so a per-tenant fan-out at startup is a rollout
-      # that fails as the fleet grows (§4.2). It needs a separate resumable runner, which is Phase 4.
-      # Until then every tenant-tier entity still resolves unqualified against `tenant_pool`, so the
-      # schema has to be complete or nothing works — and Spring Boot autoconfigures exactly ONE
-      # Flyway instance, so there is no second spring.flyway block to point at the tenant sequence.
-      # V9999__tenant_pool.sql is the stand-in: generated from db/migration/tenant by
-      # `scripts/split-migrations.py bootstrap`, replayed into `tenant_pool` as the last migration of
-      # the platform run. It carries no version from the global counter — see its header.
-      - classpath:db/migration/bootstrap
-    # Where `flyway_schema_history` lives, and the search_path the platform migrations run under. The
-    # tenant sequence gets its own history table in its own schema when Phase 4's runner lands, which
-    # is what makes "this silo is two migrations behind" a queryable fact rather than a guess.
+    # Where `flyway_schema_history` lives, and the search_path the platform migrations run under. Each
+    # tenant schema has its own history table in its own schema, written by the runner — which is what
+    # makes "this silo is two migrations behind" a queryable fact rather than a guess.
     default-schema: platform
     # `platform` and `tenant_pool` must exist before anything runs; `ext` and `no_tenant` are also
     # declared by V54 with `if not exists`, so creating them here is belt and braces rather than a
@@ -470,6 +469,36 @@ app:
     # horizon, and how often a report request costs seconds instead of milliseconds. 0 restores a
     # rebuild on every call (what the surface did before it had a budget).
     mart-ttl: ${ANALYTICS_MART_TTL:15m}
+  tenancy:
+    placement:
+      # WHERE A NEW TENANT IS BORN (ADR 0010 §1, §4.3). `pooled` is the ADR's decision and the default:
+      # every tenant lands in the shared `tenant_pool`, and promoting one to its own `t_<32hex>` schema
+      # later is a placement flip rather than a different code path.
+      #
+      # `silo-per-org` gives every new tenant its own schema at signup. It is here so the numbers below
+      # can be RE-MEASURED rather than taken on faith — flip it in an environment, create tenants, and
+      # watch the catalog and the boot time yourself. What it is not is a production setting somebody
+      # reaches for because the word "isolation" is nearby: schema separation inside one Postgres
+      # cluster buys almost nothing in security terms (the same role reaches every schema), and this
+      # system's real isolation guarantees live in ApiPermissionEvaluator and OrgAuthorization.
+      #
+      # WHAT WAS MEASURED, against the live database (§1). One tenant schema is 55 tables + 184
+      # indexes = 239 relations, ~3.2 MB of empty files. At the 5,000 orgs that exist today that is:
+      #   * ~16 GB of empty relation files and 5–6 GB of catalog (~1.2M pg_class rows);
+      #   * ~9 s of unfiltered JDBC metadata on EVERY JVM start — measured with pgjdbc's own getColumns
+      #     SQL against 300 real schemas and extrapolated, not guessed;
+      #   * a hard wall in cross-tenant fan-out at ~3,200 UNION branches, because lock slots run out
+      #     (max_locks_per_transaction 64 x max_connections 100, at a measured 2.004 locks per branch).
+      # Signup cost is the smaller half: a full replay of the tenant sequence into a fresh schema is
+      # ~200–330 ms and stays flat to 300 schemas, so it is latency on the signup path, not a wall.
+      # The wall is the fan-out, and there are 5,000 orgs on the other side of it.
+      #
+      # THE ORDERING IS HANDLED, WHICHEVER WAY THIS IS SET. Under `silo-per-org` the schema is created
+      # and migrated BEFORE OrganizationRegistered is published, because the three after-commit
+      # listeners on that event (trial, billing account, search indexing) write tenant-tier tables and
+      # would otherwise race the schema they need — silently, and retried by the outbox so the failures
+      # look like noise. See TenantProvisioner.
+      policy: ${TENANT_PLACEMENT_POLICY:pooled}
   persistence:
     soft-delete:
       # Nightly retention purge for soft-deleted aggregates (the seven AggregateRoot tables). Past this

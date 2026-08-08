@@ -812,6 +812,32 @@ flowchart TB
       that hold a <code>JdbcTemplate</code> directly, plus ShedLock and the Modulith event registry. Set on borrow, never
       reset on close: the next borrower always overwrites, so there is nothing to leak. Flyway is the one deliberate
       exception — it binds to the raw pool, because a migrator handed the tenant-less path would find nothing to migrate.</p>
+
+    <p class="sec-sub" style="margin-top:18px"><b>Two sequences, and only one of them runs at boot.</b>
+      <code>db/migration/platform</code> is autoconfigured Flyway on startup: one schema, ~44 files, ~1&nbsp;s,
+      advisory-lock-serialised across replicas. <code>db/migration/tenant</code> runs <em>nowhere</em> at boot. It is
+      applied by a separate <b>Kubernetes Job that must finish before the app rollout</b> — a
+      <code>pre-install,pre-upgrade</code> Helm hook (Argo CD <code>PreSync</code>) running the same image, whose non-zero
+      exit fails the release with the Deployment untouched. Two reasons, and neither is taste: the chart has <b>no
+      <code>startupProbe</code></b> and its liveness settings give a pod <b>~105&nbsp;s</b> before the kubelet kills it,
+      while Flyway runs before the servlet container serves — so a fan-out at startup is a rollout that works until the
+      fleet grows and then fails with every replica crash-looping mid-migration. And it would put the code and the schema
+      on one clock, when the version-skew rule needs them on two: <b>a tenant migration ships in release N and the code
+      that reads it no earlier than N+1</b>, which only holds if the schema can move without the binary.</p>
+    <div class="chain">
+      <div class="stagebox"><span class="ord">1</span>
+        <span class="what"><b>Platform first, serially.</b> The Job applies <code>db/migration/platform</code> before anything else. On a live database that is an idempotent no-op; on a fresh one it is what creates <code>platform</code>, <code>tenant_pool</code>, <code>ext</code>, <code>no_tenant</code> and the placement registry — none of which exist before the first pod has ever started.</span>
+        <span class="fail"><span class="pill store">~1 s</span></span></div>
+      <div class="stagebox"><span class="ord">2</span>
+        <span class="what"><b>Discover the fleet</b> — <code>tenant_pool</code>, plus every <code>t_&lt;32hex&gt;</code> schema in the catalogue, plus every schema <code>platform.tenant_placement</code> names. The <em>union</em>: a silo whose promotion died before flipping its placement row is still migrated, and a placement row naming a schema that is not there is <em>reported</em> rather than skipped.</span>
+        <span class="fail"><span class="pill store">catalogue ∪ registry</span></span></div>
+      <div class="stagebox"><span class="ord">3</span>
+        <span class="what"><b>Fan out, 8–16 workers.</b> Safe because Flyway derives its advisory-lock discriminator from the <em>qualified</em> <code>"&lt;schema&gt;"."flyway_schema_history"</code> — the lock is per schema, so parallel tenants never serialise. One Flyway per schema, with the scripts read off the classpath <b>once</b> and handed to every migrate as a shared resource provider: supply that and the Java-migration class provider together and Flyway skips building its Scanner entirely, which is the 50–150&nbsp;ms per schema it otherwise pays with nothing pending.</span>
+        <span class="fail"><span class="pill store">per-schema lock</span></span></div>
+      <div class="stagebox"><span class="ord">4</span>
+        <span class="what"><b>Never abort.</b> One tenant's failure is recorded in <code>platform.tenant_placement</code> (<code>FAILED</code> + the reason + the version the schema is actually at) and the run continues to the next schema, exiting non-zero with a manifest. <em>Loud AND complete, not loud instead of complete.</em> A transactional failure rolls back whole and writes <b>no</b> history row, so that schema sits at V(n−1), internally consistent, and the next run retries it — which is why <code>executeInTransaction=false</code> is <b>forbidden</b> in the tenant sequence and the forbid is enforced at load time, not documented.</span>
+        <span class="fail"><span class="pill bad">exit 1 + manifest</span></span></div>
+    </div>
     <div class="chain">
       <div class="stagebox"><span class="ord">org</span>
         <span class="what"><code>search_path = tenant_pool, ext</code> — every tenant is pooled today and separated inside that schema by the <code>org_id</code> predicate every tenant query still carries. A promoted tenant gets <code>t_&lt;32hex&gt;, ext</code> instead, derived from <code>organization.id</code> with <b>zero database reads</b>; that is the only difference, which is why promotion is a placement flip rather than a code change. Tenant tables are named <b>unqualified</b> so the path can decide.</span>

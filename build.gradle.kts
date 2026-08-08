@@ -117,6 +117,28 @@ tasks.register<Test>("exportModulithDocs") {
     outputs.upToDateWhen { false }
 }
 
+/**
+ * The dev-loop equivalent of the Kubernetes Job in deploy/helm/smsone/templates/tenant-migration-job.yaml.
+ *
+ * ADR 0010 Phase 4 retired db/migration/bootstrap/V9999__tenant_pool.sql, so `bootRun` against a FRESH
+ * Compose database now builds `platform` and leaves `tenant_pool` empty — MappedSchemaValidator then
+ * fails at ApplicationReadyEvent, correctly and confusingly. Run this once first:
+ *
+ *     ./gradlew tenantMigrate
+ *     ./gradlew tenantMigrate -PtenantMigrationArgs="--mode=info"
+ *
+ * Same main() the Job runs, same classpath, same migrations. The test suite does not need it — the
+ * singleton container is migrated by TenantSchemaBootstrap through the same runner.
+ */
+tasks.register<JavaExec>("tenantMigrate") {
+    description = "Applies db/migration/platform and then the tenant sequence to tenant_pool and every silo"
+    group = "application"
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass = "ug.co.smsone.shared.persistence.TenantMigrationJob"
+    // POSTGRES_* from the environment, exactly as application.yaml reads them; flags override.
+    args((findProperty("tenantMigrationArgs") as String? ?: "").split(" ").filter { it.isNotBlank() })
+}
+
 // Re-runs only the tagged export test; the spec also refreshes on every normal build.
 tasks.register<Test>("exportOpenApi") {
     description = "Boots the app (test profile) and writes docs/openapi/openapi.{yaml,json}"

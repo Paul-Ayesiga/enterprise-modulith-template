@@ -10,11 +10,13 @@ import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.annotation.Order;
+import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 import ug.co.smsone.shared.error.ErrorCode;
 import ug.co.smsone.shared.tenancy.Tenant;
 import ug.co.smsone.shared.tenancy.TenantContext;
+import ug.co.smsone.shared.tenancy.TenantSchemaFloor;
 import ug.co.smsone.shared.web.EnvelopeErrorWriter;
 import ug.co.smsone.shared.web.RequestPaths;
 
@@ -75,6 +77,42 @@ import ug.co.smsone.shared.web.RequestPaths;
  * written straight to the response rather than thrown: throwing from a filter bypasses
  * {@code GlobalExceptionHandler} and renders a non-envelope 500, which is the failure this whole mechanism
  * exists to avoid.
+ *
+ * <h2>The version floor (ADR 0010 §4.4)</h2>
+ *
+ * <p>Once the tenant is known and before it is pinned, the request is checked against
+ * {@link TenantSchemaFloor}: a tenant whose schema is BEHIND this binary is answered 503 with
+ * {@code Retry-After} rather than allowed to issue a select against a column its schema does not have.
+ * It belongs here for the same reason the pin does — this is the first place the tenant has a name, and
+ * it is before the three filters that read tenant tables.
+ *
+ * <p><b>Per tenant, and that is the entire point.</b> Tenant migrations run as a Job that completes
+ * before the rollout, but it fans out per schema and commits per schema, so "the fleet has migrated" is
+ * never instantaneous and can be partial for as long as a failed schema goes unrepaired. A global gate —
+ * refuse everyone until every schema reports the floor — would turn one lagging tenant into an outage
+ * for all of them, which is strictly worse than the failure it prevents. Every tenant is judged on its
+ * own row, so a fleet in the middle of a fan-out serves everybody it can.
+ *
+ * <p><b>Before the pin, not after.</b> The registry lives on the platform tier and this filter is still
+ * on the PLATFORM axis at that point. Today the qualified name would resolve from either axis; from
+ * Phase 7 it would not, because a promoted tenant's axis reaches a different database entirely — asking
+ * first is what keeps that true. The refusal is written straight to the response for the same reason
+ * layer 1's is: a throw from a filter renders a non-envelope 500.
+ *
+ * <p><b>It gates every request that PINS the tenant, not only the tenant-scoped paths.</b>
+ * {@link #ORG_SCOPED_PATH} answers "does this route name an organization", which is the right question
+ * for the 403 below and the wrong one here: what makes a stale schema dangerous is the pin itself, since
+ * anything downstream may borrow a connection pointed at it. A member of a lagging tenant is therefore
+ * refused on their personal routes too, which is the honest reading of "this tenant is not serviceable
+ * right now".
+ *
+ * <p><b>The one read that precedes it, named rather than hidden.</b> {@code CurrentUserProvider} enters
+ * the caller's own tenant to read {@code membership}, {@code org_role} and {@code role_permission} —
+ * that is how the org is learned at all — so those three tables are touched before the floor has anything
+ * to compare. It cannot be otherwise: the tenant's identity is the output of that resolution, not an
+ * input to it. The exposure is bounded and worth stating in a migration review: those are V11 tables of
+ * fixed shape, and a release that changes one of them is the release that has to think about this
+ * paragraph.
  *
  * <p>The clear is not tidiness — but read {@code McpToolDispatcher} for where it actually bites.
  * {@code spring.threads.virtual.enabled} is on, so request threads are never reused and neither the memo
@@ -162,10 +200,13 @@ class CurrentUserFilter extends OncePerRequestFilter {
 
     private final CurrentUserProvider currentUserProvider;
     private final EnvelopeErrorWriter errorWriter;
+    private final TenantSchemaFloor schemaFloor;
 
-    CurrentUserFilter(CurrentUserProvider currentUserProvider, EnvelopeErrorWriter errorWriter) {
+    CurrentUserFilter(CurrentUserProvider currentUserProvider, EnvelopeErrorWriter errorWriter,
+            TenantSchemaFloor schemaFloor) {
         this.currentUserProvider = currentUserProvider;
         this.errorWriter = errorWriter;
+        this.schemaFloor = schemaFloor;
     }
 
     @Override
@@ -221,6 +262,18 @@ class CurrentUserFilter extends OncePerRequestFilter {
         }
         UUID orgId = caller == null ? null : caller.organizationId();
         if (orgId != null) {
+            // ADR 0010 §4.4, asked on the PLATFORM axis this method still runs under and answered from
+            // memory on all but the first request per tenant — see TenantSchemaFloor. Only THIS tenant
+            // is affected: the fleet migrates one schema at a time and a partial fleet must degrade the
+            // same way.
+            if (!schemaFloor.admits(orgId)) {
+                response.setHeader(HttpHeaders.RETRY_AFTER, String.valueOf(schemaFloor.retryAfterSeconds()));
+                errorWriter.write(request, response, ErrorCode.SERVICE_UNAVAILABLE,
+                        "This organization's storage has not finished upgrading for the running release, "
+                                + "so its data is not yet safe to read. Nothing is lost and no action is "
+                                + "needed — retry after the interval in the Retry-After header.", null);
+                return false;
+            }
             TenantContext.set(orgId);
             return true;
         }

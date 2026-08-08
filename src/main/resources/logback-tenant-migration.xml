@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Logging for TenantMigrationJob, which runs with NO Spring context and therefore never reads
+     logback-spring.xml (the <springProfile> elements in that file only mean anything to Boot's own
+     initializer). Left to itself logback falls back to BasicConfigurator at root DEBUG, which buries
+     the manifest under every statement Flyway parses and every pool event Hikari raises.
+
+     Selected explicitly by the Job's command line — logback resolves a non-URL value of this property
+     off the classpath, so the file travels inside the same jar as the migrations it configures:
+
+         -Dlogback.configurationFile=logback-tenant-migration.xml
+
+     PLAIN TEXT, not the JSON the application ships in production. The audience is different: this is
+     read with `kubectl logs job/…` by someone deciding whether to let a rollout proceed, and the
+     manifest lines are already structured (`schema=… from=… to=… status=…`) for grep. -->
+<configuration>
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} %-5level [%thread] %logger{28} : %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Flyway logs one INFO line per applied migration per schema, which is exactly what a fan-out
+         manifest wants, and a wall of DEBUG otherwise. -->
+    <logger name="org.flywaydb" level="INFO"/>
+    <logger name="com.zaxxer.hikari" level="WARN"/>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>

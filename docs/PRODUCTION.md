@@ -31,6 +31,10 @@ replacing the echo.
          --set global.imageTag=<commit-sha> \
          -f my-environment-values.yaml
 
+   The install blocks on `{release}-tenant-migration`, a pre-install hook Job that builds the
+   platform schema and then the tenant schemas before any modulith pod starts. If it fails, the
+   release fails with nothing deployed — read its log (`kubectl logs job/<release>-tenant-migration`)
+   and see *Migration discipline* below.
 5. **Keycloak first boot** (see below), then restart the modulith once so its admin-client secret
    and issuer line up.
 6. **Kill Bill**: run `scripts/killbill-init.sh` against the prod Kill Bill (tenant + catalog),
@@ -62,8 +66,43 @@ First boot only:
 ## Migration discipline (why rollback is safe)
 
 Deploys are rolling and rollbacks are instant **because** every migration is expand-contract —
-AGENTS.md §4.6 is the contract. Flyway runs in the modulith at boot; the previous image always
-runs against the current schema. Never gate a deploy on a manual DB step.
+AGENTS.md §4.6 is the contract. The previous image always runs against the current schema. Never
+gate a deploy on a manual DB step.
+
+**Two sequences, and only one of them is at boot** (ADR 0010 §4.2):
+
+- `db/migration/platform` — autoconfigured Flyway in the modulith at startup, as it always was. One
+  schema, advisory-lock-serialized across replicas.
+- `db/migration/tenant` — applied to `tenant_pool` and to every silo by the
+  `{release}-tenant-migration` **Job**, a `pre-install,pre-upgrade` Helm hook (Argo CD `PreSync`)
+  that Helm waits for before it touches the modulith Deployment. Same image as the release it
+  precedes. It is not a manual step and it is not optional: with `tenantMigration.enabled: false`
+  nothing else migrates tenant schemas, and a fresh install would bring up pods against an empty
+  `tenant_pool`.
+
+Not at boot because the chart has **no `startupProbe`** and the liveness settings give a pod ~105 s
+before the kubelet kills it, while Flyway runs before the servlet container serves — a per-tenant
+fan-out at startup is a rollout that works until the fleet grows. See the Job template's header.
+
+**The deploy order inverts for tenant migrations.** A tenant migration ships in release N; the code
+that depends on it ships no earlier than N+1, and only once the fan-out has recorded 100% of tenant
+schemas at that version. Ask before shipping the reader:
+
+    kubectl logs job/<release>-tenant-migration        # the manifest, one line per schema
+    select schema_name, state, schema_version, last_error from platform.tenant_placement;
+
+**When the Job exits non-zero.** It never aborts on one tenant — it records the failure and finishes
+the fleet, so the exit code says *some* tenant is behind, not *which*. Read the manifest, then:
+
+- exit **1** — one or more tenant schemas failed. Each is at V(n−1) with **no** history row (tenant
+  migrations are transactional by rule), so the schema is internally consistent and a re-run retries
+  it. The binary serves that tenant at its old version, or answers 503 + `Retry-After` if it is below
+  the release's floor. Every other tenant is unaffected.
+- exit **2** — the platform sequence failed and the fan-out was never attempted. Nothing moved.
+- a schema wedged at `success = false` (only reachable through a non-transactional *platform*
+  migration, or a checksum drift) needs `--mode=repair`, which repairs and then finishes the
+  migration. Target one silo rather than the fleet with
+  `--schemas=t_<32hex>`.
 
 ## Backups & DR
 

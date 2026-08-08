@@ -52,5 +52,9 @@ public abstract class AbstractIntegrationTest {
 
     static {
         POSTGRES.start();
+        // Boot's Flyway builds `platform` and nothing else since ADR 0010 Phase 4 retired the
+        // V9999__tenant_pool.sql scaffold, so the tenant sequence has to be applied by the thing that
+        // applies it in production — before any context here is built. See TenantSchemaBootstrap.
+        TenantSchemaBootstrap.ensureMigrated(POSTGRES);
     }
 }

@@ -491,85 +491,6 @@ def command_split(args):
 
 
 # --------------------------------------------------------------------------------------------
-# The tenant_pool bootstrap — a scaffold with an expiry date, generated so it cannot drift
-# --------------------------------------------------------------------------------------------
-BOOTSTRAP_DIR = "bootstrap"
-BOOTSTRAP_FILE = "V9999__tenant_pool.sql"
-
-BOOTSTRAP_HEADER = """\
--- GENERATED — do not edit. Regenerate with `python3 scripts/split-migrations.py bootstrap`.
--- SCAFFOLD WITH AN EXPIRY DATE: delete this file, its directory, and the second entry in
--- `spring.flyway.locations` when ADR 0010 Phase 4 lands the tenant migration runner.
---
--- WHY IT EXISTS. Phase 2 splits the migrations into two sequences but builds no runner for the
--- second one — that is Phase 4, deliberately, because tenant migrations must not run at boot (the
--- Helm chart gives the pod ~105 s before the kubelet kills it and Flyway runs before the servlet
--- container serves, ADR 0010 §4.2). Meanwhile every tenant-tier entity resolves unqualified against
--- `tenant_pool` from the moment the router points there, so the schema has to be complete or the
--- whole suite fails with `relation "ticket" does not exist`. Spring Boot autoconfigures exactly ONE
--- Flyway instance, so there is no second `spring.flyway.*` block to point at `db/migration/tenant`.
--- This file is the join: it replays the tenant sequence into `tenant_pool` from inside the platform
--- run, in one transaction, as the last migration.
---
--- WHY V9999 AND NOT THE NEXT FREE NUMBER. It is not a migration, it is a stand-in for a runner, and
--- taking a real number would consume one from AGENTS §4.5's single global counter and leave a hole
--- in it when Phase 4 deletes this. 9999 sorts last, which is also what it must do, and says out
--- loud that it is not part of the sequence. The counter is untouched: the next free number is the
--- one AGENTS §4.5 names.
---
--- WHY THE PROSE IS GONE. Every statement below is copied verbatim from `db/migration/tenant/`,
--- which keeps the decision rationale. Duplicating 1,300 lines of it here would create a second
--- place to read and a second place to rot. `split-migrations.py verify` regenerates this file and
--- fails if it differs from what is committed, so editing a tenant migration without regenerating
--- is caught rather than discovered in Phase 4.
---
--- WHY `set local`. It is transaction-scoped, and Flyway 12 runs an SQL migration and its own
--- `flyway_schema_history` insert in one transaction — so the path is restored below before Flyway
--- writes that row, and no later migration inherits it. A failure here rolls the whole thing back
--- and writes no history row, which is the property ADR 0010 §4.2 relies on.
-set local search_path to tenant_pool;
-"""
-
-BOOTSTRAP_FOOTER = """\
-
--- Back to the platform path before Flyway writes its history row. Belt and braces — the row is
--- written against the fully-qualified `platform.flyway_schema_history` — but a migration that
--- leaves the connection pointing somewhere else is a trap for whatever runs next.
-set local search_path to platform;
-"""
-
-
-def render_bootstrap(tenant_migrations):
-    lines = [BOOTSTRAP_HEADER.rstrip("\n")]
-    for migration in tenant_migrations:
-        statements = [b for b in migration.blocks if b.statement]
-        if not statements:
-            continue
-        lines.append("")
-        lines.append("-- ---------------------------------------------------------------- %s"
-                     % migration.filename)
-        for block in statements:
-            lines.extend(block.statement)
-    return "\n".join(lines) + "\n" + BOOTSTRAP_FOOTER
-
-
-def tenant_tree():
-    directory = os.path.join(MIGRATIONS, TENANT)
-    names = sorted((n for n in os.listdir(directory) if MIGRATION_FILE.match(n)),
-                   key=lambda n: int(MIGRATION_FILE.match(n).group(1)))
-    return [parse_migration(os.path.join(directory, n)) for n in names]
-
-
-def command_bootstrap(_args):
-    path = os.path.join(MIGRATIONS, BOOTSTRAP_DIR, BOOTSTRAP_FILE)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as handle:
-        handle.write(render_bootstrap(tenant_tree()))
-    print("wrote %s" % path)
-    return 0
-
-
-# --------------------------------------------------------------------------------------------
 # Verifying the split tree that exists today
 # --------------------------------------------------------------------------------------------
 def command_verify(_args):
@@ -646,16 +567,12 @@ def command_verify(_args):
             if not any(b.statement for b in migration.blocks):
                 problems.append("V%d exists in both directories but one half is empty" % version)
 
-    # The tenant_pool scaffold is generated from db/migration/tenant. Editing a tenant migration
-    # without regenerating it would leave tenant_pool a version behind the sequence it claims to be,
-    # which is exactly the failure Phase 4's runner exists to make visible — and until then nothing
-    # else would notice.
-    bootstrap = os.path.join(MIGRATIONS, BOOTSTRAP_DIR, BOOTSTRAP_FILE)
-    if os.path.exists(bootstrap):
-        with open(bootstrap, encoding="utf-8") as handle:
-            if handle.read() != render_bootstrap(trees[TENANT]):
-                problems.append("%s/%s is stale — run `split-migrations.py bootstrap`"
-                                % (BOOTSTRAP_DIR, BOOTSTRAP_FILE))
+    # The generated tenant_pool scaffold that used to be checked here is gone: ADR 0010 Phase 4 landed
+    # shared.persistence.TenantMigrationRunner, and db/migration/bootstrap, its entry in
+    # spring.flyway.locations and this script's `bootstrap` mode went with it. A tenant migration
+    # edited without the pool being re-migrated is now caught where it belongs — by the runner, and by
+    # the head-parity test that asserts every tenant schema's flyway_schema_history matches
+    # tenant_pool's.
 
     for problem in problems:
         print("FAIL %s" % problem)
@@ -672,11 +589,10 @@ def main():
     sub.add_parser("report", help="print the generated bisection list and cross-tier statements")
     split = sub.add_parser("split", help="write platform/ and tenant/ from the flat set (one-shot)")
     split.add_argument("--dry-run", action="store_true")
-    sub.add_parser("bootstrap", help="regenerate the temporary tenant_pool scaffold")
     sub.add_parser("verify", help="check the split tree against docs/DATA_MODEL.md")
     args = parser.parse_args()
     return {"report": command_report, "split": command_split,
-            "bootstrap": command_bootstrap, "verify": command_verify}[args.command](args)
+            "verify": command_verify}[args.command](args)
 
 
 if __name__ == "__main__":

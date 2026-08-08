@@ -12,6 +12,7 @@ import ug.co.smsone.shared.audit.AuditLog;
 import ug.co.smsone.shared.error.ConflictException;
 import ug.co.smsone.shared.error.NotFoundException;
 import ug.co.smsone.shared.tenancy.TenantContext;
+import ug.co.smsone.shared.tenancy.placement.TenantProvisioner;
 
 /**
  * Organization lifecycle. Creating an org creates the provider-side organization, provisions the first
@@ -34,6 +35,15 @@ import ug.co.smsone.shared.tenancy.TenantContext;
  * surface) or an org-scoped one (already pinned by {@code CurrentUserFilter}), and each works from
  * either axis because a qualified name always does. They are left alone.
  *
+ * <h2>And where the tenant's schema comes from (ADR 0010 §4.3)</h2>
+ *
+ * <p>Both provisioning paths go through {@link #homeReadyFor} before they write anything tenant-tier.
+ * Under the default pooled policy that is a no-op with a name — {@code tenant_pool} already exists —
+ * and the single atomic transaction described above is untouched. Under {@code silo-per-org} it is the
+ * step that keeps a tenant from being ANNOUNCED before its schema can serve it, which the three
+ * after-commit listeners on {@code OrganizationRegistered} would otherwise lose a race to. Read that
+ * method before changing the order of anything in either path.
+ *
  * <p>The two provisioning paths are the exception, because they are the only writes in this class that
  * reach the TENANT's own tables — {@code org_role}, {@code role_permission}, {@code membership},
  * through {@link OrgProjectionWriter}. They run from routes that name no tenant ({@code POST
@@ -49,6 +59,7 @@ class OrganizationService {
     private final PersonProvisioning personProvisioning;
     private final ProviderOrgMembership providerOrgMembership;
     private final OrgProjectionWriter projectionWriter;
+    private final TenantProvisioner provisioner;
     private final AuditLog auditLog;
     private final TransactionTemplate transactionTemplate;
 
@@ -56,7 +67,7 @@ class OrganizationService {
 
     OrganizationService(OrganizationRepository organizations, KeycloakOrgAdminGateway keycloakOrg,
             PersonProvisioning personProvisioning, ProviderOrgMembership providerOrgMembership,
-            OrgProjectionWriter projectionWriter, AuditLog auditLog,
+            OrgProjectionWriter projectionWriter, TenantProvisioner provisioner, AuditLog auditLog,
             TransactionTemplate transactionTemplate,
             org.springframework.context.ApplicationEventPublisher events) {
         this.organizations = organizations;
@@ -64,6 +75,7 @@ class OrganizationService {
         this.personProvisioning = personProvisioning;
         this.providerOrgMembership = providerOrgMembership;
         this.projectionWriter = projectionWriter;
+        this.provisioner = provisioner;
         this.auditLog = auditLog;
         this.transactionTemplate = transactionTemplate;
         this.events = events;
@@ -131,11 +143,12 @@ class OrganizationService {
         // organization no audit accounts for — and the strict-create retry (409) never writes it.
         //
         // The pin wraps the template rather than sitting inside it, because the schema is chosen when
-        // the connection is borrowed and the template has already borrowed one (ADR 0010 §3.2). Strict
-        // create has just proved no org holds this alias locally or at the provider, so tenantAxisOf
-        // will answer "a new one" — it is asked anyway rather than assumed, so the one caller that can
-        // reach an EXISTING tenant here (the dev re-adopt below) needs no second spelling of this line.
-        return TenantContext.callAs(projectionWriter.tenantAxisOf(externalOrgId, normalizedAlias),
+        // the connection is borrowed and the template has already borrowed one (ADR 0010 §3.2). The
+        // axis is ASKED rather than assumed, and homeReadyFor is where it is asked from: strict create
+        // has just proved no org holds this alias, so under the pooled policy the answer is "a new one"
+        // — but under a silo policy that method has already reserved the tenant, so the answer is its
+        // real id, and one spelling covers the re-adopt path below as well.
+        return TenantContext.callAs(homeReadyFor(externalOrgId, normalizedAlias, name),
                 () -> transactionTemplate.execute(tx -> {
                     Organization organization = projectionWriter.projectWithOwner(
                             externalOrgId, normalizedAlias, name, owner.personId());
@@ -143,6 +156,43 @@ class OrganizationService {
                             "owner=" + ownerEmail);
                     return new NewOrganization(organization, owner.personId());
                 }));
+    }
+
+    /**
+     * Makes sure this tenant has somewhere to live BEFORE the write that announces it, and answers with
+     * the axis that write must be pinned to (ADR 0010 §4.3).
+     *
+     * <p><strong>Under the default pooled policy this is one method call and one indexed read.</strong>
+     * {@code tenant_pool} already exists, so there is nothing to build, nothing to order, and no second
+     * transaction: {@code projectWithOwner} stays the single atomic write it has always been, and the
+     * placement row joins it. §4.3 calls this the strongest practical argument for the hybrid, and this
+     * method is where the argument is cashed.
+     *
+     * <p><strong>Under a silo policy the order below is the whole point.</strong> Three
+     * {@code @ApplicationModuleListener}s hang off {@code OrganizationRegistered} — the trial, the
+     * billing account, the search document — and all three fire after commit, asynchronously, against
+     * tenant-tier tables. Build the schema after the announcement and all three race it: every new
+     * tenant silently gets no trial and no billing account, and the outbox retries make it look like
+     * transient noise. So the schema is built first, and because the schema is NAMED after the tenant,
+     * the tenant's row has to be reserved before that. Reserve, build, then announce — never a listener.
+     *
+     * <p>The two-step is confined to this method rather than pushed into {@link OrgProjectionWriter} so
+     * both provisioning paths — the strict admin create and the dev re-adopt — get it from one place,
+     * and so the pooled path keeps a call graph with nothing extra in it.
+     */
+    private UUID homeReadyFor(String externalOrgId, String alias, String name) {
+        if (provisioner.schemaPrecedesAnnouncement()) {
+            // Platform axis: reserve touches `platform.organization` and `platform.external_organization`
+            // and nothing tenant-tier, so it needs no tenant of its own — and could not have one, since
+            // naming the tenant is what this step exists to accomplish.
+            UUID orgId = TenantContext.callAsPlatform(() -> transactionTemplate.execute(
+                    tx -> projectionWriter.reserve(externalOrgId, alias, name).getId()));
+            // Outside every transaction, which is why the reserve above had to commit first: this issues
+            // DDL, runs Flyway, and on failure writes a FAILED placement row that has to outlive the
+            // failure. TenantProvisioner refuses to run inside a transaction for exactly that reason.
+            provisioner.provisionHomeFor(orgId);
+        }
+        return projectionWriter.tenantAxisOf(externalOrgId, alias);
     }
 
     /**
@@ -178,11 +228,13 @@ class OrganizationService {
         ProvisionedPerson owner = personProvisioning.provision(
                 new ProvisionRequest(ownerEmail, ownerGivenName, ownerFamilyName));
         providerOrgMembership.attach(owner.personId(), externalOrgId);
-        // Same pin as create(), and the reason it is asked rather than assumed lives here: this is the
-        // re-adopt path, so the tenant may ALREADY exist (a Keycloak org that survived a local reset,
-        // relinked to a local row this method did not create). Answering with the pool for one of those
-        // would write its roles into the wrong schema the day it is promoted.
-        return TenantContext.callAs(projectionWriter.tenantAxisOf(externalOrgId, alias),
+        // Same pin as create(), through the same ordering step, and the reason the axis is asked rather
+        // than assumed lives here: this is the re-adopt path, so the tenant may ALREADY exist (a
+        // Keycloak org that survived a local reset, relinked to a local row this method did not
+        // create). Answering with the pool for one of those would write its roles into the wrong schema
+        // the day it is promoted — and an already-ACTIVE tenant is precisely the one the provisioner
+        // declines to touch, because moving a serving tenant is promotion and promotion has a runbook.
+        return TenantContext.callAs(homeReadyFor(externalOrgId, alias, name),
                 () -> projectionWriter.projectWithOwner(externalOrgId, alias, name, owner.personId()));
     }
 

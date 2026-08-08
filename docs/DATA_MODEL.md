@@ -4,7 +4,7 @@ Every table in the database, its columns and its relationships. Generated from
 `src/main/resources/db/migration`, which is the source of truth — and since ADR 0010 Phase 2 that is
 two sequences, `platform/` and `tenant/`. Which one created a table is the same statement as its tier.
 
-**57 tables**, grouped by owning module, alphabetical within each group. Seven of them were created in
+**58 tables**, grouped by owning module, alphabetical within each group. Seven of them were created in
 both schemas and are counted once, here and in every total below. (`flyway_schema_history` is created
 by Flyway itself, is not declared in any migration, and is not counted here.)
 
@@ -50,7 +50,7 @@ tier is now also the answer to *where is this table, and how is it addressed*.
 
 ## The schemas
 
-- `platform` — the 30 platform-tier tables, the platform copy of the seven split ones, and Flyway's own
+- `platform` — the 31 platform-tier tables, the platform copy of the seven split ones, and Flyway's own
   `flyway_schema_history`.
 - `tenant_pool` — the 20 tenant-tier tables and the tenant copy of the seven. Every tenant lives here
   until it is promoted, so inside this schema `org_id` is the only thing separating them: **every
@@ -1116,6 +1116,23 @@ The lock one scheduled task holds, so only one instance runs it.
 | locked_by | varchar(255) | no | Which instance holds it |
 
 Relationships: none. Owned by the ShedLock library.
+
+### tenant_placement
+Where each tenant's rows live, on which datasource, and whether that home is fit to serve. One row per organization, written before the tenant is announced and read on the way to deciding whether to serve it.
+
+**Tier:** platform — it answers *which schema is this tenant in*, so it cannot itself be in the tenant's schema; and a fan-out that visits every schema has to be able to enumerate them from one place. It is also the one table an extracted tenant's new deployment writes fresh rather than receiving a copy of: a lifted tenant has exactly one placement, its own.
+
+| Column | Type | Null | Description |
+|---|---|---|---|
+| org_id | uuid | no | `organization.id`, and the primary key — one tenant has exactly one home. Soft ref, no FK: the key would cross a module boundary (AGENTS §1), and the row has to be able to survive its organization, since a hard-deleted tenant still has bytes in a schema somebody must reclaim |
+| schema_name | text | no | `tenant_pool` while pooled, `t_<32hex>` once promoted. The NAME rather than an "is siloed" boolean, because a restore target is a name and a boolean would have to be re-derived into one at every use |
+| datasource_name | text | no | Which database serves this tenant; always `primary` until ADR 0010 Phase 7 keys `AbstractRoutingDataSource` on it. Written now at not-null with a default, so that hop is a value change rather than a migration against a table the request path reads |
+| state | text | no | `PROVISIONING` (home claimed, not yet proven fit, **and not yet announced**), `ACTIVE` (schema at the recorded version, tenant announced — the only state that licenses serving), `FAILED` (attempted and unfinished; `last_error` says why). Constrained by `tenant_placement_state_known`; a fourth value is an expand step in its own release |
+| schema_version | text | yes | The tenant sequence's head as last applied to `schema_name`, and what ADR 0010 §4.4's floor check compares `MIN_TENANT_SCHEMA_VERSION` against. A property of the SCHEMA denormalized onto every tenant in it, so moving the pool is one `update … where schema_name = ?` rather than a join on the request path. **NULL means "not yet recorded", never "behind"** |
+| last_error | text | yes | Why the last provisioning or migration attempt failed, verbatim; NULL on every success. This is what makes a FAILED row worth having instead of sending its reader back to the logs |
+| updated_at | timestamptz | no | When the state last changed. Not `created_at`/`updated_at`: nothing cares when a placement was first recorded and everything cares how long a tenant has been stuck, which is `now() - updated_at` |
+
+Relationships: `org_id` is a soft ref to `organization.id`, no FK (see the column). Primary key (`org_id`); indexed by (`schema_name`) for the fleet's by-schema statements, and by (`state`, `updated_at`) **partial on `state <> 'ACTIVE'`** for "which tenants are not fit to serve, oldest first" — the alert query, kept off the write path for the overwhelming ACTIVE majority. No `version`, `created_at` or `deleted_at`: every write is a single conditional statement whose row count is the answer, so there is nothing for optimistic locking to arbitrate, and a placement is never deleted while its schema holds bytes. ADR 0010 §4.2, V57; `shared.tenancy.placement.TenantPlacements` owns every statement against it.
 
 ---
 
