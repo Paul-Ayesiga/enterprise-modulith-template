@@ -3,6 +3,37 @@ name: enterprise-modulith-template
 services:
   postgres:
     image: postgres:18.4-alpine
+    # ADR 0010 §6 hop 1->2 cuts a tenant over to its own database with ROW-FILTERED LOGICAL
+    # REPLICATION: CREATE PUBLICATION ... FOR TABLE ticket WHERE (org_id = '<id>'). That is what keeps
+    # the read-only window at seconds-to-tens-of-seconds INDEPENDENT OF TENANT SIZE — initial sync runs
+    # online, and the freeze is only: open it, wait for confirmed_flush_lsn to reach pg_current_wal_lsn,
+    # flip placement, evict caches, drain the pool, close.
+    #
+    # wal_level defaults to 'replica', and 'logical' is NOT settable at runtime — it needs a RESTART.
+    # That is precisely why the ADR filed it as a Phase 0 item rather than a Phase 7 one: discovering it
+    # during a cutover means the cutover stops and waits for a maintenance window on the platform
+    # database, i.e. on every tenant at once, to move one tenant.
+    #
+    # The cost of carrying it early is small and worth naming: slightly larger WAL (logical adds enough
+    # to decode row images) and REPLICA IDENTITY bookkeeping. All 55 tables have a primary key, so the
+    # default REPLICA IDENTITY suffices and there is nothing to configure per table (ADR §6).
+    #
+    # Slots and senders: one publication/subscription pair per tenant IN FLIGHT, not per tenant. The
+    # defaults are 10 each; 20 gives room for several concurrent cutovers plus the backup tooling
+    # without inviting anyone to run 200 at once. A slot whose subscriber dies retains WAL FOREVER and
+    # will fill the disk — max_slot_wal_keep_size makes that failure bounded and loud (the slot is
+    # invalidated) instead of unbounded and silent. This project has already had one outage from a disk
+    # filling quietly; that is not a second one worth having.
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_replication_slots=20
+      - -c
+      - max_wal_senders=20
+      - -c
+      - max_slot_wal_keep_size=4GB
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-modulith}
       POSTGRES_USER: ${POSTGRES_USER:-modulith}

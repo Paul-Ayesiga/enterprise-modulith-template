@@ -104,6 +104,28 @@ the fleet, so the exit code says *some* tenant is behind, not *which*. Read the 
   migration. Target one silo rather than the fleet with
   `--schemas=t_<32hex>`.
 
+## Postgres settings the platform requires
+
+The chart's dev/local Postgres already sets these (`docker/docker-compose.yml`,
+`deploy/k3s-local/infra/state.yaml`). **A managed Postgres does not** — prod points at an external
+instance, so these are an operator action on the provider's parameter group, and one of them needs a
+restart.
+
+| Setting | Default | Required | Why |
+|---|---|---|---|
+| `wal_level` | `replica` | **`logical`** | ADR 0010 §6 hop 1→2 moves a tenant to its own database by row-filtered logical replication. **Needs a restart** — set it at provisioning, not at cutover. |
+| `max_replication_slots` | 10 | 20 | One slot per tenant *in flight*, not per tenant, plus headroom for backup tooling. |
+| `max_wal_senders` | 10 | 20 | Pairs with the slots above. |
+| `max_slot_wal_keep_size` | unlimited | 4GB | **An abandoned slot retains WAL forever and fills the disk.** Bounded, the slot is invalidated instead — loud and recoverable rather than silent and terminal. |
+
+Set `wal_level` **before you need it**. It is not settable at runtime, so discovering it during a
+cutover means taking a maintenance window on the *platform* database — every tenant at once — in
+order to move *one* tenant. That is why ADR 0010 files it as a Phase 0 item even though nothing reads
+it until Phase 7.
+
+Every one of the 55 tables has a primary key, so the default `REPLICA IDENTITY` suffices and there is
+nothing to configure per table.
+
 ## Backups & DR
 
 Nightly `pg_dump` CronJob (chart), `scripts/backup-postgres.sh` for anything outside the cluster,

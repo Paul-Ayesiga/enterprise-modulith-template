@@ -47,6 +47,22 @@ spec:
       containers:
         - name: postgres
           image: postgres:18.4-alpine
+          # Kept byte-identical to docker/docker-compose.yml — see the long note there for why logical
+          # replication is configured now rather than at Phase 7. Short version: ADR 0010 §6 hop 1->2
+          # cuts a tenant over with row-filtered logical replication, wal_level=logical needs a RESTART,
+          # and discovering that mid-cutover means taking a maintenance window on the whole platform
+          # database to move one tenant. max_slot_wal_keep_size bounds the abandoned-slot failure, which
+          # otherwise retains WAL until the disk fills.
+          args:
+            - postgres
+            - -c
+            - wal_level=logical
+            - -c
+            - max_replication_slots=20
+            - -c
+            - max_wal_senders=20
+            - -c
+            - max_slot_wal_keep_size=4GB
           ports:
             - containerPort: 5432
           env:

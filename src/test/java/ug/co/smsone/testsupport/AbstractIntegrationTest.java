@@ -30,10 +30,27 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  * that must declare its own axis — the harness pin makes the assertion unfalsifiable, and the fix is
  * {@link NoTenantAxis} on the class or {@link TenantAxis#withNoAxis} around the one call. Read
  * {@code NoTenantAxis}' javadoc before adding either; read it before deciding you do not need one.
+ *
+ * <h2>Silo schemas do not outlive the test that made one (ADR 0010 §7 Phase 5)</h2>
+ *
+ * <p>{@link TenantSilos} is registered here as well as on the classes that call {@code place()}, and the
+ * second registration is the one that stops a whole class of cross-file failure. Under the shipped
+ * {@code silo-per-org} placement policy <strong>every organization created through the service path
+ * gets a {@code t_<32hex>} schema</strong> — {@code SignupFlowTest}, {@code PersonLifecycleApiTest},
+ * {@code OrganizationsImplTest}, {@code TenantPromotionTest} and every other class that registers a
+ * tenant, not only the ones that deliberately build a silo. Left behind, each one is 126 relations that
+ * every subsequent fan-out has to visit, and it fails
+ * {@code TenancyTierBoundaryTest.everySiloHoldsExactlyTheTenantTier} in a file that names neither the
+ * schema's origin nor the test that leaked it, because the container is shared by every cached context
+ * in the run.
+ *
+ * <p>The sweep is total and idempotent (see {@link TenantSilos#dropEverySilo}), so a class that also
+ * registers its own instance simply finds nothing left to drop. Nothing here relies on a silo surviving
+ * between test methods: the only two {@code @BeforeAll} fixtures in the suite build no organizations.
  */
 @SpringBootTest
 @ActiveProfiles("test")
-@ExtendWith(TenantAxisExtension.class)
+@ExtendWith({TenantAxisExtension.class, TenantSilos.class})
 public abstract class AbstractIntegrationTest {
 
     @ServiceConnection
@@ -48,7 +65,17 @@ public abstract class AbstractIntegrationTest {
             new PostgreSQLContainer("postgres:18.4-alpine")
                     // Headroom for the many cached Spring test contexts sharing this one container
                     // (each keeps a small Hikari pool — see application-test.yaml).
-                    .withCommand("postgres", "-c", "max_connections=400");
+                    .withCommand("postgres", "-c", "max_connections=400",
+                            // Matches docker/docker-compose.yml and deploy/k3s-local/infra/state.yaml,
+                            // which carry the reasoning. Here it buys one specific thing: ADR 0010 §6
+                            // hop 1->2's row-filtered logical replication CANNOT BE TESTED AT ALL
+                            // against wal_level=replica — CREATE PUBLICATION succeeds and the
+                            // subscription then fails at connect time, so the gap would surface as a
+                            // broken cutover rather than a red test. A container that cannot run the
+                            // mechanism cannot prove the mechanism.
+                            "-c", "wal_level=logical",
+                            "-c", "max_replication_slots=20",
+                            "-c", "max_wal_senders=20");
 
     static {
         POSTGRES.start();
