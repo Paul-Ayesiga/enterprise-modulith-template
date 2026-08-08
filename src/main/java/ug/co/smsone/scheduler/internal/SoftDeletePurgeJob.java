@@ -7,7 +7,6 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.slf4j.Logger;
@@ -19,6 +18,9 @@ import ug.co.smsone.shared.persistence.MappedTables;
 import ug.co.smsone.shared.persistence.SoftDeleteProperties;
 import ug.co.smsone.shared.tenancy.JobAxis;
 import ug.co.smsone.shared.tenancy.TenantContext;
+import ug.co.smsone.shared.tenancy.TenantFanOut;
+import ug.co.smsone.shared.tenancy.TenantHomeSweep;
+import ug.co.smsone.shared.tenancy.TenantSchemas;
 
 /**
  * Retention for soft-deleted aggregates: once {@code deleted_at} falls outside the window the row is
@@ -34,9 +36,13 @@ import ug.co.smsone.shared.tenancy.TenantContext;
  * the offending row does not go away on its own. Erasure would quietly stop platform-wide while the
  * only symptom is one stack trace at 04:00. Loud AND complete, not loud instead of complete.
  *
- * <p><b>It runs in two passes, one per tenancy tier</b> — see {@link #purgeExpiredSoftDeletes} for why
- * the tier boundary is an axis boundary and not something a wider pin can paper over, and {@link Tier}
- * for why every entry in {@link #PURGE_ORDER} names its own.
+ * <p><b>It runs in two passes, one per tenancy tier, and the tenant pass runs once per HOME</b> — see
+ * {@link #purgeExpiredSoftDeletes} for why the tier boundary is an axis boundary and not something a
+ * wider pin can paper over, {@link Tier} for why every entry in {@link #PURGE_ORDER} names its own, and
+ * {@link ug.co.smsone.shared.tenancy.TenantFanOut} for why "every tenant" stopped being one
+ * schema the day the first organization was promoted. Before that loop existed, a promoted tenant's
+ * tombstones were never hard-deleted and the run reported success — erasure silently stopped meaning
+ * erasure for exactly the customers important enough to be given their own schema.
  *
  * <p>Two other things run in the same run and are not retention at all: {@link #sweepSearchResidue}
  * un-indexes rows whose source is gone, and {@link #CASCADES} deletes children a cut foreign key no
@@ -47,22 +53,6 @@ import ug.co.smsone.shared.tenancy.TenantContext;
 class SoftDeletePurgeJob {
 
     private static final Logger log = LoggerFactory.getLogger(SoftDeletePurgeJob.class);
-
-    /**
-     * The org whose axis the TENANT pass borrows. It names no organization deliberately: an org that
-     * has never been promoted resolves to the shared {@code tenant_pool}, and a UUID in no
-     * {@code organization} row can never resolve to anything else — so this IS the pooled schema's
-     * axis, spelled with the only vocabulary {@code TenantContext} has. Same constant, same reasoning
-     * as {@code MappedSchemaValidator} and {@code WebhookSecretEncryptionMigrator}: one idiom for "the
-     * pool", not three.
-     *
-     * <p>ADR 0010 Phase 5 turns the single tenant pass into a LOOP over
-     * {@code platform.tenant_placement} — one {@code runAs(orgId)} per silo plus this one for whatever
-     * is still pooled — because "every tenant" stops being one schema the day the first org is
-     * promoted. The two-pass structure below is what makes that a change to {@link #purgeEverything}
-     * and to nothing else.
-     */
-    private static final UUID POOLED_TENANT = new UUID(0L, 0L);
 
     /**
      * How long a whole run may take before it stops itself, against the {@code PT30M} lease on
@@ -101,17 +91,35 @@ class SoftDeletePurgeJob {
      * that matters is that one exists at all. An early-finishing platform pass hands its unspent time
      * straight to the tenant pass, because the tenant deadline is computed from the run's start and not
      * from where the platform pass stopped.
+     *
+     * <p><b>Phase 5 sharpened this rather than changing it.</b> The tenant pass is now (silos + 1)
+     * schemas, so what this budget protects is split AGAIN by {@link TenantHomeSweep} — half to
+     * {@code tenant_pool}, the rest shared by the silos. Two nested floors, each holding a half whose
+     * cost does not grow away from a half whose cost does.
      */
     private static final Duration PLATFORM_BUDGET = RUN_DEADLINE.dividedBy(3);
 
     /**
+     * Which home this job is sweeping and where the rotation resumes — one instance, held here because
+     * the position is this job's and has to outlive a run (ADR 0010 §3.4). Only the TENANT pass uses
+     * it: {@code platform} is one schema and never fans out.
+     */
+    private final TenantHomeSweep tenantHomes = new TenantHomeSweep("Soft-delete purge");
+
+    /**
      * Where each pass resumes: the index into {@link #PURGE_ORDER} the last run was cut at, or absent
-     * when that pass ran to the end. <b>This is the resumable cursor ADR 0010 §3.4 asks every sweeping
-     * job for</b>, and without it the deadline above would have made this job worse rather than better:
-     * a pass that always restarts at index 0 re-purges {@code org_group}, {@code membership} and
-     * {@code org_role} every night and never reaches {@code ticket} or {@code geo_stamp}, so the
-     * tables at the tail of the list would quietly keep their tombstones forever while the job logged a
-     * healthy row count from the head.
+     * when that pass ran to the end. <b>Keyed by (tier, SCHEMA) since Phase 5</b> — a cursor that says
+     * "table 12" is meaningless once "which home" is a second axis, and one cursor shared across homes
+     * would let a silo cut at {@code ticket} resume the pool at {@code ticket} too, skipping every table
+     * ahead of it in the schema that holds every unpromoted tenant.
+     *
+     * <p><b>This is the resumable cursor ADR 0010 §3.4 asks every sweeping job for</b> — the TABLE half
+     * of it; {@link #tenantHomes} holds the HOME half, and the two are independent on purpose. Without
+     * it the deadline above would have made this job worse rather than better: a pass that
+     * always restarts at index 0 re-purges {@code org_group}, {@code membership} and {@code org_role}
+     * every night and never reaches {@code ticket} or {@code geo_stamp}, so the tables at the tail of
+     * the list would quietly keep their tombstones forever while the job logged a healthy row count from
+     * the head.
      *
      * <p><b>It is IN MEMORY, and here is exactly what that buys and what it does not.</b> It survives
      * across nights within one process, which is the case that matters — a pod lives for days and a
@@ -138,7 +146,15 @@ class SoftDeletePurgeJob {
      * happens-before edge between them. The failure would be silent and would look exactly like the bug
      * this cursor removes — a pass restarting at the head — which is the worst possible way to lose it.
      */
-    private final Map<Tier, Integer> resumeAt = new ConcurrentHashMap<>();
+    private final Map<PassKey, Integer> resumeAt = new ConcurrentHashMap<>();
+
+    /**
+     * One pass: a tier in one schema. The schema is part of the key because the same tier is now walked
+     * once per home, and each home drains at its own rate — a silo with four tombstones finishes every
+     * night while the pool is still working through its tail.
+     */
+    private record PassKey(Tier tier, String schema) {
+    }
 
     /**
      * The tenancy tier of a purge step's table, and therefore WHICH PASS visits it (ADR 0010 §2).
@@ -394,14 +410,16 @@ class SoftDeletePurgeJob {
     private final Clock clock;
     private final io.micrometer.core.instrument.MeterRegistry meters;
     private final MappedTables tables;
+    private final TenantFanOut fanOut;
 
     SoftDeletePurgeJob(JdbcTemplate jdbc, SoftDeleteProperties properties, Clock clock,
-            io.micrometer.core.instrument.MeterRegistry meters, MappedTables tables) {
+            io.micrometer.core.instrument.MeterRegistry meters, MappedTables tables, TenantFanOut fanOut) {
         this.jdbc = jdbc;
         this.properties = properties;
         this.clock = clock;
         this.meters = meters;
         this.tables = tables;
+        this.fanOut = fanOut;
     }
 
     /**
@@ -459,11 +477,20 @@ class SoftDeletePurgeJob {
      * one of those borrows reads the axis afresh — which is exactly why the pins wrap the passes
      * rather than sitting inside them (ADR 0010 §3.4).
      *
+     * <p><b>Since Phase 5 the tenant pass is a LOOP over homes, not one pass over the pool.</b>
+     * {@code tenant_pool} plus every ACTIVE silo, each on its own axis, each in its own transactions —
+     * see {@link TenantFanOut} for why "one statement per home" and not "one UNION over the homes" is
+     * what BOUNDED means. A promoted tenant is not a tenant with less retention; before this loop
+     * existed it was a tenant with NO retention, and nothing said so.
+     *
      * <p><b>AXIS: PLATFORM and TENANT, two spans, for the reason spelled out above</b> — this is the
-     * job the {@link JobAxis} annotation's two-valued form exists for. <b>CURSOR:</b> per pass, in
-     * memory, {@link #resumeAt}. <b>LEASE:</b> {@code PT30M} against a {@link #RUN_DEADLINE} of 25
-     * minutes, split by {@link #PLATFORM_BUDGET}; both javadocs say what they are sized for and which
-     * of the two numbers behind them is a guess.
+     * job the {@link JobAxis} annotation's two-valued form exists for; the tenant span is now opened
+     * once per home by {@link TenantHomeSweep}, which is a change to how many times the axis is
+     * declared and not to which axis it is. <b>CURSOR:</b> two of them, and they are independent —
+     * {@link #resumeAt} for the position in {@link #PURGE_ORDER} within one (tier, home), and
+     * {@link #tenantHomes} for which home the rotation resumes at. <b>LEASE:</b> {@code PT30M} against
+     * a {@link #RUN_DEADLINE} of 25 minutes, split by {@link #PLATFORM_BUDGET} and then again per home;
+     * every javadoc says what its number is sized for and which of them is a guess.
      */
     @Scheduled(cron = "${app.scheduler.soft-delete-purge-cron:0 0 4 * * *}")
     @SchedulerLock(name = "soft-delete-purge", lockAtMostFor = "PT30M")
@@ -489,15 +516,28 @@ class SoftDeletePurgeJob {
         Instant platformDeadline = started.plus(PLATFORM_BUDGET);
         Instant runDeadline = started.plus(RUN_DEADLINE);
 
+        // Read BEFORE the platform pass, not between the passes: one snapshot per run is what stops the
+        // tenant loop disagreeing with itself about how many homes there are half way through, and a
+        // registry read is cheap enough that taking it early costs nothing.
+        TenantFanOut.Fleet fleet = fanOut.fleet();
+
         // Not @Transactional on purpose: every batch commits on its own connection, so a long backlog
         // never becomes one giant transaction holding row locks against live traffic.
         Run run = new Run();
-        TenantContext.runAsPlatform(() -> pass(Tier.PLATFORM, cutoff, platformDeadline, run));
-        // PHASE 5: this single call becomes a loop — one runAs per silo in platform.tenant_placement
-        // plus this one for whatever is still pooled. Today the pool IS every tenant, so one pass is
-        // the whole fleet; see POOLED_TENANT. The loop is also where resumeAt has to grow a schema
-        // dimension: a cursor that says "table 12" is meaningless once "which home" is a second axis.
-        TenantContext.runAs(POOLED_TENANT, () -> pass(Tier.TENANT, cutoff, runDeadline, run));
+        TenantContext.runAsPlatform(() -> pass(Tier.PLATFORM, TenantSchemas.PLATFORM, cutoff,
+                platformDeadline, run));
+        // One tenant pass per HOME. The sweep pins each home's axis, gives it a slice of what is left of
+        // the run's budget, isolates its failures and remembers where it stopped — see TenantHomeSweep.
+        TenantHomeSweep.Swept swept = tenantHomes.over(fleet.homes(), clock, runDeadline,
+                (home, homeDeadline) -> pass(Tier.TENANT, home.schema(), cutoff, homeDeadline, run));
+        if (swept.cutShort()) {
+            run.cutShort = true;
+        }
+        if (swept.firstFailure() != null) {
+            // A home that could not be reached at all — pass() catches everything a TABLE can throw, so
+            // what arrives here is the connection or the schema, and it must still fail the run.
+            run.failed(swept.firstFailure());
+        }
 
         if (run.total > 0) {
             log.info("Soft-delete purge removed {} rows deleted before {} (retention {}): {}",
@@ -568,11 +608,12 @@ class SoftDeletePurgeJob {
      * exists to keep the pass inside its lease would defeat the deadline. It runs on the night the pass
      * completes, which is also the night the platform pass finished its hard deletes.
      */
-    private void pass(Tier passTier, Instant cutoff, Instant deadline, Run run) {
-        int from = resumeAt.getOrDefault(passTier, 0);
+    private void pass(Tier passTier, String schema, Instant cutoff, Instant deadline, Run run) {
+        PassKey pass = new PassKey(passTier, schema);
+        int from = resumeAt.getOrDefault(pass, 0);
         if (from > 0) {
-            log.info("Soft-delete purge {} pass resumes at {} — the previous run stopped there",
-                    passTier, PURGE_ORDER.get(from).table());
+            log.info("Soft-delete purge {} pass over {} resumes at {} — the previous run stopped there",
+                    passTier, schema, PURGE_ORDER.get(from).table());
         }
         for (int index = from; index < PURGE_ORDER.size(); index++) {
             PurgeStep step = PURGE_ORDER.get(index);
@@ -580,7 +621,7 @@ class SoftDeletePurgeJob {
                 continue;
             }
             if (clock.instant().isAfter(deadline)) {
-                stopAt(passTier, index, run, "before " + step.table());
+                stopAt(pass, index, run, "before " + step.table());
                 return;
             }
             try {
@@ -594,17 +635,17 @@ class SoftDeletePurgeJob {
                 if (drain.stoppedOnDeadline()) {
                     // AT this index, not after it: the table still holds a backlog and resuming past it
                     // would leave that backlog for a full cycle of the cursor.
-                    stopAt(passTier, index, run, "inside " + step.table() + ", which still has a backlog");
+                    stopAt(pass, index, run, "inside " + step.table() + ", which still has a backlog");
                     return;
                 }
             } catch (RuntimeException ex) {
-                log.error("Soft-delete purge failed on {} ({} pass; continuing with the remaining tables)",
-                        step.table(), passTier, ex);
+                log.error("Soft-delete purge failed on {} ({} pass over {}; continuing with the remaining"
+                        + " tables)", step.table(), passTier, schema, ex);
                 run.failed(ex);
             }
         }
         // Reached the end: the next run starts from the head again.
-        resumeAt.remove(passTier);
+        resumeAt.remove(pass);
         for (Cascade cascade : CASCADES.values()) {
             if (cascade.tier() != passTier) {
                 continue;
@@ -612,7 +653,8 @@ class SoftDeletePurgeJob {
             try {
                 run.total += sweepCascade(cascade, run.purged);
             } catch (RuntimeException ex) {
-                log.error("Soft-delete cascade sweep failed on {} ({} pass)", cascade.childTable(), passTier, ex);
+                log.error("Soft-delete cascade sweep failed on {} ({} pass over {})",
+                        cascade.childTable(), passTier, schema, ex);
                 run.failed(ex);
             }
         }
@@ -628,14 +670,14 @@ class SoftDeletePurgeJob {
      * idempotent pass that recorded its position is a smaller problem than a job failing every night in
      * a way nobody can tell from a broken one.
      */
-    private void stopAt(Tier passTier, int index, Run run, String where) {
-        resumeAt.put(passTier, index);
+    private void stopAt(PassKey pass, int index, Run run, String where) {
+        resumeAt.put(pass, index);
         run.cutShort = true;
-        log.warn("Soft-delete purge {} pass stopped at its {} deadline {} — the next run resumes there "
-                        + "rather than from the head, so the tables behind it are not starved. A run that "
-                        + "hits this regularly has outgrown one pass: measure a batch and re-derive "
+        log.warn("Soft-delete purge {} pass over {} stopped at its {} deadline {} — the next run resumes "
+                        + "there rather than from the head, so the tables behind it are not starved. A run "
+                        + "that hits this regularly has outgrown one pass: measure a batch and re-derive "
                         + "RUN_DEADLINE and the PT30M lease together.",
-                passTier, RUN_DEADLINE, where);
+                pass.tier(), pass.schema(), RUN_DEADLINE, where);
     }
 
     /**

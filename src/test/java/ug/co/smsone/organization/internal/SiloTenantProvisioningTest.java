@@ -8,14 +8,15 @@ import static org.mockito.BDDMockito.given;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.event.EventListener;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.event.TransactionPhase;
@@ -24,7 +25,11 @@ import ug.co.smsone.identity.PersonProvisioning;
 import ug.co.smsone.identity.ProvisionedPerson;
 import ug.co.smsone.identity.ProviderOrgMembership;
 import ug.co.smsone.organization.OrganizationRegistered;
+import ug.co.smsone.shared.persistence.TenantMigrationRunner;
+import ug.co.smsone.shared.persistence.TenantMigrationRunner.Manifest;
+import ug.co.smsone.shared.persistence.TenantMigrationRunner.Mode;
 import ug.co.smsone.shared.tenancy.Tenant;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.shared.tenancy.TenantSchemas;
 import ug.co.smsone.shared.tenancy.placement.PlacementState;
 import ug.co.smsone.shared.tenancy.placement.TenantPlacement;
@@ -32,6 +37,7 @@ import ug.co.smsone.shared.tenancy.placement.TenantPlacements;
 import ug.co.smsone.shared.tenancy.placement.TenantProvisioner;
 import ug.co.smsone.shared.tenancy.placement.TenantProvisioningException;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
+import ug.co.smsone.testsupport.TenantSilos;
 
 /**
  * The policy where the ordering is not free (ADR 0010 §4.3): every new tenant gets its own schema, so
@@ -56,8 +62,28 @@ import ug.co.smsone.testsupport.AbstractIntegrationTest;
 @TestPropertySource(properties = "app.tenancy.placement.policy=silo-per-org")
 class SiloTenantProvisioningTest extends AbstractIntegrationTest {
 
+    /**
+     * <strong>Silo schemas must not outlive the test that made them.</strong> Two other classes read the
+     * catalogue directly and would fail on a leftover: {@code TenancyTierBoundaryTest} asserts nothing
+     * lives outside {@code platform} and {@code tenant_pool}, and the migration runner's fleet discovery
+     * takes {@code select distinct schema_name from platform.tenant_placement}, so a placement pointing
+     * at a dropped schema is reported as a broken tenant. Both would fail in another file, for a reason
+     * that would look nothing like this one.
+     *
+     * <p>The sweep itself lives in {@link TenantSilos} — one mechanism, shared with the mixed-tenancy
+     * fixture Phase 5 builds on — and it runs as an extension rather than an {@code @AfterEach} so it is
+     * still guaranteed after a test that threw somewhere this class does not control.
+     */
+    @RegisterExtension
+    final TenantSilos silos = new TenantSilos();
+
+    private static final String REGISTERED = OrganizationRegistered.class.getName();
+
     @Autowired
     private OrganizationService organizations;
+
+    @Autowired
+    private OrgProjectionWriter projectionWriter;
 
     @Autowired
     private TenantProvisioner provisioner;
@@ -91,23 +117,6 @@ class SiloTenantProvisioningTest extends AbstractIntegrationTest {
     }
 
     /**
-     * <strong>Silo schemas must not outlive the test that made them.</strong> Two other classes read the
-     * catalogue directly and would fail on a leftover: {@code TenancyTierBoundaryTest} asserts nothing
-     * lives outside {@code platform} and {@code tenant_pool}, and the migration runner's fleet discovery
-     * takes {@code select distinct schema_name from platform.tenant_placement}, so a placement pointing
-     * at a dropped schema is reported as a broken tenant. Both would fail in another file, for a reason
-     * that would look nothing like this one.
-     */
-    @AfterEach
-    void dropEverySiloThisTestCreated() {
-        List<String> silos = jdbc.queryForList(
-                "select schema_name from information_schema.schemata where schema_name ~ '^t_[0-9a-f]{32}$'",
-                String.class);
-        silos.forEach(silo -> jdbc.execute("drop schema " + silo + " cascade"));
-        jdbc.update("delete from platform.tenant_placement where schema_name ~ '^t_[0-9a-f]{32}$'");
-    }
-
-    /**
      * The ordering rule, asserted from the vantage of the listeners it protects: at the instant
      * {@code OrganizationRegistered} was published, and again at the instant the commit released it,
      * the tenant's schema already existed and was already at head.
@@ -133,8 +142,14 @@ class SiloTenantProvisioningTest extends AbstractIntegrationTest {
                 .isEqualTo(new Seen(true, headOf(silo)));
         assertThat(headOf(silo)).as("a schema that exists but is at no version cannot serve").isNotNull();
 
-        TenantPlacement placement = placements.find(orgId).orElseThrow();
+        // The registry half, term for term with TenantPlacementOnCreateTest's pooled assertion — same
+        // four columns, one of them different. Written out rather than narrowed to "the interesting
+        // one" so the two classes read as one claim under two policies: a new tenant gets an ACTIVE
+        // placement, on the primary datasource, naming the home ITS policy chose, and is announced once.
+        TenantPlacement placement = placements.find(orgId).orElseThrow(
+                () -> new AssertionError("a tenant with no placement row is a tenant nothing can route"));
         assertThat(placement.schemaName()).isEqualTo(silo);
+        assertThat(placement.dataSourceName()).isEqualTo(TenantPlacement.PRIMARY_DATASOURCE);
         assertThat(placement.state()).isEqualTo(PlacementState.ACTIVE);
         assertThat(placement.schemaVersion())
                 .as("the registry's version is the schema's real head, not a guess")
@@ -142,25 +157,43 @@ class SiloTenantProvisioningTest extends AbstractIntegrationTest {
     }
 
     /**
-     * <strong>The routing gap this phase deliberately leaves open, stated as an assertion so it cannot
-     * be forgotten.</strong> Phase 4 makes the schema, the migration and the registry real; Phase 5 is
-     * where {@code TenantSchemas.searchPathFor} starts reading the placement and a promoted tenant's
-     * queries actually land in its own schema. Until then a silo is provisioned and recorded but not yet
-     * routed to, which is why {@code silo-per-org} is a measurement flag and not a production mode.
+     * <strong>The routing claim, and it is the whole of Phase 5's headline.</strong> Phase 4 made the
+     * schema, the migration and the registry real while every axis still resolved to
+     * {@code tenant_pool} — a silo was provisioned and recorded but not routed to, and this test used to
+     * assert exactly that gap so it could not be forgotten. It is now the assertion that the gap is
+     * closed: {@code TenantSchemas.searchPathFor} reads {@code platform.tenant_placement} and a placed
+     * tenant's connections are set to its own schema.
      *
-     * <p>When Phase 5 lands, this test fails — and that is the point. Delete it then, and assert the
-     * silo instead.
+     * <p><strong>The negative half is the one that matters.</strong> Asserting the path merely starts
+     * with the silo would still pass if the pool were on it as a second element — which would put every
+     * unqualified tenant table one fallthrough away from five thousand other tenants' rows, and would
+     * look correct in any test that only ever reads its own data. {@code ext} is the only other schema
+     * allowed on a tenant path, and it holds pg_trgm and nothing else (ADR 0010 §3.1).
      */
     @Test
-    void routingStillSendsAProvisionedSiloTenantToThePoolUntilPhase5() {
+    void aProvisionedSiloTenantIsRoutedToItsOwnSchemaAndNotToThePool() {
         UUID orgId = UUID.randomUUID();
         provisioner.provisionHomeFor(orgId);
+        String silo = TenantSchemas.siloSchema(orgId);
 
-        assertThat(placements.find(orgId).orElseThrow().schemaName())
-                .isEqualTo(TenantSchemas.siloSchema(orgId));
+        assertThat(placements.find(orgId).orElseThrow().schemaName()).isEqualTo(silo);
         assertThat(TenantSchemas.searchPathFor(Tenant.of(orgId)))
-                .as("ADR 0010 Phase 5 flips this — when it does, this assertion is the thing that says so")
-                .startsWith(TenantSchemas.TENANT_POOL);
+                .as("the placement is what decides the search_path — that is what makes promotion a row"
+                        + " change and not a deployment (ADR 0010 §3.1)")
+                .isEqualTo(silo + ", " + TenantSchemas.EXTENSIONS)
+                .doesNotContain(TenantSchemas.TENANT_POOL);
+    }
+
+    /**
+     * And the other side of the same fact: an organization the registry has never heard of routes to the
+     * pool. ADR 0010 §4.3 keeps provisioning free of DDL under the shipped policy, so "no placement row"
+     * is an ordinary, serving state and not an unknown — a router that refused it would refuse every
+     * tenant created before V57's backfill.
+     */
+    @Test
+    void anOrganizationWithNoPlacementRowStillRoutesToThePool() {
+        assertThat(TenantSchemas.searchPathFor(Tenant.of(UUID.randomUUID())))
+                .isEqualTo(TenantSchemas.TENANT_POOL + ", " + TenantSchemas.EXTENSIONS);
     }
 
     /**
@@ -221,6 +254,160 @@ class SiloTenantProvisioningTest extends AbstractIntegrationTest {
                 .isEqualTo(PlacementState.PROVISIONING);
         assertThat(healed.schemaVersion()).isNotNull();
         assertThat(healed.lastError()).as("a stale reason must not read as a current one").isNull();
+    }
+
+    /**
+     * <strong>Announced once, ever — asserted on the DEFAULT policy, which is where it stopped being
+     * covered.</strong> {@code TenantPlacementOnCreateTest} makes the same two claims and now declares
+     * {@code policy=pooled} to make them, so without this pair the guard against a second trial, a second
+     * billing account and a second search document had no test on the path every real signup takes.
+     *
+     * <p>The second half is the re-adopt shape: a Keycloak organization relinked to a local tenant that
+     * already exists. It goes through {@code OrgProjectionWriter} on the axis {@code tenantAxisOf}
+     * answers with — which for an existing tenant is its real id, and therefore its own silo — because
+     * that is what {@code OrganizationService.provisionOwner} does, minus the two provider calls. A
+     * regression in either {@code announce}'s or {@code reserve}'s {@code ON CONFLICT … WHERE} arm shows
+     * up here as a second publication.
+     */
+    @Test
+    void aSiloTenantIsAnnouncedExactlyOnceAndReAdoptingItAnnouncesNothing() {
+        String alias = "silo-once-" + UUID.randomUUID().toString().substring(0, 8);
+        String externalOrgId = "kc-" + alias;
+
+        UUID orgId = organizations.create(alias, "Silo " + alias, "owner@test", "Ada", null)
+                .organization().getId();
+
+        assertThat(announcements(orgId)).isEqualTo(1);
+
+        UUID again = reAdopt(externalOrgId, alias);
+
+        assertThat(again).as("the same tenant, found by its provider link").isEqualTo(orgId);
+        assertThat(announcements(orgId))
+                .as("OrganizationRegistered fans out to a trial, a billing account and a search document"
+                        + " — a second one is a second of each")
+                .isEqualTo(1);
+        assertThat(placements.find(orgId).orElseThrow().schemaName())
+                .as("and a re-adopt does not move a serving tenant — that is promotion")
+                .isEqualTo(TenantSchemas.siloSchema(orgId));
+    }
+
+    /**
+     * <strong>The failure the shipped default moved onto the ordinary signup path, end to end.</strong>
+     *
+     * <p>Under {@code POOLED} a signup ran no DDL, so a Flyway failure during provisioning was not a
+     * thing that could happen. Under {@code silo-per-org} every signup runs a fresh 28-table sequence, so
+     * a transient lock, a full disk or a concurrent DDL leaves the row this test builds: an organization
+     * committed by {@code reserve}, a schema created, a migration that did not finish, and
+     * {@link PlacementState#FAILED} with no {@code schema_version} — never announced.
+     *
+     * <p><strong>Then the next deploy's fleet pass finds that schema.</strong> It is in the catalogue
+     * because {@code CREATE SCHEMA} succeeded, so {@code TENANT_SCHEMAS_IN_CATALOGUE} discovers it with
+     * or without the registry, and it migrates cleanly now that the obstacle is gone. What that pass must
+     * NOT do is rescue the placement to ACTIVE: {@code TenantPlacements.announce} publishes only for the
+     * call that transitions a row INTO ACTIVE, so a rescued row means this tenant is never announced —
+     * no trial, no billing account, no search document — while every health query says it is fine.
+     * {@code TenantMigrationRunner.NOT_A_PROVISIONING_FAILURE} is the predicate that keeps the row
+     * claimable, and this is the test that would notice it going away.
+     */
+    @Test
+    void aProvisioningFailureRescuedByAMigrationPassIsStillAnnouncedExactlyOnce() {
+        String alias = "wedged-" + UUID.randomUUID().toString().substring(0, 8);
+        String externalOrgId = "kc-" + alias;
+        // The "learn the id" half of a silo signup, on its own transaction, exactly as homeReadyFor
+        // commits it before anything is built.
+        UUID orgId = TenantContext.callAsPlatform(
+                () -> projectionWriter.reserve(externalOrgId, alias, "Org " + alias).getId());
+        String silo = TenantSchemas.siloSchema(orgId);
+        jdbc.execute("create schema " + silo);
+        jdbc.execute("create table " + silo + ".left_behind (id uuid)");
+
+        assertThatThrownBy(() -> provisioner.provisionHomeFor(orgId))
+                .isInstanceOf(TenantProvisioningException.class);
+        assertThat(announcements(orgId)).isZero();
+        assertThat(placements.find(orgId).orElseThrow().schemaVersion())
+                .as("nothing proved this home fit, and that null is what tells the fleet runner whose"
+                        + " FAILED this is")
+                .isNull();
+
+        jdbc.execute("drop table " + silo + ".left_behind");
+        migrateTheFleetOver(silo);
+
+        assertThat(placements.find(orgId).orElseThrow().state())
+                .as("a migration pass may not announce a tenant nobody announced — ACTIVE here would"
+                        + " make announce() decline for the rest of this tenant's life")
+                .isEqualTo(PlacementState.FAILED);
+
+        UUID adopted = reAdopt(externalOrgId, alias);
+
+        assertThat(adopted).isEqualTo(orgId);
+        assertThat(announcements(orgId))
+                .as("the retry is the announcement this tenant never got — once, and only once")
+                .isEqualTo(1);
+        assertThat(placements.find(orgId).orElseThrow().state()).isEqualTo(PlacementState.ACTIVE);
+    }
+
+    /**
+     * The local write, run again for a tenant that already exists — {@code OrganizationService}'s
+     * re-adopt path minus the Keycloak and identity calls. The axis is ASKED rather than assumed, which
+     * for an existing tenant is its own silo; see {@code OrgProjectionWriter}'s note on
+     * {@code NEW_POOLED_TENANT} for why driving this method without that question is a misroute.
+     */
+    private UUID reAdopt(String externalOrgId, String alias) {
+        return TenantContext.callAs(projectionWriter.tenantAxisOf(externalOrgId, alias),
+                () -> projectionWriter.projectWithOwner(externalOrgId, alias, "Org " + alias,
+                        UUID.randomUUID()).getId());
+    }
+
+    /**
+     * One pass of the real fleet runner over one schema — the Kubernetes Job's own code path, on its own
+     * unpooled connections. Not the application's {@code DataSource}: the runner pins a baseline
+     * {@code search_path} on every borrow and takes {@code 2 x workers + 2} of them, and the test profile
+     * caps the shared pool at three.
+     */
+    private static void migrateTheFleetOver(String schema) {
+        Manifest manifest = TenantMigrationRunner.fromClasspath(
+                        new DriverManagerDataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(),
+                                POSTGRES.getPassword()), 1)
+                .fanOut(Mode.MIGRATE, List.of(schema));
+        assertThat(manifest.ok())
+                .as("the pass this test is about has to SUCCEED — a failed one would leave the placement"
+                        + " FAILED for the wrong reason and prove nothing: %s", manifest.report())
+                .isTrue();
+    }
+
+    /**
+     * How many times this tenant was announced, read from the durable outbox — term for term with
+     * {@code TenantPlacementOnCreateTest.announcements}, so the pooled and silo classes count the same
+     * thing. Every publication of {@code OrganizationRegistered} leaves a row in
+     * {@code platform.event_publication} ({@code SearchEventListeners} takes it with
+     * {@code @ApplicationModuleListener}), including one a listener would have missed.
+     *
+     * <p><strong>A publication leaves one row PER LISTENER, so {@code count(*)} counts listeners and
+     * not announcements.</strong> Modulith stores a publication for every AFTER_COMMIT
+     * {@code TransactionalApplicationListener} it is about to invoke
+     * ({@code PersistentApplicationEventMulticaster.storePublications}) — that is every
+     * {@code @TransactionalEventListener}, not only the {@code @ApplicationModuleListener} ones, unless
+     * {@code spring.modulith.events.registry-trigger-annotation} narrows it, which nothing here sets.
+     * The trial and the billing account are flag-gated and off in the suite, so the outbox holds one
+     * row per announcement — {@code SearchEventListeners}' — everywhere except HERE, where
+     * {@link Announcements#whenReleased} stands beside it to observe the same instant and is persisted
+     * exactly like a production listener. A bare {@code count(*)} therefore reads 2 for a single
+     * correct announcement — a fact about the observer this class installed, not about the tenant, and
+     * the only reason {@code TenantPlacementOnCreateTest} read 1 from the identical query.
+     *
+     * <p>Grouping by {@code listener_id} and taking the largest group asks each listener how many
+     * announcements it saw; every listener sees every publication, so that is the number of
+     * publications however many listeners are registered. It absorbs nothing: a tenant announced twice
+     * gives EVERY listener two rows, and this still answers 2.
+     */
+    private int announcements(UUID orgId) {
+        Integer count = jdbc.queryForObject("""
+                select coalesce(max(seen), 0) from (
+                       select count(*) as seen from platform.event_publication
+                        where event_type = ? and serialized_event like ?
+                        group by listener_id) per_listener
+                """, Integer.class, REGISTERED, "%" + orgId + "%");
+        return count == null ? 0 : count;
     }
 
     /** The head version of a schema, or null when it has never been migrated. */

@@ -27,6 +27,23 @@ app:
   # the identity IT re-enables it and provisions users to exercise the gate.
   provisioning:
     gate-enabled: false
+  # A promotion settles for two seconds in production so requests already in flight can finish.
+  # Nothing here has in-flight requests, and eight promotions across the promotion tests would spend
+  # sixteen seconds of the suite asleep. Shortened, not removed: the wait is still taken, so the
+  # ordering it enforces is still exercised, and the freeze is still up for long enough that the
+  # background-writer probe gets hundreds of samples inside it.
+  tenancy:
+    promotion:
+      drain: PT0.2S
+    # How long a process remembers which schema an organization lives in. Thirty seconds in production;
+    # here it is also how long every promotion sleeps after the flip so other processes drop the old
+    # route before the source rows go (TenantPromoter.waitForEveryProcessToSeeTheFlip), and twelve
+    # promote/demote calls at the production value would put SIX MINUTES of sleep into a nine-minute
+    # suite. Shortened, not removed — the wait is still taken and the memo still expires on exactly
+    # this number, so both halves of the mechanism are exercised. Low enough that a stale route is
+    # gone before any assertion looks; high enough that the cache is a cache and the router is not
+    # re-reading the registry on every borrow of the whole suite.
+    route-ttl: PT2S
   # No Keycloak in unit/IT context by default — the org dev-bootstrap runner must not fire.
   organization:
     dev-bootstrap:

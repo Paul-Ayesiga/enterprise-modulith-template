@@ -37,16 +37,29 @@ final class TenantRoutingDataSource extends DelegatingDataSource {
 
     @Override
     public Connection getConnection() throws SQLException {
-        return pinned(super.getConnection());
+        String searchPath = resolveBeforeBorrowing();
+        return pinned(super.getConnection(), searchPath);
     }
 
     @Override
     public Connection getConnection(String username, String password) throws SQLException {
-        return pinned(super.getConnection(username, password));
+        String searchPath = resolveBeforeBorrowing();
+        return pinned(super.getConnection(username, password), searchPath);
     }
 
-    private static Connection pinned(Connection connection) throws SQLException {
-        String searchPath = TenantSchemas.searchPathFor(TenantContext.current());
+    /**
+     * <strong>Resolve the path first, take the connection second — the order is load-bearing.</strong>
+     * Since Phase 5 a tenant axis resolves through {@code TenantRoutes}, which on a cache miss reads
+     * {@code platform.tenant_placement} over its own connection from the raw pool. Doing that while
+     * already holding a connection from the same pool means every thread in a saturated pool waiting
+     * for a connection that only another waiting thread can release. Doing it first makes the two
+     * borrows sequential, so a miss costs one extra round trip and nothing else.
+     */
+    private static String resolveBeforeBorrowing() {
+        return TenantSchemas.searchPathFor(TenantContext.current());
+    }
+
+    private static Connection pinned(Connection connection, String searchPath) throws SQLException {
         try (Statement statement = connection.createStatement()) {
             // Not a bind parameter: SET takes no parameters. Every name in this string is either a
             // constant or has been through TenantSchemas.requireSiloSchema.

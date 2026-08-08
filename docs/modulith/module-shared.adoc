@@ -18,6 +18,7 @@ _Others_
 * `u.c.s.s.cache.CacheConfig`
 * `u.c.s.s.cache.CacheInvalidationBroadcaster`
 * `u.c.s.s.cache.CacheRegistry`
+* `u.c.s.s.cache.TenantPromotionCaches`
 * `u.c.s.s.cache.TwoLevelCacheManager`
 * `u.c.s.s.config.AsyncConfig`
 * `u.c.s.s.config.ClockConfig`
@@ -45,10 +46,16 @@ _Others_
 * `u.c.s.s.security.McpTokenAuthorizationManager`
 * `u.c.s.s.security.OrgMdcFilter`
 * `u.c.s.s.security.SecurityConfig`
+* `u.c.s.s.tenancy.TenantFanOut`
+* `u.c.s.s.tenancy.TenantRoutes`
 * `u.c.s.s.tenancy.TenantSchemaFloor`
 * `u.c.s.s.tenancy.placement.TenantPlacements`
 * `u.c.s.s.tenancy.placement.TenantProvisioner`
 * `u.c.s.s.tenancy.placement.TenantSchemaMigrator`
+* `u.c.s.s.tenancy.promotion.TenantFreezes`
+* `u.c.s.s.tenancy.promotion.TenantPromoter`
+* `u.c.s.s.tenancy.promotion.TenantRows`
+* `u.c.s.s.tenancy.promotion.TenantTierTables`
 * `u.c.s.s.web.ApiMetaFactory`
 * `u.c.s.s.web.CursorPageRequestArgumentResolver`
 * `u.c.s.s.web.EnvelopeErrorWriter`

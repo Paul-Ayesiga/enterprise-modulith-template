@@ -1,15 +1,14 @@
 package ug.co.smsone.access.internal;
 
-import org.springframework.scheduling.annotation.Async;
-import org.springframework.transaction.event.TransactionalEventListener;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.annotation.Propagation;
-import ug.co.smsone.shared.tenancy.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.modulith.events.ApplicationModuleListener;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.event.TransactionalEventListener;
 import ug.co.smsone.access.DeviceRevoked;
+import ug.co.smsone.shared.tenancy.TenantContext;
+import ug.co.smsone.shared.tenancy.TenantFanOut;
+import ug.co.smsone.shared.tenancy.TenantHome;
 
 /**
  * Deletes every organization's trust grant over a device the moment its owner revokes it — the
@@ -40,29 +39,15 @@ class DeviceTrustRevocationListener {
 
     private static final Logger log = LoggerFactory.getLogger(DeviceTrustRevocationListener.class);
 
-    /**
-     * The org whose axis this sweep borrows. It names no organization deliberately: an org that has
-     * never been promoted resolves to the shared {@code tenant_pool}, and a UUID in no
-     * {@code organization} row can never resolve to anything else — so this IS the pooled schema's axis,
-     * spelled with the only vocabulary {@code TenantContext} has. Same constant, same reasoning as
-     * {@code MappedSchemaValidator} and {@code WebhookSecretEncryptionMigrator}: one idiom for "the
-     * pool", not three.
-     *
-     * <p>It is the honest shape for this listener specifically, because the grants being deleted belong
-     * to every org that blessed the device and the event carries no {@code orgId} to name one (see
-     * {@link ug.co.smsone.access.DeviceRevoked}). When silos exist (ADR 0010 Phase 5) this stops being
-     * one pass: the loop belongs here, over {@code platform.tenant_placement}, one transaction per home
-     * — which is exactly the shape the class note already argues an event buys us.
-     */
-    private static final java.util.UUID POOLED_TENANT = new java.util.UUID(0L, 0L);
-
     private final UserDeviceTrustRepository deviceTrust;
     private final org.springframework.transaction.support.TransactionTemplate transactions;
+    private final TenantFanOut fanOut;
 
     DeviceTrustRevocationListener(UserDeviceTrustRepository deviceTrust,
-            org.springframework.transaction.support.TransactionTemplate transactions) {
+            org.springframework.transaction.support.TransactionTemplate transactions, TenantFanOut fanOut) {
         this.deviceTrust = deviceTrust;
         this.transactions = transactions;
+        this.fanOut = fanOut;
     }
 
     /**
@@ -87,18 +72,49 @@ class DeviceTrustRevocationListener {
         // this table at all, so the delete would fail on every revocation with
         // relation "user_device_trust" does not exist — asynchronously, retried by the outbox, with a
         // revoked device left trusted in the meantime.
-        TenantContext.runAs(POOLED_TENANT, () -> transactions.executeWithoutResult(tx -> revokeGrants(event)));
+        //
+        // ONE PASS PER HOME since Phase 5, and this is the sharpest case in the whole fan-out. The
+        // grants belong to every org that blessed the device and the event carries no orgId to name one
+        // (see DeviceRevoked), so "everywhere" used to mean one schema. After a promotion it meant every
+        // schema BUT the promoted tenant's — a revoked device left trusted, indefinitely, in exactly the
+        // orgs that were given their own schema, satisfying require_trusted_device with a grant nothing
+        // would ever remove. AGENTS §1 names this class of bug ("forget this and revoked devices stay
+        // trusted forever") and V53's cut cascade is why nothing else would have caught it.
+        //
+        // A TransactionTemplate per home and not a @Transactional method, for the reason the obvious
+        // version fails review only after it has shipped: calling an annotated method on `this` is a
+        // SELF-INVOCATION, Spring's proxy never sees it, no transaction starts, and the modifying delete
+        // silently does nothing. The template needs no proxy — and it opens INSIDE each pin, which is
+        // the ordering the whole thing depends on.
+        TenantFanOut.Fleet fleet = fanOut.fleet();
+        int removed = 0;
+        for (TenantHome home : fleet.homes()) {
+            removed += TenantContext.callAs(home.axis(),
+                    () -> transactions.execute(tx -> deviceTrust.revokeEverywhere(event.deviceId())));
+        }
+        report(event, removed, fleet.withheldHomes());
     }
 
     /**
-     * A {@code TransactionTemplate} and not a {@code @Transactional} method, because the obvious version
-     * of this is broken in a way that passes review: calling an annotated method on {@code this} is a
-     * SELF-INVOCATION, so Spring's proxy never sees it, no transaction starts, and the modifying delete
-     * silently does nothing. The template needs no proxy, so the transaction actually exists — and it
-     * begins INSIDE the pin above, which is the ordering the whole thing depends on.
+     * <b>A home this pass could not enter is a grant that survived its device, so an incomplete pass
+     * THROWS.</b>
+     *
+     * <p>Every other fanned-out caller in this codebase is a scheduled sweep whose next pass is minutes
+     * or hours away, so a home withheld by a promotion freeze is simply visited next time and nobody
+     * needs to be told. This one is a reaction to an event, and there is no next pass to fall back on —
+     * but there IS a retry, and it is the one the class note already relies on: throwing leaves the
+     * Modulith publication incomplete and {@code OutboxResubmissionJob} resubmits it after the freeze
+     * has lifted. That is free precisely because the work is idempotent (deleting rows that are already
+     * gone removes nothing), which is the same property that made the {@code EventInbox} guard the wrong
+     * tool here.
+     *
+     * <p>The alternative — logging and returning — would leave a revoked device satisfying
+     * {@code require_trusted_device} in a promoted tenant with nothing but a 03:00 ERROR to say so.
+     * AGENTS §1 names exactly that failure ("forget this and revoked devices stay trusted forever"), and
+     * a stale trust row is the same class of bug as the device-trust bypass the branch before this one
+     * fixed.
      */
-    private void revokeGrants(DeviceRevoked event) {
-        int removed = deviceTrust.revokeEverywhere(event.deviceId());
+    private void report(DeviceRevoked event, int removed, int withheld) {
         if (removed > 0) {
             // Logged at INFO because it is a security-relevant state change with no other trail: the
             // grant row IS the trust (V51 — absence means untrusted), so its deletion leaves nothing
@@ -106,5 +122,14 @@ class DeviceTrustRevocationListener {
             log.info("Device {} revoked by person {} — removed {} organization trust grant(s)",
                     event.deviceId(), event.personId(), removed);
         }
+        if (withheld > 0) {
+            throw new IllegalStateException(
+                    "device " + event.deviceId() + " was revoked but " + withheld + " tenant home(s) are"
+                            + " frozen for a promotion, so any trust grant it holds there is still live."
+                            + " Failing so the publication stays incomplete and OutboxResubmissionJob"
+                            + " retries once the freeze has lifted — this delete is idempotent, so the"
+                            + " retry costs nothing (ADR 0010 §6 hop 0->1).");
+        }
     }
+
 }

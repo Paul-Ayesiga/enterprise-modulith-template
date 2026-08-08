@@ -6,6 +6,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.support.TransactionTemplate;
 import ug.co.smsone.organization.OrganizationRegistered;
 import ug.co.smsone.shared.tenancy.TenantContext;
@@ -15,10 +16,17 @@ import ug.co.smsone.shared.tenancy.placement.TenantPlacements;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
 /**
- * Creating a tenant under the DEFAULT pooled policy (ADR 0010 §4.3), which is the case that has to
- * cost nothing: {@code tenant_pool} already exists, so there is no DDL, no {@code PROVISIONING} state
- * and no second transaction — the registration is exactly the single atomic write it was before Phase
- * 4, with one more row in it.
+ * Creating a tenant under the POOLED policy (ADR 0010 §4.3), which is the case that has to cost
+ * nothing: {@code tenant_pool} already exists, so there is no DDL, no {@code PROVISIONING} state and no
+ * second transaction — the registration is exactly the single atomic write it was before Phase 4, with
+ * one more row in it.
+ *
+ * <p><b>The policy is pinned rather than inherited, and that is a correctness fix rather than a
+ * style.</b> This class asserts {@code schemaName() == "tenant_pool"} on a tenant it creates, which is
+ * a statement about ONE policy and not about whichever one happens to be default. It previously relied
+ * on the default being pooled and broke the moment that moved — silently in the sense that the failure
+ * says "expected tenant_pool but was t_9f3a…", which reads as a routing bug rather than as a test
+ * asserting the wrong policy. Both policies now have a class that names the one it is about.
  *
  * <p>It drives {@link OrgProjectionWriter} rather than {@code OrganizationService.create} because
  * under this policy those two differ only by the Keycloak and identity calls that create a provider
@@ -28,6 +36,7 @@ import ug.co.smsone.testsupport.AbstractIntegrationTest;
  *
  * <p>{@link SiloTenantProvisioningTest} is the other half: the policy where the ordering is not free.
  */
+@TestPropertySource(properties = "app.tenancy.placement.policy=pooled")
 class TenantPlacementOnCreateTest extends AbstractIntegrationTest {
 
     private static final String REGISTERED = OrganizationRegistered.class.getName();
@@ -150,11 +159,21 @@ class TenantPlacementOnCreateTest extends AbstractIntegrationTest {
      * with {@code @ApplicationModuleListener}, so every publication leaves a row in
      * {@code platform.event_publication}. Counting those counts announcements that actually happened,
      * including the ones a listener would have missed by not being registered yet.
+     *
+     * <p><strong>Grouped by {@code listener_id}, because a publication leaves one row per listener and
+     * not one row.</strong> Modulith stores one for every AFTER_COMMIT transactional listener of the
+     * event, so {@code count(*)} answers "listeners x announcements" and reads 2 the day a second
+     * listener takes {@code OrganizationRegistered} — a green test turning red for a change that broke
+     * nothing. Each listener sees every publication, so the largest group IS the number of
+     * publications. Kept term for term with {@code SiloTenantProvisioningTest.announcements}, whose
+     * javadoc carries the full trap: that class has a second listener today, and reads 2 without this.
      */
     private int announcements(UUID orgId) {
         Integer count = jdbc.queryForObject("""
-                select count(*) from platform.event_publication
-                 where event_type = ? and serialized_event like ?
+                select coalesce(max(seen), 0) from (
+                       select count(*) as seen from platform.event_publication
+                        where event_type = ? and serialized_event like ?
+                        group by listener_id) per_listener
                 """, Integer.class, REGISTERED, "%" + orgId + "%");
         return count == null ? 0 : count;
     }

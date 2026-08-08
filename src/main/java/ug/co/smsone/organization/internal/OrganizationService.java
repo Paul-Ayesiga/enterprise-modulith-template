@@ -38,7 +38,7 @@ import ug.co.smsone.shared.tenancy.placement.TenantProvisioner;
  * <h2>And where the tenant's schema comes from (ADR 0010 §4.3)</h2>
  *
  * <p>Both provisioning paths go through {@link #homeReadyFor} before they write anything tenant-tier.
- * Under the default pooled policy that is a no-op with a name — {@code tenant_pool} already exists —
+ * Under the non-default pooled policy that is a no-op with a name — {@code tenant_pool} already exists —
  * and the single atomic transaction described above is untouched. Under {@code silo-per-org} it is the
  * step that keeps a tenant from being ANNOUNCED before its schema can serve it, which the three
  * after-commit listeners on {@code OrganizationRegistered} would otherwise lose a race to. Read that
@@ -162,7 +162,7 @@ class OrganizationService {
      * Makes sure this tenant has somewhere to live BEFORE the write that announces it, and answers with
      * the axis that write must be pinned to (ADR 0010 §4.3).
      *
-     * <p><strong>Under the default pooled policy this is one method call and one indexed read.</strong>
+     * <p><strong>Under the pooled policy this is one method call and one indexed read.</strong>
      * {@code tenant_pool} already exists, so there is nothing to build, nothing to order, and no second
      * transaction: {@code projectWithOwner} stays the single atomic write it has always been, and the
      * placement row joins it. §4.3 calls this the strongest practical argument for the hybrid, and this

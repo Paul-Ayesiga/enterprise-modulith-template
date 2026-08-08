@@ -91,8 +91,15 @@ import ug.co.smsone.shared.tenancy.placement.TenantPlacements;
  * <p>The check is at the edge, on the tenant a REQUEST names. Work that enters a tenant from elsewhere —
  * a job's {@code runAs} loop, an operator route calling {@code TenantContext.runAs(orgId, …)} — is not
  * gated here and should not be: those paths are bounded, off the hot path, and their fan-out has the
- * registry open in front of it already. Phase 5's promoter is where the placement row is consulted for
- * every other purpose.
+ * registry open in front of it already.
+ *
+ * <p><strong>It is also not the router.</strong> This class reads one column of the placement row —
+ * {@code schema_version} — to decide whether to SERVE a tenant. {@link TenantRoutes} reads another —
+ * {@code schema_name} — to decide WHERE its rows are. The two memoize the same row for different
+ * lifetimes and with opposite failure policies, and both differences are deliberate: an unreadable
+ * registry is served here (refusing on a fact we could not establish is a fleet-wide outage) and
+ * refused there (guessing a schema is how a write lands in the wrong one). A promotion drops both, in
+ * the same call.
  */
 @Component
 public class TenantSchemaFloor {
@@ -181,6 +188,29 @@ public class TenantSchemaFloor {
     /** The {@code Retry-After} to give a refused tenant: the interval after which this will look again. */
     public long retryAfterSeconds() {
         return RECHECK_AFTER.toSeconds();
+    }
+
+    /**
+     * Drop what this process remembers about {@code orgId}, so the next {@link #admits} re-reads the
+     * registry. The one thing that can move a tenant's recorded version <em>without</em> a rollout, and
+     * therefore the one caller: <b>promotion</b> ({@code TenantPromotionCaches.evictAfterPlacementFlip},
+     * ADR 0010 §6 hop 0→1) rewrites the placement row this class read its answer out of.
+     *
+     * <p>It exists for the SETTLED entry specifically. A refusal expires on {@link #RECHECK_AFTER} and
+     * an unresolved read on the slower interval, so both would heal on their own; "at or above the
+     * floor" never expires, because the class note's argument for that — {@code schema_version} only
+     * increases and the floor is compiled in — holds for a tenant that stays in one schema and is
+     * exactly what a promotion suspends. The sanctioned sequence migrates the new home to head before
+     * flipping, so in practice the memo stays true; this is what makes that a property of the data
+     * rather than an assumption the memo bakes in.
+     *
+     * <p>Silently tolerates a tenant this process never decided about, and a null. Both mean "there is
+     * nothing remembered here", which is the state the caller wanted.
+     */
+    public void forget(UUID orgId) {
+        if (orgId != null) {
+            decisions.remove(orgId);
+        }
     }
 
     private Entry read(UUID orgId, Entry previous) {

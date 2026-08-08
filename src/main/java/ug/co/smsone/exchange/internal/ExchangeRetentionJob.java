@@ -4,9 +4,9 @@ import static ug.co.smsone.shared.tenancy.JobAxis.Axis.PLATFORM;
 import static ug.co.smsone.shared.tenancy.JobAxis.Axis.TENANT;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
-import java.util.UUID;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,6 +18,8 @@ import ug.co.smsone.shared.retention.RetentionPurges;
 import ug.co.smsone.shared.retention.RetentionScope;
 import ug.co.smsone.shared.tenancy.JobAxis;
 import ug.co.smsone.shared.tenancy.TenantContext;
+import ug.co.smsone.shared.tenancy.TenantFanOut;
+import ug.co.smsone.shared.tenancy.TenantHomeSweep;
 
 /**
  * The retention job the V24 terminal index was always waiting for: terminal jobs past
@@ -35,30 +37,41 @@ class ExchangeRetentionJob {
     private static final int MAX_BATCHES = 100; // bounds one run inside the ShedLock lease
 
     /**
-     * The tenant axis the org half of this run needs. Names no organization deliberately: an org in no
-     * {@code organization} row can only ever resolve to the shared {@code tenant_pool}, so this IS the
-     * pooled schema's axis — the same constant and reasoning as {@code MappedSchemaValidator} and
-     * {@code WebhookSecretEncryptionMigrator}.
-     *
-     * <p>PHASE 5 makes the tenant span a LOOP over {@code platform.tenant_placement}: "every org's
-     * jobs" is one schema today and one per silo afterwards. The platform span below stays exactly one.
+     * How long the whole run may take, against the {@code PT30M} lease — the same five-minute margin
+     * {@code SoftDeletePurgeJob} and {@code UsageExportJob} take, and it is here because Phase 5 turned
+     * the tenant span into (silos + 1) spans each carrying its own per-override pass.
      */
-    private static final UUID POOLED_TENANT = new UUID(0L, 0L);
+    private static final Duration RUN_DEADLINE = Duration.ofMinutes(25);
+
+    /**
+     * The share of {@link #RUN_DEADLINE} the PLATFORM span may spend, so the growing half is not starved
+     * by the fixed one. {@code platform.exchange_job} is one schema now and one schema after Phase 7;
+     * the tenant span is the only half whose cost scales with the fleet. Same shape and same argument as
+     * {@code SoftDeletePurgeJob.PLATFORM_BUDGET}, and equally a floor rather than a measurement — an
+     * early-finishing platform span hands its remainder straight to the tenant sweep, because the sweep's
+     * deadline is computed from the run's start rather than from where the platform span stopped.
+     */
+    private static final Duration PLATFORM_BUDGET = RUN_DEADLINE.dividedBy(3);
+
+    /** Which home the tenant span is on and where the rotation resumes — see {@link TenantHomeSweep}. */
+    private final TenantHomeSweep homes = new TenantHomeSweep("Exchange-job retention");
 
     private final ExchangeJobStore store;
     private final ExchangeProperties config;
     private final RetentionOverrides retentionOverrides;
     private final Clock clock;
     private final io.micrometer.core.instrument.MeterRegistry meters;
+    private final TenantFanOut fanOut;
 
     ExchangeRetentionJob(ExchangeJobStore store, ExchangeProperties config,
             RetentionOverrides retentionOverrides, Clock clock,
-            io.micrometer.core.instrument.MeterRegistry meters) {
+            io.micrometer.core.instrument.MeterRegistry meters, TenantFanOut fanOut) {
         this.store = store;
         this.config = config;
         this.retentionOverrides = retentionOverrides;
         this.clock = clock;
         this.meters = meters;
+        this.fanOut = fanOut;
     }
 
     /**
@@ -91,34 +104,42 @@ class ExchangeRetentionJob {
      * run is in flight is simply picked up by the next run rather than missed — the map is re-read at
      * the start of every pass.
      *
-     * <p><b>LEASE: PT30M, sized for TWO drains of {@link #MAX_BATCHES} × {@link #BATCH_SIZE} rows each
-     * plus one drain per per-org override, all against ONE tenant schema.</b> That last clause is the
-     * part Phase 5 breaks and it breaks worse here than in most of these jobs, because the override
-     * pass is per-ORG inside each home: the tenant span becomes (silos + 1) × (1 default drain + its
-     * own overrides). PT30M is not sized for that and must be re-derived — with a resumable per-home
-     * cursor at the same time, since a fan-out cut at home 40 of 200 that restarts at home 1 the next
-     * night never reaches the tail. The measured input that derivation will need is the per-batch cost
-     * against a real {@code exchange_job}, which nobody has taken; today's PT30M rests on 100 batches of
-     * 1,000 being comfortable in half an hour, which is true by a wide margin and is not a measurement
-     * either.
+     * <p><b>LEASE: PT30M against {@link #RUN_DEADLINE}, split by {@link #PLATFORM_BUDGET} and then again
+     * per home.</b> The tenant span is now (silos + 1) × (one default drain + that home's own
+     * overrides), and the override pass is per-ORG inside each home — which is why the bound is a
+     * deadline threaded all the way down to {@code RetentionPurges.Bounds} rather than a batch cap: a
+     * cap can only see one pass, and what overruns a lease here is the product of three loops. The
+     * per-batch cost against a real {@code exchange_job} has never been measured; the twenty-five
+     * minutes rests on 100 batches of 1,000 being comfortable, which is arithmetic, and the deadline is
+     * what turns a wrong guess into a WARN and a resumed rotation instead of two replicas purging the
+     * same rows.
      */
     @Scheduled(cron = "${app.scheduler.exchange-retention-cron:0 45 4 * * *}")
     @SchedulerLock(name = "exchange-job-retention", lockAtMostFor = "PT30M")
     @JobAxis({PLATFORM, TENANT})
     public void purgeExpiredJobs() {
         Instant now = clock.instant();
+        Instant runDeadline = now.plus(RUN_DEADLINE);
         int platformScoped = TenantContext.callAsPlatform(
-                () -> drainDefault(now.minus(config.retention())));
-        // PHASE 5: one span per home rather than one for the pool — see POOLED_TENANT.
-        int tenantOwned = TenantContext.callAs(POOLED_TENANT, () -> RetentionPurges.purge(retentionOverrides,
-                RetentionScope.EXCHANGE_JOB, now, config.retention(), BATCH_SIZE, MAX_BATCHES,
-                store::purgeTerminalBatch, store::purgeTerminalBatchForOrg));
-        int total = platformScoped + tenantOwned;
-        // One metric for the run, not one per span: "exchange_job" is one table's retention however
-        // many homes it has, and splitting the counter would silently change what the dashboards read.
+                () -> drainDefault(now.minus(config.retention()), now.plus(PLATFORM_BUDGET)));
+        // One tenant span per HOME. A promoted tenant's exchange history and its retention override are
+        // both in its own schema, so the single pooled span this replaced purged neither — and said so
+        // nowhere.
+        int[] tenantOwned = {0};
+        TenantHomeSweep.Swept swept = homes.over(fanOut.fleet().homes(), clock, runDeadline,
+                (home, deadline) -> tenantOwned[0] += RetentionPurges.purge(retentionOverrides,
+                        RetentionScope.EXCHANGE_JOB, now, config.retention(),
+                        new RetentionPurges.Bounds(BATCH_SIZE, MAX_BATCHES, clock, deadline),
+                        store::purgeTerminalBatch, store::purgeTerminalBatchForOrg));
+        int total = platformScoped + tenantOwned[0];
+        // One metric for the run, not one per span and not one per home: "exchange_job" is one table's
+        // retention however many homes it has, and splitting the counter would silently change what the
+        // dashboards read on the day the first tenant is promoted.
         PurgeMetrics.purged(meters, "exchange-job-retention", "exchange_job", total);
-        log.info("Purged {} terminal exchange jobs (default retention {}): {} platform-scoped, {} tenant-owned",
-                total, config.retention(), platformScoped, tenantOwned);
+        log.info("Purged {} terminal exchange jobs (default retention {}): {} platform-scoped, {} "
+                        + "tenant-owned across {} home(s)",
+                total, config.retention(), platformScoped, tenantOwned[0], swept.visited());
+        swept.rethrowFirstFailure();
     }
 
     /**
@@ -126,9 +147,14 @@ class ExchangeRetentionJob {
      * Bounded the same way {@link RetentionPurges} bounds its own passes, so one span cannot outrun the
      * ShedLock lease.
      */
-    private int drainDefault(Instant cutoff) {
+    private int drainDefault(Instant cutoff, Instant deadline) {
         int total = 0;
         for (int batch = 0; batch < MAX_BATCHES; batch++) {
+            // Never before the first batch, so the platform half always does some work however tight the
+            // budget — the same rule the tenant half follows through RetentionPurges.Bounds.
+            if (batch > 0 && !clock.instant().isBefore(deadline)) {
+                return total;
+            }
             int deleted = store.purgeTerminalBatch(cutoff, List.of(), BATCH_SIZE);
             total += deleted;
             if (deleted < BATCH_SIZE) {

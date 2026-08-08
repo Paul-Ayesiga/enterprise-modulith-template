@@ -4,6 +4,10 @@ Committed, runnable [k6](https://k6.io) scripts that stress the platform against
 The **plan, SLOs, and what to watch** live in [`docs/plans/PERF_PLAN.md`](../docs/plans/PERF_PLAN.md); this is the
 operational quick-start.
 
+**Not the only thing here.** [`tenancy/`](tenancy/) is a separate, database-only benchmark that
+builds a real 200-silo fleet through `TenantMigrationRunner` and measures what ADR 0010's silo
+ceiling is made of. It does not go through the app and does not need k6 — see its own README.
+
 ## Prerequisites
 
 - The stack up: `make run` (or `make seed`) **and** `make gateway` — see [`docs/LOCAL_ACCESS.md`](../docs/LOCAL_ACCESS.md).

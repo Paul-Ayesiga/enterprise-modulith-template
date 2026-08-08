@@ -18,6 +18,7 @@ _Others_
 * `u.c.s.s.web.EnvelopeErrorWriter` (in Shared Kernel)
 * `u.c.s.s.cache.TwoLevelCacheManager` (in Shared Kernel)
 * `u.c.s.s.audit.AuditLog` (in Shared Kernel)
+* `u.c.s.s.tenancy.TenantFanOut` (in Shared Kernel)
 |Events listened to
 |* `u.c.s.s.SubscriptionChanged` (async) 
 |===

@@ -12,7 +12,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import ug.co.smsone.shared.security.CurrentUser;
-import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.shared.web.CursorPageRequest;
 import ug.co.smsone.shared.web.ResourceObject;
 import ug.co.smsone.shared.web.WindowedResult;
@@ -32,35 +31,35 @@ import ug.co.smsone.shared.web.WindowedResult;
  * therefore arrives on the PLATFORM axis. Every table the desk touches is the opposite:
  * {@code ticket} and {@code ticket_message} are TENANT-tier and addressed bare, so on the platform
  * axis they resolve to nothing and the whole support desk answers 500. The tenant is not knowable
- * before the read either — the ticket id is what names it — which is why the span is
- * {@link #POOLED_TENANT} rather than an org taken from the path.
+ * before the read either — the ticket id is what names it, and nothing in the URL says whose it is —
+ * which is why the span is resolved by {@link TicketFanOut} rather than taken from the path.
  *
  * <p>One span per route and not one per service call: {@link #messages} makes two calls that are both
  * the same tenant's rows, and a second span would be a second connection and so a second transaction.
  * The mapping to resources runs INSIDE the span for the same reason
  * {@code AdminOrganizationController.listMembers} does — a window whose rows outlive the schema they
  * came from is a lazy-load waiting to fail.
+ *
+ * <h2>Phase 5: the span is no longer one schema, and every route here had to change</h2>
+ *
+ * <p>Pinning the pooled axis was right while every ticket was in {@code tenant_pool} and became a silent
+ * defect the moment one organization was promoted: the queue would answer without that tenant's tickets
+ * and the single-ticket routes with a 404, with nothing in either case saying a home had been missed.
+ * {@link TicketFanOut} is where the reach lives now — a merge over every home for {@link #queue}, and a
+ * home lookup by ticket id for the rest — and it is a separate bean rather than a method on
+ * {@code SupportService} because the axis must be pinned before {@code @Transactional} opens the
+ * transaction, which a self-invocation could not do (AGENTS §4.3).
  */
 @RestController
 @RequestMapping("/api/v1/admin/tickets")
 class AdminTicketController {
 
-    /**
-     * The axis the cross-tenant desk reads on. It names no organization deliberately: an org in no
-     * {@code organization} row can only ever resolve to the shared {@code tenant_pool}, so this IS the
-     * pooled schema's axis — the same constant and reasoning as {@link SlaEscalationJob}, which sweeps
-     * the same table.
-     *
-     * <p>PHASE 5 replaces it: a promoted tenant's tickets live in {@code t_<32hex>}, so
-     * {@link #queue} becomes a fan-out over {@code platform.tenant_placement} and the single-ticket
-     * routes resolve the placement from the id first. Until then there is one home and this is it.
-     */
-    private static final UUID POOLED_TENANT = new UUID(0L, 0L);
-
     private final SupportService support;
+    private final TicketFanOut homes;
 
-    AdminTicketController(SupportService support) {
+    AdminTicketController(SupportService support, TicketFanOut homes) {
         this.support = support;
+        this.homes = homes;
     }
 
     record ReplyRequest(String body, boolean internal) {
@@ -79,16 +78,18 @@ class AdminTicketController {
     @PreAuthorize("hasRole('platform-support')")
     WindowedResult<ResourceObject> queue(@RequestParam(name = "status", required = false) String status,
             CursorPageRequest page) {
-        return TenantContext.callAs(POOLED_TENANT,
-                () -> WindowedResult.of(support.queue(status, page), page, TicketResources::toResource));
+        // The fan-out pins each home itself, so nothing is pinned here — and the mapping stays outside
+        // it deliberately: the merged window already holds rows read inside their own home's
+        // transaction, so mapping under some other home's axis would be an accident that happens to
+        // work only because TicketAttributes touches no association.
+        return WindowedResult.of(homes.queue(status, page), page, TicketResources::toResource);
     }
 
     @GetMapping("/{id}")
     @Operation(summary = "Get one ticket (any org)")
     @PreAuthorize("hasRole('platform-support')")
     ResourceObject get(@PathVariable UUID id) {
-        return TenantContext.callAs(POOLED_TENANT,
-                () -> TicketResources.toResource(support.requireAnyOrg(id)));
+        return homes.onTicketsHome(id, () -> TicketResources.toResource(support.requireAnyOrg(id)));
     }
 
     @GetMapping("/{id}/messages")
@@ -96,7 +97,7 @@ class AdminTicketController {
             description = "Oldest first, cursor-paged.")
     @PreAuthorize("hasRole('platform-support')")
     WindowedResult<ResourceObject> messages(@PathVariable UUID id, CursorPageRequest page) {
-        return TenantContext.callAs(POOLED_TENANT, () -> {
+        return homes.onTicketsHome(id, () -> {
             support.requireAnyOrg(id); // an unknown ticket is a 404, not an empty conversation
             return WindowedResult.of(support.messages(id, true, page), page, TicketResources::toResource);
         });
@@ -109,7 +110,7 @@ class AdminTicketController {
     @PreAuthorize("hasRole('platform-support')")
     @org.springframework.web.bind.annotation.ResponseStatus(org.springframework.http.HttpStatus.CREATED)
     ResourceObject reply(@PathVariable UUID id, @RequestBody ReplyRequest request, CurrentUser user) {
-        return TenantContext.callAs(POOLED_TENANT, () -> TicketResources.toResource(
+        return homes.onTicketsHome(id, () -> TicketResources.toResource(
                 support.platformReply(id, user.personId(), request.body(), request.internal())));
     }
 
@@ -119,7 +120,7 @@ class AdminTicketController {
                     + "`/api/v1/admin/users` lists), not a name or a login.")
     @PreAuthorize("hasRole('platform-support')")
     ResourceObject assign(@PathVariable UUID id, @RequestBody AssignRequest request) {
-        return TenantContext.callAs(POOLED_TENANT,
+        return homes.onTicketsHome(id,
                 () -> TicketResources.toResource(support.assign(id, request.assigneePersonId())));
     }
 
@@ -127,7 +128,7 @@ class AdminTicketController {
     @Operation(summary = "Transition the ticket's status")
     @PreAuthorize("hasRole('platform-support')")
     ResourceObject status(@PathVariable UUID id, @RequestBody StatusRequest request) {
-        return TenantContext.callAs(POOLED_TENANT,
+        return homes.onTicketsHome(id,
                 () -> TicketResources.toResource(support.changeStatus(id, request.status())));
     }
 }

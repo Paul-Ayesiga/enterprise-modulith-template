@@ -18,13 +18,22 @@ import ug.co.smsone.shared.persistence.SoftDeletableEntity;
  * is exactly why it lives in {@code platform} rather than in any tenant's schema. An org document is
  * the tenant's and lives with the tenant.
  *
- * <p>Nothing here names a schema, and nothing needs to: the two scopes are reached through two
- * controllers whose axes already agree with the rule. {@code /api/v1/me/documents} names no
- * organization, so the request stays on the platform axis and resolves {@code platform.document};
- * {@code /api/v1/orgs/{orgId}/documents} pins that tenant and resolves theirs. There is no read that
- * spans both — a personal document is never listed beside an org's, by design — so the routing is the
- * {@code search_path}, which is the form that keeps working when a tenant is promoted to its own
- * schema. The predicates in {@code DocumentService} ({@code orgId is null and ownerPersonId = ?}) are
+ * <p>Nothing here names a schema, and nothing needs to: the routing is the {@code search_path}, which
+ * is the form that keeps working when a tenant is promoted to its own schema.
+ * {@code /api/v1/orgs/{orgId}/documents} pins that tenant at the edge and resolves theirs;
+ * {@code /api/v1/documents} pins PLATFORM in every handler and resolves {@code platform.document}.
+ *
+ * <p><b>That second pin is explicit and must stay explicit.</b> An earlier version of this note said
+ * the personal surface "names no organization, so the request stays on the platform axis" — which is
+ * false twice over: the route is {@code /api/v1/documents}, and {@code CurrentUserFilter} pins the
+ * caller's org whenever their token names exactly one, whatever the route. A single-org member's
+ * personal upload therefore landed in that tenant's schema with a null {@code org_id}, where an
+ * extraction would have carried it out with the organization. {@code PersonalDocumentController}'s
+ * javadoc has the full failure list; do not remove the pins on the argument that the path has no
+ * {@code orgId} in it.
+ *
+ * <p>There is no read that spans both homes — a personal document is never listed beside an org's, by
+ * design. The predicates in {@code DocumentService} ({@code orgId is null and ownerPersonId = ?}) are
  * still load-bearing: they are what stops one person's personal documents being served to another.
  */
 @Entity

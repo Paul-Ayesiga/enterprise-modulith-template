@@ -482,7 +482,7 @@ flowchart TB
         <span class="fail"><span class="pill store">Postgres · SMTP</span></span></div>
       <div class="connector">│ scheduled, cluster-locked</div>
       <div class="stagebox"><span class="ord">jobs</span>
-        <span class="what"><b>Scheduler</b> — DB lock rows make every job single-flight across instances (observable at <code>/admin/scheduler/locks</code>): trial expiry (TRIALING → PAUSED), retention purges (webhook deliveries, exchange jobs, soft-deleted rows — per-org overrides honored, legal holds always skipped), billing reconcile.</span>
+        <span class="what"><b>Scheduler</b> — DB lock rows make every job single-flight across instances (observable at <code>/admin/scheduler/locks</code>): trial expiry (TRIALING → PAUSED), retention purges (webhook deliveries, exchange jobs, soft-deleted rows — per-org overrides honored, legal holds always skipped), billing reconcile. Every tenant-axis job runs <b>once per tenant home</b> — see the bounded fan-out under Tenancy.</span>
         <span class="fail"><span class="pill store">Postgres locks</span></span></div>
     </div>
   </section>
@@ -754,6 +754,8 @@ flowchart TB
           <tr><td>metrics</td><td>lookups counted by outcome (hit-L1 / hit-L2 / miss / degraded) per cache name</td></tr>
           <tr><td>L2 encoding</td><td>values normalized on the L2 write so numeric/value types survive the JSON round-trip (the bug class this design retired)</td></tr>
           <tr><td>consumers</td><td>entitlement resolver (plan gates), permission resolution, settings/flags — the reads on every request's hot path</td></tr>
+          <tr><td>tenancy</td><td>every cache name is declared <b>GLOBAL</b> or <b>TENANT</b>; a TENANT cache prefixes the tenant's own schema name into the key at <em>both</em> levels and refuses to answer with no tenant declared. An unclassified name cannot be created at all</td></tr>
+          <tr><td>promotion</td><td>moving a tenant to its own schema invalidates answers without changing a row — a cache hit runs no query, so nothing else would notice. One call at the flip drops what the tenant resolved under its old schema: the permission sets (cleared, since their keys can carry a sweep's shared axis) and its entitlements. The platform-tier caches are left alone, by a written verdict per cache that a test enforces</td></tr>
         </table></div>
     </div>
   </section>
@@ -840,7 +842,7 @@ flowchart TB
     </div>
     <div class="chain">
       <div class="stagebox"><span class="ord">org</span>
-        <span class="what"><code>search_path = tenant_pool, ext</code> — every tenant is pooled today and separated inside that schema by the <code>org_id</code> predicate every tenant query still carries. A promoted tenant gets <code>t_&lt;32hex&gt;, ext</code> instead, derived from <code>organization.id</code> with <b>zero database reads</b>; that is the only difference, which is why promotion is a placement flip rather than a code change. Tenant tables are named <b>unqualified</b> so the path can decide.</span>
+        <span class="what"><code>search_path = tenant_pool, ext</code> for a pooled tenant, <code>t_&lt;32hex&gt;, ext</code> for one with a schema of its own — and <b>the placement registry is what chooses</b>. <code>TenantRoutes</code> reads <code>platform.tenant_placement</code> and memoizes the answer per organization, so the borrow path costs a map lookup rather than a round trip; the schema NAME is still derived from <code>organization.id</code> with zero reads, so nothing in the binary ever holds a silo name. That is why promotion is a placement flip and not a deployment. Tenant tables are named <b>unqualified</b> so the path can decide.</span>
         <span class="fail"><span class="pill store">tenant tables, bare</span></span></div>
       <div class="stagebox"><span class="ord">platform</span>
         <span class="what"><code>search_path = platform, ext</code> — operators, catalogues, the person graph, the framework tables. <code>platform</code> is on <em>no</em> tenant's path, so a platform table is only ever reached by being NAMED (<code>platform.person</code>) — which is exactly what lets a tenant-pinned request read one without leaving its own axis. A build gate fails the compile when a mapping or a SQL literal gets that backwards in either direction.</span>
@@ -852,6 +854,94 @@ flowchart TB
         <span class="what"><b>Seven tables live in both schemas</b> — <code>audit_log</code>, <code>document</code>, <code>exchange_job</code>, <code>exchange_job_error</code>, <code>integration</code>, <code>integration_setting</code>, <code>maintenance_window</code>. Same DDL, two homes; <code>org_id</code> decides which copy a row belongs to — non-null is the tenant's and travels with it, null is the platform's and stays. Both addresses are legal for these and mean <em>different rows</em>, which is where the split's one visible API consequence lands: <code>GET /api/v1/audit</code> with no <code>org</code> is now the platform trail, not everything.</span>
         <span class="fail"><span class="pill">1 table · 2 homes</span></span></div>
     </div>
+    <p class="sec-sub" style="margin-top:18px"><b>Promotion — moving a tenant between those schemas, reversibly.</b>
+      Operator-initiated only, from <code>docs/runbooks/tenant-promotion.md</code>: there is no route and no threshold.
+      The whole of it is nine steps, and the interesting half is the <em>freeze</em>, because there are three of them and
+      one is not enough — a RESTRICT <code>maintenance_window</code> gates HTTP org paths <b>only</b>, and every durable
+      queue in this system claims its work outside any request.</p>
+    <div class="chain">
+      <div class="stagebox"><span class="ord">1</span>
+        <span class="what"><b>Freeze, three ways.</b> An org-scoped RESTRICT <code>maintenance_window</code> (503 at
+          <code>MaintenanceFilter</code>, reads still pass) + a row in <code>platform.tenant_freeze</code>, which
+          <code>QueueSignals.claim</code> refuses to hand out so all three queues stand off that tenant +
+          <code>tenant_placement.state = PROVISIONING</code>, which takes it out of every fan-out sweep. The freeze row
+          carries a <b>deadline</b>, so a promoter that is killed pauses the tenant for minutes, not forever.</span>
+        <span class="fail"><span class="pill store">3 locks · 1 deadline</span></span></div>
+      <div class="stagebox"><span class="ord">2</span>
+        <span class="what"><b>Create, migrate, copy.</b> <code>t_&lt;32hex&gt;</code> is created and run through the real
+          tenant migration sequence — the same call a silo signup and the fleet runner make — then one transaction copies
+          the org's rows, parents before children. The plan is derived from the catalogue, never a hand-kept list: the
+          five tables with no <code>org_id</code> of their own reach it through their parent's foreign key, and a table
+          that could reach it neither way refuses to plan at all.</span>
+        <span class="fail"><span class="pill store">INSERT … SELECT</span></span></div>
+      <div class="stagebox"><span class="ord">3</span>
+        <span class="what"><b>Verify — counts AND checksums, in a NEW transaction.</b> A count cannot see a row that
+          <em>changed</em>, nor one row deleted and another inserted. Both sides are fingerprinted from one snapshot taken
+          <em>after</em> the copy committed — inside the copy's own transaction the comparison would be true by
+          construction and prove nothing. A mismatch means a writer got past the freeze, and it <b>aborts</b>: nothing
+          is flipped and the tenant is still serving from the schema it has always served from.</span>
+        <span class="fail"><span class="pill bad">abort before the flip</span></span></div>
+      <div class="stagebox"><span class="ord">4</span>
+        <span class="what"><b>Flip, evict, delete, unfreeze.</b> One compare-and-swap statement moves
+          <code>schema_name</code>, <code>schema_version</code> and <code>state</code> together, so no reader can ever see
+          a new home beside a stale state. Caches drop after the flip and before the unfreeze; only then are the source
+          rows removed — and only if the source still matches what was verified. Between the eviction and the delete the
+          freeze is held one more <code>app.tenancy.route-ttl</code>: the flip drops the promoting pod's memoized route
+          and <em>no other one's</em>, so every replica has to re-read the registry before the rows it may still be
+          addressing can go. <b>Demotion is the same steps with the schemas swapped</b>, which is what makes hop 0→1
+          reversible rather than nominally reversible.</span>
+        <span class="fail"><span class="pill ok">reversible</span></span></div>
+    </div>
+    <p class="sec-sub"><b>The ceiling is 200 silos per database</b>, refused in the promoter and configurable
+      (<code>app.tenancy.promotion.max-silos</code>). Measured, not chosen: ~0.5–0.66 ms of query planning per UNION
+      branch that never amortizes, and 2.004 lock entries per branch against ~6,400 cluster-wide slots — so 200 costs
+      ~130 ms of planning and ~403 locks per fan-out transaction. The fan-out deliberately does <em>not</em> enforce it;
+      truncating a sweep's home list would silently stop doing the 201st tenant's work.</p>
+
+    <p class="sec-sub" style="margin-top:18px"><b>Bounded fan-out — what every background sweep does once a second
+      schema exists.</b> Nine surfaces used to be one statement against <code>tenant_pool</code>, because one schema
+      held every tenant: the soft-delete purge, SLA escalation, the webhook and exchange retention purges, exchange
+      schedule firing, trial expiry, dunning, the usage export, and the platform ticket queue with its single-ticket
+      admin routes. The day one org is promoted, each of them silently stops doing that org's work — no exception, no
+      log line, no metric moves. <code>TenantFanOut</code> is the one place that answers <em>which schemas</em>, and
+      <code>TenantHomeSweep</code> is the loop every job runs over the answer.</p>
+    <div class="chain">
+      <div class="stagebox"><span class="ord">1</span>
+        <span class="what"><b>One statement per home, never one UNION over the homes.</b> Lock entries are released
+          with each home's own statement, so the ~6,400-slot ceiling is never approached; the planner sees the same
+          small cacheable query once per home instead of a 200-branch text that defeats both the JDBC statement cache
+          and Postgres' plan cache. The cost traded is one round trip per home.</span>
+        <span class="fail"><span class="pill store">O(homes) round trips</span></span></div>
+      <div class="stagebox"><span class="ord">2</span>
+        <span class="what"><b>The bound is TIME, not branch count.</b> Every fanned-out job now carries a run deadline
+          derived from its ShedLock lease — a job that took a lease sized for one schema and then multiplied its work
+          by the home count is not slow, it is <em>two replicas on the same rows</em>. Within a run the remaining
+          budget is divided by the remaining homes, and <code>tenant_pool</code> takes half of it before the silos
+          share the rest: it holds every unpromoted tenant, so an equal slice would starve the fleet to serve the
+          exception.</span>
+        <span class="fail"><span class="pill">deadline &lt; lease</span></span></div>
+      <div class="stagebox"><span class="ord">3</span>
+        <span class="what"><b>The rotation resumes, and it advances past a failure.</b> A run cut at home 40 of 200
+          continues at 41 next time rather than restarting at the head — otherwise the tail is never swept at all,
+          quietly, while the log reports a healthy run. One unreachable schema is logged, skipped, and still fails the
+          run at the end (<em>loud AND complete</em>), and the cursor moves past it so a permanently broken silo cannot
+          park the rotation on itself.</span>
+        <span class="fail"><span class="pill ok">resumable</span></span></div>
+      <div class="stagebox"><span class="ord">4</span>
+        <span class="what"><b>A frozen tenant is withheld.</b> A silo whose org holds a <code>tenant_freeze</code>
+          drops out of the home list; a frozen tenant that still lives in <code>tenant_pool</code> stands that whole
+          schema down, because the sweep's unit is a schema and the freeze's is a tenant. Affordable only because every
+          consumer resumes — the pool is deferred to the next run, sixty seconds later for escalation and one night
+          against a thirty-day window for the purges.</span>
+        <span class="fail"><span class="pill bad">no write mid-copy</span></span></div>
+    </div>
+    <p class="sec-sub">The platform ticket queue is the one surface that is a <em>read</em> rather than a sweep: each
+      home is scrolled from the SAME keyset cursor and the pages are merged in order, with the next cursor taken from
+      the winning branch's own window. The tie-break compares uuids UNSIGNED, the way Postgres does and the way
+      <code>UUID.compareTo</code> does not — get that wrong and pages skip or repeat a row, but only when two
+      timestamps collide. §5.1's trigger for replacing the whole shape with <code>platform.ticket_index</code> is 50
+      silos, which is where the fan-out starts warning.</p>
+
     <p class="sec-sub"><b>Why, in one line:</b> once a tenant has been promoted into its own schema,
       <code>pg_dump -n t_&lt;hex&gt;</code> is a complete, restorable tenant — no <code>WHERE org_id = ?</code> to get wrong and
       no dependency-ordered extraction script to forget a table in. Lifting a tenant out becomes a runbook step instead of a

@@ -30,11 +30,17 @@ import java.util.TreeSet;
  * cache fails the build until it is classified here, and a name that stops being used fails it until the
  * stale line goes.
  *
- * <h2>Adding a cache</h2>
+ * <h2>Adding a cache: two declarations, not one</h2>
  *
  * <p>Declare it here first. {@link CacheScope#TENANT} is the answer unless the value is genuinely one
  * answer for the whole installation — see {@link CacheScope#GLOBAL} for the two shapes that qualify —
  * and a {@code GLOBAL} line owes the reader the argument, next to it, in the comment.
+ *
+ * <p>Then declare what a <b>promotion</b> does to it, in {@link TenantPromotionCaches} (ADR 0010 §6 hop
+ * 0→1). The two questions are genuinely different — the scope says which tenant an entry belongs to,
+ * the promotion verdict says whether that entry is still TRUE once the tenant's rows live in a different
+ * schema — and a cache classified for one and not the other is the entry a promotion silently keeps
+ * serving from the old schema. {@code TenantPromotionEvictionTest} fails the build until both exist.
  */
 public final class CacheRegistry {
 

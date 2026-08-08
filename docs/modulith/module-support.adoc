@@ -5,6 +5,7 @@
 |Spring components
 |* `u.c.s.s.SupportDesk` (via `u.c.s.s.internal.SupportDeskImpl`)
 |Bean references
-|* `u.c.s.n.Notifications` (in Notification)
+|* `u.c.s.s.tenancy.TenantFanOut` (in Shared Kernel)
+* `u.c.s.n.Notifications` (in Notification)
 * `u.c.s.s.audit.AuditLog` (in Shared Kernel)
 |===

@@ -16,6 +16,7 @@ import org.springframework.web.multipart.MultipartFile;
 import ug.co.smsone.shared.error.ForbiddenException;
 import ug.co.smsone.shared.security.CurrentUser;
 import ug.co.smsone.shared.security.PlatformRole;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.shared.web.CursorPageRequest;
 import ug.co.smsone.shared.web.ResourceObject;
 import ug.co.smsone.shared.web.WindowedResult;
@@ -24,6 +25,38 @@ import ug.co.smsone.shared.web.WindowedResult;
  * A person's personal documents (no org). The cross-person reach mirrors the files tiering by blast
  * radius: {@code platform-support} may read another person's document, destroying one takes
  * {@code platform-admin}.
+ *
+ * <h2>Every handler here pins the PLATFORM axis, and it is not decoration</h2>
+ *
+ * <p>{@code document} is a split table (ADR 0010 §2 row 6) whose entity names no schema, so the
+ * {@code search_path} decides which copy a statement reaches — and {@code CurrentUserFilter} pins the
+ * caller's organization whenever their token names exactly one, <b>whatever the route</b>. This surface
+ * is not under {@code /api/v1/orgs/{orgId}/}, but the overwhelmingly common caller — a human who belongs
+ * to a single org — still arrives on that org's axis. Unpinned, {@code POST /api/v1/documents} therefore
+ * writes a row with a NULL {@code org_id} into that tenant's schema: the row whose org disagrees with
+ * its schema that ADR 0010 §1 calls the worst failure this design can produce. Four things follow, all
+ * silent:
+ *
+ * <ul>
+ *   <li><b>It travels.</b> {@code pg_dump -n t_<hex>} is the extraction (§6), and it takes the schema
+ *       whole — so a member's private documents leave with an organization that never owned them, which
+ *       is the one thing §2.2 says must not happen. The bytes do not follow (their key is
+ *       {@code doc/u/<personId>/}, not in the bundle's prefixes), so the extracted deployment gets rows
+ *       pointing at objects it does not have.</li>
+ *   <li><b>Promotion loses them.</b> The copy plan selects {@code where org_id = ?}, so null-org rows
+ *       stay behind in {@code tenant_pool} while the reads move to {@code t_<hex>}.</li>
+ *   <li><b>A second organization hides them.</b> A person seated in two orgs resolves to NO org
+ *       (§3.3), lands on the platform axis, and cannot see what they uploaded from their first one.</li>
+ *   <li><b>The trail splits.</b> {@code AuditLogImpl} routes on the row's own org, so
+ *       {@code document.registered} for a null org goes to {@code platform.audit_log} while the document
+ *       went to the tenant's copy.</li>
+ * </ul>
+ *
+ * <p>The pin wraps the service call rather than living inside {@code DocumentService}, which is
+ * {@code @Transactional}: the schema is chosen when the connection is borrowed and the transaction has
+ * already borrowed one, which is why {@code TenantContext.set} throws in there. Same shape and same
+ * reason as {@code AdminMaintenanceController.schedule}, which is the mirror image of this bug —
+ * an org's row written from a platform-axis request.
  */
 @RestController
 @RequestMapping("/api/v1/documents")
@@ -42,23 +75,31 @@ class PersonalDocumentController {
     @ResponseStatus(HttpStatus.CREATED)
     ResourceObject upload(@RequestParam("file") MultipartFile file, CurrentUser user) {
         UUID owner = requirePerson(user);
-        var meta = shared.store(file, "u/" + owner, null, owner);
-        return OrgDocumentController.toResource(documents.requirePersonal(documents.register(meta)));
+        // The whole handler rather than just the register. Only register/requirePersonal touch a table,
+        // but one span and one finally is what keeps the pin next to the write it protects — a pin that
+        // wraps half a handler is one somebody narrows later without noticing which half mattered.
+        return TenantContext.callAsPlatform(() -> {
+            var meta = shared.store(file, "u/" + owner, null, owner);
+            return OrgDocumentController.toResource(documents.requirePersonal(documents.register(meta)));
+        });
     }
 
     @GetMapping
     @Operation(summary = "List your personal documents")
     WindowedResult<ResourceObject> list(CurrentUser user, CursorPageRequest page) {
-        return WindowedResult.of(documents.listPersonal(requirePerson(user), page), page,
-                OrgDocumentController::toResource);
+        UUID owner = requirePerson(user);
+        return TenantContext.callAsPlatform(() -> WindowedResult.of(documents.listPersonal(owner, page),
+                page, OrgDocumentController::toResource));
     }
 
     @GetMapping("/{id}")
     @Operation(summary = "Download a personal document",
             description = "Owner, or platform-support across users. 302 to a presigned URL.")
     ResponseEntity<Void> download(@PathVariable UUID id, CurrentUser user) {
-        Document document = documents.requirePersonal(id);
+        Document document = TenantContext.callAsPlatform(() -> documents.requirePersonal(id));
         requireOwnerOr(document, user, PlatformRole.SUPPORT);
+        // Outside the pin deliberately: presigning is local crypto over a key, and the existence probe
+        // is the object store. Neither reads a table, so neither has an axis to get wrong.
         return ResponseEntity.status(HttpStatus.FOUND)
                 .location(OrgDocumentController.toUri(documents.downloadUrl(document))).build();
     }
@@ -68,9 +109,13 @@ class PersonalDocumentController {
             description = "Owner, or platform-admin across users — destructive, so the higher tier.")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     void delete(@PathVariable UUID id, CurrentUser user) {
-        Document document = documents.requirePersonal(id);
-        requireOwnerOr(document, user, PlatformRole.ADMIN);
-        documents.delete(document);
+        TenantContext.runAsPlatform(() -> {
+            Document document = documents.requirePersonal(id);
+            requireOwnerOr(document, user, PlatformRole.ADMIN);
+            // Soft-deletes the row AND writes its audit entry; both belong to the platform copy, which
+            // is the same span that found the row.
+            documents.delete(document);
+        });
     }
 
     /**

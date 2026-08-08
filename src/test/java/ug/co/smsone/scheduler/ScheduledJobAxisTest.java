@@ -125,11 +125,12 @@ class ScheduledJobAxisTest {
             if (declared == null) {
                 continue; // already failed, loudly, in the gate above
             }
-            Set<String> pins = tenantContextCallsIn(job.getOwner());
+            Set<String> pins = pinsTakenIn(job.getOwner());
             for (JobAxis.Axis axis : declared.value()) {
-                if (pins.stream().noneMatch(axis.pinningMethods()::contains)) {
+                if (!pinsAxis(pins, axis)) {
                     mismatches.put(job.getFullName(), "declares " + axis + " but calls none of "
-                            + new TreeSet<>(axis.pinningMethods()) + " — TenantContext calls found: "
+                            + new TreeSet<>(axis.pinningMethods()) + " nor "
+                            + new TreeSet<>(axis.delegatedPinners()) + " — pins found: "
                             + new TreeSet<>(pins));
                 }
             }
@@ -159,9 +160,9 @@ class ScheduledJobAxisTest {
             }
             Set<JobAxis.Axis> claimed = EnumSet.noneOf(JobAxis.Axis.class);
             claimed.addAll(Arrays.asList(declared.value()));
-            Set<String> pins = tenantContextCallsIn(job.getOwner());
+            Set<String> pins = pinsTakenIn(job.getOwner());
             for (JobAxis.Axis axis : JobAxis.Axis.values()) {
-                boolean pinned = pins.stream().anyMatch(axis.pinningMethods()::contains);
+                boolean pinned = pinsAxis(pins, axis);
                 if (pinned && !claimed.contains(axis)) {
                     undeclared.put(job.getFullName(),
                             "pins " + axis + " (" + new TreeSet<>(pins) + ") but declares only " + claimed);
@@ -223,14 +224,32 @@ class ScheduledJobAxisTest {
                 .isEmpty();
     }
 
-    /** Names of {@link TenantContext} methods this class calls, anywhere in its own body. */
-    private static Set<String> tenantContextCallsIn(JavaClass type) {
+    /**
+     * Every pin this class takes, direct or delegated: bare {@link TenantContext} method names for the
+     * former, {@code <owner>#<method>} for the latter.
+     *
+     * <p>Both shapes are needed because Phase 5's fan-out moved the {@code runAs} call out of eight jobs
+     * and into {@code TenantHomeSweep.over}, which pins each home in turn. Recognising only the direct
+     * form would have made those eight look axis-less and this gate would have had to be deleted or
+     * defanged — which is the outcome worth avoiding, since it is the gate that caught three jobs
+     * declaring an axis they did not run on. Which helpers count is declared on {@code JobAxis.Axis}
+     * beside the direct names, so there is one mapping and not two.
+     */
+    private static Set<String> pinsTakenIn(JavaClass type) {
         Set<String> called = new LinkedHashSet<>();
         for (JavaMethodCall call : type.getMethodCallsFromSelf()) {
-            if (TENANT_CONTEXT.equals(call.getTargetOwner().getFullName())) {
+            String owner = call.getTargetOwner().getFullName();
+            if (TENANT_CONTEXT.equals(owner)) {
                 called.add(call.getTarget().getName());
             }
+            called.add(owner + "#" + call.getTarget().getName());
         }
         return called;
+    }
+
+    /** Whether this class takes {@code axis}'s pin, in either shape. */
+    private static boolean pinsAxis(Set<String> pins, JobAxis.Axis axis) {
+        return pins.stream().anyMatch(axis.pinningMethods()::contains)
+                || pins.stream().anyMatch(axis.delegatedPinners()::contains);
     }
 }

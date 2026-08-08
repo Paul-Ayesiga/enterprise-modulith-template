@@ -17,6 +17,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import ug.co.smsone.shared.retention.RetentionScope;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
 /**
@@ -42,8 +43,12 @@ class RetentionOverrideApiTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.data.attributes.scope").value("EXCHANGE_JOB"))
                 .andExpect(jsonPath("$.data.attributes.retentionDays").value(365));
 
-        // The shared port (what the retention jobs consult) now carries this org's override.
-        assertThat(overrides.daysByScope(RetentionScope.EXCHANGE_JOB)).containsEntry(orgId, 365);
+        // The shared port (what the retention jobs consult) now carries this org's override — read on
+        // the org's OWN home, because that is where the retention jobs read it from since ADR 0010
+        // Phase 5. daysByScope declares no axis of its own precisely so a fan-out can decide which home
+        // it is answering for; asserting it from the harness's PLATFORM pin would ask the wrong schema.
+        assertThat(TenantContext.callAs(orgId, () -> overrides.daysByScope(RetentionScope.EXCHANGE_JOB)))
+                .containsEntry(orgId, 365);
 
         mockMvc.perform(get("/api/v1/admin/orgs/{orgId}/retention", orgId).with(admin()))
                 .andExpect(status().isOk())
@@ -57,7 +62,8 @@ class RetentionOverrideApiTest extends AbstractIntegrationTest {
         mockMvc.perform(delete("/api/v1/admin/orgs/{orgId}/retention/{scope}", orgId, "exchange-job")
                         .with(admin()))
                 .andExpect(status().isNoContent());
-        assertThat(overrides.daysByScope(RetentionScope.EXCHANGE_JOB)).doesNotContainKey(orgId);
+        assertThat(TenantContext.callAs(orgId, () -> overrides.daysByScope(RetentionScope.EXCHANGE_JOB)))
+                .doesNotContainKey(orgId);
     }
 
     private static RequestPostProcessor admin() {

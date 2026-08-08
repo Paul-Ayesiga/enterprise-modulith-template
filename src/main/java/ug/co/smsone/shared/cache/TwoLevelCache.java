@@ -45,11 +45,26 @@ import ug.co.smsone.shared.tenancy.TenantSchemas;
  *
  * <p><b>The prefix is the AXIS's tenant, not the entry's.</b> The cache sees a key, never the org a
  * value is about, so a caller that pins one tenant and asks about another namespaces its entries under
- * the pin. The one production caller that does this is the pooled-probe sweep in
- * {@code ExchangeScheduleFiringJob} ({@code new UUID(0L, 0L)} — see the idiom's note there), which is
- * why {@code org-permissions} keeps the organization inside its key: under a probe axis the key is what
- * separates two orgs, and every eviction of that cache is a {@code clear()} that spans all prefixes
- * anyway. Phase 5 turns the probe into a real per-tenant loop and the compensation stops being needed.
+ * the pin. That is not a transitional wart: ADR 0010 §3.4 fixes the background fan-out at one axis per
+ * HOME rather than one per tenant (§1 and §5 measure why per-tenant is unshippable at 5,000 orgs), and
+ * {@code TenantHome.pool()} is that axis for the shared schema — a uuid naming no organization, covering
+ * every unpromoted tenant there is. So there is permanently a class of caller that resolves many orgs
+ * under one prefix, {@code ExchangeScheduleFiringJob} being the one doing it today. Two consequences,
+ * both load-bearing:
+ *
+ * <ul>
+ *   <li>{@code org-permissions} keeps the organization inside its key. Under a home's axis that
+ *       component is the ONLY thing separating two tenants' answers, and the answer is an authorization
+ *       decision — see {@code PermissionResolver}'s note, which closes the question for good.</li>
+ *   <li>{@code org-entitlements} does not need one, because {@code TenantCacheKeys.forThisTenant}
+ *       <em>throws</em> unless the axis is the org being asked about — the option a per-member cache
+ *       does not have.</li>
+ * </ul>
+ *
+ * <p>The eviction side follows from the same fact: an entry written under a home's axis cannot be
+ * reached by a key an outside caller can name, so every eviction of {@code org-permissions} is a
+ * {@link #clear()} that spans all prefixes. {@link TenantPromotionCaches} is where that is written down
+ * per cache, for the one event that invalidates answers without changing any row: a promotion.
  */
 class TwoLevelCache implements Cache {
 
@@ -247,9 +262,10 @@ class TwoLevelCache implements Cache {
 
     /**
      * Drops every entry of every tenant. Deliberately needs no axis: it names no key, it can only
-     * over-evict, and its callers are after-commit listeners that have none. Coarse but correct beats
-     * precise and wrong — and for {@code org-permissions} it is also what makes a probe-axis entry
-     * (see the class note) reachable by an eviction that does not know the prefix it was written under.
+     * over-evict, and its callers have none — after-commit listeners, and {@link TenantPromotionCaches}
+     * on a promotion's placement flip. Coarse but correct beats precise and wrong; and for
+     * {@code org-permissions} it is also the only eviction that reaches an entry written under a HOME's
+     * axis (see the class note), whose prefix no outside caller can name.
      */
     @Override
     public void clear() {

@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import ug.co.smsone.shared.tenancy.TenantRoutes;
 
 /**
  * Makes a tenant's home real, and — this is the part worth reading — makes it real <strong>before the
@@ -26,10 +27,10 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  *
  * <p><strong>The rule, in one line: a tenant is never ANNOUNCED before its schema can serve it.</strong>
  *
- * <p>Under the default {@link PlacementPolicy#POOLED} that rule costs nothing — {@code tenant_pool}
- * already exists, so there is nothing to build and nothing to order, and the registration transaction
- * is exactly what it always was. §4.3 calls this the strongest practical argument for the hybrid.
- * Under {@link PlacementPolicy#SILO_PER_ORG} the rule has teeth: the schema is named after the tenant,
+ * <p>Under {@link PlacementPolicy#POOLED} that rule costs nothing — {@code tenant_pool} already exists,
+ * so there is nothing to build and nothing to order, and the registration transaction is exactly what
+ * it always was. §4.3 calls this the strongest practical argument for the hybrid.
+ * Under the default {@link PlacementPolicy#SILO_PER_ORG} the rule has teeth: the schema is named after the tenant,
  * so the tenant's row must exist first, which is what {@link PlacementState#PROVISIONING} is for. The
  * transition out of it is explicit and happens in the announcing transaction
  * ({@link TenantPlacements#announce}) — never in a listener, which is the shape that reintroduces the
@@ -138,6 +139,13 @@ public class TenantProvisioner {
                     orgId, home, failure);
             throw new TenantProvisioningException(failure);
         }
+        // This tenant's home has just been decided, and under a silo policy it is NOT the pool. Anything
+        // that touched this org's axis earlier in the same process — a re-adopt, a retried signup —
+        // would be holding a memoized route to tenant_pool, and the announcement is about to release
+        // three after-commit listeners that write tenant-tier rows on that axis. Dropping the memo here
+        // is what makes "the schema is ready before the tenant is announced" true of the ROUTE as well
+        // as of the schema. Costs one map removal on a path that runs once per tenant.
+        TenantRoutes.forget(orgId);
         return placements.find(orgId).orElseThrow(() -> new IllegalStateException(
                 "placement for " + orgId + " vanished between being reserved and being read back"));
     }

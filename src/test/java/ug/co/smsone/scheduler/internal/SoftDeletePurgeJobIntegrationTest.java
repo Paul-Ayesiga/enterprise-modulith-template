@@ -78,6 +78,14 @@ class SoftDeletePurgeJobIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private EntityManagerFactory entityManagerFactory;
 
+    /**
+     * The real fan-out, handed to the hand-built job below so the only thing differing from the
+     * autowired bean is the clock. With no silo placed it answers {@code [tenant_pool]}, which is what
+     * makes this test's arithmetic about the PLATFORM pass unchanged by Phase 5.
+     */
+    @Autowired
+    private ug.co.smsone.shared.tenancy.TenantFanOut fanOut;
+
     private record Seeded(String table, UUID id) {
     }
 
@@ -400,7 +408,7 @@ class SoftDeletePurgeJobIntegrationTest extends AbstractIntegrationTest {
         // The third read — the check before the SECOND visited table — lands past the platform budget
         // (RUN_DEADLINE / 3 = 8m20s), so exactly one table is purged per run.
         BudgetClock clock = new BudgetClock(2, Duration.ofMinutes(10));
-        SoftDeletePurgeJob resumable = new SoftDeletePurgeJob(jdbc, properties, clock, meters, tables);
+        SoftDeletePurgeJob resumable = new SoftDeletePurgeJob(jdbc, properties, clock, meters, tables, fanOut);
 
         resumable.purgeExpiredSoftDeletes();
 

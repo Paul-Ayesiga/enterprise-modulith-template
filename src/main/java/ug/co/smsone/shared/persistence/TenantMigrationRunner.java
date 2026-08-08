@@ -123,6 +123,45 @@ public final class TenantMigrationRunner {
     private static final int MAX_RECORDED_ERROR = 2000;
 
     /**
+     * <strong>The row this pass does not own, and therefore does not touch — in either direction.</strong>
+     *
+     * <p>Two different writers produce a {@code FAILED} placement and they mean different things.
+     * <em>This</em> runner marks a SCHEMA that would not migrate: every tenant living in it was serving
+     * a moment ago and will serve again as soon as a later pass succeeds, which is what
+     * {@link #CLEAR_PLACEMENT}'s rescue is for. {@code TenantPlacements.markFailed} marks a TENANT whose
+     * schema was never built — a signup whose Flyway pass failed — and that row carries an extra meaning
+     * this runner cannot see: <strong>never announced</strong>. Rescuing one of those to {@code ACTIVE}
+     * is not a repair, it is a permanent wedge: {@code TenantPlacements.announce} only publishes
+     * {@code OrganizationRegistered} for the call that transitions a row INTO {@code ACTIVE}, so a row
+     * already sitting there can never be announced, and that tenant has no trial, no billing account and
+     * no search document forever, behind a registry row that reads perfectly healthy.
+     *
+     * <p><strong>The shipped default is what made this load-bearing.</strong> Under
+     * {@code PlacementPolicy.POOLED} a signup ran no DDL at all — a pooled tenant goes straight to
+     * {@code ACTIVE} in {@code announce}, and this shape could not exist. Since {@code silo-per-org}
+     * became the default, EVERY signup creates a schema and runs a fresh tenant sequence, so one transient
+     * lock, one full disk or one concurrent DDL produces exactly this row on the ordinary signup path.
+     *
+     * <p><strong>{@code schema_version} is the discriminator</strong> because it is the one column whose
+     * null the two writers do not share. {@code reserve} inserts the row with a null version and only
+     * {@code recordMigrated} stamps one — AFTER a successful migrate — so a provisioning failure is
+     * always {@code FAILED} with no version, while a schema this runner failed on is at a real version it
+     * reads back and writes (see {@link #FAIL_PLACEMENT}).
+     *
+     * <p><strong>And it is on both statements, which is the part a rescue-only guard gets wrong.</strong>
+     * Guarding only the rescue holds until the next FAILING pass over that schema stamps a version onto
+     * the row — and from then on it looks exactly like one of this runner's own, so the pass after that
+     * rescues it and the wedge is back, one release later. Excluding the row from both writes keeps the
+     * marker durable: nothing but provisioning's retry, or {@code announce} itself, moves it.
+     *
+     * <p>The cost is one shape this pass will not heal: a tenant marked {@code FAILED} with no recorded
+     * version stays in the unhealthy-fleet query until something announces it. That is the honest reading
+     * — nothing has proved that tenant was ever announced — and it is loud rather than silent.
+     */
+    private static final String NOT_A_PROVISIONING_FAILURE =
+            " and not (state = 'FAILED' and schema_version is null)";
+
+    /**
      * Every pooled organization has a placement row naming {@code tenant_pool}, so one statement per
      * schema covers the whole pool. Deliberately an UPDATE and never an UPSERT: rows are inserted by
      * provisioning (ADR 0010 §4.3), and a migration runner that invented placement rows would be
@@ -134,6 +173,10 @@ public final class TenantMigrationRunner {
      * {@code FAILED} to be reversible. Setting {@code ACTIVE} unconditionally would overwrite whatever
      * the registry means by a healthy state — the promotion lifecycle lives in this column too — so
      * {@code ACTIVE} is written only over a {@code FAILED} this runner itself put there.
+     *
+     * <p>{@link #NOT_A_PROVISIONING_FAILURE} is what "itself put there" is decided by. Read it before
+     * changing either statement; it is the difference between a repair and a tenant that can never be
+     * announced.
      */
     private static final String CLEAR_PLACEMENT =
             "update platform.tenant_placement"
@@ -141,21 +184,30 @@ public final class TenantMigrationRunner {
                     + "     last_error = null,"
                     + "     state = case when state = 'FAILED' then 'ACTIVE' else state end,"
                     + "     updated_at = now()"
-                    + " where schema_name = ?";
+                    + " where schema_name = ?"
+                    + NOT_A_PROVISIONING_FAILURE;
 
     /**
      * {@code schema_version} is written on the failure path too, and that is the point of it. A
      * transactional migration that fails rolls back whole, so the schema really is at V(n−1) and the
      * compiled-in version floor (§4.4) has to be able to read that as a fact rather than infer it from
      * the absence of a value.
+     *
+     * <p><strong>{@code coalesce} rather than a plain assignment</strong>, for the reason V57's column
+     * note states: NULL there means "not yet recorded", never "behind". {@link #historyHead(String)}
+     * answers null for a schema that has never been migrated AND for a head it could not read — it
+     * catches the {@code SQLException} and warns — so a plain write would let one unlucky read erase a
+     * version the floor check depends on, and would turn a serving tenant's row into the
+     * FAILED-with-no-version shape {@link #NOT_A_PROVISIONING_FAILURE} then refuses to rescue.
      */
     private static final String FAIL_PLACEMENT =
             "update platform.tenant_placement"
-                    + " set schema_version = ?,"
+                    + " set schema_version = coalesce(?, schema_version),"
                     + "     last_error = ?,"
                     + "     state = 'FAILED',"
                     + "     updated_at = now()"
-                    + " where schema_name = ?";
+                    + " where schema_name = ?"
+                    + NOT_A_PROVISIONING_FAILURE;
 
     /** Silos are named from {@code organization.id}, so the catalogue can be filtered without the registry. */
     private static final String TENANT_SCHEMAS_IN_CATALOGUE =

@@ -48,6 +48,19 @@ class ArtifactStore {
         }
     }
 
+    /**
+     * {@code exch/o/<orgId>/<jobId>/<fileName>} — an organization's artifacts under its own prefix,
+     * which is what makes them extractable (ADR 0010 §6 item 7) and what keeps two tenants from minting
+     * the same key now that {@code uq_document_storage_key} exists once per schema.
+     *
+     * <p><b>A platform-scoped job has no key here, and that is deliberate rather than unhandled.</b>
+     * {@code exchange_job.org_id} is nullable (V24:11 — null is a platform-scoped handler) and
+     * {@code ExchangeWorker} already routes such a job to the platform axis, but no submit path creates
+     * one today. If one ever does, {@code NewDocument} refuses the {@code exch/o/null/…} this would
+     * produce — loudly, on the first artifact — rather than filing a personal document under a
+     * namespace an extraction reads as an organization's. Give platform artifacts their own namespace
+     * at that point; do not relax the guard.
+     */
     static String artifactKey(UUID orgId, UUID jobId, String fileName) {
         return "exch/o/" + orgId + "/" + jobId + "/" + fileName;
     }

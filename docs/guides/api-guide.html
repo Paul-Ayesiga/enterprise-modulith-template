@@ -523,7 +523,11 @@ GET  /api/v1/me/consents                                            # full histo
   presigned URL; <code>POST /api/v1/files/presign</code> mints a presigned <code>PUT</code>/<code>GET</code> without proxying bytes.</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/documents</span><span class="perm any">any caller</span></div>
   <div class="ep-body"><p>Your personal document catalog (support may read others', admin may delete). The org-scoped equivalent is
-  <a href="#orgmisc">under <code>/orgs/{orgId}/documents</code></a>.</p></div></div>
+  <a href="#orgmisc">under <code>/orgs/{orgId}/documents</code></a>.</p>
+  <p><strong>These belong to you, not to any organization you are in</strong>, and the two catalogs never mix — they are
+  separate stores, so a personal document is invisible to every org listing and stays yours whether you are seated in one
+  organization, several, or none. It follows that they do <em>not</em> travel when an organization is moved onto its own
+  deployment: an extracted tenant's members keep their personal documents on the platform and see an empty list here.</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/permissions</span><span class="perm any">any caller</span></div>
   <div class="ep-body"><p>The fixed permission vocabulary — the exact strings you name when building a role or an API key.</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/settings</span> · <span class="path">/api/v1/feature-flags</span> · <span class="path">/api/v1/translations</span><span class="perm any">any caller</span></div>

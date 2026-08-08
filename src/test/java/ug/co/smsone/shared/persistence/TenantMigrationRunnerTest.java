@@ -300,6 +300,47 @@ class TenantMigrationRunnerTest {
         assertThat(placementState(ghost)).isEqualTo("FAILED");
     }
 
+    /**
+     * <strong>The rescue is scoped to a FAILED this runner can tell it wrote, and under the shipped
+     * {@code silo-per-org} default that scoping is the difference between a repair and a tenant that can
+     * never be announced.</strong>
+     *
+     * <p>Two rows in one schema, so one pass decides both — which is also the shape production has, since
+     * both statements are keyed by {@code schema_name}. The row with a version is a tenant that WAS
+     * serving and whose schema fell behind: bringing it back is what the {@code case} exists for. The row
+     * without one is {@code TenantPlacements.markFailed}'s — a signup whose schema was never built, and
+     * therefore a tenant that was never announced. Flipping THAT to ACTIVE makes
+     * {@code TenantPlacements.announce} decline forever ({@code where state <> 'ACTIVE'} matches
+     * nothing), so the tenant keeps a registry row that reads healthy and never gets a trial, a billing
+     * account or a search document.
+     *
+     * <p>The version assertion on the untouched row is not incidental: it is the marker that has to
+     * survive, or the next failing pass stamps a version onto it and the pass after that rescues it.
+     */
+    @Test
+    void aSuccessfulPassRescuesTheFailuresItWroteAndLeavesAProvisioningFailureAlone() {
+        String silo = scratchSilo();
+        UUID wasServing = placementFor(silo, "FAILED", "9001");
+        UUID neverBuilt = placementFor(silo, "FAILED");
+
+        Manifest manifest = runner(realTenantScripts(), 1).fanOut(Mode.MIGRATE, List.of(silo));
+
+        assertThat(manifest.ok()).describedAs(manifest.report().toString()).isTrue();
+        assertThat(placementState(wasServing))
+                .describedAs("a schema that came back has to take its tenants with it, or nothing ever"
+                        + " leaves the unhealthy-fleet query")
+                .isEqualTo("ACTIVE");
+        assertThat(placementVersion(wasServing)).isEqualTo(TENANT_HEAD);
+        assertThat(placementState(neverBuilt))
+                .describedAs("a migration pass may not announce a tenant nobody announced — ACTIVE here"
+                        + " is what makes announce() decline for the rest of that tenant's life")
+                .isEqualTo("FAILED");
+        assertThat(placementVersion(neverBuilt))
+                .describedAs("and the null is the marker itself: write a version here and the next"
+                        + " failing pass makes this row indistinguishable from the one above")
+                .isNull();
+    }
+
     /** INFO answers the version-skew question ("is 100% of the fleet at N?") and writes nothing at all. */
     @Test
     void infoReportsWithoutTouchingTheSchemaOrTheRegistry() {
@@ -354,15 +395,25 @@ class TenantMigrationRunnerTest {
      * (V57's header). It is also what lets this test assert on the registry without creating an org.
      */
     private UUID placementFor(String schema, String state) {
+        return placementFor(schema, state, null);
+    }
+
+    /**
+     * The same row with a recorded version, which is the only thing that tells a FAILED this runner wrote
+     * from a FAILED {@code TenantPlacements.markFailed} wrote — see
+     * {@code TenantMigrationRunner.NOT_A_PROVISIONING_FAILURE}.
+     */
+    private UUID placementFor(String schema, String state, String version) {
         UUID orgId = UUID.randomUUID();
         try (Connection connection = pool.getConnection();
                 PreparedStatement statement = connection.prepareStatement("""
                         insert into platform.tenant_placement
                             (org_id, schema_name, datasource_name, state, schema_version, last_error, updated_at)
-                        values (?, ?, 'primary', ?, null, null, now())""")) {
+                        values (?, ?, 'primary', ?, ?, null, now())""")) {
             statement.setObject(1, orgId);
             statement.setString(2, schema);
             statement.setString(3, state);
+            statement.setString(4, version);
             statement.executeUpdate();
         } catch (SQLException failure) {
             throw new IllegalStateException("could not seed a placement row", failure);

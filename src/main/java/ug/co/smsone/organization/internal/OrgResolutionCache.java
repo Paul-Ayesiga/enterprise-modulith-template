@@ -27,6 +27,19 @@ import ug.co.smsone.organization.OrganizationDeleted;
  * re-checks {@code organization.status} inside its own (separately evicted) value. A stale entry
  * therefore fails closed — it can only ever name a tenant whose grants resolve to nothing.
  *
+ * <p><b>A promotion does NOT evict this cache, and ADR 0010 §6 has been corrected to say so.</b> That
+ * section originally listed "evict {@code OrgResolutionCache}" among the steps of hop 0→1, on the
+ * reasonable-sounding ground that a tenant changing schema invalidates what was resolved before it. It
+ * does not invalidate this: the entry is the ROUTER'S INPUT, not the router's answer. Both tables behind
+ * it — {@code platform.external_organization} and {@code platform.organization} — are platform-tier and
+ * do not move, {@code organization.id} is unchanged (the silo is named after it), and nothing here
+ * remembers a schema or a datasource. The memo that does — {@code shared.tenancy.TenantRoutes}, which
+ * is what {@code TenantSchemas.searchPathFor} asks on every borrow — is dropped by the flip, and it is
+ * a different thing in a different place. Evicting anyway would cost the whole installation one indexed read per
+ * authenticated request, on every promotion, for no correctness. The verdict lives in
+ * {@code shared.cache.TenantPromotionCaches} with the rest, and it is a property of the VALUE: if this
+ * ever caches anything beyond the organization id, it becomes routing state and the verdict flips.
+ *
  * <p><b>Invalidation, in full — and it is short precisely because the key is immutable:</b>
  * <ul>
  *   <li>absences are NOT cached ({@code unless = "#result == null"}), so a tenant linked for the first

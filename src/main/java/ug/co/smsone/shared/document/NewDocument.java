@@ -11,9 +11,21 @@ import java.util.UUID;
  * <p>The owner is required and is never null: {@code document.owner_person_id} is NOT NULL (V23), and a
  * document belongs to a human even when a job produced it. A machine caller therefore cannot register
  * one — that refusal belongs at the door rather than three layers down as a constraint violation.
+ *
+ * <p><b>{@code orgId} and {@code storageKey} must agree about who owns the bytes</b>, and this record
+ * is where that is checked — see {@link #requireOwnerNamespacedKey}. It is the one door every
+ * {@code document} row goes through, which is what makes the check complete rather than a convention
+ * two controllers happen to keep.
  */
 public record NewDocument(UUID orgId, UUID ownerPersonId, String storageKey, String name,
         String contentType, long sizeBytes, String source) {
+
+    /**
+     * The segment that makes an object key an organization's: {@code o/<orgId>/}. Both live org-scoped
+     * minters produce it — {@code doc/o/<orgId>/…} and {@code exch/o/<orgId>/…} — and this is where it
+     * stops being a habit two controllers happen to share.
+     */
+    private static final String ORG_SEGMENT = "/o/";
 
     public NewDocument {
         if (ownerPersonId == null) {
@@ -25,6 +37,49 @@ public record NewDocument(UUID orgId, UUID ownerPersonId, String storageKey, Str
         source = require(source, 20, "source");
         if (sizeBytes < 0) {
             throw new IllegalArgumentException("NewDocument.sizeBytes must not be negative");
+        }
+        requireOwnerNamespacedKey(orgId, storageKey);
+    }
+
+    /**
+     * An organization's bytes live under {@code o/<orgId>/}; a person's live under a namespace naming
+     * the person and must never claim an org's. Enforced here because this record is the one door every
+     * {@code document} row goes through — {@code Documents.register} takes nothing else — so a future
+     * controller that mints a flat key fails on its first upload rather than at an extraction two years
+     * later.
+     *
+     * <p><b>Why the key has to carry the org when the row already does.</b> ADR 0010 §6 extracts a
+     * tenant's objects BY KEY PREFIX (bundle item 7: the org's bytes under {@code doc/o/<orgId>/} and
+     * {@code exch/o/<orgId>/}), so a key that does not name its org is a key no extraction can find and
+     * no platform can prove it stopped serving. The database stopped being the backstop at Phase 2:
+     * {@code uq_document_storage_key} now exists once per schema, so two tenants can hold the same key
+     * and nothing in Postgres says so. The prefix is what is left.
+     *
+     * <p><b>Why the {@code o/} segment and not the bare id.</b> An org id and a person id are both
+     * UUIDs, so {@code doc/<uuid>/} says nothing about which of the two the uuid is — and the person
+     * namespaces ({@code doc/u/<personId>/}, {@code u/<personId>/}, {@code avatar/p/<personId>/}) are
+     * exactly the ones ADR 0010 §2.2 says must NOT travel with a tenant. One letter is the whole
+     * difference between "extract this" and "this belongs to a human who has other organizations".
+     */
+    private static void requireOwnerNamespacedKey(UUID orgId, String storageKey) {
+        // Leading slash so the first segment is matched by the same expression as any later one.
+        String path = "/" + storageKey;
+        if (orgId == null) {
+            // Personal: the key names the human. Refusing an org segment here is the other half of the
+            // rule — a personal row whose key sat under o/<someOrg>/ would be swept up by that org's
+            // prefix extraction, which is the leak in the direction nobody looks for.
+            if (path.contains(ORG_SEGMENT)) {
+                throw new IllegalArgumentException("NewDocument.storageKey for a PERSONAL document (null orgId)"
+                        + " must not sit under an organization's o/<orgId>/ namespace — an extraction takes"
+                        + " that prefix whole (ADR 0010 §6). Key: " + storageKey);
+            }
+            return;
+        }
+        if (!path.contains(ORG_SEGMENT + orgId + "/")) {
+            throw new IllegalArgumentException("NewDocument.storageKey for org " + orgId + " must place the"
+                    + " bytes under o/" + orgId + "/ so an extraction can find them by prefix (ADR 0010 §6)"
+                    + " and so two tenants cannot mint the same key now that uq_document_storage_key is"
+                    + " per-schema. Key: " + storageKey);
         }
     }
 

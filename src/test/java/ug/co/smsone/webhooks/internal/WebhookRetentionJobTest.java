@@ -51,7 +51,7 @@ class WebhookRetentionJobTest extends AbstractIntegrationTest {
         UUID oldPending = insert(subscription.getId(), orgId, "PENDING", "40 days");
         UUID youngDelivered = insert(subscription.getId(), orgId, "DELIVERED", "1 day");
 
-        job.purgeExpiredDeliveries();
+        runRetention();
 
         assertThat(exists(orgId, oldDelivered)).as("DELIVERED past retention goes").isFalse();
         assertThat(exists(orgId, oldFailed)).as("dead-letters age out too — the log is not an archive").isFalse();
@@ -59,6 +59,32 @@ class WebhookRetentionJobTest extends AbstractIntegrationTest {
         assertThat(exists(orgId, youngDelivered)).as("inside the window stays").isTrue();
         assertThat(purged()).as("the purge reports its work — silence is the alertable failure")
                 .isEqualTo(purgedBefore + 2);
+    }
+
+    /**
+     * <b>Releases the lease before every run, or this test observes nothing at all.</b>
+     * {@code @SchedulerLock} is around-advice on the bean's proxy, so it fires on a direct call exactly
+     * as it does on the cron one — and {@code SchedulingConfig}'s {@code defaultLockAtLeastFor = PT30S}
+     * means a completed run holds {@code webhook-delivery-retention} for thirty seconds AFTER it
+     * returns. A second acquisition inside that window is refused and the method body is skipped
+     * <em>in silence</em>: no exception, no log line, and every "the aged row is gone" assertion in the
+     * test above fails while the purge itself is perfectly healthy.
+     *
+     * <p><b>The window here is CROSS-CLASS, which is why the release cannot live in one test.</b> One
+     * Postgres container and one {@code platform.shedlock} row serve the whole suite, and
+     * {@code WebhookRetentionFanOutTest} runs this same job seconds before this class starts — so
+     * whichever of the two runs first leases the job away from the other. Every other job test in the
+     * suite already does this ({@code ExchangeRetentionJobTest}, {@code TrialExpiryFanOutTest},
+     * {@code SoftDeletePurgeFanOutTest}, {@code SupportDeskFanOutTest}); the two webhook-retention
+     * classes were the only ones that did not.
+     *
+     * <p>{@code shedlock} is platform-tier and named explicitly (ADR 0010 §2), which the harness's
+     * PLATFORM pin would resolve anyway — the qualifier is what makes the read independent of it.
+     */
+    private void runRetention() {
+        jdbc.update("update platform.shedlock set lock_until = timestamp '1970-01-01 00:00:00' where name = ?",
+                "webhook-delivery-retention");
+        job.purgeExpiredDeliveries();
     }
 
     private UUID insert(UUID subscriptionId, UUID orgId, String status, String age) {

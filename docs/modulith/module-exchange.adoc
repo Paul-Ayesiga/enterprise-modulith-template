@@ -11,6 +11,7 @@
 * `u.c.s.s.queue.QueueSignals` (in Shared Kernel)
 * `u.c.s.s.security.CurrentUserProvider` (in Shared Kernel)
 * `u.c.s.s.retention.RetentionOverrides` (in Shared Kernel)
+* `u.c.s.s.tenancy.TenantFanOut` (in Shared Kernel)
 * `u.c.s.s.security.OrgAuthorization` (in Shared Kernel)
 * `u.c.s.s.audit.AuditLog` (in Shared Kernel)
 * `u.c.s.s.Entitlements` (in Subscription)

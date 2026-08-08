@@ -1,5 +1,8 @@
 package ug.co.smsone.billing.internal;
 
+import static ug.co.smsone.shared.tenancy.JobAxis.Axis.PLATFORM;
+import static ug.co.smsone.shared.tenancy.JobAxis.Axis.TENANT;
+
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -17,8 +20,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.StringJoiner;
-import static ug.co.smsone.shared.tenancy.JobAxis.Axis.TENANT;
-
 import java.util.UUID;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.slf4j.Logger;
@@ -30,6 +31,8 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import ug.co.smsone.shared.tenancy.JobAxis;
 import ug.co.smsone.shared.tenancy.TenantContext;
+import ug.co.smsone.shared.tenancy.TenantFanOut;
+import ug.co.smsone.shared.tenancy.TenantHome;
 
 /**
  * The metered-billing bridge: closed days from the api_usage_daily ledger become Kill Bill usage
@@ -81,29 +84,17 @@ class UsageExportJob {
      */
     private static final Duration RUN_DEADLINE = Duration.ofMinutes(25);
 
-    /**
-     * The axis this pass borrows. It names no organization deliberately: an org that has never been
-     * promoted resolves to the shared {@code tenant_pool}, and a UUID in no {@code organization} row
-     * can never resolve to anything else — so this IS the pooled schema's axis, spelled with the only
-     * vocabulary {@code TenantContext} has. Same constant, same reasoning as {@code DunningJob} and
-     * {@code TrialExpiryJob}.
-     *
-     * <p>PHASE 5 makes this a LOOP over {@code platform.tenant_placement}: the backlog scan stays one
-     * statement (it is platform-tier and cross-tenant by design — see {@link #export()}), and it is the
-     * per-org {@code billing_account} read that has to be asked of each home in turn. The natural shape
-     * then is to keep the scan and the grouping exactly as they are and open one span per home around
-     * the org loop, so the fairness ordering below survives the change untouched.
-     */
-    private static final UUID POOLED_TENANT = new UUID(0L, 0L);
 
     private final JdbcTemplate jdbc;
     private final BillingAccountRepository accounts;
     private final KillBillGateway killBill;
     private final Clock clock;
+    private final TenantFanOut fanOut;
     private final String unitType;
     private final int maxBacklogDays;
 
     UsageExportJob(JdbcTemplate jdbc, BillingAccountRepository accounts, KillBillGateway killBill, Clock clock,
+            TenantFanOut fanOut,
             @Value("${app.billing.usage-export.unit:api-requests}") String unitType,
             @Value("${app.billing.usage-export.max-backlog-days:45}") int maxBacklogDays) {
         if (maxBacklogDays < 1) {
@@ -116,6 +107,7 @@ class UsageExportJob {
         this.accounts = accounts;
         this.killBill = killBill;
         this.clock = clock;
+        this.fanOut = fanOut;
         this.unitType = unitType;
         this.maxBacklogDays = maxBacklogDays;
     }
@@ -151,7 +143,7 @@ class UsageExportJob {
      */
     @Scheduled(cron = "${app.scheduler.usage-export-cron:0 20 4 * * *}")
     @SchedulerLock(name = "billing-usage-export", lockAtMostFor = "PT30M")
-    @JobAxis(TENANT)
+    @JobAxis({PLATFORM, TENANT})
     public void run() {
         export();
     }
@@ -161,28 +153,36 @@ class UsageExportJob {
      * because a test calls this method directly, and the axis has to be a property of the work, not of
      * how it was triggered.
      *
-     * <p><b>One span, and it is the TENANT one — even though this pass is mostly platform work.</b>
-     * The two tiers are not symmetrical in how they are reached. {@code api_usage_daily} is
-     * platform-tier and every statement below names it {@code platform.api_usage_daily}, and a
-     * qualified name resolves from ANY axis: the scan, {@link #markExported} and {@link #agedOutDays()}
-     * are all correct on a tenant's {@code search_path}. {@code billing_account} is tenant-tier and is
-     * reached BARE, which resolves on a tenant axis and nowhere else. So a tenant pin covers both
-     * halves and a platform pin covers only one — the direction of the asymmetry decides the axis.
+     * <p><b>A PLATFORM span with a nested per-org one since Phase 5, and the asymmetry that decides it
+     * has inverted.</b> {@code api_usage_daily} is platform-tier and every statement below names it
+     * {@code platform.api_usage_daily}, so the scan, {@link #markExported} and {@link #agedOutDays()}
+     * would resolve from any axis. {@code billing_account} is tenant-tier and reached BARE — and it is
+     * read PER ORG, so with silos in the fleet there is no single tenant axis that reaches all of them.
+     * One pooled pin used to cover every org because every org was pooled; that same pin now reaches
+     * every org except the promoted ones, and for those it returns no row, which this pass reads as "no
+     * billable subscription". The platform pin is the honest outer span, and the org's own home is
+     * pinned around the one read that needs it (see {@link #activeSubscriptionOf}).
      *
-     * <p>The alternative, a platform pin with a nested {@code callAs(orgId)} around each
-     * {@code billing_account} read, is two spans and therefore two connections and two transactions for
-     * work that has no need of either. It buys nothing here: the org read is a single row and shares
-     * nothing with the ledger writes.
+     * <p><b>This is deliberately NOT a {@code TenantHomeSweep}, and the reason is the ledger.</b> The
+     * other seven fanned-out jobs iterate homes because their input lives in the homes. This one's input
+     * is one cross-tenant scan of {@code platform.api_usage_daily} ordered by day, and that ordering IS
+     * the fairness property the job is built on — regrouping the backlog by home would replace "the
+     * oldest unexported days go first" with "the pool's days go first", which is a different and worse
+     * job. So the scan and the grouping stay exactly as they were and the home is resolved per org.
      *
      * <p>What did NOT move is the ledger. {@code api_usage_daily} stayed platform-tier through the
      * Phase 2 split deliberately, because the cross-tenant {@code order by day} below is the fairness
      * property this job is built on and a per-tenant ledger cannot express it (ADR 0010 §2).
      */
     Export export() {
-        return TenantContext.callAs(POOLED_TENANT, this::exportBacklog);
+        return TenantContext.callAsPlatform(this::exportBacklog);
     }
 
     private Export exportBacklog() {
+        // One snapshot for the run, so the loop cannot disagree with itself about where an org lives
+        // half way through — and so a tenant that begins a promotion mid-run is skipped consistently
+        // rather than exported from one schema and marked exported in another.
+        TenantFanOut.Fleet fleet = fanOut.fleet();
         // ORDER BY day ascending, and the grouping below preserves it, which buys two things. Within a
         // batch the records reach Kill Bill oldest-first. Across nights it is what makes a run cut
         // short by the deadline FAIR: the orgs it never reached still hold the oldest unexported days,
@@ -217,6 +217,7 @@ class UsageExportJob {
         int batches = 0;
         int days = 0;
         int unbillableOrgs = 0;
+        int frozenOrgs = 0;
         boolean cutShort = false;
         for (Map.Entry<UUID, List<KillBillGateway.UsageDay>> entry : backlog.entrySet()) {
             if (clock.instant().isAfter(deadline)) {
@@ -225,10 +226,19 @@ class UsageExportJob {
             }
             UUID orgId = entry.getKey();
             List<KillBillGateway.UsageDay> batch = entry.getValue();
+            TenantHome home = fleet.homeOf(orgId).orElse(null);
+            if (home == null) {
+                // Mid-provision: its rows are being copied and this run must not read a billing account
+                // that is about to move, nor mark days exported in a schema the tenant is leaving. The
+                // days stay unexported, which puts them at the head of tomorrow's `order by day` — the
+                // same fairness the deadline-cut case relies on, for free.
+                frozenOrgs++;
+                continue;
+            }
             UUID subscriptionId;
             try {
                 subscriptionId = billableSubscriptions
-                        .computeIfAbsent(orgId, this::activeSubscriptionOf)
+                        .computeIfAbsent(orgId, org -> activeSubscriptionOf(home, org))
                         .orElse(null);
             } catch (RuntimeException e) {
                 log.warn("Resolving the Kill Bill subscription for org {} failed — its {} unexported "
@@ -279,6 +289,10 @@ class UsageExportJob {
             log.warn("Usage export stopped at its {} deadline after {} org batch(es) — the rest wait for "
                     + "the next run, where their days are the oldest and sort first. Is Kill Bill slow?",
                     RUN_DEADLINE, batches);
+        }
+        if (frozenOrgs > 0) {
+            log.info("Usage export skipped {} org(s) that are mid-provision — their days stay unexported "
+                    + "and sort first on the next run", frozenOrgs);
         }
         if (batches > 0) {
             log.info("Exported {} usage day(s) for {} org(s) to Kill Bill as unit '{}'; {} org(s) skipped "
@@ -367,17 +381,29 @@ class UsageExportJob {
     /**
      * The org's one billable subscription, or empty when it has no billing account or none ACTIVE.
      *
-     * <p>{@code billing_account} is tenant-tier (ADR 0010 §2) and is therefore read BARE, on the tenant
-     * axis {@link #export()} pinned around the whole pass. No pin of its own: the org id is a predicate
-     * here, not an axis, and while there is one tenant schema every org's account row is in it. That
-     * distinction is what Phase 5 turns back into a loop — see {@link #POOLED_TENANT}.
+     * <p>{@code billing_account} is tenant-tier (ADR 0010 §2) and is read BARE, so it needs the ORG'S
+     * OWN axis — which is why the home is a parameter. Before Phase 5 the pass pinned the pool once and
+     * that answered for everyone; after the first promotion the same pin answered {@code empty} for the
+     * promoted tenant, which this job reads as "no billable subscription" and counts as
+     * {@code unbillableOrgs}. Its usage would have sat unexported until it aged past
+     * {@code max-backlog-days} and then been dropped from the window entirely — revenue lost to a log
+     * line that says a healthy-looking number of orgs were skipped.
      */
-    private Optional<UUID> activeSubscriptionOf(UUID orgId) {
-        return accounts.findByOrgId(orgId)
-                .map(account -> killBill.subscriptions(account.getKbAccountId()))
-                .flatMap(subs -> subs.stream()
-                        .filter(sub -> "ACTIVE".equalsIgnoreCase(sub.state()))
-                        .findFirst())
+    private Optional<UUID> activeSubscriptionOf(TenantHome home, UUID orgId) {
+        // The account read is pinned to the ORG'S OWN home and the Kill Bill call is deliberately
+        // outside that pin. Two reasons, and both are house rules: a remote round trip inside a pinned
+        // span is a remote round trip inside whatever the span opens (AGENTS §4.3), and pinning is a
+        // thread-local, so leaving it in place across a multi-second HTTP call would make the next
+        // borrow on this thread — the markExported below — land on the tenant's schema rather than on
+        // the platform axis this pass runs on.
+        UUID kbAccountId = TenantContext.callAs(home.axis(),
+                () -> accounts.findByOrgId(orgId).map(BillingAccount::getKbAccountId).orElse(null));
+        if (kbAccountId == null) {
+            return Optional.empty();
+        }
+        return killBill.subscriptions(kbAccountId).stream()
+                .filter(sub -> "ACTIVE".equalsIgnoreCase(sub.state()))
+                .findFirst()
                 .map(sub -> UUID.fromString(sub.subscriptionId()));
     }
 }

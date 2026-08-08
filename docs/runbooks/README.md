@@ -18,6 +18,7 @@ Two runbooks here are not wired to an alert — nothing pages you, you come look
 |---|---|
 | [restore.md](restore.md) | restoring from backup, or running the DR drill |
 | [ci-jenkins.md](ci-jenkins.md) | signing in to the self-hosted Jenkins, wiring its two CI credentials, or recovering the local k3s node after a build exhausts it |
+| [tenant-promotion.md](tenant-promotion.md) | moving one organization out of `tenant_pool` into a schema of its own — or back — and recovering a promotion whose process died (ADR 0010 §6 hop 0→1) |
 
 Shared context for every incident:
 

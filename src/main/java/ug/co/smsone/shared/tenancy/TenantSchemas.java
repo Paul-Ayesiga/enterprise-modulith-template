@@ -5,18 +5,25 @@ import java.util.regex.Pattern;
 
 /**
  * Schema names, and the {@code search_path} each {@link Tenant} state resolves to (ADR 0010 §3.1).
- * Pure naming policy — no Spring, no database reads, so it can be called from anywhere including the
- * connection-borrow path.
+ * The naming is pure policy — {@link #siloSchema} derives a schema from an organization id with no
+ * reads at all, which is what §3.1 means by "zero database reads to route".
  *
- * <p><strong>Since Phase 2 this routes for real.</strong> A platform axis reaches {@code platform}, a
- * tenant axis reaches {@code tenant_pool}, and no axis at all reaches the empty {@code no_tenant}. The
- * schema a statement lands in is now decided entirely here, which is why this method is the one place
- * Phase 5 edits to send a promoted tenant to its own silo.
+ * <p><strong>Since Phase 2 this routes for real, and since Phase 5 it routes per tenant.</strong> A
+ * platform axis reaches {@code platform}, no axis at all reaches the empty {@code no_tenant}, and a
+ * tenant axis reaches whichever schema {@code platform.tenant_placement} says that organization lives
+ * in — {@code tenant_pool} for every tenant nobody has promoted, {@code t_<32hex>} for one that has
+ * been. The schema a statement lands in is decided entirely here.
  *
- * <p>{@link #siloSchema} and its guard are written now, ahead of the phase that needs them, because
- * the regex is the only thing standing between a schema name and SQL injection: a {@code search_path}
- * cannot be a bound parameter, so the name is interpolated into the statement and validation is the
- * whole defence. That is not a thing to invent under promotion-day pressure.
+ * <p><strong>The one read, and where it lives.</strong> "Has this tenant been promoted?" is a row and
+ * cannot be derived, so {@link #searchPathFor} asks {@link TenantRoutes}, which memoizes it. That split
+ * is deliberate: naming stays a pure function anybody can call and reason about, and the single fact
+ * that has to come from the database is behind one class with one cache and one documented staleness
+ * window. Everything else in this file still reads and writes nothing.
+ *
+ * <p>{@link #siloSchema} and its guard carry the whole injection defence: a {@code search_path} cannot
+ * be a bound parameter, so the name is interpolated into the statement and validation is all there is.
+ * Every silo name that reaches a {@code SET} — derived here, or read back out of the registry by
+ * {@code TenantRoutes} — goes through {@link #requireSiloSchema} first.
  */
 public final class TenantSchemas {
 
@@ -88,16 +95,19 @@ public final class TenantSchemas {
      * The {@code search_path} to set on a connection borrowed under {@code tenant}. A SQL fragment,
      * not a value — it is interpolated, which is why every name in it is either a constant here or
      * has been through {@link #requireSiloSchema}.
+     *
+     * <p>Called once per connection borrow, so the tenant branch is the one place in this system where
+     * a registry read sits on the hot path. {@link TenantRoutes} is what makes that affordable, and its
+     * class note is where the cost and the staleness window are written down.
      */
     public static String searchPathFor(Tenant tenant) {
         return switch (tenant) {
-            // The org id is deliberately unread in Phase 1. Phase 5 looks it up in
-            // platform.tenant_placement and calls siloSchema(orgId) for a SILO row; a pooled tenant
-            // keeps this path, which is why promotion is a placement flip and not a code change.
-            // Phase 5 looks the org up in platform.tenant_placement and returns siloSchema(orgId) for
-            // a promoted tenant; an unpromoted one keeps this path. That is why promotion is a row
-            // change and not a deployment.
-            case Tenant.Org ignored -> POOLED_TENANT_SEARCH_PATH;
+            // The org id is READ here, and this is the line promotion turns on. TenantRoutes resolves
+            // platform.tenant_placement to a schema name: tenant_pool for an unpromoted tenant, its own
+            // t_<32hex> for a promoted one. That is why promotion is a row change and not a deployment
+            // — nothing in the binary names a silo, and every consumer of a tenant connection gets the
+            // new home on its next borrow.
+            case Tenant.Org org -> tenantSearchPath(TenantRoutes.homeOf(org.orgId()));
             case Tenant.Platform ignored -> PLATFORM_SEARCH_PATH;
             // Never "leave the connection as it is", and never "fall back to platform". Both would
             // serve a tenant-less request from whichever schema the last borrower happened to leave
@@ -105,5 +115,15 @@ public final class TenantSchemas {
             // No `ext` here either: work with no axis has no business resolving trigram operators.
             case Tenant.Absent ignored -> NO_TENANT;
         };
+    }
+
+    /**
+     * A tenant home plus {@code ext}, which is the shape every tenant path has. The pooled constant is
+     * kept as a literal rather than built here so that {@code TenantSchemasTest}'s assertion about the
+     * exact string is still an assertion about a written-down name and not the method restated.
+     */
+    private static String tenantSearchPath(String home) {
+        return TENANT_POOL.equals(home) ? POOLED_TENANT_SEARCH_PATH
+                : requireSiloSchema(home) + ", " + EXTENSIONS;
     }
 }

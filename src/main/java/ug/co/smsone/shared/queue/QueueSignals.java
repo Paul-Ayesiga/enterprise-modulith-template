@@ -166,6 +166,23 @@ public class QueueSignals {
      * table an attractive outer relation. Checked against Postgres 18 with the statistics that provoke
      * it, on all four statements.
      *
+     * <p><b>A tenant being MOVED is not handed out at all.</b> The {@code not exists} arm is the queue
+     * half of a promotion freeze (ADR 0010 §6 hop 0→1): while {@code platform.tenant_freeze} holds a
+     * live row for an organization, its rows are being copied between schemas, and a worker that
+     * claimed it here would write into the schema the tenant is leaving — a write that is either lost
+     * at the flip or aborts the promotion by moving a row count. §6 names this failure explicitly and
+     * names this table as the fix: the RESTRICT maintenance window gates HTTP org paths only, and every
+     * durable queue in this system claims its work outside any request.
+     *
+     * <p>Three properties of putting it HERE rather than in each worker: it covers all three queues at
+     * once, because all three claim through this statement; it costs one primary-key probe against a
+     * table that holds one row on the busiest day promotion is expected to see; and a frozen tenant's
+     * {@code due_at} is left untouched, so the work is not delayed by a second — the moment the freeze
+     * lapses the tenant sorts exactly where it always did. What it does NOT cover is a worker that
+     * claimed the tenant just BEFORE the freeze went on and is still running its batch; that is what
+     * {@code app.tenancy.promotion.drain} is sized against, and what the fingerprint comparison catches
+     * when the sizing is wrong.
+     *
      * @throws IncorrectResultSizeDataAccessException if more than one tenant was leased, which the
      *     statement above makes impossible — it is here so that a future rewrite that reintroduces the
      *     rescan fails loudly instead of quietly starving tenants
@@ -176,6 +193,8 @@ public class QueueSignals {
                 with candidate as materialized (
                     select queue, org_id from platform.queue_signal
                     where queue = ? and due_at <= now()
+                      and not exists (select 1 from platform.tenant_freeze f
+                                       where f.org_id = queue_signal.org_id and f.expires_at > now())
                     order by due_at
                     limit 1
                     %s

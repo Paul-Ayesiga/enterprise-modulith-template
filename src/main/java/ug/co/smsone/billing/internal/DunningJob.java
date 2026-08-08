@@ -2,8 +2,8 @@ package ug.co.smsone.billing.internal;
 
 import static ug.co.smsone.shared.tenancy.JobAxis.Axis.TENANT;
 
+import java.time.Clock;
 import java.time.Duration;
-import java.util.UUID;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,7 +11,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import ug.co.smsone.shared.tenancy.JobAxis;
-import ug.co.smsone.shared.tenancy.TenantContext;
+import ug.co.smsone.shared.tenancy.TenantFanOut;
+import ug.co.smsone.shared.tenancy.TenantHomeSweep;
 import ug.co.smsone.subscription.Subscriptions;
 
 /**
@@ -27,23 +28,30 @@ class DunningJob {
     private static final Logger log = LoggerFactory.getLogger(DunningJob.class);
 
     /**
-     * The axis this sweep borrows. It names no organization deliberately: an org that has never been
-     * promoted resolves to the shared {@code tenant_pool}, and a UUID in no {@code organization} row
-     * can never resolve to anything else — so this IS the pooled schema's axis, spelled with the only
-     * vocabulary {@code TenantContext} has. Same constant, same reasoning as
-     * {@code MappedSchemaValidator} and {@code WebhookSecretEncryptionMigrator}.
+     * How long one run may take, against the {@code PT10M} lease — the same two-minute margin
+     * {@code TrialExpiryJob} takes, and here for the same reason: Phase 5 turned one pass into
+     * (silos + 1) of them, and (silos + 1) ordinary passes must not be able to add up to an overrun that
+     * lets a second replica pause the same subscriptions concurrently.
      *
-     * <p>When silos exist (ADR 0010 Phase 5) this stops being one pass. The loop belongs here, over
-     * {@code platform.tenant_placement}, summing what each home paused.
+     * <p>It does not make {@link Subscriptions#pauseLapsedPastDue} bounded — that query is still
+     * unbounded within a home, which is the honest gap the paragraph on {@link #run()} names — so this is
+     * a bound on the FAN-OUT and says so.
      */
-    private static final UUID POOLED_TENANT = new UUID(0L, 0L);
+    private static final Duration RUN_DEADLINE = Duration.ofMinutes(8);
+
+    /** Which home this pass is on and where the rotation resumes — see {@link TenantHomeSweep}. */
+    private final TenantHomeSweep homes = new TenantHomeSweep("Dunning");
 
     private final Subscriptions subscriptions;
+    private final TenantFanOut fanOut;
+    private final Clock clock;
     private final int graceDays;
 
-    DunningJob(Subscriptions subscriptions,
+    DunningJob(Subscriptions subscriptions, TenantFanOut fanOut, Clock clock,
             @Value("${app.billing.dunning.grace-days:7}") int graceDays) {
         this.subscriptions = subscriptions;
+        this.fanOut = fanOut;
+        this.clock = clock;
         this.graceDays = Math.max(1, graceDays);
     }
 
@@ -69,9 +77,12 @@ class DunningJob {
      * it has not happened, and this sentence is here so the next person to see it overrun knows the
      * shape of the fix rather than reaching for the lease.
      *
-     * <p>ADR 0010 Phase 5 multiplies the pass by (silos + 1) homes, and since the lease is already
-     * sized by the lapsed COUNT rather than by schema count, the honest re-derivation then is per-home
-     * batching — not PT10M × homes.
+     * <p>Phase 5 multiplied the pass by (silos + 1) homes. The lease was NOT multiplied with it, and
+     * that is deliberate: it is sized by the lapsed COUNT rather than by schema count, so the honest
+     * response to a fan-out is per-home batching rather than PT10M × homes. What did arrive is
+     * {@link #RUN_DEADLINE}, which bounds the number of homes one run reaches and hands the rest to the
+     * next run through {@link #homes} — a delay of one day for the tail, against an overrun that would
+     * have two replicas pausing the same subscriptions.
      */
     @Scheduled(cron = "${app.scheduler.dunning-cron:0 40 3 * * *}")
     @SchedulerLock(name = "billing-dunning", lockAtMostFor = "PT10M")
@@ -79,12 +90,20 @@ class DunningJob {
     public void run() {
         // Declares a TENANT axis, not the platform one: no request runs this, so nothing else declares
         // anything, and `org_subscription` is tenant-tier (ADR 0010 §2) — the platform pin this used to
-        // take could not see the table at all once Phase 2 split them. One statement still sweeps every
-        // tenant because every tenant is in the same schema; see POOLED_TENANT for what Phase 5 owes.
-        int paused = TenantContext.callAs(POOLED_TENANT,
-                () -> subscriptions.pauseLapsedPastDue(Duration.ofDays(graceDays)));
-        if (paused > 0) {
-            log.info("Dunning: paused {} subscription(s) PAST_DUE beyond {} day(s)", paused, graceDays);
+        // take could not see the table at all once Phase 2 split them.
+        //
+        // One statement per HOME since Phase 5. "One statement sweeps every tenant" was true exactly
+        // while every tenant was in one schema; after the first promotion it swept everyone EXCEPT the
+        // promoted tenant, whose lapsed subscription then kept full access indefinitely with no error
+        // anywhere to say the dunning deadline had stopped applying to it.
+        int[] paused = {0};
+        TenantHomeSweep.Swept swept = homes.over(fanOut.fleet().homes(), clock,
+                clock.instant().plus(RUN_DEADLINE),
+                (home, deadline) -> paused[0] += subscriptions.pauseLapsedPastDue(Duration.ofDays(graceDays)));
+        if (paused[0] > 0) {
+            log.info("Dunning: paused {} subscription(s) PAST_DUE beyond {} day(s) across {} tenant home(s)",
+                    paused[0], graceDays, swept.visited());
         }
+        swept.rethrowFirstFailure();
     }
 }

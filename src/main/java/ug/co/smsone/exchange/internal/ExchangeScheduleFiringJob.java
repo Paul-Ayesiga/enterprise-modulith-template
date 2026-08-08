@@ -3,6 +3,7 @@ package ug.co.smsone.exchange.internal;
 import static ug.co.smsone.shared.tenancy.JobAxis.Axis.TENANT;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
@@ -15,7 +16,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 import ug.co.smsone.exchange.ExchangeHandler;
 import ug.co.smsone.shared.security.OrgAuthorization;
 import ug.co.smsone.shared.tenancy.JobAxis;
-import ug.co.smsone.shared.tenancy.TenantContext;
+import ug.co.smsone.shared.tenancy.TenantFanOut;
+import ug.co.smsone.shared.tenancy.TenantHomeSweep;
 
 /**
  * Fires due schedules: submits the export job AS THE SCHEDULE'S REQUESTER — after re-resolving
@@ -31,16 +33,19 @@ class ExchangeScheduleFiringJob {
     private static final int BATCH = 50;
 
     /**
-     * The tenant axis this pass runs on. Names no organization deliberately: an org in no
-     * {@code organization} row can only ever resolve to the shared {@code tenant_pool}, so this IS the
-     * pooled schema's axis — the same constant and reasoning as {@code MappedSchemaValidator} and
-     * {@code WebhookSecretEncryptionMigrator}.
+     * How long one sweep may take, against the {@code PT5M} lease and a 60-second cron.
      *
-     * <p>PHASE 5 makes this a loop over {@code platform.tenant_placement}, one transaction per home,
-     * and the {@link #BATCH} cap becomes per-home rather than global — which is a fairness change: due
-     * schedules are ordered within a home from then on, not across the installation.
+     * <p>It exists because the sweep stopped being one transaction. One home is {@link #BATCH} = 50
+     * schedules, each a permission re-resolution plus an {@code exchange_job} insert — sub-second — so
+     * four minutes covers a fan-out well past the silo ceiling. What it prevents is the case where it
+     * does not: a pass outliving PT5M lets ShedLock hand the lock to a second replica while the first is
+     * still firing, and two sweeps then submit the same schedule twice. A sweep that takes four minutes
+     * skips three ticks, which delays a schedule by minutes; the alternative duplicates an export.
      */
-    private static final UUID POOLED_TENANT = new UUID(0L, 0L);
+    private static final Duration RUN_DEADLINE = Duration.ofMinutes(4);
+
+    /** Which home this sweep is on and where the rotation resumes — see {@link TenantHomeSweep}. */
+    private final TenantHomeSweep homes = new TenantHomeSweep("Exchange-schedule firing");
 
     private final ExchangeScheduleRepository schedules;
     private final ExchangeJobStore store;
@@ -48,10 +53,11 @@ class ExchangeScheduleFiringJob {
     private final OrgAuthorization authorization;
     private final Clock clock;
     private final TransactionTemplate transactions;
+    private final TenantFanOut fanOut;
 
     ExchangeScheduleFiringJob(ExchangeScheduleRepository schedules, ExchangeJobStore store,
             HandlerRegistry handlers, OrgAuthorization authorization, Clock clock,
-            ExchangeProperties config, TransactionTemplate transactions) {
+            ExchangeProperties config, TransactionTemplate transactions, TenantFanOut fanOut) {
         this.schedules = schedules;
         this.store = store;
         this.handlers = handlers;
@@ -59,6 +65,7 @@ class ExchangeScheduleFiringJob {
         this.clock = clock;
         this.config = config;
         this.transactions = transactions;
+        this.fanOut = fanOut;
     }
 
     private final ExchangeProperties config;
@@ -87,17 +94,19 @@ class ExchangeScheduleFiringJob {
      * in the strongest available form: shared between replicas, durable across restarts, and advanced
      * by the failure path as well as the success path. The {@link #BATCH} cap is safe precisely because
      * of that last property; a cap over an ordering the failure path did not advance would be a
-     * starvation bug rather than a bound.
+     * starvation bug rather than a bound. Since Phase 5 there is a second cursor above it —
+     * {@link #homes} — so a sweep cut mid-fleet continues at the next home rather than restarting at
+     * the pool, and {@link #BATCH} is per home rather than global. That is a fairness change worth
+     * naming: due schedules are ordered within a home from here on and not across the installation,
+     * which is better than the alternative it replaces, where the pool would fill a global fifty every
+     * minute and a promoted tenant's schedules would queue behind five thousand pooled ones.
      *
-     * <p><b>LEASE: PT5M against a 60-second cron, and the honest reading is that it is sized for a
-     * SKIPPED TICK, not for a long pass.</b> One sweep is {@link #BATCH} = 50 schedules, each a
-     * permission re-resolution plus an {@code exchange_job} insert — sub-second work — so PT5M leaves
-     * four minutes of slack whose purpose is to absorb a stalled instance without letting a second one
-     * start concurrently. A pass that genuinely needed five minutes would be a different problem, and
-     * ShedLock's silent same-name relock skip means a slow tick simply does not fire rather than
-     * queueing. Phase 5's per-home loop is where this needs re-deriving: 50 per sweep becomes 50 per
-     * home, and the cap stops being global — a fairness change, since due schedules are ordered within
-     * a home from then on and not across the installation.
+     * <p><b>LEASE: PT5M against {@link #RUN_DEADLINE}, and the honest reading is that it is sized for a
+     * SKIPPED TICK, not for a long pass.</b> One home is {@link #BATCH} = 50 schedules, each a
+     * permission re-resolution plus an {@code exchange_job} insert — sub-second work — so four minutes
+     * covers a fan-out an order of magnitude past the silo ceiling, and the remaining minute of slack
+     * absorbs a stalled instance without letting a second one start concurrently. ShedLock's silent
+     * same-name relock skip means a slow tick simply does not fire rather than queueing.
      */
     @Scheduled(cron = "${app.scheduler.exchange-schedule-cron:30 * * * * *}")
     @SchedulerLock(name = "exchange-schedule-fire", lockAtMostFor = "PT5M")
@@ -122,8 +131,12 @@ class ExchangeScheduleFiringJob {
      */
     public void fireDueSchedules() {
         // The axis first, then the transaction inside it: the schema is chosen when the connection is
-        // borrowed and the transaction has already borrowed one. ADR 0010 §3.2/§3.4.
-        TenantContext.runAs(POOLED_TENANT, () -> transactions.executeWithoutResult(tx -> doFire()));
+        // borrowed and the transaction has already borrowed one. ADR 0010 §3.2/§3.4. One of each per
+        // HOME — a promoted tenant's schedules are in its own schema, and a pooled-only sweep would have
+        // stopped firing them with nothing anywhere saying so.
+        homes.over(fanOut.fleet().homes(), clock, clock.instant().plus(RUN_DEADLINE),
+                        (home, deadline) -> transactions.executeWithoutResult(tx -> doFire()))
+                .rethrowFirstFailure();
     }
 
     private void doFire() {

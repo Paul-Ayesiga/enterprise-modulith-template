@@ -5,7 +5,8 @@
 |Spring components
 |* `u.c.s.a.OrgSecurityPolicies` (via `u.c.s.a.internal.OrgSecurityPoliciesImpl`)
 |Bean references
-|* `u.c.s.s.security.CurrentUserProvider` (in Shared Kernel)
+|* `u.c.s.s.tenancy.TenantFanOut` (in Shared Kernel)
+* `u.c.s.s.security.CurrentUserProvider` (in Shared Kernel)
 * `u.c.s.s.web.EnvelopeErrorWriter` (in Shared Kernel)
 * `u.c.s.s.web.ForwardedClientIp` (in Shared Kernel)
 * `u.c.s.s.security.OrgMembership` (in Shared Kernel)

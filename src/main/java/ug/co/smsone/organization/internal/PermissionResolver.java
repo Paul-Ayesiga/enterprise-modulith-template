@@ -59,24 +59,46 @@ class PermissionResolver {
      * Both halves of the cache key are UUIDs of ours now. The composite key is unchanged in shape but
      * no longer mixes id spaces: it used to concatenate a Keycloak org id with a Keycloak subject.
      *
-     * <h3>Why the organization is still in this key, when {@code org-entitlements} dropped it</h3>
+     * <h3>The organization stays in this key. PERMANENTLY — this is the third time it has been asked</h3>
      *
      * <p>{@code CacheRegistry} declares this cache {@link ug.co.smsone.shared.cache.CacheScope#TENANT},
-     * so {@code TwoLevelCache} prefixes the thread's tenant into the key at both levels and the
-     * organization here is, on every request path, redundant with that prefix. It stays because the
-     * prefix comes from the AXIS and one production caller resolves permissions for an organization it
-     * has not pinned: {@code ExchangeScheduleFiringJob} sweeps every due schedule under the pooled-tenant
-     * probe ({@code new UUID(0L, 0L)}) and asks this question per schedule, for whatever org that
-     * schedule belongs to. Under that one axis, every org's entries share a prefix — and a person who
-     * belongs to two organizations, each with a schedule, would then have one org's permission set
-     * answer for the other. That is an authorization bypass, so the organization stays in the key,
-     * where it separates them regardless of which axis asked.
+     * so {@code TwoLevelCache} prefixes the thread's tenant into the key at both levels, and on every
+     * request path the organization here is redundant with that prefix. It has been proposed for removal
+     * twice on exactly that observation, deferred to "Phase 5" the second time, and Phase 5 has now
+     * happened. <b>The answer is that it stays, and the reason is structural rather than transitional.</b>
      *
-     * <p>It costs nothing beyond a longer string: every eviction of this cache is a {@code clear()}
-     * ({@link OrgPermissionCacheEvictor}, {@link OrgGroupService}), which spans all prefixes and all
-     * keys, so the extra component cannot strand an entry. <b>Remove it in Phase 5</b>, together with
-     * the probe: once that sweep is a real loop over {@code platform.tenant_placement}, every caller is
-     * on the axis of the org it is asking about and the prefix alone is sufficient.
+     * <p><b>The prefix comes from the AXIS; this key component comes from the ARGUMENT.</b> They agree
+     * only when the axis names the very organization being asked about. A caller that pins one tenant
+     * and asks about another files its answers under the pin — {@code TwoLevelCache}'s class note states
+     * this as the general rule, and {@code TenantCacheKeys.forThisTenant} is how {@code org-entitlements}
+     * closes it, by <em>throwing</em> unless the two agree. This cache cannot take that option: its
+     * callers legitimately ask about an organization they are not on.
+     *
+     * <p><b>And Phase 5 made that permanent rather than removing it, because the fan-out is per HOME,
+     * not per TENANT.</b> ADR 0010 §3.4 fixes the iteration source as "{@code tenant_pool} plus the
+     * silos — bounded by the silo ceiling, not by tenant count", and §1/§5 measure why the alternative
+     * is not shippable into this database at 5,000 orgs. {@code TenantHome.pool()} is the shape that
+     * took: one axis, the non-organization uuid {@code new UUID(0L, 0L)}, standing for the entire shared
+     * schema. So a sweep over the pooled home asks this question for many different organizations under
+     * one prefix — {@code ExchangeScheduleFiringJob} does it today, per due schedule, inside a
+     * transaction where {@link OrgAuthorizationImpl} deliberately does not re-pin. Two organizations,
+     * one prefix, one cache: with the organization gone from the key, a person who belongs to both would
+     * get whichever set was resolved first. That is a cross-tenant authorization bypass, and AGENTS §5.5
+     * is the rule it breaks.
+     *
+     * <p><b>Pooling is the default and stays the default</b> (§1, §4.3: a new org lands in
+     * {@code tenant_pool} and signup does no DDL), so the pooled home is never empty and never becomes a
+     * single tenant. There is no later phase in which this component becomes redundant. What removing it
+     * would actually require is per-ORGANIZATION iteration, which is the design ADR 0010 rejects on
+     * measurement in its first section.
+     *
+     * <p><b>The price of keeping it, stated so nobody pays it twice.</b> These entries are one per
+     * MEMBER, under a prefix that may be the asking axis rather than the organization, so no caller
+     * outside this module can reach one tenant's entries by key. Every eviction of this cache is
+     * therefore a {@code clear()} — {@link OrgPermissionCacheEvictor}, {@link OrgGroupService}, and
+     * {@code TenantPromotionCaches} at a promotion's placement flip — which spans all prefixes and all
+     * keys and so cannot strand an entry. That is the trade: a longer key and coarse eviction, in
+     * exchange for two tenants never sharing an authorization answer.
      */
     @Cacheable(cacheNames = CACHE, key = "#organizationId + ':' + #personId", sync = true)
     public Set<String> resolve(UUID personId, UUID organizationId) {

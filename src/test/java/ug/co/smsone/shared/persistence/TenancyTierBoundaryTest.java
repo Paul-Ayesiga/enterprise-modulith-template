@@ -76,13 +76,21 @@ class TenancyTierBoundaryTest extends AbstractIntegrationTest {
     private static final String PLATFORM_SCHEMA = "platform";
 
     /**
-     * The tenant tier's schema while every tenant is pooled. Spelled literally rather than taken from
+     * The tenant tier's shared schema — the home of every tenant nobody has promoted, and the reference
+     * every silo is compared against. Spelled literally rather than taken from
      * {@code TenantSchemas.TENANT_POOL}: this test is one half of the pair that says where the tables
      * ACTUALLY are, and reading the constant the router routes by would make it agree with the router
-     * by construction instead of checking it. Phase 5 adds silos, and the day it does, this test grows a
-     * loop over {@code platform.tenant_placement} rather than a second constant.
+     * by construction instead of checking it.
      */
     private static final String TENANT_SCHEMA = "tenant_pool";
+
+    /**
+     * ADR 0010 §3.1's silo name, as a Postgres regex — the same shape {@code TenantSchemas.siloSchema}
+     * mints. Written as SQL here for the same reason {@link #TENANT_SCHEMA} is a literal: the question
+     * is what the CATALOGUE holds, and asking it through the class that decides the name would make the
+     * answer agree with the namer rather than with the database.
+     */
+    private static final String SILO_SCHEMA_PATTERN = "^t_[0-9a-f]{32}$";
 
     /**
      * A tier line is {@code platform + tenant — <the rule deciding which copy a row belongs to>}: the
@@ -144,7 +152,7 @@ class TenancyTierBoundaryTest extends AbstractIntegrationTest {
     }
 
     /**
-     * Everything outside the two data-bearing schemas, which must be nothing at all.
+     * Everything outside the data-bearing schemas, which must be nothing at all.
      *
      * <p>Each of the three is load-bearing and each fails silently if it stops being true. {@code ext}
      * sits on EVERY tenant's {@code search_path}, so a table there is a table every tenant can read
@@ -156,22 +164,80 @@ class TenancyTierBoundaryTest extends AbstractIntegrationTest {
      * <p>Deliberately not a list of those three names: a table in a schema nobody declared is the same
      * failure and would be invisible to a per-name check. Postgres' own {@code pg_*} schemas (catalog,
      * toast, per-session temp) are excluded because they are not ours to be empty.
+     *
+     * <p><b>Silo schemas are excluded here and checked properly in
+     * {@link #everySiloHoldsExactlyTheTenantTierAndNothingElse()}.</b> Through Phase 4 there was exactly
+     * one tenant home and "outside {@code platform} and {@code tenant_pool}" and "not a tenant home"
+     * were the same sentence. Phase 5 made them different: a {@code t_<32hex>} schema is a tenant home,
+     * it is what the whole design exists to produce, and listing it here as a stray would fail this test
+     * for every promoted tenant in production. The exclusion is the NAME SHAPE and nothing else — a
+     * schema called anything but {@code t_} plus 32 lower-case hex is still a stray, and a silo that
+     * holds the wrong tables now fails one assertion down instead of not being looked at.
      */
     @Test
-    void nothingLivesOutsideTheTwoDataBearingSchemas() {
+    void nothingLivesOutsideTheDataBearingSchemas() {
         assertThat(jdbc.queryForList(
                 """
                 select table_schema || '.' || table_name from information_schema.tables
                  where table_type = 'BASE TABLE'
                    and table_schema not in ('information_schema', ?, ?)
                    and table_schema !~ '^pg_'
+                   and table_schema !~ ?
                  order by 1
                 """,
-                String.class, PLATFORM_SCHEMA, TENANT_SCHEMA))
-                .describedAs("tables outside %s and %s — `ext` is on every tenant's path, `no_tenant` "
-                        + "only fails closed while it is empty, and `public` is what a lifted tenant "
-                        + "must not need (ADR 0010 §3.1)", PLATFORM_SCHEMA, TENANT_SCHEMA)
+                String.class, PLATFORM_SCHEMA, TENANT_SCHEMA, SILO_SCHEMA_PATTERN))
+                .describedAs("tables outside %s, %s and the tenant silos — `ext` is on every tenant's "
+                        + "path, `no_tenant` only fails closed while it is empty, and `public` is what a "
+                        + "lifted tenant must not need (ADR 0010 §3.1)", PLATFORM_SCHEMA, TENANT_SCHEMA)
                 .isEmpty();
+    }
+
+    /**
+     * <b>A silo is a tenant home, so it holds the tenant tier — every table of it, and not one table
+     * more.</b> ADR 0010 §7 Phase 5's boundary claim, and the one this test can make that nothing at
+     * runtime would ever notice being false.
+     *
+     * <p>Both directions matter and they fail in opposite ways. A silo MISSING a tenant table is a
+     * tenant whose next request 500s on {@code relation "…" does not exist} — loud, local, and easy.
+     * A silo carrying a PLATFORM table is the quiet one: it resolves perfectly well (the platform copy
+     * is reached by explicit qualification, so nothing reads the stray), it survives every test in this
+     * suite, and it surfaces on extraction day as a {@code pg_dump -n t_<hex>} that carries a slice of
+     * the platform's catalogue — plans, settings, people — into what was supposed to be one tenant's
+     * data. That is the mistake §2 exists to prevent, and replaying the platform migration sequence into
+     * a tenant schema is the single way to make it.
+     *
+     * <p>Asserted against {@code tenant_pool}'s own table set rather than against a list parsed out of
+     * the document: the pool is migrated by the same {@code TenantSchemaMigrator} that builds every
+     * silo, so equality here is the statement that the two ran the same sequence. A silo built from a
+     * different directory disagrees immediately, whatever the document says.
+     *
+     * <p>Vacuous when no silo exists, which is honest rather than a gap: under the pooled policy there
+     * are none, and {@code TenantSilosHarnessTest} is what proves a placed tenant gets one at all.
+     */
+    @Test
+    void everySiloHoldsExactlyTheTenantTierAndNothingElse() {
+        Set<String> tenantHome = new TreeSet<>(tablesIn(TENANT_SCHEMA));
+
+        for (String silo : jdbc.queryForList(
+                "select schema_name from information_schema.schemata where schema_name ~ ? order by 1",
+                String.class, SILO_SCHEMA_PATTERN)) {
+            assertThat(new TreeSet<>(tablesIn(silo)))
+                    .describedAs("%s must hold exactly what %s holds — both are built by the same tenant"
+                            + " migration sequence, so any difference means one of them was migrated from"
+                            + " the wrong directory (ADR 0010 §2, §4.1)", silo, TENANT_SCHEMA)
+                    .isEqualTo(tenantHome);
+        }
+    }
+
+    private List<String> tablesIn(String schema) {
+        return jdbc.queryForList(
+                "select table_name from information_schema.tables"
+                        + " where table_schema = ? and table_type = 'BASE TABLE'"
+                        // Flyway's own bookkeeping is per-schema and belongs to no tier — it is in every
+                        // tenant home including the pool, so comparing the two sets never sees it, but
+                        // excluding it keeps the failure message about tenant tables.
+                        + " and table_name <> 'flyway_schema_history'",
+                String.class, schema);
     }
 
     /**

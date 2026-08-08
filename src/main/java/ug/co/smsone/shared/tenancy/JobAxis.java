@@ -5,7 +5,6 @@ import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
-import java.util.List;
 import java.util.Set;
 
 /**
@@ -58,20 +57,29 @@ public @interface JobAxis {
          * per-tenant. A job is PLATFORM when everything it touches is on that tier, not when it happens
          * to be triggered by no request.
          */
-        PLATFORM("runAsPlatform", "callAsPlatform"),
+        PLATFORM(Set.of("runAsPlatform", "callAsPlatform"), Set.of()),
 
         /**
-         * One tenant's own tables, reached bare so {@code search_path} places them. Today one span over
-         * {@code tenant_pool} covers the whole fleet; ADR 0010 Phase 5 turns that span into a loop over
-         * {@code platform.tenant_placement}, which is a change to the job's body and not to this
+         * One tenant's own tables, reached bare so {@code search_path} places them. Phase 5 turned the
+         * single span over {@code tenant_pool} into a loop over {@code tenant_pool} plus every ACTIVE
+         * silo — a change to the job's body, and to how many times the pin is taken, but not to this
          * declaration.
+         *
+         * <p>Which is why it has a DELEGATED pinner. Eight jobs now take that pin through
+         * {@link TenantHomeSweep#over}, because the loop it wraps carries four other properties (a
+         * per-home budget, a resumable rotation, per-home failure isolation, the pool's own floor) that
+         * no job should be re-deriving. The sweep calls {@code TenantContext.runAs} itself, so the axis
+         * is genuinely pinned; what moved is only which class the call appears in.
          */
-        TENANT("runAs", "callAs");
+        TENANT(Set.of("runAs", "callAs"),
+                Set.of(TenantHomeSweep.class.getName() + "#over"));
 
         private final Set<String> pins;
+        private final Set<String> delegated;
 
-        Axis(String... pins) {
-            this.pins = Set.copyOf(List.of(pins));
+        Axis(Set<String> pins, Set<String> delegated) {
+            this.pins = Set.copyOf(pins);
+            this.delegated = Set.copyOf(delegated);
         }
 
         /**
@@ -82,6 +90,23 @@ public @interface JobAxis {
          */
         public Set<String> pinningMethods() {
             return pins;
+        }
+
+        /**
+         * Helpers that take this axis's pin on the caller's behalf, as {@code <fully.qualified.Class>#method}.
+         *
+         * <p>They are listed HERE, beside the direct pinners, for the reason the class note gives: a
+         * binding that lives in the test drifts from the code it binds, and the drift is invisible
+         * because the build stays green. A job whose only pin is a delegated one still declares the axis
+         * it runs on, and {@code ScheduledJobAxisTest} still checks the declaration against the body —
+         * it just knows about one more shape the body can take.
+         *
+         * <p><strong>Only add a helper here if it really pins.</strong> The whole value of the check is
+         * that a declaration cannot become a comment; a class listed here that merely <em>looks</em> like
+         * a fan-out would satisfy every job that touched it and prove nothing about any of them.
+         */
+        public Set<String> delegatedPinners() {
+            return delegated;
         }
     }
 }

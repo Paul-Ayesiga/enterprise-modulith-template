@@ -28,18 +28,18 @@ System_Boundary("Application_boundary", "Application", $tags="") {
 }
 
 Rel(Application.Application.Support, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
-Rel(Application.Application.Subscription, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Exchange, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Exchange, Application.Application.Subscription, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Organization, Application.Application.Exchange, "depends on", $techn="", $tags="", $link="")
 Rel(Application.Application.Organization, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Organization, Application.Application.Subscription, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Webhooks, Application.Application.Organization, "listens to", $techn="", $tags="", $link="")
-Rel(Application.Application.Webhooks, Application.Application.Exchange, "listens to", $techn="", $tags="", $link="")
 Rel(Application.Application.Webhooks, Application.Application.Support, "listens to", $techn="", $tags="", $link="")
 Rel(Application.Application.Webhooks, Application.Application.Subscription, "listens to", $techn="", $tags="", $link="")
+Rel(Application.Application.Webhooks, Application.Application.Exchange, "listens to", $techn="", $tags="", $link="")
 Rel(Application.Application.Webhooks, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Webhooks, Application.Application.Subscription, "uses", $techn="", $tags="", $link="")
-Rel(Application.Application.Exchange, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
-Rel(Application.Application.Exchange, Application.Application.Subscription, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Subscription, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 
 SHOW_LEGEND(true)
 hide stereotypes

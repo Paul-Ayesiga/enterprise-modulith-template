@@ -21,7 +21,7 @@ import ug.co.smsone.shared.tenancy.placement.TenantProvisioner;
  * write, and it is also what decides whether {@code OrganizationRegistered} is published at all — see
  * {@link #announce}. Under a silo policy the organization row is claimed one transaction earlier by
  * {@link #reserve}, so that the schema named after it can be built before the tenant is announced
- * (ADR 0010 §4.3); the pooled default never splits the write.
+ * (ADR 0010 §4.3); the pooled policy never splits the write.
  *
  * <h2>Which axis this write runs on (ADR 0010 §2, §3.2)</h2>
  *
@@ -50,12 +50,25 @@ class OrgProjectionWriter {
      * there is no "the pool" state). Same constant, same reasoning as {@code MappedSchemaValidator} and
      * {@code WebhookSecretEncryptionMigrator}: one idiom for "the pool", not three.
      *
-     * <p>It is the RIGHT answer here rather than a stand-in, and the reason is the lifecycle: a tenant
-     * is BORN pooled and is only ever promoted later (ADR 0010 Phase 5 is a placement flip on an
-     * existing tenant). The id Hibernate is about to assign therefore cannot name a silo, so the schema
-     * this write must land in is {@code tenant_pool} in every world — including after Phase 5, when
-     * {@link #tenantAxisOf} keeps returning the real id for a tenant that already exists and this
-     * constant only for one that does not.
+     * <p><strong>It is the right answer for an organization that does not exist yet, and ONLY because
+     * under a silo policy that case never reaches {@link #projectWithOwner}.</strong> This javadoc used
+     * to say the schema "must land in {@code tenant_pool} in every world", reasoning that a tenant is
+     * born pooled and only ever promoted later. That premise died when {@code silo-per-org} became the
+     * default on 2026-08-08: under it a tenant is born in {@code t_<32hex>}, and the reason this constant
+     * is still correct is a different one — {@code OrganizationService.homeReadyFor} RESERVES the
+     * organization row and builds its schema in an earlier transaction, so by the time
+     * {@link #tenantAxisOf} is asked the tenant exists and it answers with the real id. The zero uuid is
+     * reached only on the pooled path, where the pool really is the home.
+     *
+     * <p><strong>Which makes the ordering load-bearing rather than tidy.</strong> A caller that invokes
+     * {@link #projectWithOwner} under {@code silo-per-org} without going through {@code homeReadyFor}
+     * first gets this constant, writes {@code org_role}, {@code role_permission} and {@code membership}
+     * into {@code tenant_pool}, and then announces a placement naming a {@code t_<32hex>} schema that was
+     * never created — a tenant whose registry row and whose rows are in different schemas. Nothing
+     * throws; the next read on that tenant's own axis fails with {@code relation "org_role" does not
+     * exist}, three calls and one transaction away from the mistake. {@code TenantPlacementOnCreateTest}
+     * drives this class directly and therefore declares {@code app.tenancy.placement.policy=pooled};
+     * {@code SiloTenantProvisioningTest} drives {@code OrganizationService} for the other policy.
      */
     private static final UUID NEW_POOLED_TENANT = new UUID(0L, 0L);
 
@@ -159,7 +172,7 @@ class OrgProjectionWriter {
      * and {@code projectWithOwner}'s leaves an organization with no owner. It is bounded and it is
      * <em>visible</em> — {@code platform.tenant_placement} says PROVISIONING for that org, which is a
      * queryable fact rather than a row nobody can tell apart from a healthy one — and every step of
-     * the sequence is get-or-create, so the retry heals it. The pooled default never opens the window
+     * the sequence is get-or-create, so the retry heals it. The pooled policy never opens the window
      * at all; there, {@code projectWithOwner} is still the single atomic transaction it always was.
      */
     @Transactional

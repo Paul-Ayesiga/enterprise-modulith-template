@@ -4,7 +4,7 @@ Every table in the database, its columns and its relationships. Generated from
 `src/main/resources/db/migration`, which is the source of truth — and since ADR 0010 Phase 2 that is
 two sequences, `platform/` and `tenant/`. Which one created a table is the same statement as its tier.
 
-**58 tables**, grouped by owning module, alphabetical within each group. Seven of them were created in
+**59 tables**, grouped by owning module, alphabetical within each group. Seven of them were created in
 both schemas and are counted once, here and in every total below. (`flyway_schema_history` is created
 by Flyway itself, is not declared in any migration, and is not counted here.)
 
@@ -50,7 +50,7 @@ tier is now also the answer to *where is this table, and how is it addressed*.
 
 ## The schemas
 
-- `platform` — the 31 platform-tier tables, the platform copy of the seven split ones, and Flyway's own
+- `platform` — the 32 platform-tier tables, the platform copy of the seven split ones, and Flyway's own
   `flyway_schema_history`.
 - `tenant_pool` — the 20 tenant-tier tables and the tenant copy of the seven. Every tenant lives here
   until it is promoted, so inside this schema `org_id` is the only thing separating them: **every
@@ -1116,6 +1116,21 @@ The lock one scheduled task holds, so only one instance runs it.
 | locked_by | varchar(255) | no | Which instance holds it |
 
 Relationships: none. Owned by the ShedLock library.
+
+### tenant_freeze
+The tenants whose rows are being moved between schemas right now, and until when. One row per organization for the length of one promotion or demotion; empty the rest of the time.
+
+**Tier:** platform — it is read to decide whether a tenant may be written at all, by workers that have not yet pinned a tenant axis, and by the promoter that is in the middle of emptying that tenant's schema. A freeze living in the schema being copied would be copied with it.
+
+| Column | Type | Null | Description |
+|---|---|---|---|
+| org_id | uuid | no | `organization.id`, and the primary key — a tenant is frozen or it is not. Soft ref, no FK: a key here would cross a module boundary, and a freeze has to stay removable after its organization has been hard-deleted |
+| reason | text | no | Why, in a sentence a human reads at 03:00 — "moving organization X from tenant_pool to t_…". Never parsed |
+| frozen_at | timestamptz | no | When the freeze was taken, on the database's clock, because every comparison against it is made in SQL |
+| expires_at | timestamptz | no | **When the freeze lapses on its own.** The most important column here: a reader treats an expired row as no freeze at all, so a promoter that is killed mid-run pauses a tenant's background work for a bounded window instead of forever. Set from `app.tenancy.promotion.freeze` |
+| holder | text | no | Which process took it, so "is that promoter still alive" is answerable. Not a lease token — this table arbitrates nothing; two concurrent promotions are made impossible by `tenant_placement`'s conditional writes |
+
+Relationships: `org_id` is a soft ref to `organization.id`, no FK (see the column). Primary key (`org_id`); **no secondary index, deliberately** — the whole table is the set of promotions in flight, which is one row on the busiest day ADR 0010 §8 Q3 anticipates, and every read is by primary key. Constrained by `tenant_freeze_ends_after_it_starts`, since a freeze that expires before it begins reads as "not frozen" to every consumer. Read by `QueueSignals.claim` (the queue half of the pause) and by every per-tenant job that asks `TenantFreezes.isFrozen`; it is the half of the promotion freeze that `maintenance_window` cannot express, because a RESTRICT window gates HTTP org paths only. ADR 0010 §6 hop 0→1, V58; `shared.tenancy.promotion.TenantFreezes` owns every statement against it.
 
 ### tenant_placement
 Where each tenant's rows live, on which datasource, and whether that home is fit to serve. One row per organization, written before the tenant is announced and read on the way to deciding whether to serve it.
