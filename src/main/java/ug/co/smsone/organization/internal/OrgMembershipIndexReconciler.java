@@ -1,5 +1,8 @@
 package ug.co.smsone.organization.internal;
 
+import static ug.co.smsone.shared.tenancy.JobAxis.Axis.PLATFORM;
+import static ug.co.smsone.shared.tenancy.JobAxis.Axis.TENANT;
+
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -11,6 +14,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.shared.tenancy.JobAxis;
 import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
@@ -80,15 +84,40 @@ class OrgMembershipIndexReconciler {
      * is the same margin {@code UsageExportJob} and {@code IdentityReconciliationJob} chose, for this
      * exact reason.
      *
-     * <p>Hitting it is not a failure to recover from here: the pass is idempotent and ordered by id,
-     * so tomorrow's run redoes the same work from the start. It is a signal that the fleet has
-     * outgrown a single pass, and the answer then is a resumable cursor keyed on the last org
-     * processed — which is Phase 4's {@code platform.tenant_placement} work, not this class's.
+     * <p><b>Hitting it used to mean tomorrow redid the same prefix</b> — the pass is idempotent and
+     * ordered by id, so a cut run restarted at the smallest org id every night and the organizations
+     * past the cut were never reconciled at all. On a fleet large enough to need more than one pass
+     * that is not a slow job: it is a permanent set of members who cannot see an organization they are
+     * really in, with a nightly log line claiming the reconciliation ran. {@link #resumeFrom} is the
+     * fix, and it is what ADR 0010 §3.4 means by making the loop resumable.
      */
     private static final Duration RUN_DEADLINE = Duration.ofMinutes(25);
 
     /** The nil UUID: lower than every real one, so the first keyset page starts at the beginning. */
     private static final UUID SCAN_START = new UUID(0L, 0L);
+
+    /**
+     * The organization the last run finished with, or {@link #SCAN_START} when the last run reached the
+     * end. The next run's keyset scan begins strictly after it.
+     *
+     * <p><b>In memory, and the trade is spelled out because it is a real one.</b> It survives across
+     * nights inside one process, which is the case that matters — a pod lives for days and a fleet too
+     * large for one 25-minute pass drains over consecutive runs. It resets to the head on restart,
+     * which is safe: every statement here is idempotent ({@code on conflict do update … where status is
+     * distinct from}, and a delete keyed on liveness), so re-doing a prefix costs time and nothing else.
+     * And it is not shared between replicas, so when the ShedLock winner alternates the two advance
+     * through the org table independently and overlap rather than starve. Overlap is waste; starvation
+     * is members locked out of their own switcher. The durable, shared home for this is a row in
+     * {@code platform}, next to ADR 0010 Phase 4's {@code tenant_placement} — that needs a migration,
+     * which this slice does not own.
+     *
+     * <p><b>It advances past an organization that FAILED, deliberately.</b> A per-org failure is
+     * isolated, logged and rethrown at the end of the run (the {@code loud AND complete} doctrine in
+     * the class note), so a poisoned org is already visible. Parking the cursor on it as well would
+     * mean one unreachable schema starves every organization behind it, which converts a single loud
+     * failure into a silent fleet-wide one — the exact trade this cursor exists to refuse.
+     */
+    private volatile UUID resumeFrom = SCAN_START;
 
     /**
      * Index rows for organizations that are GONE — hard-purged, not soft-deleted. Platform-only on
@@ -143,9 +172,29 @@ class OrgMembershipIndexReconciler {
      * 04:50 is chosen, not free: {@code SoftDeletePurgeJob} runs at 04:00 and is the main producer of
      * the residue this job removes, so running before it would mean every hard-deleted membership's
      * index row survived a further twenty-four hours.
+     *
+     * <p><b>AXIS: PLATFORM and TENANT, and it is the only job in the set that already fans out per
+     * tenant today.</b> The orphan sweep and the org scan are platform-tier and run under the pin
+     * declared below; {@link #reconcileOrg} then pins each organization's OWN axis from inside, which
+     * is what makes it correct in both worlds — see the class note on why the one clever cross-schema
+     * statement is the shape that turns catastrophic on promotion day. So this job needs no Phase 5
+     * rewrite; it needs Phase 5 to exist.
+     *
+     * <p><b>CURSOR: {@link #resumeFrom}, in memory, keyed on the last organization visited.</b>
+     *
+     * <p><b>LEASE: PT30M against {@link #RUN_DEADLINE}, and unlike most of these it is sized by TENANT
+     * COUNT, which is why it needed the cursor most.</b> The pass is two indexed statements per
+     * organization plus a keyset page every {@link #SCAN_PAGE} of them — so the deadline buys roughly
+     * {@code 25 min / (2 statements + one connection borrow)} organizations a night. At a millisecond
+     * apiece that is comfortably six figures and at ten milliseconds it is ~150,000, but both are
+     * arithmetic: nobody has measured a {@link #reconcileOrg} round trip, and after Phase 5 each
+     * promoted tenant's pair of statements costs a connection borrow into a different schema, which is
+     * the term most likely to make this the first job to hit its deadline for real. The warning
+     * {@link #reconcileEveryOrg} logs is what makes that observable rather than inferred.
      */
     @Scheduled(cron = "${app.scheduler.org-membership-index-cron:0 50 4 * * *}")
     @SchedulerLock(name = "org-membership-index-reconcile", lockAtMostFor = "PT30M")
+    @JobAxis({PLATFORM, TENANT})
     public void reconcile() {
         // The scan and the orphan sweep are platform-tier; the per-org repair pins each tenant in turn
         // from inside. Declared here because a scheduler thread has no axis of its own — nothing above
@@ -160,19 +209,36 @@ class OrgMembershipIndexReconciler {
         int deleted = 0;
         int organizations = 0;
         RuntimeException firstFailure = null;
-        UUID cursor = SCAN_START;
+        // Resumes where the last run stopped, or at the head when it finished. The orphan sweep above
+        // is deliberately OUTSIDE that: it is one platform statement, it is the only part of the run
+        // that can reach index rows no per-org pass ever visits, and skipping it on a resumed night
+        // would make those rows depend on the cursor happening to wrap.
+        UUID cursor = resumeFrom;
+        UUID lastVisited = cursor;
+        if (!SCAN_START.equals(cursor)) {
+            log.info("Membership-index reconciliation resumes after org {} — the previous run stopped there",
+                    cursor);
+        }
         List<UUID> page;
         while (!(page = nextPage(cursor)).isEmpty()) {
             for (UUID orgId : page) {
                 if (clock.instant().isAfter(deadline)) {
+                    // The cursor is what makes this survivable. Without it the same prefix is redone
+                    // every night and every organization past the cut goes unreconciled forever.
+                    resumeFrom = lastVisited;
                     log.warn("Membership-index reconciliation stopped at its {} deadline after {} "
-                                    + "organizations; the remainder is retried on the next run",
-                            RUN_DEADLINE, organizations);
-                    // Not an exception: an incomplete idempotent pass is a smaller problem than a
-                    // failing job nobody can distinguish from a broken one.
+                                    + "organizations; the next run RESUMES after org {} rather than "
+                                    + "restarting at the head, so the organizations behind it are not "
+                                    + "starved. A run that hits this regularly has outgrown one pass.",
+                            RUN_DEADLINE, organizations, lastVisited);
+                    // Not an exception: an incomplete idempotent pass that recorded its position is a
+                    // smaller problem than a failing job nobody can distinguish from a broken one.
                     return;
                 }
                 organizations++;
+                // Marked visited before the attempt, so a permanently failing organization does not park
+                // the cursor on itself and starve every organization behind it. See resumeFrom.
+                lastVisited = orgId;
                 try {
                     int[] repaired = reconcileOrg(orgId);
                     inserted += repaired[0];
@@ -189,6 +255,11 @@ class OrgMembershipIndexReconciler {
             }
             cursor = page.getLast();
         }
+        // Reached the end of the org table: the next run is a full sweep from the head again. Set before
+        // the rethrow below, so a run that failed on one organization still records that it COVERED
+        // every organization — the failure is loud on its own and does not need a starved cursor to
+        // make it louder.
+        resumeFrom = SCAN_START;
 
         if (inserted > 0 || deleted > 0 || orphaned > 0) {
             // Loud when it repairs anything. Every row this job writes is a row the write path should

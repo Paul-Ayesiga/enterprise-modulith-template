@@ -3,10 +3,14 @@ package ug.co.smsone.identity.internal;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.HashMap;
@@ -145,6 +149,101 @@ class IdentityReconciliationJobTest extends AbstractIntegrationTest {
         assertThat(result.examined())
                 .as("a page size of 1 must still walk all three seeded candidates")
                 .isGreaterThanOrEqualTo(3);
+    }
+
+    /**
+     * <b>The resumable cursor (ADR 0010 §3.4, Phase 3), and the regression above taken one level up.</b>
+     * {@code aPassExaminesEveryCandidateAcrossMultiplePages} fixed the head-truncation INSIDE a pass;
+     * the deadline then quietly reintroduced the same failure BETWEEN passes, because a run cut at 25
+     * minutes used to restart at the oldest candidate the following night. On a person table too big
+     * for one pass that means the same prefix is checked against Keycloak every night and the accounts
+     * behind it are never checked at all — and since this is the only job that can revoke access,
+     * "never reached" is a deleted Keycloak account keeping an ACTIVE-looking person row indefinitely.
+     *
+     * <p>The assertion is about WHO was examined, not how many: the second pass examines one person
+     * either way, and what separates resuming from restarting is whether it is the same one.
+     *
+     * <p><b>The grace period is the isolation mechanism, and it is doing real work here.</b> One
+     * Postgres container serves every test class and nothing truncates {@code person} between them, so
+     * a test that asserted on a specific candidate would otherwise be at the mercy of every row the
+     * rest of the suite has left behind. A 3,000-day grace period makes the candidate predicate
+     * ({@code invited_at < now - grace}) select the three decade-old rows seeded below and nothing else
+     * in the database — every other seed in the suite is minutes old.
+     */
+    @Test
+    void aPassCutByItsDeadlineResumesAfterTheLastPersonExamined() {
+        UUID oldest = seedAged("resume-oldest", Duration.ofDays(3650));
+        UUID next = seedAged("resume-next", Duration.ofDays(3649));
+        seedAged("resume-last", Duration.ofDays(3648));
+        given(keycloak.accountPresence(any())).willReturn(AccountPresence.PRESENT);
+
+        // Three unjumped reads per pass: the grace cutoff, the deadline, and the check before the first
+        // candidate. The fourth — the check before the second candidate — lands an hour past a
+        // twenty-five-minute deadline, so each pass examines exactly one person.
+        BudgetClock clock = new BudgetClock(3, Duration.ofHours(1));
+        IdentityReconciliationJob job = new IdentityReconciliationJob(persons, resolver, keycloak,
+                new IdentityReconciliationProperties(Action.REPORT, Duration.ofDays(3000), 1.0, 500),
+                auditLog, transactions, clock);
+
+        var cutShort = job.run();
+
+        assertThat(cutShort.examined())
+                .as("the clock is rigged so the deadline falls after exactly one candidate").isEqualTo(1);
+        verify(keycloak).accountPresence(subjectOf(oldest));
+
+        clearInvocations(keycloak);
+        clock.restart();
+        job.run();
+
+        verify(keycloak).accountPresence(subjectOf(next));
+        verify(keycloak, never()).accountPresence(subjectOf(oldest));
+    }
+
+    /** The subject {@link #seedAged} links the person under, and the one the job resolves for them. */
+    private static String subjectOf(UUID personId) {
+        return "kc-" + personId;
+    }
+
+    /**
+     * A clock that answers with one fixed instant for its first {@code unjumped} reads and then jumps
+     * past the deadline — the only honest way to reach a 25-minute bound in a test without sleeping.
+     *
+     * <p>It counts READS rather than following a schedule, which ties the budget to the job's own
+     * deadline checks (one per candidate) instead of to a guess about durations. {@link #restart()} is
+     * what lets one clock serve two passes of the same job instance: the cursor under test lives on
+     * that instance, so it cannot be rebuilt between them.
+     */
+    private static final class BudgetClock extends Clock {
+
+        private final int unjumped;
+        private final Duration jump;
+        private Instant base = Instant.now();
+        private int reads;
+
+        private BudgetClock(int unjumped, Duration jump) {
+            this.unjumped = unjumped;
+            this.jump = jump;
+        }
+
+        private void restart() {
+            base = Instant.now();
+            reads = 0;
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return ++reads <= unjumped ? base : base.plus(jump);
+        }
     }
 
     @Test

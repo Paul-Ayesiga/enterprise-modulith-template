@@ -80,13 +80,24 @@ public class CacheConfig {
         return new CacheInvalidationBroadcaster(redisTemplate);
     }
 
+    /**
+     * The GLOBAL/TENANT classification of every cache name (ADR 0010 §3.5). A bean rather than a static
+     * lookup so a test can supply its own — {@code CacheRegistry.standardPlus(...)} marked
+     * {@code @Primary} — to declare a scratch cache without putting a probe name in the application's
+     * own declarations.
+     */
+    @Bean
+    CacheRegistry cacheRegistry() {
+        return CacheRegistry.standard();
+    }
+
     @Bean
     @Primary
-    TwoLevelCacheManager cacheManager(CaffeineCacheManager caffeineCacheManager,
+    TwoLevelCacheManager cacheManager(CacheRegistry cacheRegistry, CaffeineCacheManager caffeineCacheManager,
             org.springframework.beans.factory.ObjectProvider<RedisCacheManager> redisCacheManager,
             org.springframework.beans.factory.ObjectProvider<CacheInvalidationBroadcaster> broadcaster,
             io.micrometer.core.instrument.MeterRegistry meters) {
-        return new TwoLevelCacheManager(caffeineCacheManager,
+        return new TwoLevelCacheManager(cacheRegistry, caffeineCacheManager,
                 redisCacheManager.getIfAvailable(), broadcaster.getIfAvailable(), meters);
     }
 

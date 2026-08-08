@@ -19,6 +19,13 @@ import ug.co.smsone.shared.tenancy.TenantContext;
 
 @Configuration(proxyBeanMethods = false)
 @EnableScheduling
+// `defaultLockAtMostFor` is a backstop that nothing currently falls through to, and that is on purpose:
+// every @SchedulerLock in the codebase states its own lease next to a paragraph deriving it, and
+// ScheduledJobAxisTest fails the build on one that does not. A default lease is by definition a number
+// nobody sized for the job holding it, and this is the one setting where an unsized number is a
+// correctness bug rather than a tuning miss — a lease that expires under a running pass lets a second
+// replica start a concurrent one. `lockAtLeastFor` is genuinely shared: 30s is a clock-skew floor
+// between instances, not a statement about any job's duration.
 @EnableSchedulerLock(defaultLockAtMostFor = "PT10M", defaultLockAtLeastFor = "PT30S")
 // The soft-delete retention policy is declared with the mapping it belongs to (shared/persistence);
 // the scheduler is only the module that acts on it. The event/inbox retention record is the

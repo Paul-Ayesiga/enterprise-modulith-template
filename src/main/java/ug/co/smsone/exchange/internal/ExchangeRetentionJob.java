@@ -1,5 +1,8 @@
 package ug.co.smsone.exchange.internal;
 
+import static ug.co.smsone.shared.tenancy.JobAxis.Axis.PLATFORM;
+import static ug.co.smsone.shared.tenancy.JobAxis.Axis.TENANT;
+
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
@@ -13,6 +16,7 @@ import ug.co.smsone.shared.metrics.PurgeMetrics;
 import ug.co.smsone.shared.retention.RetentionOverrides;
 import ug.co.smsone.shared.retention.RetentionPurges;
 import ug.co.smsone.shared.retention.RetentionScope;
+import ug.co.smsone.shared.tenancy.JobAxis;
 import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
@@ -74,9 +78,33 @@ class ExchangeRetentionJob {
      *
      * <p>Order does not matter here — the two homes share no key and no constraint — so it runs
      * platform first only to match {@code SplitTables.homes()} and the worker's claim order.
+     *
+     * <p><b>AXIS: PLATFORM and TENANT, two spans, because the table is SPLIT</b> — the paragraphs above
+     * are the derivation, and this is the second of the three jobs the {@link JobAxis} two-valued form
+     * exists for.
+     *
+     * <p><b>CURSOR: the delete, in both spans.</b> Every batch removes terminal rows past their cutoff,
+     * so a pass stopped by {@link #MAX_BATCHES} — or by a lease that expired under it — leaves the
+     * untouched remainder as the next night's head. Nothing is re-examined and nothing is skipped, so
+     * there is no position worth keeping in memory. The one place that is subtler than it looks is
+     * {@link RetentionPurges}' second pass: it iterates the override map, so an override added while a
+     * run is in flight is simply picked up by the next run rather than missed — the map is re-read at
+     * the start of every pass.
+     *
+     * <p><b>LEASE: PT30M, sized for TWO drains of {@link #MAX_BATCHES} × {@link #BATCH_SIZE} rows each
+     * plus one drain per per-org override, all against ONE tenant schema.</b> That last clause is the
+     * part Phase 5 breaks and it breaks worse here than in most of these jobs, because the override
+     * pass is per-ORG inside each home: the tenant span becomes (silos + 1) × (1 default drain + its
+     * own overrides). PT30M is not sized for that and must be re-derived — with a resumable per-home
+     * cursor at the same time, since a fan-out cut at home 40 of 200 that restarts at home 1 the next
+     * night never reaches the tail. The measured input that derivation will need is the per-batch cost
+     * against a real {@code exchange_job}, which nobody has taken; today's PT30M rests on 100 batches of
+     * 1,000 being comfortable in half an hour, which is true by a wide margin and is not a measurement
+     * either.
      */
     @Scheduled(cron = "${app.scheduler.exchange-retention-cron:0 45 4 * * *}")
     @SchedulerLock(name = "exchange-job-retention", lockAtMostFor = "PT30M")
+    @JobAxis({PLATFORM, TENANT})
     public void purgeExpiredJobs() {
         Instant now = clock.instant();
         int platformScoped = TenantContext.callAsPlatform(

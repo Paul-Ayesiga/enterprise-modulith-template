@@ -55,9 +55,10 @@ import ug.co.smsone.testsupport.TenantAxisExtension;
  * {@code drainOnce()} runs on the worker's own pooled platform thread, where nothing has declared an
  * axis — so a worker that does not declare its own is broken there. Called plainly from a test method
  * it would borrow the harness's pin instead, pass, and prove nothing; {@link TenantAxis#withNoAxis} is
- * what puts the drive back in the state the poller hands it (ADR 0010 §3.4). Inside an
- * {@code await(…)} the drive is already unpinned — Awaitility polls on its own thread — and
- * {@link #count} and friends are what need the axis there instead.
+ * what puts the drive back in the state the poller hands it (ADR 0010 §3.4) — including inside an
+ * {@code await(…)}, whose polls run on this same thread here (see {@link #drainFullyUnpinned()} for
+ * why they must). A Modulith {@code Scenario}'s state-change poll still runs on a thread of its own
+ * with no axis at all, which is what {@link #count} and friends declare one for.
  */
 @ApplicationModuleTest(mode = ApplicationModuleTest.BootstrapMode.ALL_DEPENDENCIES)
 @ActiveProfiles("test")
@@ -107,6 +108,11 @@ class NotificationDeliveryTest {
         // queue) leave rows behind, and the worker drains/claims globally. Start each test from empty.
         jdbc.update("delete from notification_delivery");
         jdbc.update("delete from in_app_notification");
+        // And the index over the queue, which since ADR 0010 Phase 3 is the thing the worker actually
+        // reads to decide which scope to look at. A signal whose rows the line above deleted is
+        // harmless — the worker that finds nothing deletes it — but it costs one of the bounded probes
+        // per drain, and "start from empty" now means both tables or it means nothing.
+        jdbc.update("delete from platform.queue_signal where queue = 'notification'");
     }
 
     @Test
@@ -121,7 +127,8 @@ class NotificationDeliveryTest {
         // Deliver, tolerating the async send pipeline: processBatch waits on a latch with a timeout, so
         // under load drainFully() can return with a send still in flight. Re-drain until the in-app row
         // (keyed by person.id, the platform's only durable answer to "who") has actually landed.
-        await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
+        // `pollInSameThread` because this poll DRAINS — see the note on the helper.
+        await().pollInSameThread().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
             drainFullyUnpinned();
             assertThat(inAppFor(ADMIN_PERSON_ID, "new-billing")).isGreaterThanOrEqualTo(1);
         });
@@ -267,7 +274,8 @@ class NotificationDeliveryTest {
             // delivery is dead-lettered — tolerant of a drain that doesn't deliver under load (the next
             // poll fast-forwards and retries), instead of assuming exactly one delivery per iteration.
             int maxAttempts = 5; // app.notification.delivery.max-attempts default
-            await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
+            // `pollInSameThread` because this poll DRAINS — see the note on the helper.
+            await().pollInSameThread().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
                 fastForwardBackoff(subject);
                 drainFullyUnpinned();
                 assertThat(statusFor(subject)).isEqualTo("FAILED");
@@ -284,16 +292,31 @@ class NotificationDeliveryTest {
     }
 
     /**
-     * Brings a parked retry due now instead of sleeping out its backoff.
+     * Brings a parked retry due now instead of sleeping out its backoff — <b>in both places the
+     * backoff is recorded</b>.
      *
-     * <p>Pinned for the same reason {@link #count} is: its only caller is inside
-     * {@code await().untilAsserted(…)}, and Awaitility's poll thread carries no tenant axis, so the
-     * update would fail with {@code relation "notification_delivery" does not exist} rather than
-     * moving the row (ADR 0010 §3.4).
+     * <p>Pinned for the same reason {@link #count} is, and it stays pinned now that its
+     * {@code await(…)} polls in the test's own thread: the harness's platform pin is the axis this
+     * needs, but {@link #drainFullyUnpinned()} takes the axis OFF for the length of a drain in the same
+     * loop, so a caller that leaned on the ambient pin would be leaning on something another statement
+     * in the same block deliberately removes. Declaring it is what makes that independent (ADR 0010
+     * §3.4).
+     *
+     * <p>The second statement is the one a reader will not expect, and it is the design rather than a
+     * leak. Since Phase 3 the worker asks {@code platform.queue_signal} which scope to look at before
+     * it claims any row, and {@code NotificationDeliveryQueue.releaseSignal} stamped that signal with
+     * this delivery's own {@code next_attempt_at} when it rescheduled it — a backoff of five seconds
+     * here, doubling. Moving the row without moving the signal parks the scope in the future and the
+     * drain finds nothing, so a test that fast-forwards one and not the other would sit out the real
+     * backoff and blow its 15-second budget on the fourth retry. Production has no such path: every
+     * write that makes a delivery claimable goes through {@code enqueue}, {@code requeueFailed} or the
+     * release itself, and all three keep the two in step.
      */
     private void fastForwardBackoff(String subject) {
-        TenantContext.runAsPlatform(() -> jdbc.update(
-                "update notification_delivery set next_attempt_at = now() where subject = ?", subject));
+        TenantContext.runAsPlatform(() -> {
+            jdbc.update("update notification_delivery set next_attempt_at = now() where subject = ?", subject);
+            jdbc.update("update platform.queue_signal set due_at = now() where queue = 'notification'");
+        });
     }
 
     // ---- helpers ----
@@ -302,6 +325,18 @@ class NotificationDeliveryTest {
      * Drains with NO axis declared, which is the state the worker's own poller thread arrives in.
      * See the class note: pinned, this would prove nothing about
      * {@link NotificationDeliveryWorker#drainOnce()} declaring its own.
+     *
+     * <p><b>Every {@code await(…)} that calls this declares {@code pollInSameThread()}, and that is a
+     * correctness requirement rather than a preference.</b> Awaitility polls on a thread of its own and,
+     * when a poll satisfies the condition, shuts that thread's executor down GRACEFULLY — a poll that
+     * had already started keeps running after the test method returns. A drain that outlives its test
+     * is a worker still claiming from a queue the next class believes is its own: it takes
+     * {@code NotificationDeliveryQueueTest}'s freshly enqueued row (also platform-scoped, so the same
+     * signal) a moment before that class claims it by hand, and the claim comes back empty with
+     * "row … was not claimed". Polling in the test's own thread means the last drain has finished
+     * before the test has. It also keeps the axis honest — the platform pin the harness leaves on this
+     * thread is stripped by {@link TenantAxis#withNoAxis}, which is what makes the drain unpinned here
+     * whichever thread runs it.
      */
     private void drainFullyUnpinned() throws Exception {
         TenantAxis.withNoAxis(this::drainFully);
@@ -325,12 +360,12 @@ class NotificationDeliveryTest {
     /**
      * Every count this class makes, with the tenant axis declared on it.
      *
-     * <p>Most callers sit inside {@code await(…)} or inside a Modulith {@code Scenario}'s state-change
-     * poll — both of which run on Awaitility's own thread, which the harness never pins (ADR 0010
-     * §3.4). Unpinned, the borrow routes to the empty {@code no_tenant} schema and the count fails
-     * with {@code relation "notification_delivery" does not exist} instead of returning a number the
-     * assertion can be wrong about. Declaring it here covers the callers on the test thread too, where
-     * it is a harmless re-pin of the axis they already hold.
+     * <p>Some callers sit inside a Modulith {@code Scenario}'s state-change poll, which runs on a thread
+     * the harness never pins (ADR 0010 §3.4). Unpinned, the borrow routes to the empty {@code no_tenant}
+     * schema and the count fails with {@code relation "notification_delivery" does not exist} instead of
+     * returning a number the assertion can be wrong about. Declaring it here covers the callers on the
+     * test thread too — including the {@code await(…)} polls, which run there since
+     * {@link #drainFullyUnpinned()} — where it is a harmless re-pin of the axis they already hold.
      */
     private long count(String sql, Object... args) {
         Long c = TenantContext.callAsPlatform(() -> jdbc.queryForObject(sql, Long.class, args));

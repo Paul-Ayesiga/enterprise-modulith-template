@@ -22,8 +22,14 @@ import org.springframework.cache.caffeine.CaffeineCache;
  */
 class TwoLevelCacheSyncLoadTest {
 
+    /**
+     * GLOBAL, so the keys here are the keys the cache stores: stampede protection is about the striped
+     * locks and nothing else, and a tenant prefix would only add a thread-local to every assertion.
+     * {@code TenantCacheScopingTest} owns the scoping half, including that the stripe is taken from the
+     * SCOPED key so two tenants do not serialize on one lock.
+     */
     private TwoLevelCache newCache() {
-        return new TwoLevelCache("t", new CaffeineCache("t", Caffeine.newBuilder().build()),
+        return new TwoLevelCache("t", CacheScope.GLOBAL, new CaffeineCache("t", Caffeine.newBuilder().build()),
                 null, null, new SimpleMeterRegistry());
     }
 

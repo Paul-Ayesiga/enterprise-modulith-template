@@ -62,13 +62,9 @@ class ExchangeApiTest extends AbstractIntegrationTest {
     @BeforeEach
     void reset() {
         handler.reset();
-        // The queue is one shared table and drainOnce() claims strictly oldest-first — leftovers
-        // from other tests would be claimed instead of this test's job.
-        for (String home : ug.co.smsone.shared.tenancy.SplitTables.homes()) {
-            // exchange_job is a split table: leftovers in EITHER home would be claimed ahead of this
-            // test's job, which claims strictly oldest-first (ADR 0010 §2 row 10).
-            jdbc.update("delete from " + home + ".exchange_job");
-        }
+        // Leftovers from other tests would be claimed instead of this test's job — both homes AND the
+        // signals that index them. See ExchangeTestSupport.clearQueue.
+        ExchangeTestSupport.clearQueue(jdbc);
     }
 
     @Test

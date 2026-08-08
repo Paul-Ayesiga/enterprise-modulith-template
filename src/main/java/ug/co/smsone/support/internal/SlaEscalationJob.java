@@ -1,5 +1,7 @@
 package ug.co.smsone.support.internal;
 
+import static ug.co.smsone.shared.tenancy.JobAxis.Axis.TENANT;
+
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
@@ -14,6 +16,7 @@ import org.springframework.data.domain.Limit;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
+import ug.co.smsone.shared.tenancy.JobAxis;
 import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.support.TicketEscalated;
 
@@ -78,9 +81,33 @@ class SlaEscalationJob {
      * it fails outright with {@code relation "ticket" does not exist}, inside a scheduled job whose
      * exception nobody reads at 04:00, and every SLA breach on the installation stops escalating. The
      * pin is what makes the statement resolve at all.
+     *
+     * <p><b>CURSOR: {@code ticket.escalated}, in the row.</b> {@code lockBreached} selects tickets past
+     * their resolution due that are not yet escalated and not terminal; {@code Ticket.escalate} sets the
+     * flag inside this transaction, so an escalated ticket leaves the candidate set permanently and the
+     * next sweep — sixty seconds later — sees the remainder. The {@link #BATCH} cap is therefore a
+     * bound and not a truncation: at 100 a sweep and one sweep a minute, a backlog of 6,000 breaches
+     * drains in an hour with nothing re-examined. {@code SKIP LOCKED} covers the other direction — a
+     * manual re-run, or a replica the lease let through, steps over rows the first is holding rather
+     * than blocking on them or double-escalating them.
+     *
+     * <p><b>LEASE: PT5M, and it is BOTH oversized and, at the far end, the wrong knob.</b> Sized: one
+     * sweep is a single transaction over at most 100 rows plus one digest notification, well under a
+     * second, so five minutes is four-and-a-bit minutes of pure slack against a 60-second cron — the
+     * same "absorb a stalled instance without letting a second one start" reasoning as
+     * {@code ExchangeScheduleFiringJob}. Wrong knob: ADR 0010 §5.2 names this job as the one the split
+     * hurts most, because {@code TicketRepository.lockBreached} becomes a fan-out with
+     * {@code PESSIMISTIC_WRITE}/{@code SKIP LOCKED} per schema, and at the 200-silo ceiling that is 200
+     * locking round trips every sixty seconds. PT5M would still cover it and the job would still be
+     * wrong — the answer there is {@code platform.ticket_index}, so a sweep dives per-tenant only to
+     * WRITE the escalation and N becomes the breach count rather than the tenant count. Until that
+     * exists, the interim shape §5.2 asks for is a bounded silo loop with a resumable per-home cursor,
+     * and {@link #BATCH} stops being global at the same moment — a fairness change, since breaches are
+     * then ordered within a home and not across the installation.
      */
     @Scheduled(cron = "${app.scheduler.support-escalation-cron:15 * * * * *}")
     @SchedulerLock(name = "support-sla-escalation", lockAtMostFor = "PT5M")
+    @JobAxis(TENANT)
     public void escalateBreaches() {
         // Declares the tenant axis, then opens the transaction inside it. ADR 0010 §3.4.
         TenantContext.runAs(POOLED_TENANT, () -> transactions.executeWithoutResult(tx -> escalate()));

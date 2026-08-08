@@ -12,11 +12,13 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
+import ug.co.smsone.testsupport.TenantAxis;
 
 /**
  * The webhook delivery pipeline against a REAL local receiver: fan-out enqueues, the worker signs and
@@ -36,9 +38,21 @@ import ug.co.smsone.testsupport.AbstractIntegrationTest;
  *
  * <p>{@code worker.drainOnce()} is deliberately NOT pinned anywhere below. Declaring its own axis is
  * the worker's obligation (ADR 0010 §3.4) and this class is where it is really tested — the poller is
- * a thread the worker starts itself, which no filter and no {@code TaskDecorator} ever covers.
+ * a thread the worker starts itself, which no filter and no {@code TaskDecorator} ever covers. In
+ * {@link #transientFailureIsRetriedThenDeadLettered()} the drive goes further and takes the harness's
+ * pin OFF with {@link TenantAxis#withNoAxis}: that drain sits inside an {@code await(…)} which now
+ * polls in this thread (see the comment there for why it must), and a drain that quietly borrowed the
+ * ambient platform pin would stop testing the thing this paragraph is about.
  */
 class WebhookDeliveryTest extends AbstractIntegrationTest {
+
+    /**
+     * The axis {@link #resetQueue()} sweeps on. It names no organization deliberately: an org in no
+     * {@code organization} row can only ever resolve to the shared {@code tenant_pool}, so this IS the
+     * pooled schema's axis, spelled with the only vocabulary {@code TenantContext} has. ADR 0010
+     * Phase 5 turns it into a loop over {@code platform.tenant_placement}.
+     */
+    private static final UUID POOLED_TENANT = new UUID(0L, 0L);
 
     @Autowired
     private WebhookSubscriptionService subscriptions;
@@ -54,6 +68,22 @@ class WebhookDeliveryTest extends AbstractIntegrationTest {
 
     @Autowired
     private io.micrometer.core.instrument.MeterRegistry meters;
+
+    /**
+     * Starts every test from an empty queue, and since ADR 0010 Phase 3 that means two tables.
+     *
+     * <p><b>It became necessary with the two-step claim, and the reason is worth stating.</b> A drain
+     * used to be one cluster-wide claim, so another test's leftover rows rode along in the same batch
+     * as this test's and nothing noticed. A drain is now ONE TENANT's batch — which is the fairness
+     * guarantee — so a leftover tenant that still has claimable rows consumes the whole drain and this
+     * test's own delivery is never reached. That is the mechanism working, not failing, and the fixture
+     * has to stop leaning on the behaviour it replaced.
+     */
+    @BeforeEach
+    void resetQueue() {
+        TenantContext.runAs(POOLED_TENANT, () -> jdbc.update("delete from webhook_delivery"));
+        jdbc.update("delete from platform.queue_signal where queue = 'webhook'");
+    }
 
     private double deadLettered() {
         io.micrometer.core.instrument.Counter counter = meters.find("smsone.deliveries.dead_lettered")
@@ -122,15 +152,33 @@ class WebhookDeliveryTest extends AbstractIntegrationTest {
                     WebhookPayload.of("org.status_changed", orgId, Instant.now()).with("status", "SUSPENDED")));
 
             // Fast-forward the backoff and drain until dead-lettered (max-attempts default = 5).
-            // Everything in this block runs on Awaitility's own thread, which carries no tenant axis
-            // (ADR 0010 §3.4): the fast-forward declares one — the TENANT's, since that is where the
-            // row is — and the drain deliberately does not, because that is the worker's own
-            // obligation and this is the one place it is really tested.
-            await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
-                TenantContext.runAs(orgId, () -> jdbc.update(
-                        "update webhook_delivery set next_attempt_at = now() where subscription_id = ?",
-                        subscription.getId()));
-                worker.drainOnce();
+            //
+            // `pollInSameThread` because this poll DRAINS, and that makes it a correctness requirement
+            // rather than a preference. Awaitility polls on a thread of its own and, when a poll
+            // satisfies the condition, shuts that thread's executor down GRACEFULLY — a poll already
+            // running keeps running after this method returns. A drain that outlives its test is a
+            // worker still claiming tenants from a queue the NEXT class believes is its own, and the
+            // next class here is WebhookQueueFairnessTest, which counts drains: one straggler claim and
+            // its arithmetic is somebody else's. Polling in this thread means the last drain has
+            // finished before the test has.
+            //
+            // The axis each statement below needs is therefore declared by that statement, as before:
+            // the fast-forward takes the TENANT's, since that is where the row is, and the drain takes
+            // the axis OFF — that is the worker's own obligation and this is the one place it is really
+            // tested, so it must not inherit the harness's platform pin from this thread.
+            await().pollInSameThread().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
+                // Both places the backoff is recorded. `releaseSignal` stamped queue_signal with this
+                // delivery's own next_attempt_at when the reschedule parked it, so moving the row and
+                // not the signal leaves the tenant due in the future and the drain below finds nothing.
+                // Production has no such path — enqueue, requeueFailed and the release itself all keep
+                // the two in step — which is exactly why simulating one by hand has to do both.
+                TenantContext.runAs(orgId, () -> {
+                    jdbc.update("update webhook_delivery set next_attempt_at = now() where subscription_id = ?",
+                            subscription.getId());
+                    jdbc.update("update platform.queue_signal set due_at = now() "
+                            + "where queue = 'webhook' and org_id = ?", orgId);
+                });
+                TenantAxis.withNoAxis(worker::drainOnce);
                 assertThat(deliveryStatus(orgId, subscription.getId())).isEqualTo("FAILED");
             });
             assertThat(hits.get()).isEqualTo(5);

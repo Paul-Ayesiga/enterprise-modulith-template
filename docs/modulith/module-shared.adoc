@@ -17,6 +17,7 @@ _Others_
 * `u.c.s.s.audit.AuditLog`
 * `u.c.s.s.cache.CacheConfig`
 * `u.c.s.s.cache.CacheInvalidationBroadcaster`
+* `u.c.s.s.cache.CacheRegistry`
 * `u.c.s.s.cache.TwoLevelCacheManager`
 * `u.c.s.s.config.AsyncConfig`
 * `u.c.s.s.config.ClockConfig`
@@ -29,6 +30,7 @@ _Others_
 * `u.c.s.s.persistence.JpaAuditingConfig`
 * `u.c.s.s.persistence.MappedTables`
 * `u.c.s.s.persistence.SoftDeleteRecovery`
+* `u.c.s.s.queue.QueueSignals`
 * `u.c.s.s.ratelimit.DistributedRateLimiter`
 * `u.c.s.s.ratelimit.RateLimitFilter`
 * `u.c.s.s.retention.RetentionOverrides`

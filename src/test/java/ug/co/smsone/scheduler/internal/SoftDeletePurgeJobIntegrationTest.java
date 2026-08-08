@@ -17,6 +17,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import ug.co.smsone.shared.persistence.MappedTables;
 import ug.co.smsone.shared.persistence.SoftDeletableEntity;
+import ug.co.smsone.shared.persistence.SoftDeleteProperties;
 import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 import ug.co.smsone.testsupport.EdgeSeed;
@@ -62,6 +63,17 @@ class SoftDeletePurgeJobIntegrationTest extends AbstractIntegrationTest {
     /** The same source the job resolves table names from, so the probes address exactly what it does. */
     @Autowired
     private MappedTables tables;
+
+    /**
+     * The shipped retention policy, and the shipped meter registry — both handed to the hand-built job
+     * in {@link #aPassCutByItsDeadlineResumesWhereItStoppedRatherThanAtTheHead()} so that the only
+     * thing differing from the autowired bean is the clock.
+     */
+    @Autowired
+    private SoftDeleteProperties properties;
+
+    @Autowired
+    private io.micrometer.core.instrument.MeterRegistry meters;
 
     @Autowired
     private EntityManagerFactory entityManagerFactory;
@@ -355,6 +367,115 @@ class SoftDeletePurgeJobIntegrationTest extends AbstractIntegrationTest {
         assertThat(table).describedAs("%s must declare @Table(name = ...)", entity.getSimpleName())
                 .isNotNull();
         return table.name();
+    }
+
+    /**
+     * <b>The resumable cursor (ADR 0010 §3.4, Phase 3).</b> A pass cut by its deadline must continue
+     * where it stopped, not restart at the head — otherwise the tables at the front of
+     * {@code PURGE_ORDER} are re-purged every night and the ones behind them keep their tombstones
+     * forever, with the job logging a healthy row count throughout.
+     *
+     * <p><b>The two probes sit at consecutive PLATFORM steps, and that adjacency is the whole
+     * experiment.</b> {@code external_organization} is the first table the platform pass visits and
+     * {@code organization} the second, so a budget that affords one table a run distinguishes the two
+     * behaviours exactly: a resuming job spends run 2 on {@code organization} and purges it, while a
+     * restarting job spends run 2 re-visiting the already-empty {@code external_organization} and cuts
+     * before {@code organization} again — leaving the row alive, which is what the final assertion
+     * would then catch.
+     *
+     * <p>The external link hangs off the LIVE tenant rather than off the aged probe, deliberately:
+     * {@code external_organization.organization_id} cascades, so a link on the probe would vanish with
+     * it and the first assertion would pass without the platform pass having purged anything.
+     *
+     * <p>Driven through a hand-built job rather than the autowired one because the deadline is 25
+     * minutes of wall clock and the only honest way to reach it in a test is to control the clock. That
+     * also sheds the ShedLock advice, so {@link #runPurge()}'s lease-expiry dance is not needed here.
+     */
+    @Test
+    void aPassCutByItsDeadlineResumesWhereItStoppedRatherThanAtTheHead() {
+        UUID agedLink = insertExternalOrganization(orgId, AGED); // PURGE_ORDER step 1 of the platform pass
+        UUID agedOrg = insertOrganization(AGED);                 // step 2, and the row the cursor decides
+
+        // Two unjumped reads per run: the run's start, then the check before the first visited table.
+        // The third read — the check before the SECOND visited table — lands past the platform budget
+        // (RUN_DEADLINE / 3 = 8m20s), so exactly one table is purged per run.
+        BudgetClock clock = new BudgetClock(2, Duration.ofMinutes(10));
+        SoftDeletePurgeJob resumable = new SoftDeletePurgeJob(jdbc, properties, clock, meters, tables);
+
+        resumable.purgeExpiredSoftDeletes();
+
+        assertThat(exists("external_organization", agedLink))
+                .as("the first table of the platform pass is purged before the budget runs out").isFalse();
+        assertThat(exists("organization", agedOrg))
+                .as("the second is not reached — otherwise this test proves nothing about resuming")
+                .isTrue();
+
+        clock.restart();
+        resumable.purgeExpiredSoftDeletes();
+
+        assertThat(exists("organization", agedOrg))
+                .as("run 2 must SPEND its one table on organization, which only happens if the pass "
+                        + "resumed at the cursor. A pass restarting at the head would spend it on the "
+                        + "now-empty external_organization and cut before organization again")
+                .isFalse();
+    }
+
+    /**
+     * A clock that answers with the same instant for its first {@code unjumped} reads and then jumps —
+     * which is what turns a 25-minute deadline into something a test can reach without sleeping.
+     *
+     * <p>Counting READS rather than taking a schedule is deliberate: it ties the budget to the job's own
+     * deadline checks, one per visited table, so the test says "one table per run" instead of guessing
+     * at durations. {@link #restart()} is what lets one clock serve two runs of the same job instance —
+     * the cursor under test lives on that instance, so it cannot be re-created between runs.
+     */
+    private static final class BudgetClock extends java.time.Clock {
+
+        private final int unjumped;
+        private final Duration jump;
+        private Instant base = Instant.now();
+        private int reads;
+
+        private BudgetClock(int unjumped, Duration jump) {
+            this.unjumped = unjumped;
+            this.jump = jump;
+        }
+
+        private void restart() {
+            base = Instant.now();
+            reads = 0;
+        }
+
+        @Override
+        public java.time.ZoneId getZone() {
+            return java.time.ZoneOffset.UTC;
+        }
+
+        @Override
+        public java.time.Clock withZone(java.time.ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return ++reads <= unjumped ? base : base.plus(jump);
+        }
+    }
+
+    /**
+     * A provider link for an EXISTING organization. Random provider/issuer/external id so the partial
+     * unique indexes (V11) cannot collide with another test class sharing the container.
+     */
+    private UUID insertExternalOrganization(UUID organizationId, Instant deletedAt) {
+        UUID id = UUID.randomUUID();
+        jdbc.update("""
+                insert into external_organization
+                    (id, organization_id, provider, issuer, external_org_id, external_alias, linked_at,
+                     version, created_at, deleted_at)
+                values (?, ?, 'KEYCLOAK', ?, ?, ?, now(), 0, now(), ?)
+                """, id, organizationId, "https://purge.probe/" + suffix(id), id.toString(),
+                "purge-link-" + suffix(id), timestamp(deletedAt));
+        return track("external_organization", id);
     }
 
     @Test

@@ -15,7 +15,9 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.transaction.support.TransactionTemplate;
 import ug.co.smsone.shared.audit.AuditLog;
+import ug.co.smsone.shared.cache.TwoLevelCacheManager;
 import ug.co.smsone.subscription.SubscriptionChanged;
 
 /** Dunning's teeth in isolation: a lapsed PAST_DUE row pauses and announces PAUSED. */
@@ -34,7 +36,8 @@ class SubscriptionServicePastDueTest {
 
         SubscriptionService service = new SubscriptionService(repo, plans,
                 mock(EntitlementResolver.class), events, mock(AuditLog.class),
-                new SimpleMeterRegistry(), Clock.systemUTC());
+                new SimpleMeterRegistry(), Clock.systemUTC(),
+                mock(TwoLevelCacheManager.class), mock(TransactionTemplate.class));
 
         assertThat(service.pauseLapsedPastDue(Duration.ofDays(7))).isEqualTo(1);
         assertThat(lapsed.getStatus()).isEqualTo(OrgSubscription.Status.PAUSED);

@@ -17,6 +17,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.StringJoiner;
+import static ug.co.smsone.shared.tenancy.JobAxis.Axis.TENANT;
+
 import java.util.UUID;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.slf4j.Logger;
@@ -26,6 +28,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.shared.tenancy.JobAxis;
 import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
@@ -59,9 +62,23 @@ class UsageExportJob {
 
     private static final Logger log = LoggerFactory.getLogger(UsageExportJob.class);
 
-    // Well under the PT30M ShedLock lease — the house default across all thirteen @SchedulerLock jobs,
-    // and not something to raise for one slow job. A Kill Bill that answers slowly rather than failing
-    // must not run the pass past the lock and into a second instance's concurrent run.
+    /**
+     * Five minutes under the {@code PT30M} lease, so a Kill Bill that answers slowly rather than failing
+     * cannot run the pass past the lock and into a second instance's concurrent run.
+     *
+     * <p><b>Re-derived rather than inherited, and the derivation is a division.</b> The pass is one
+     * synchronous POST per org with a backlog, so the deadline buys {@code 25 min / (KB latency per
+     * org)} orgs a night: at 250 ms that is ~6,000, at one second ~1,500, at three seconds ~500. Those
+     * are arithmetic, not measurements — no Kill Bill latency has been measured against this
+     * installation — so the honest statement is that the number of orgs one night covers is unknown
+     * within an order of magnitude, and {@link Export#cutShort()} plus the warning it logs is what makes
+     * the real answer observable instead of inferred.
+     *
+     * <p>What it is NOT sized by is schema count, and that is worth saying because most of this
+     * subsystem's Phase 5 notes are about fan-out. The dominant cost here is remote and per-ORG; the
+     * per-home {@code billing_account} read is one indexed row. Promoting a hundred tenants to silos
+     * therefore changes the connection pattern and not the deadline.
+     */
     private static final Duration RUN_DEADLINE = Duration.ofMinutes(25);
 
     /**
@@ -110,8 +127,31 @@ class UsageExportJob {
     record Export(int batches, int days, int unbillableOrgs, boolean cutShort) {
     }
 
+    /**
+     * <b>AXIS: TENANT, one span, argued in {@link #export()}</b> — the ledger is platform-tier and named,
+     * so it resolves from any axis, while {@code billing_account} is the tenant's and is reached bare;
+     * the asymmetry is what picks the axis.
+     *
+     * <p><b>CURSOR: persisted in the data, in {@code platform.api_usage_daily.exported}, and it is the
+     * shape ADR 0010 §3.4 tells the other fan-out jobs to generalise.</b> Nothing is held in memory:
+     * the scan selects {@code exported = false} ordered by {@code day} ascending, so the orgs a
+     * deadline-cut run never reached still hold the OLDEST unexported days and sort to the front of
+     * tomorrow's scan by construction. The position is shared between replicas (it is a committed
+     * column) and survives restarts, which is strictly better than the in-memory cursors
+     * {@code SoftDeletePurgeJob} and {@code IdentityReconciliationJob} have to settle for — those sweep
+     * tables with no per-row "done" flag to write.
+     *
+     * <p>The {@code max-backlog-days} window is the second half of the same idea and is documented on
+     * the class: it is what stops permanently-unexportable days (an org with no Kill Bill subscription)
+     * accumulating at the head of that ordering and starving everything behind them. A cursor with no
+     * such window is a cursor that eventually parks on a poisoned prefix.
+     *
+     * <p><b>LEASE: PT30M against {@link #RUN_DEADLINE}</b>, both re-derived there, and the org count one
+     * night covers is honestly a division rather than a measurement.
+     */
     @Scheduled(cron = "${app.scheduler.usage-export-cron:0 20 4 * * *}")
     @SchedulerLock(name = "billing-usage-export", lockAtMostFor = "PT30M")
+    @JobAxis(TENANT)
     public void run() {
         export();
     }

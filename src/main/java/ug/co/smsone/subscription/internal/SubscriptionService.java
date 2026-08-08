@@ -9,14 +9,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import ug.co.smsone.shared.audit.AuditLog;
+import ug.co.smsone.shared.cache.TenantCacheKeys;
+import ug.co.smsone.shared.cache.TwoLevelCacheManager;
 import ug.co.smsone.shared.error.ConflictException;
 import ug.co.smsone.shared.error.NotFoundException;
 import ug.co.smsone.shared.error.ValidationException;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.shared.web.ApiSource;
 import ug.co.smsone.subscription.EntitlementKeys;
 import ug.co.smsone.subscription.SubscriptionChanged;
@@ -32,6 +35,23 @@ class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
     /** Default trial length when the caller does not specify one. */
     static final int DEFAULT_TRIAL_DAYS = 14;
 
+    /** The plan every organization is on when it has no {@code org_subscription} row at all. */
+    private static final String FREE_PLAN = "FREE";
+
+    /**
+     * The axis the "who is on this plan" question borrows, when it names no organization.
+     *
+     * <p>Same constant and same reasoning as {@code AdminSubscriptionController} and
+     * {@code MappedSchemaValidator}: an org that has never been promoted resolves to the shared
+     * {@code tenant_pool}, and a UUID in no {@code organization} row can never resolve to anything else
+     * — so this IS the pooled schema's axis, spelled with the only vocabulary {@code TenantContext} has.
+     * One idiom for "the pool", not several.
+     *
+     * <p>When silos exist (ADR 0010 Phase 5) the affected organizations stop living in one schema and
+     * this becomes a loop over {@code platform.tenant_placement}, accumulating the ids from each home.
+     */
+    private static final UUID POOLED_TENANT = new UUID(0L, 0L);
+
     private final OrgSubscriptionRepository subscriptions;
     private final PlanRepository plans;
     private final EntitlementResolver resolver;
@@ -39,10 +59,13 @@ class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
     private final AuditLog auditLog;
     private final MeterRegistry meters;
     private final Clock clock;
+    private final TwoLevelCacheManager caches;
+    private final TransactionTemplate transactions;
 
     SubscriptionService(OrgSubscriptionRepository subscriptions, PlanRepository plans,
             EntitlementResolver resolver, ApplicationEventPublisher events, AuditLog auditLog,
-            MeterRegistry meters, Clock clock) {
+            MeterRegistry meters, Clock clock, TwoLevelCacheManager caches,
+            TransactionTemplate transactions) {
         this.subscriptions = subscriptions;
         this.plans = plans;
         this.resolver = resolver;
@@ -50,6 +73,8 @@ class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
         this.auditLog = auditLog;
         this.meters = meters;
         this.clock = clock;
+        this.caches = caches;
+        this.transactions = transactions;
     }
 
     record SubscriptionView(UUID orgId, String planCode, String planName, String status,
@@ -129,7 +154,7 @@ class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
         String normalized = planCode == null ? "" : planCode.trim().toUpperCase();
         Plan plan = plans.findByCode(normalized)
                 .orElseThrow(() -> new NotFoundException("No plan named '" + normalized + "'."));
-        if ("FREE".equals(plan.getCode())) {
+        if (FREE_PLAN.equals(plan.getCode())) {
             throw new ValidationException("The FREE plan has nothing to trial — trials are for paid plans.");
         }
         int days = trialDays <= 0 ? DEFAULT_TRIAL_DAYS : trialDays;
@@ -232,23 +257,75 @@ class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
         return plan;
     }
 
-    /** Editing a plan changes what EVERY org on it may do, so evict the per-org entitlement cache. */
-    @Transactional
-    @CacheEvict(cacheNames = EntitlementResolver.CACHE, allEntries = true)
+    /**
+     * Editing a plan changes what EVERY org on it may do, so the per-org entitlement cache has to go —
+     * but only for those orgs.
+     *
+     * <h3>Why this is no longer {@code allEntries}, and no longer {@code @Transactional}</h3>
+     *
+     * <p>{@code org-entitlements} is a TENANT cache now (ADR 0010 §3.5): its keys carry the tenant, so
+     * {@code allEntries = true} means "throw away every tenant's answer in order to invalidate the
+     * tenants on one plan". It stayed correct and got more wasteful with every tenant added, and the
+     * waste is not abstract — it is a cold entitlement read on the next request of every organization in
+     * the installation, caused by an operator editing a plan most of them are not on.
+     *
+     * <p>Naming the affected orgs means reading {@code org_subscription}, which is tenant-tier, from a
+     * method whose own writes are the platform-tier catalog. That is two axes, and the schema is chosen
+     * when the connection is BORROWED — so the pin has to happen with no transaction open, which an
+     * {@code @Transactional} annotation makes impossible: the proxy opens the transaction before the
+     * body can pin anything, and {@code TenantContext} throws rather than silently leaving the statements
+     * on the previous axis. Hence the explicit {@link TransactionTemplate} (AGENTS §4.3's rule about
+     * self-invocation is the same shape seen from the other side). The eviction then runs strictly AFTER
+     * the commit, which also closes the window where a concurrent reader could re-cache the pre-commit
+     * entitlements behind an eviction that had already happened.
+     */
     Plan updatePlan(String code, String name, int rank, Map<String, Long> entitlements) {
-        Plan plan = requirePlan(normalizeCode(code));
-        plan.update(name.trim(), rank, toStored(entitlements));
-        plans.save(plan);
-        auditLog.record("subscription.plan_updated", null, plan.getCode(), null,
-                "name=" + plan.getName() + " rank=" + rank);
+        Plan plan = transactions.execute(status -> {
+            Plan existing = requirePlan(normalizeCode(code));
+            existing.update(name.trim(), rank, toStored(entitlements));
+            plans.save(existing);
+            auditLog.record("subscription.plan_updated", null, existing.getCode(), null,
+                    "name=" + existing.getName() + " rank=" + rank);
+            return existing;
+        });
+        evictEntitlementsOfOrgsOn(plan);
         return plan;
     }
 
+    /**
+     * Drops the cached entitlement map of every organization this plan edit re-gates.
+     *
+     * <p><b>FREE is the exception, and it is not a shortcut.</b> An org with no {@code org_subscription}
+     * row at all runs on FREE — {@link EntitlementResolver#resolve} falls back to it — and those orgs
+     * are by definition absent from the plan's subscription rows, so a keyed sweep over those rows would
+     * miss exactly the population FREE governs. Editing FREE genuinely does re-gate every tenant, so
+     * clearing every tenant is the correct answer there rather than the lazy one.
+     */
+    private void evictEntitlementsOfOrgsOn(Plan plan) {
+        if (FREE_PLAN.equals(plan.getCode())) {
+            caches.getCache(EntitlementResolver.CACHE).clear();
+            return;
+        }
+        // Pinned OUTSIDE any transaction (see updatePlan): the repository opens its own inside this
+        // axis, so the borrow lands on the schema where org_subscription actually lives.
+        List<UUID> affected =
+                TenantContext.callAs(POOLED_TENANT, () -> subscriptions.orgIdsByPlanId(plan.getId()));
+        for (UUID orgId : affected) {
+            // evictForTenant rather than a pin per org: this thread names the tenant it reaches into,
+            // which is what a deliberate cross-tenant cache write should look like at the call site.
+            caches.evictForTenant(EntitlementResolver.CACHE, orgId, TenantCacheKeys.wholeTenant());
+        }
+    }
+
+    /**
+     * No cache eviction here, and its absence is the point: the guard below refuses the delete unless NO
+     * organization is on the plan, so nothing cached anywhere was derived from it. The {@code allEntries}
+     * evict this used to carry threw away every tenant's entitlements to invalidate nothing at all.
+     */
     @Transactional
-    @CacheEvict(cacheNames = EntitlementResolver.CACHE, allEntries = true)
     void deletePlan(String code) {
         Plan plan = requirePlan(normalizeCode(code));
-        if ("FREE".equals(plan.getCode())) {
+        if (FREE_PLAN.equals(plan.getCode())) {
             throw new ConflictException("FREE is the default fallback plan and cannot be deleted.");
         }
         if (subscriptions.existsByPlanId(plan.getId())) {

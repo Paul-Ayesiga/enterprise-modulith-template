@@ -2134,7 +2134,7 @@ and the Keycloak state this runner creates are tabulated under FR-ORG-31 in §3.
 
 | Key | Default | Note |
 |---|---|---|
-| `l1-ttl` / `l1-max-size` | `PT60S` / `10000` (`CACHE_L1_TTL`, `CACHE_L1_MAX_SIZE`) | Caffeine |
+| `l1-ttl` / `l1-max-size` | `PT60S` / `50000` (`CACHE_L1_TTL`, `CACHE_L1_MAX_SIZE`) | Caffeine. Raised from `10000` with ADR 0010 §3.5: TENANT-scoped caches prefix the organization into their keys, so the entry count now scales with tenants served rather than with one org's members |
 | `l2-ttl` | `PT10M` (`CACHE_L2_TTL`) | Valkey |
 | `l2-enabled` | `true` (`CACHE_L2_ENABLED`) | Gates three beans in `CacheConfig` (`:56,73,88`) with `matchIfMissing = true`; `false` in the test profile. Deliberately **not** a record component: the flag is honoured by the conditionals, never read from the record |
 

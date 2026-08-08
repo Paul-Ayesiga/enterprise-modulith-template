@@ -65,11 +65,8 @@ class ExchangeScheduleTest extends AbstractIntegrationTest {
     @BeforeEach
     void reset() {
         handler.reset();
-        for (String home : ug.co.smsone.shared.tenancy.SplitTables.homes()) {
-            // exchange_job is a split table: leftovers in EITHER home would be claimed ahead of this
-            // test's job, which claims strictly oldest-first (ADR 0010 §2 row 10).
-            jdbc.update("delete from " + home + ".exchange_job");
-        }
+        // Both homes AND the signals that index them — see ExchangeTestSupport.clearQueue.
+        ExchangeTestSupport.clearQueue(jdbc);
         // exchange_schedule is TENANT-tier (ADR 0010 §2), so it is unreachable from the harness's
         // PLATFORM pin — and this sweep names no org, so it takes the pooled tenant's axis.
         TenantContext.runAs(POOLED_TENANT, () -> jdbc.update("delete from exchange_schedule"));

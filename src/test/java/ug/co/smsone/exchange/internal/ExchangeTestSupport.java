@@ -35,6 +35,49 @@ import ug.co.smsone.files.FileStorageProvider;
 @TestConfiguration(proxyBeanMethods = false)
 public class ExchangeTestSupport {
 
+    /**
+     * Empties the queue completely — <b>the jobs in both homes AND the signals that index them</b>.
+     *
+     * <p>Every exchange test asserts on {@code drainOnce()} returning exactly 1, and the queue is a
+     * table shared by every class running against the singleton Postgres, so leftovers would be claimed
+     * instead of this test's job. Since ADR 0010 Phase 3 there is a second thing to leave behind:
+     * {@code platform.queue_signal} is what the worker reads to decide which scope to look at, and a
+     * signal whose rows this method deleted is one wasted probe on some later test's drain. That is
+     * harmless by design — the worker that finds nothing deletes it — but it is bounded by
+     * {@code ExchangeWorker.MAX_EMPTY_PROBES}, and "start from an empty queue" now means both tables or
+     * it means nothing.
+     *
+     * <p>{@code exchange_job} is a split table (ADR 0010 §2 row 10), so leftovers in EITHER home would
+     * be claimed; {@code queue_signal} is platform-tier and named, so it is reachable from whichever
+     * axis the harness happens to hold.
+     */
+    static void clearQueue(org.springframework.jdbc.core.JdbcTemplate jdbc) {
+        for (String home : ug.co.smsone.shared.tenancy.SplitTables.homes()) {
+            jdbc.update("delete from " + home + ".exchange_job");
+        }
+        jdbc.update("delete from platform.queue_signal where queue = ?", ExchangeJobStore.QUEUE);
+    }
+
+    /**
+     * Ages a claimed job's lock past the stale-lock window so the next poll reclaims it —
+     * <b>including the signal that says when the scope is next worth looking at</b>.
+     *
+     * <p>The second half is the one a reader will not expect, and it is the design rather than a leak.
+     * {@code ExchangeJobStore.releaseSignal} computes {@code due_at} from {@code locked_at + staleLock},
+     * so a test that rewinds {@code locked_at} behind the queue's back leaves the signal parked in the
+     * future and the drain it is about finds nothing. Production has no such path — every write that
+     * makes a job claimable goes through {@code submit}, {@code releaseForRetry} or the release itself,
+     * all of which keep the two in step — which is precisely why simulating a dead claimant has to do
+     * by hand what those do for free.
+     */
+    static void expireClaim(org.springframework.jdbc.core.JdbcTemplate jdbc, java.util.UUID jobId,
+            java.util.UUID orgId) {
+        jdbc.update("update " + ug.co.smsone.shared.tenancy.SplitTables.homeOf(orgId)
+                + ".exchange_job set locked_at = locked_at - interval '10 minutes' where id = ?", jobId);
+        jdbc.update("update platform.queue_signal set due_at = now() where queue = ? and org_id = ?",
+                ExchangeJobStore.QUEUE, orgId);
+    }
+
     @Bean
     @Primary
     InMemoryFileStorage inMemoryFileStorage() {

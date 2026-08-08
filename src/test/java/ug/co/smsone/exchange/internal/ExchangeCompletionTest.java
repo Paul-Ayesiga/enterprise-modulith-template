@@ -21,7 +21,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
-import ug.co.smsone.shared.tenancy.SplitTables;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
 /**
@@ -57,11 +56,8 @@ class ExchangeCompletionTest extends AbstractIntegrationTest {
     @BeforeEach
     void reset() {
         handler.reset();
-        for (String home : ug.co.smsone.shared.tenancy.SplitTables.homes()) {
-            // exchange_job is a split table: leftovers in EITHER home would be claimed ahead of this
-            // test's job, which claims strictly oldest-first (ADR 0010 §2 row 10).
-            jdbc.update("delete from " + home + ".exchange_job");
-        }
+        // Both homes AND the signals that index them — see ExchangeTestSupport.clearQueue.
+        ExchangeTestSupport.clearQueue(jdbc);
     }
 
     @Test
@@ -192,11 +188,10 @@ class ExchangeCompletionTest extends AbstractIntegrationTest {
                 ExchangeTestSupport.CountingExchangeHandler.ID, 1, "CSV", key);
 
         // "Instance A" claims and stalls; its lock goes stale; B reclaims and finishes the job.
-        // Names the home (ADR 0010 §2 row 10): a claim is one scan per home now, and an org's job is in
-        // the tenant home because submit() routes on org_id, not on the submitter's axis.
-        ExchangeJob claimA = store.claimOne(Duration.ofMinutes(5), SplitTables.TENANT_POOL).orElseThrow();
-        jdbc.update("update " + SplitTables.TENANT_POOL
-                + ".exchange_job set locked_at = locked_at - interval '10 minutes' where id = ?", jobId);
+        // Names the SCOPE and the scope decides the home (ADR 0010 §2 row 10): an org's job is in the
+        // tenant home because submit() routes on org_id, not on the submitter's axis.
+        ExchangeJob claimA = store.claimOne(Duration.ofMinutes(5), orgId).orElseThrow();
+        ExchangeTestSupport.expireClaim(jdbc, jobId, orgId);
         assertThat(worker.drainOnce()).isEqualTo(1);
         assertThat(store.find(jobId, orgId).orElseThrow().status()).isEqualTo(ExchangeJob.COMPLETED);
 

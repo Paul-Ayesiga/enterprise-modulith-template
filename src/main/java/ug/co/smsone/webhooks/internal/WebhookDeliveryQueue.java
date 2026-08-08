@@ -15,6 +15,8 @@ import org.springframework.jdbc.core.BatchPreparedStatementSetter;
 import org.springframework.jdbc.core.JdbcTemplate;
 import ug.co.smsone.shared.persistence.DbDialect;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionTemplate;
+import ug.co.smsone.shared.queue.QueueSignals;
 
 /**
  * The webhook delivery queue, backed by {@code webhook_delivery} and driven with plain JDBC. Enqueue is
@@ -23,6 +25,16 @@ import org.springframework.stereotype.Component;
  * secret is thus never copied into the delivery row. Status updates are short, single-statement and
  * FENCED (row must still be PROCESSING at the claimant's attempt count), so a stale claimant whose row
  * was re-claimed can't corrupt the new owner's state.
+ *
+ * <h2>Since Phase 3 the claim is in two steps, and this class owns the second one</h2>
+ *
+ * <p>{@code platform.queue_signal} answers "which tenant has work"; {@link WebhookDeliveryWorker} pins
+ * that tenant; {@link #claim} then runs against ONE tenant's rows. That is what makes the join to
+ * {@code webhook_subscription} — a tenant-tier table with no schema anyone can name once a tenant is
+ * promoted — expressible at all, and it is what makes fairness a property of the shape rather than of
+ * a predicate. Everything this class writes therefore keeps the signal honest: {@link #enqueue} and
+ * {@link #requeueFailed} raise it in the same transaction as the rows, and {@link #releaseSignal}
+ * recomputes it from what the tenant has left.
  */
 @Component
 class WebhookDeliveryQueue {
@@ -30,36 +42,68 @@ class WebhookDeliveryQueue {
     private static final Logger log = LoggerFactory.getLogger(WebhookDeliveryQueue.class);
     private static final int MAX_ERROR = 1000;
 
+    /** This queue's discriminator in {@code platform.queue_signal}. */
+    static final String QUEUE = "webhook";
+
     private final JdbcTemplate jdbc;
     private final DbDialect dialect;
+    private final QueueSignals signals;
+    private final TransactionTemplate transactions;
 
-    WebhookDeliveryQueue(JdbcTemplate jdbc, DbDialect dialect) {
+    WebhookDeliveryQueue(JdbcTemplate jdbc, DbDialect dialect, QueueSignals signals,
+            TransactionTemplate transactions) {
         this.jdbc = jdbc;
         this.dialect = dialect;
+        this.signals = signals;
+        this.transactions = transactions;
     }
 
+    /**
+     * One batch insert plus <strong>one signal row per distinct org, not per delivery</strong> — a
+     * fan-out of forty thousand rows announces itself once (ADR 0010 §2.1).
+     *
+     * <p><strong>The transaction is the point, not tidiness.</strong> The rows and the signal that
+     * indexes them have to become visible together: commit the rows first and a worker can claim the
+     * tenant, find nothing, and delete the signal in the window before they land; commit the signal
+     * first and the same probe deletes it before the rows exist. Either way the batch is queued, no
+     * error is raised anywhere, and no poll ever looks at it again. Inside one transaction a concurrent
+     * claim either sees both or skips the tenant entirely, because the upsert holds the signal row's
+     * lock and {@code SKIP LOCKED} steps over it.
+     *
+     * <p>{@code distinct} rather than one raise per delivery: the dispatcher fans one event out inside a
+     * single org, so this is one row in practice — but the signature takes a list of deliveries that
+     * each carry their own {@code org_id}, and a mixed batch that announced only the first org would
+     * strand the rest.
+     */
     void enqueue(List<NewWebhookDelivery> deliveries, int maxAttempts) {
-        jdbc.batchUpdate("""
-                insert into webhook_delivery
-                    (id, subscription_id, org_id, event_type, payload, status, attempts, max_attempts,
-                     next_attempt_at, created_at)
-                values (?, ?, ?, ?, ?, 'PENDING', 0, ?, now(), now())
-                """, new BatchPreparedStatementSetter() {
-            @Override
-            public void setValues(PreparedStatement ps, int i) throws SQLException {
-                NewWebhookDelivery d = deliveries.get(i);
-                ps.setObject(1, UUID.randomUUID());
-                ps.setObject(2, d.subscriptionId());
-                ps.setObject(3, d.orgId());
-                ps.setString(4, d.eventType());
-                ps.setString(5, d.payload());
-                ps.setInt(6, maxAttempts);
-            }
+        if (deliveries.isEmpty()) {
+            return;
+        }
+        transactions.executeWithoutResult(tx -> {
+            jdbc.batchUpdate("""
+                    insert into webhook_delivery
+                        (id, subscription_id, org_id, event_type, payload, status, attempts, max_attempts,
+                         next_attempt_at, created_at)
+                    values (?, ?, ?, ?, ?, 'PENDING', 0, ?, now(), now())
+                    """, new BatchPreparedStatementSetter() {
+                @Override
+                public void setValues(PreparedStatement ps, int i) throws SQLException {
+                    NewWebhookDelivery d = deliveries.get(i);
+                    ps.setObject(1, UUID.randomUUID());
+                    ps.setObject(2, d.subscriptionId());
+                    ps.setObject(3, d.orgId());
+                    ps.setString(4, d.eventType());
+                    ps.setString(5, d.payload());
+                    ps.setInt(6, maxAttempts);
+                }
 
-            @Override
-            public int getBatchSize() {
-                return deliveries.size();
-            }
+                @Override
+                public int getBatchSize() {
+                    return deliveries.size();
+                }
+            });
+            deliveries.stream().map(NewWebhookDelivery::orgId).distinct()
+                    .forEach(orgId -> signals.raise(QUEUE, QueueSignals.scopeOf(orgId)));
         });
     }
 
@@ -102,15 +146,32 @@ class WebhookDeliveryQueue {
      * parenthesised branches included. The arms therefore choose candidates and the outer select — a
      * plain single-table read — takes the locks.
      *
-     * <p><b>Everything above about ordering and starvation is scoped to ONE schema, and today that
-     * happens to be every tenant.</b> Both tables are tenant-tier (ADR 0010 §2), so the caller pins a
-     * tenant axis and this statement sees whatever that axis resolves to — the shared pool while nobody
-     * is promoted. The paused-subscription starvation this shape fixes is therefore cross-tenant today
-     * and becomes per-tenant the moment a silo exists, which is when
-     * {@link WebhookDeliveryWorker#drainOnce} turns into a loop and this query's {@code limit} stops
-     * being the whole fleet's batch. Nothing here changes then; what changes is what "the queue" means.
+     * <p><b>Since Phase 3 this claim covers exactly ONE tenant, and that is the fairness guarantee.</b>
+     * {@link WebhookDeliveryWorker#drainOnce} takes a tenant from {@code platform.queue_signal} first,
+     * pins it, and passes its {@code orgId} here; both arms carry {@code org_id = ?} INSIDE their own
+     * limit, so the batch this statement returns can only ever be one tenant's. The outage the paragraph
+     * above narrates — one subscription's rows occupying every slot until no tenant got a webhook — is
+     * therefore impossible by construction now rather than prevented by a predicate: the slots are not
+     * shared. The liveness predicates stay exactly where they are, because they still decide the
+     * ordering WITHIN a tenant and because a tenant whose every row is paused must still yield an empty
+     * batch rather than a batch of rows the outer join would discard.
+     *
+     * <p>The predicate goes in the two ARMS and deliberately not in the outer update: the arms are what
+     * choose the ids and therefore what the {@code limit} applies to, and the outer statement already
+     * joins on those ids. Adding a third copy would read as a safety check it is not — every id reaching
+     * it came from an arm that already proved the org.
+     *
+     * <p>Both tables are tenant-tier (ADR 0010 §2), so the pin also decides the SCHEMA these names
+     * resolve in — {@code tenant_pool} while the org is pooled, its own silo after promotion. That is
+     * the property the two-step claim exists to buy: a single-step claim cannot pin what it has not
+     * found yet, so it could never have named the schema this join needs.
+     *
+     * <p>The index this shape now wants is {@code (org_id, next_attempt_at) where status = 'PENDING'};
+     * V15's {@code idx_webhook_del_due} orders correctly and then filters on the org, so a pooled schema
+     * carrying several tenants' backlogs reads rows it discards. That DDL is tenant-tier and belongs in
+     * {@code db/migration/tenant/} — V56's header records the reason it is not in the platform sequence.
      */
-    List<ClaimedWebhookDelivery> claim(int batchSize, Duration staleLock) {
+    List<ClaimedWebhookDelivery> claim(UUID orgId, int batchSize, Duration staleLock) {
         return jdbc.query("""
                 update webhook_delivery d
                 set status = 'PROCESSING', locked_at = now(), attempts = attempts + 1
@@ -118,7 +179,8 @@ class WebhookDeliveryQueue {
                     select id from webhook_delivery
                     where id in (
                         (select id from webhook_delivery p
-                         where p.status = 'PENDING' and p.next_attempt_at <= now()
+                         where p.org_id = ?
+                           and p.status = 'PENDING' and p.next_attempt_at <= now()
                            and exists (select 1 from webhook_subscription s
                                        where s.id = p.subscription_id
                                          and s.deleted_at is null and s.status = 'ACTIVE')
@@ -126,7 +188,8 @@ class WebhookDeliveryQueue {
                          limit ?)
                         union all
                         (select id from webhook_delivery r
-                         where r.status = 'PROCESSING'
+                         where r.org_id = ?
+                           and r.status = 'PROCESSING'
                            and r.locked_at < now() - (? * interval '1 millisecond')
                            and exists (select 1 from webhook_subscription s
                                        where s.id = r.subscription_id
@@ -150,7 +213,40 @@ class WebhookDeliveryQueue {
                         rs.getString("payload"),
                         rs.getInt("attempts"),
                         rs.getInt("max_attempts")),
-                batchSize, staleLock.toMillis(), batchSize, batchSize);
+                orgId, batchSize, orgId, staleLock.toMillis(), batchSize, batchSize);
+    }
+
+    /**
+     * Hands a leased tenant back to {@code platform.queue_signal} with the time its earliest remaining
+     * row becomes claimable — or deletes the signal when nothing is left. Runs on the tenant's own axis,
+     * like everything else that names {@code webhook_delivery}.
+     *
+     * <p><b>Both arms, and losing either one is a lost delivery.</b> PENDING rows contribute their
+     * {@code next_attempt_at}; PROCESSING rows contribute {@code locked_at + staleLock}, which is when
+     * the stale-lock reclaim can take them. Drop the second and a delivery whose worker crashed
+     * mid-POST leaves a tenant whose signal says "nothing due" — the row stays PROCESSING forever, no
+     * reclaim ever looks at it, and the only symptom is one webhook that never arrived.
+     * {@code least(…)} over two scalar subqueries rather than one query with an {@code OR}: each arm
+     * walks its own partial index, and either arm being empty yields NULL, which {@code least} ignores.
+     *
+     * <p><b>The subscription-liveness predicates are deliberately NOT repeated here.</b> Applying them
+     * would delete the signal of a tenant whose only queued rows sit behind a DISABLED subscription —
+     * and re-enabling that subscription is a write to {@code webhook_subscription}, a table this queue
+     * never watches, so nothing would raise the signal again and the backlog the pause was supposed to
+     * hold would never resume. Counting those rows instead costs one empty probe per poll for as long
+     * as the pause lasts, and the {@code greatest(…, now())} clamp in {@code QueueSignals.release}
+     * keeps that tenant sorted behind everyone with real work. One empty query against a lost backlog
+     * is not a close call.
+     */
+    void releaseSignal(UUID orgId, UUID lease, Duration staleLock) {
+        Timestamp due = jdbc.queryForObject("""
+                select least(
+                    (select min(next_attempt_at) from webhook_delivery
+                      where org_id = ? and status = 'PENDING'),
+                    (select min(locked_at) + (? * interval '1 millisecond') from webhook_delivery
+                      where org_id = ? and status = 'PROCESSING'))
+                """, Timestamp.class, orgId, staleLock.toMillis(), orgId);
+        signals.release(QUEUE, orgId, lease, due == null ? null : due.toInstant());
     }
 
     void markDelivered(UUID id, int expectedAttempts, int responseStatus) {
@@ -181,14 +277,25 @@ class WebhookDeliveryQueue {
      * Attempts reset so backoff restarts; {@code last_error} is kept until the next attempt writes
      * its own outcome (an operator reading the log mid-retry still sees why it dead-lettered).
      *
+     * <p>Raises the signal in the same transaction as the status flip, and only when the flip landed.
+     * A dead-lettered row is invisible to every remaining-work computation, so this is the one path
+     * that turns a tenant with nothing queued back into one with something queued — miss it and the
+     * operator's redelivery sits PENDING with no signal, which looks exactly like "still trying".
+     *
      * @return 1 when re-queued; 0 when the row is not FAILED (or not this org's/subscription's)
      */
     int requeueFailed(UUID deliveryId, UUID subscriptionId, UUID orgId, Instant now) {
-        return jdbc.update(
-                "update webhook_delivery set status = 'PENDING', attempts = 0, next_attempt_at = ?, "
-                        + "locked_at = null where id = ? and subscription_id = ? and org_id = ? "
-                        + "and status = 'FAILED'",
-                Timestamp.from(now), deliveryId, subscriptionId, orgId);
+        return transactions.execute(tx -> {
+            int requeued = jdbc.update(
+                    "update webhook_delivery set status = 'PENDING', attempts = 0, next_attempt_at = ?, "
+                            + "locked_at = null where id = ? and subscription_id = ? and org_id = ? "
+                            + "and status = 'FAILED'",
+                    Timestamp.from(now), deliveryId, subscriptionId, orgId);
+            if (requeued > 0) {
+                signals.raise(QUEUE, QueueSignals.scopeOf(orgId));
+            }
+            return requeued;
+        });
     }
 
     /**

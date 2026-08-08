@@ -8,9 +8,12 @@ import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.cache.Cache;
 import org.springframework.cache.caffeine.CaffeineCacheManager;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -34,6 +37,29 @@ class ValkeyCacheIntegrationTest extends AbstractIntegrationTest {
     @DynamicPropertySource
     static void cacheProperties(DynamicPropertyRegistry registry) {
         registry.add("app.cache.l2-enabled", () -> "true");
+    }
+
+    /**
+     * The two scratch caches this class writes probe values into. {@code TwoLevelCacheManager} refuses
+     * an undeclared name (ADR 0010 §3.5), and rightly — but a probe of the L2 SERIALIZATION contract is
+     * not an application cache and has no business in {@code CacheRegistry}, where
+     * {@code CacheDeclarationTest} would then demand production code use it. {@code standardPlus}
+     * is the seam for exactly this, and it refuses to reclassify a name the application already
+     * declares, so a test cannot quietly turn {@code org-permissions} global to make itself pass.
+     *
+     * <p>GLOBAL because these probes are about JSON round-tripping and nothing else; the tenant-scoping
+     * half is {@code TenantCacheScopingTest}'s, where the keys are readable without Valkey.
+     */
+    @TestConfiguration
+    static class ProbeCacheDeclarations {
+
+        @Bean
+        @Primary
+        CacheRegistry probeCacheRegistry() {
+            return CacheRegistry.standardPlus(Map.of(
+                    "null-probe", CacheScope.GLOBAL,
+                    "cache.typeprobe", CacheScope.GLOBAL));
+        }
     }
 
     @Autowired

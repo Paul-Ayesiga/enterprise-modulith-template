@@ -58,6 +58,25 @@ class PermissionResolver {
     /**
      * Both halves of the cache key are UUIDs of ours now. The composite key is unchanged in shape but
      * no longer mixes id spaces: it used to concatenate a Keycloak org id with a Keycloak subject.
+     *
+     * <h3>Why the organization is still in this key, when {@code org-entitlements} dropped it</h3>
+     *
+     * <p>{@code CacheRegistry} declares this cache {@link ug.co.smsone.shared.cache.CacheScope#TENANT},
+     * so {@code TwoLevelCache} prefixes the thread's tenant into the key at both levels and the
+     * organization here is, on every request path, redundant with that prefix. It stays because the
+     * prefix comes from the AXIS and one production caller resolves permissions for an organization it
+     * has not pinned: {@code ExchangeScheduleFiringJob} sweeps every due schedule under the pooled-tenant
+     * probe ({@code new UUID(0L, 0L)}) and asks this question per schedule, for whatever org that
+     * schedule belongs to. Under that one axis, every org's entries share a prefix — and a person who
+     * belongs to two organizations, each with a schedule, would then have one org's permission set
+     * answer for the other. That is an authorization bypass, so the organization stays in the key,
+     * where it separates them regardless of which axis asked.
+     *
+     * <p>It costs nothing beyond a longer string: every eviction of this cache is a {@code clear()}
+     * ({@link OrgPermissionCacheEvictor}, {@link OrgGroupService}), which spans all prefixes and all
+     * keys, so the extra component cannot strand an entry. <b>Remove it in Phase 5</b>, together with
+     * the probe: once that sweep is a real loop over {@code platform.tenant_placement}, every caller is
+     * on the axis of the org it is asking about and the prefix alone is sufficient.
      */
     @Cacheable(cacheNames = CACHE, key = "#organizationId + ':' + #personId", sync = true)
     public Set<String> resolve(UUID personId, UUID organizationId) {

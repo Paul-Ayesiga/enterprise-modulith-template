@@ -1,10 +1,13 @@
 package ug.co.smsone.subscription.internal;
 
+import static ug.co.smsone.shared.tenancy.JobAxis.Axis.TENANT;
+
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.shared.tenancy.JobAxis;
 import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
@@ -36,8 +39,30 @@ class TrialExpiryJob {
         this.subscriptions = subscriptions;
     }
 
+    /**
+     * <b>AXIS: TENANT</b> — see the comment in the body; {@code org_subscription} is tenant-tier and the
+     * platform pin this used to carry could not see the table at all after Phase 2 split them.
+     *
+     * <p><b>CURSOR: the state transition, held in the row.</b> {@link SubscriptionService#expireTrials}
+     * selects {@code status = TRIALING} with a lapsed {@code trial_ends_at} and writes {@code PAUSED},
+     * so a subscription this pass handles never appears in a later one. A run cut off half way leaves
+     * the rest for the next HOUR rather than the next night, which is the second reason no in-memory
+     * position is worth keeping here: the cadence is short enough that "the remainder waits for the
+     * next tick" is a sixty-minute delay, not a starved tail.
+     *
+     * <p><b>LEASE: PT10M for an hourly job over an unbounded query — the same honest gap as
+     * {@code DunningJob}, one cadence faster.</b> {@code expireTrials} loads every lapsed trial at once
+     * and pauses them in one transaction with an event and an audit row each; there is no batch cap and
+     * no deadline, so the pass is bounded by how many trials lapse in an hour. Ten minutes is sized for
+     * that ordinary trickle and NOT for the one-off spike a bulk signup cohort produces when its trials
+     * all end on the same day — that case wants batching before it wants a longer lease. Nothing here
+     * is sized by schema count today; ADR 0010 Phase 5 multiplies the pass by (silos + 1) homes and is
+     * where both this number and {@code DunningJob}'s want re-deriving together, since they are the same
+     * sweep over the same table an hour apart.
+     */
     @Scheduled(cron = "${app.scheduler.trial-expiry-cron:0 10 * * * *}")
     @SchedulerLock(name = "subscription-trial-expiry", lockAtMostFor = "PT10M")
+    @JobAxis(TENANT)
     public void run() {
         // Declares a TENANT axis, not the platform one: no request runs this, so nothing else declares
         // anything, and `org_subscription` is tenant-tier (ADR 0010 §2) — the platform pin this used to

@@ -1,5 +1,7 @@
 package ug.co.smsone.shared.events;
 
+import static ug.co.smsone.shared.tenancy.JobAxis.Axis.PLATFORM;
+
 import java.time.Clock;
 import java.time.Instant;
 import java.util.function.Predicate;
@@ -15,6 +17,7 @@ import org.springframework.modulith.events.IncompleteEventPublications;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.shared.tenancy.JobAxis;
 import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
@@ -89,10 +92,36 @@ class OutboxResubmissionJob {
         resubmitOnce("startup");
     }
 
+    /**
+     * <b>AXIS: PLATFORM.</b> {@code event_publication} is the registry this deployment's outbox writes
+     * to, configured onto {@code platform} — see {@link #resubmitOnce} for the harder half of that
+     * argument, which is that the RETRY and the first delivery must go through the same axis or the
+     * same publication replays against a different schema than it was published on.
+     *
+     * <p><b>CURSOR: persisted in the data, in {@code platform.event_publication}, and it is the one
+     * this job could least afford to keep in memory.</b> A pass takes the head of the incomplete set
+     * and stamps {@code last_resubmission_date} on every publication it takes; the {@link Window}
+     * predicate then skips anything stamped inside {@code retryBackoff}. So the position is written to
+     * the same rows the pass is working on, in the same transaction, and it is shared by every replica
+     * — a pass on instance B genuinely continues where instance A's stopped. That property is what
+     * makes {@code maxPerRun} a cap rather than a truncation, and the {@link Window} javadoc explains
+     * the trap in reading it (a null {@code last_resubmission_date} does NOT mean never-retried).
+     *
+     * <p><b>LEASE: PT10M against a five-minute cron, and this one is a genuine guess.</b> What it has
+     * to cover is {@code maxPerRun} publications × the slowest listener chain behind them, and neither
+     * term is measured: listener cost is application code that varies per event type, and a pass is
+     * synchronous through {@code resubmitIncompletePublications}. Ten minutes is two ticks, chosen so a
+     * pass that runs long simply skips a tick instead of overlapping — the failure at the far end is a
+     * pass exceeding PT10M, at which point a second instance starts one concurrently, and the only
+     * thing standing between that and double delivery is Modulith's {@code and status != 'RESUBMITTED'}
+     * guard on {@code markResubmitted}. That guard is real (it is why the startup pass is deliberately
+     * unlocked), so an overrun is survivable — but it is survivable by accident of another component's
+     * predicate, not by this number, and the honest fix if it ever happens is to lower
+     * {@code maxPerRun} rather than raise the lease. Nothing here scales with tenant count.
+     */
     @Scheduled(cron = "${app.scheduler.event-resubmission-cron:0 */5 * * * *}")
-    // Ten minutes covers a pass whose listeners are all slow without outliving the next tick by much;
-    // a pass that overruns it would let a second instance start one concurrently.
     @SchedulerLock(name = "outbox-resubmission", lockAtMostFor = "PT10M")
+    @JobAxis(PLATFORM)
     public void scheduledResubmit() {
         if (!properties.enabled()) {
             return;

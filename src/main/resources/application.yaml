@@ -510,7 +510,11 @@ app:
     event-inbox-retention: ${SCHEDULER_EVENT_INBOX_RETENTION:P14D}
   cache:
     l1-ttl: ${CACHE_L1_TTL:PT60S}
-    l1-max-size: ${CACHE_L1_MAX_SIZE:10000}
+    # Shared by every tenant this node serves, and TENANT-scoped caches now prefix the organization
+    # into their keys (ADR 0010 §3.5) — so the entry count scales with tenants, not with one org's
+    # members. Raised from 10,000 with the correctness change: leaving it would have turned a leak fix
+    # into a silent hit-rate collapse, with a hot tenant evicting everyone else. See CacheProperties.
+    l1-max-size: ${CACHE_L1_MAX_SIZE:50000}
     l2-ttl: ${CACHE_L2_TTL:PT10M}
     l2-enabled: ${CACHE_L2_ENABLED:true}
   storage:

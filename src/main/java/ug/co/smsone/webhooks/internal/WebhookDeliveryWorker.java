@@ -5,6 +5,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -15,16 +16,18 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.shared.queue.QueueSignals;
 import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
- * Drains the webhook queue: claims a batch, sends each on virtual threads (up to batch-size concurrent,
- * each bounded by the send timeout), and marks each DELIVERED / rescheduled (exponential backoff) /
- * dead-lettered. Self-managed background poller per instance; {@code SKIP LOCKED} lets instances share
- * the queue with no concurrent double-claims. Delivery is still <b>at-least-once</b>: a crash between
- * the POST and its status write leaves the row PROCESSING, and the stale-lock reclaim re-POSTs it —
- * receivers must tolerate a duplicate. In tests the poller is disabled
- * ({@code app.webhooks.worker-auto-start=false}) and {@link #drainOnce()} is driven directly.
+ * Drains the webhook queue: claims a tenant, claims a batch of that tenant's deliveries, sends each on
+ * virtual threads (up to batch-size concurrent, each bounded by the send timeout), and marks each
+ * DELIVERED / rescheduled (exponential backoff) / dead-lettered. Self-managed background poller per
+ * instance; {@code SKIP LOCKED} lets instances share the queue with no concurrent double-claims — and
+ * since Phase 3 it also spreads them across tenants rather than piling them onto one. Delivery is still
+ * <b>at-least-once</b>: a crash between the POST and its status write leaves the row PROCESSING, and
+ * the stale-lock reclaim re-POSTs it — receivers must tolerate a duplicate. In tests the poller is
+ * disabled ({@code app.webhooks.worker-auto-start=false}) and {@link #drainOnce()} is driven directly.
  */
 @Component
 class WebhookDeliveryWorker implements SmartLifecycle {
@@ -34,25 +37,19 @@ class WebhookDeliveryWorker implements SmartLifecycle {
     private static final Duration SHUTDOWN_GRACE = Duration.ofSeconds(20);
 
     /**
-     * The tenant axis this worker runs on. It names no organization deliberately: an org that has never
-     * been promoted resolves to the shared {@code tenant_pool}, and a UUID in no {@code organization}
-     * row can never resolve to anything else — so this IS the pooled schema's axis, spelled with the
-     * only vocabulary {@code TenantContext} has. Same constant, same reasoning as
-     * {@link WebhookSecretEncryptionMigrator} and {@code MappedSchemaValidator}.
+     * How many tenants one drain will look at and find nothing in before giving up for this poll.
      *
-     * <p><b>PHASE 3/5 TURNS THIS WORKER INTO A PER-TENANT LOOP, and that is a fairness change, not a
-     * refactor.</b> {@code webhook_delivery} and {@code webhook_subscription} are tenant-tier (ADR 0010
-     * §2), so today's single {@code FOR UPDATE SKIP LOCKED} claim spans every tenant precisely because
-     * every tenant is in one schema. Once a tenant is promoted, one claim covers ONE schema: the
-     * oldest-first ordering that {@link WebhookDeliveryQueue#claim} leans on stops being global, and
-     * fairness becomes a property of the LOOP'S ORDER over homes rather than of the statement. §3.4
-     * gives the shape (iterate the pool plus the silos in {@code platform.tenant_placement}); Phase 3
-     * replaces the sweep with {@code platform.queue_signal} and a two-step claim, so a home with
-     * nothing to do costs nothing to visit — a map, not a search.
+     * <p>A signal can outlive the work it announced — a subscription deleted mid-flight cancels its
+     * outstanding rows, retention purges the last terminal row, a tenant's whole backlog is paused —
+     * and ADR 0010 §2.1 makes that explicitly harmless: the worker that finds nothing is the thing that
+     * cleans it up. The bound is what stops "cleans it up" from becoming an unbounded sweep on a poll
+     * that was supposed to be cheap. Each probe leaves its tenant either deleted or not due again, so
+     * the loop never revisits one, and whatever it does not reach this poll it reaches on the next.
      */
-    private static final UUID POOLED_TENANT = new UUID(0L, 0L);
+    private static final int MAX_EMPTY_PROBES = 32;
 
     private final WebhookDeliveryQueue queue;
+    private final QueueSignals signals;
     private final WebhookSender sender;
     private final WebhookProperties config;
     private final Clock clock;
@@ -62,9 +59,10 @@ class WebhookDeliveryWorker implements SmartLifecycle {
     private volatile boolean running;
     private volatile Thread poller;
 
-    WebhookDeliveryWorker(WebhookDeliveryQueue queue, WebhookSender sender, WebhookProperties config,
-            Clock clock, MeterRegistry meters) {
+    WebhookDeliveryWorker(WebhookDeliveryQueue queue, QueueSignals signals, WebhookSender sender,
+            WebhookProperties config, Clock clock, MeterRegistry meters) {
         this.queue = queue;
+        this.signals = signals;
         this.sender = sender;
         this.config = config;
         this.clock = clock;
@@ -131,40 +129,66 @@ class WebhookDeliveryWorker implements SmartLifecycle {
     }
 
     /**
-     * Claim and process one batch; returns how many were processed.
+     * Claim ONE tenant and process one batch of its deliveries; returns how many were processed.
      *
-     * <p>Two pins, and both are needed (ADR 0010 §3.4). The CLAIM runs on the poller — a thread this
-     * class starts itself, which no executor and therefore no {@code TaskDecorator} ever touches — and
-     * each SEND runs on {@link #sendExecutor}, this class's own virtual-thread executor, where the
-     * status write ({@code markDelivered}, {@code reschedule}, {@code deadLetter}) borrows its own
-     * connection. Miss the second and a webhook POSTs successfully and is never marked, which the
-     * stale-lock reclaim then re-POSTs — the duplicate this design already warns receivers about, but
-     * for every delivery rather than after a crash.
+     * <p><b>This is the fairness change, and it is a change of shape rather than of predicate</b>
+     * (ADR 0010 §2.1). Before Phase 3 a drain was one {@code FOR UPDATE SKIP LOCKED} sweep over the
+     * whole table, so the batch went to whoever held the oldest rows — and a tenant holding more than
+     * {@code batchSize} of them held the entire fleet's claim slot for as long as the backlog lasted.
+     * Now the tenant is chosen first, from {@code platform.queue_signal}, and the batch is bounded to
+     * that one tenant; the release stamps it back with {@code greatest(remaining, now())}, which puts it
+     * behind every tenant that has been waiting longer. One tenant, one slot, per drain — a property of
+     * how the claim is built, not of a WHERE clause someone has to keep remembering.
      *
-     * <p><b>Both pins are the TENANT axis since Phase 2, not the platform one.</b>
-     * {@code webhook_delivery} and {@code webhook_subscription} are tenant-tier, so the platform pin
-     * these used to take could not see either table: the claim failed on {@code relation
-     * "webhook_delivery" does not exist} on every poll, which is loud — but the send's pin would have
-     * failed AFTER the POST, leaving a delivered webhook marked PROCESSING and re-POSTed by the
-     * reclaim. See {@link #POOLED_TENANT} for what the constant means and for the per-tenant loop it
-     * becomes.
+     * <p><b>Three pins, and each one is a different thread's problem</b> (ADR 0010 §3.4). The SIGNAL
+     * claim takes the PLATFORM axis: {@code queue_signal} is platform-tier, and the poller is a thread
+     * this class starts itself, so no filter and no {@code TaskDecorator} has declared anything. The
+     * ROW claim and the release take the claimed TENANT's axis, because {@code webhook_delivery} and
+     * {@code webhook_subscription} are tenant-tier and unqualified — which is exactly what will send
+     * them to a silo instead of the pool the day that tenant is promoted, with nothing here to change.
+     * Each SEND re-pins on {@link #sendExecutor}, this class's own virtual-thread executor: a
+     * thread-local does not cross a virtual thread's boundary however the caller is pinned, and missing
+     * it would leave a webhook POSTed successfully and never marked — which the stale-lock reclaim then
+     * re-POSTs.
      *
-     * <p>The two pins stay separate rather than one wrapping both: the sends run on
-     * {@link #sendExecutor}, and a thread-local does not cross a virtual thread's boundary however the
-     * caller is pinned.
+     * <p>An empty batch is not a failure: the signal outlived its work, so it is released (which deletes
+     * it when the tenant has nothing left) and the next tenant is tried, up to {@link #MAX_EMPTY_PROBES}.
      */
     public int drainOnce() throws InterruptedException {
-        // ONE claim, spanning every tenant — because every tenant is in one schema, not because the
-        // statement crosses tenants. The FOR UPDATE SKIP LOCKED inside claim() picks the globally
-        // oldest due rows; after Phase 5 promotes a tenant, this line becomes a LOOP over homes and
-        // each claim sees one tenant's backlog. Read POOLED_TENANT before changing it: that is where
-        // fairness stops being a property of `order by next_attempt_at` and starts being a property of
-        // the loop, and where the batch size stops meaning what it means today.
-        List<ClaimedWebhookDelivery> batch = TenantContext.callAs(POOLED_TENANT,
-                () -> queue.claim(config.batchSize(), config.staleLock()));
-        if (batch.isEmpty()) {
-            return 0;
+        for (int probe = 0; probe < MAX_EMPTY_PROBES; probe++) {
+            Optional<QueueSignals.Leased> due = TenantContext.callAsPlatform(
+                    () -> signals.claim(WebhookDeliveryQueue.QUEUE, config.staleLock()));
+            if (due.isEmpty()) {
+                return 0;
+            }
+            QueueSignals.Leased tenant = due.get();
+            UUID orgId = tenant.scope();
+            List<ClaimedWebhookDelivery> batch = TenantContext.callAs(orgId,
+                    () -> queue.claim(orgId, config.batchSize(), config.staleLock()));
+            if (batch.isEmpty()) {
+                release(tenant);
+                continue;
+            }
+            try {
+                send(batch, orgId);
+            } finally {
+                // After the sends, so the recomputed due_at sees their final statuses — a rescheduled
+                // row's new next_attempt_at, and anything still PROCESSING through its stale-lock arm.
+                // In a finally because a signal left holding this worker's lease is a tenant nobody
+                // looks at again until the lease expires.
+                release(tenant);
+            }
+            return batch.size();
         }
+        return 0;
+    }
+
+    private void release(QueueSignals.Leased tenant) {
+        TenantContext.runAs(tenant.scope(),
+                () -> queue.releaseSignal(tenant.scope(), tenant.lease(), config.staleLock()));
+    }
+
+    private void send(List<ClaimedWebhookDelivery> batch, UUID orgId) throws InterruptedException {
         CountDownLatch done = new CountDownLatch(batch.size());
         ExecutorService executor = this.sendExecutor;
         for (ClaimedWebhookDelivery delivery : batch) {
@@ -172,9 +196,9 @@ class WebhookDeliveryWorker implements SmartLifecycle {
                 executor.submit(() -> {
                     try {
                         // The same axis the row was claimed on — necessarily, since the status write
-                        // has to reach the row the claim found. When this becomes a per-tenant loop the
-                        // axis comes from the loop, which is why the delivery record carries no org.
-                        TenantContext.runAs(POOLED_TENANT, () -> deliver(delivery));
+                        // has to reach the row the claim found. It comes from the tenant the signal
+                        // named, which is why the delivery record carries no org of its own.
+                        TenantContext.runAs(orgId, () -> deliver(delivery));
                     } finally {
                         done.countDown();
                     }
@@ -188,7 +212,6 @@ class WebhookDeliveryWorker implements SmartLifecycle {
             log.warn("{} of {} webhook deliveries did not finish within {}; moving on (rows reclaimable)",
                     done.getCount(), batch.size(), config.staleLock());
         }
-        return batch.size();
     }
 
     private void deliver(ClaimedWebhookDelivery delivery) {

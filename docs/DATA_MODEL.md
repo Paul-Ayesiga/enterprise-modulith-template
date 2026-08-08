@@ -4,7 +4,7 @@ Every table in the database, its columns and its relationships. Generated from
 `src/main/resources/db/migration`, which is the source of truth — and since ADR 0010 Phase 2 that is
 two sequences, `platform/` and `tenant/`. Which one created a table is the same statement as its tier.
 
-**56 tables**, grouped by owning module, alphabetical within each group. Seven of them were created in
+**57 tables**, grouped by owning module, alphabetical within each group. Seven of them were created in
 both schemas and are counted once, here and in every total below. (`flyway_schema_history` is created
 by Flyway itself, is not declared in any migration, and is not counted here.)
 
@@ -50,7 +50,7 @@ tier is now also the answer to *where is this table, and how is it addressed*.
 
 ## The schemas
 
-- `platform` — the 29 platform-tier tables, the platform copy of the seven split ones, and Flyway's own
+- `platform` — the 30 platform-tier tables, the platform copy of the seven split ones, and Flyway's own
   `flyway_schema_history`.
 - `tenant_pool` — the 20 tenant-tier tables and the tenant copy of the seven. Every tenant lives here
   until it is promoted, so inside this schema `org_id` is the only thing separating them: **every
@@ -1088,6 +1088,20 @@ One claimed HTTP idempotency key and the response it replays, scoped to the call
 | created_at | timestamptz | no | When the key was claimed; rows age out on a retention window |
 
 Relationships: `principal` may hold a `person.id` (soft ref, no FK). Primary key (`principal`, `idem_key`).
+
+### queue_signal
+Which tenants have unfinished work in which durable queue, and when each becomes claimable. One row per (queue, tenant) — **never one per message**: enqueue upserts once per BATCH, so a fan-out of forty thousand deliveries writes one row here. It is an index over the three queues, not a second copy of them.
+
+**Tier:** platform — it is read BEFORE a tenant is chosen, which is the whole point: a durable queue's claim is a search for work that belongs to no tenant yet, so the table that answers "which tenant" cannot itself live in a tenant's schema.
+
+| Column | Type | Null | Description |
+|---|---|---|---|
+| queue | text | no | Which queue — `webhook`, `notification` or `exchange`; half the primary key |
+| org_id | uuid | no | The tenant with work, or the nil uuid `00000000-0000-0000-0000-000000000000` for rows that belong to no organization (a platform-scoped notification, a platform-scoped exchange handler); half the primary key |
+| due_at | timestamptz | no | When this tenant becomes claimable — its earliest remaining row's time while nobody holds it, and `now() + stale-lock` while somebody does, so other workers skip it and a worker that dies mid-batch simply lets the stamp expire. Always minted by the database's clock, which is also the clock that reads it |
+| lease | uuid | yes | Who holds the tenant right now, and null the rest of the time. A release only lands where this is still the token its claim returned; `raise` clears it, so an enqueue that arrives mid-batch cannot be buried by a release computed before it existed. A uuid rather than a re-read of `due_at` because identity must not be a timestamp comparison — see V56 |
+
+Relationships: none, and `org_id` is a soft ref with no FK for two reasons at once — `organization` is platform-tier so a key would be legal, but the nil uuid is not an organization at all, and a signal must be raiseable for a queue row whose org was hard-deleted. Primary key (`queue`, `org_id`); indexed by (`queue`, `due_at`), which is exactly the claim's candidate `where queue = ? and due_at <= now() order by due_at limit 1 for update skip locked` — a MATERIALIZED CTE, so the candidate is evaluated once and one claim can lease only one tenant whatever plan the database picks. No `version`, `created_at` or `deleted_at`: the row is a hint about where to look next, never a record of anything, and it is DELETED the moment its queue has nothing left for that tenant. ADR 0010 §2.1; `shared.queue.QueueSignals` owns every statement against it.
 
 ### shedlock
 The lock one scheduled task holds, so only one instance runs it.

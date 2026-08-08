@@ -7,7 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
-import ug.co.smsone.shared.tenancy.SplitTables;
+import ug.co.smsone.shared.queue.QueueSignals;
 import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
@@ -23,7 +23,19 @@ class ExchangeWorker implements SmartLifecycle {
 
     private static final Logger log = LoggerFactory.getLogger(ExchangeWorker.class);
 
+    /**
+     * How many scopes one drain will look at and find nothing in before giving up for this poll.
+     *
+     * <p>A signal can outlive the work it announced — the last job of a scope is cancelled, retention
+     * purges a terminal row — and ADR 0010 §2.1 makes that explicitly harmless: the worker that finds
+     * nothing is the thing that cleans it up. The bound stops that cleanup from turning one poll into
+     * the sweep this whole mechanism replaced. Each probe leaves its scope either deleted or not due
+     * again, so the loop never revisits one and whatever it misses this poll it reaches on the next.
+     */
+    private static final int MAX_EMPTY_PROBES = 32;
+
     private final ExchangeJobStore store;
+    private final QueueSignals signals;
     private final ImportRunner imports;
     private final ExportRunner exports;
     private final ExchangeProperties config;
@@ -35,12 +47,13 @@ class ExchangeWorker implements SmartLifecycle {
     private volatile boolean running;
     private volatile Thread poller;
 
-    ExchangeWorker(ExchangeJobStore store, ImportRunner imports, ExportRunner exports,
-            ExchangeProperties config, ExchangeMetrics metrics,
+    ExchangeWorker(ExchangeJobStore store, QueueSignals signals, ImportRunner imports,
+            ExportRunner exports, ExchangeProperties config, ExchangeMetrics metrics,
             org.springframework.context.ApplicationEventPublisher events,
             org.springframework.transaction.support.TransactionTemplate transactions,
             java.time.Clock clock) {
         this.store = store;
+        this.signals = signals;
         this.imports = imports;
         this.exports = exports;
         this.config = config;
@@ -107,41 +120,66 @@ class ExchangeWorker implements SmartLifecycle {
      * connection, and the axis has to already be set when it does.
      *
      * <p><b>PHASE 2 SPLIT THIS PIN IN TWO, exactly where the seam was drawn.</b> {@code exchange_job}
-     * is a split table now (ADR 0010 §2 row 10), so the claim is no longer one cross-tenant
-     * {@code SKIP LOCKED} scan: it is one scan per HOME, and each is schema-qualified because work
-     * nobody has claimed yet belongs to no axis. Everything from {@code MDC.put("org_id", …)} onwards is
-     * ONE tenant's work — the handler reads and writes that org's rows, the artifact it registers is
-     * that org's document, the audit row it writes is that org's trail — so it is re-pinned from the
-     * claimed job's own {@code org_id} before {@code runClaimed}. That pin is what lets every
-     * other statement in {@code ExchangeJobStore} stay unqualified, and it is the only form that will
-     * still be right when a tenant is promoted to a schema of its own.
+     * is a split table (ADR 0010 §2 row 10), so the claim is not one cross-tenant {@code SKIP LOCKED}
+     * scan: it is schema-qualified, because work nobody has claimed yet belongs to no axis. Everything
+     * from {@code MDC.put("org_id", …)} onwards is ONE tenant's work — the handler reads and writes that
+     * org's rows, the artifact it registers is that org's document, the audit row it writes is that
+     * org's trail — so it is re-pinned from the claimed job's own {@code org_id} before
+     * {@code runClaimed}. That pin is what lets every other statement in {@code ExchangeJobStore} stay
+     * unqualified, and it is the only form that will still be right when a tenant is promoted to a
+     * schema of its own.
+     *
+     * <p><b>PHASE 3 REPLACED THE PER-HOME SWEEP WITH A LOOKUP</b> (ADR 0010 §2.1). This used to try
+     * every home in turn and take the first job it found, which cost one scan per home whether or not
+     * any of them had work, and gave whichever home sorted first a permanent claim on the worker.
+     * {@code platform.queue_signal} answers "which scope has work" in one indexed read, so a scope with
+     * nothing queued is never visited — and because the release stamps a serviced scope with
+     * {@code greatest(remaining, now())}, a tenant sitting on a hundred queued exports takes one job and
+     * goes behind everyone who has been waiting longer. Jobs are heavyweight and run one at a time per
+     * instance, so that ordering is the only fairness this queue has.
+     *
+     * <p>An empty probe is not a failure: the signal outlived its work (retention purged the last
+     * terminal row, a job was cancelled), so it is released — which deletes it when the scope has
+     * nothing left — and the next scope is tried, up to {@link #MAX_EMPTY_PROBES}.
      */
     public int drainOnce() {
         return TenantContext.callAsPlatform(this::claimAndRunOne);
     }
 
     /**
-     * Claims from each home in turn and runs the first job found, on that job's own axis.
+     * Takes scopes from the signal until one yields a job, and runs that job on its own axis.
      *
-     * <p>Platform first (the order {@code SplitTables.homes()} declares), so a platform-scoped handler
-     * is never starved behind tenant traffic. One job per call regardless of how many homes there are:
-     * a claim that succeeds returns immediately, so a busy pool cannot monopolise the loop either.
+     * <p>One job per call however many scopes it had to look at: a claim that succeeds returns
+     * immediately, so a busy tenant cannot monopolise the loop and a run of empty signals cannot turn
+     * one poll into a sweep.
      */
     private int claimAndRunOne() {
-        Optional<ExchangeJob> claimed = Optional.empty();
-        for (String home : SplitTables.homes()) {
-            claimed = store.claimOne(config.staleLock(), home);
-            if (claimed.isPresent()) {
-                break;
+        for (int probe = 0; probe < MAX_EMPTY_PROBES; probe++) {
+            QueueSignals.Leased leased = signals.claim(ExchangeJobStore.QUEUE, config.staleLock())
+                    .orElse(null);
+            if (leased == null) {
+                return 0;
+            }
+            Optional<ExchangeJob> claimed = store.claimOne(config.staleLock(), leased.scope());
+            if (claimed.isEmpty()) {
+                store.releaseSignal(leased.scope(), leased.lease(), config.staleLock());
+                continue;
+            }
+            // Off the platform axis and onto the job's, for the whole of the run and its bookkeeping. A
+            // platform-scoped job (null org_id) stays where it is; anything else is that tenant's work.
+            ExchangeJob job = claimed.get();
+            try {
+                return job.orgId() == null
+                        ? runClaimed(job)
+                        : TenantContext.callAs(job.orgId(), () -> runClaimed(job));
+            } finally {
+                // After the run, so the recomputed due_at sees the terminal status — or, for a job
+                // released for retry, the locked_at that carries its backoff. On the PLATFORM axis,
+                // which is the one this method holds: releaseSignal names its own home.
+                store.releaseSignal(leased.scope(), leased.lease(), config.staleLock());
             }
         }
-        if (claimed.isEmpty()) {
-            return 0;
-        }
-        // Off the platform axis and onto the job's, for the whole of the run and its bookkeeping. A
-        // platform-scoped job (null org_id) stays where it is; anything else is that tenant's work.
-        ExchangeJob job = claimed.get();
-        return job.orgId() == null ? runClaimed(job) : TenantContext.callAs(job.orgId(), () -> runClaimed(job));
+        return 0;
     }
 
     private int runClaimed(ExchangeJob job) {

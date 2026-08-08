@@ -165,6 +165,15 @@ class Person extends SoftDeletableEntity {
         return activatedAt;
     }
 
+    /**
+     * The scan key {@code IdentityReconciliationJob} orders on, paired with {@code id} to make a keyset
+     * cursor it can resume from after a deadline cut. {@code updatable = false}, so a cursor holding
+     * this value can never be invalidated by a later write to the row it names.
+     */
+    Instant getInvitedAt() {
+        return invitedAt;
+    }
+
     /** THE display value. Null is normal and means "we were never told" — never substitute the parts. */
     String getFormattedName() {
         return formattedName;

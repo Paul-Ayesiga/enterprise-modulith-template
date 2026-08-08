@@ -7,23 +7,63 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.cache.Cache;
 import org.springframework.cache.support.SimpleValueWrapper;
+import ug.co.smsone.shared.tenancy.Tenant;
+import ug.co.smsone.shared.tenancy.TenantContext;
+import ug.co.smsone.shared.tenancy.TenantSchemas;
 
 /**
  * Caffeine-first cache with a shared Valkey/Redis second level. L2 failures degrade to L1-only
  * (a cache outage must never take the application down). Writes and evictions broadcast an
  * invalidation so other instances drop their stale L1 entries.
+ *
+ * <h2>Tenancy (ADR 0010 §3.5)</h2>
+ *
+ * <p>Every cache carries the {@link CacheScope} {@link CacheRegistry} declared for it. A
+ * {@link CacheScope#TENANT} cache prefixes {@code t_<32hex>|} — the tenant's own schema name, derived
+ * from {@code organization.id} — into the key of <strong>both</strong> levels, and refuses to answer at
+ * all when the thread has declared no tenant. A {@link CacheScope#GLOBAL} cache is untouched.
+ *
+ * <p><b>Both levels, or neither is worth doing.</b> Prefixing L1 only would leave every node's Valkey
+ * entry shared; prefixing L2 only would leave the in-process entry shared for its whole 60 s TTL. The
+ * scoping therefore happens once, at the top of each public method, and both {@code l1} and {@code l2}
+ * see the same already-scoped key. The invalidation broadcast carries the scoped key too — the peer
+ * that receives it has no tenant axis of its own to re-derive one from, which is exactly why
+ * {@link #evictLocal} must never scope again.
+ *
+ * <p><b>Absent throws; it does not fall back.</b> A shared fallback key is the leak, and it is the
+ * quiet kind: the first caller with no axis publishes an entry every other tenant then reads. So the
+ * {@link Tenant#ABSENT} and {@link Tenant.Platform} states raise here rather than inventing a
+ * namespace. {@link #clear()} and {@link #evictLocal} are the deliberate exceptions — neither names a
+ * key, both are strictly over-eviction, and both run on threads (an {@code @ApplicationModuleListener}
+ * after commit, the Valkey listener container) that have no axis and have no business inventing one.
+ *
+ * <p><b>The prefix is the AXIS's tenant, not the entry's.</b> The cache sees a key, never the org a
+ * value is about, so a caller that pins one tenant and asks about another namespaces its entries under
+ * the pin. The one production caller that does this is the pooled-probe sweep in
+ * {@code ExchangeScheduleFiringJob} ({@code new UUID(0L, 0L)} — see the idiom's note there), which is
+ * why {@code org-permissions} keeps the organization inside its key: under a probe axis the key is what
+ * separates two orgs, and every eviction of that cache is a {@code clear()} that spans all prefixes
+ * anyway. Phase 5 turns the probe into a real per-tenant loop and the compensation stops being needed.
  */
 class TwoLevelCache implements Cache {
 
     private static final Logger log = LoggerFactory.getLogger(TwoLevelCache.class);
     private static final String JDK_IMMUTABLE_COLLECTION = "java.util.ImmutableCollections$";
 
+    /**
+     * Separates the tenant from the key. '|' rather than ':' because the keys it is joined to already
+     * use ':' as their own separator ({@code org-permissions}) and an issuer URL is full of them.
+     */
+    private static final String TENANT_SEPARATOR = "|";
+
     private final String name;
+    private final CacheScope scope;
     private final Cache l1;
     private final Cache l2;
     private final CacheInvalidationBroadcaster broadcaster;
@@ -35,9 +75,10 @@ class TwoLevelCache implements Cache {
     private static final int LOAD_STRIPES = 256;
     private final Object[] loadLocks = new Object[LOAD_STRIPES];
 
-    TwoLevelCache(String name, Cache l1, Cache l2, CacheInvalidationBroadcaster broadcaster,
+    TwoLevelCache(String name, CacheScope scope, Cache l1, Cache l2, CacheInvalidationBroadcaster broadcaster,
             io.micrometer.core.instrument.MeterRegistry meters) {
         this.name = name;
+        this.scope = scope;
         this.l1 = l1;
         this.l2 = l2;
         this.broadcaster = broadcaster;
@@ -70,6 +111,10 @@ class TwoLevelCache implements Cache {
 
     @Override
     public ValueWrapper get(Object key) {
+        return lookup(scopedKey(key));
+    }
+
+    private ValueWrapper lookup(Object key) {
         ValueWrapper local = l1.get(key);
         if (local != null) {
             l1Hits.increment();
@@ -111,25 +156,29 @@ class TwoLevelCache implements Cache {
      * Striped (not per-key) so the lock table is bounded — a hash collision only means two unrelated
      * keys occasionally serialize, never incorrectness. Cross-node, L2 absorbs the rest: the first
      * node to load publishes to L2, so a peer node's own cold read hits L2 rather than reloading.
+     *
+     * <p>The stripe is taken from the SCOPED key, so two tenants loading "the same" cold key contend
+     * only by hash collision, exactly as two unrelated keys do.
      */
     @Override
     @SuppressWarnings("unchecked")
     public <T> T get(Object key, Callable<T> valueLoader) {
-        ValueWrapper wrapper = get(key);
+        Object scoped = scopedKey(key);
+        ValueWrapper wrapper = lookup(scoped);
         if (wrapper != null) {
             return (T) wrapper.get();
         }
-        synchronized (loadLocks[Math.floorMod(key.hashCode(), LOAD_STRIPES)]) {
+        synchronized (loadLocks[Math.floorMod(scoped.hashCode(), LOAD_STRIPES)]) {
             // Double-check under the lock: a peer that just held it has populated L1 (put writes L1
             // synchronously), so we read its value instead of running the loader a second time.
-            ValueWrapper loaded = l1.get(key);
+            ValueWrapper loaded = l1.get(scoped);
             if (loaded != null) {
                 l1Hits.increment();
                 return (T) loaded.get();
             }
             try {
                 T value = valueLoader.call();
-                put(key, value);
+                store(scoped, value);
                 return value;
             } catch (Exception e) {
                 throw new ValueRetrievalException(key, valueLoader, e);
@@ -139,6 +188,10 @@ class TwoLevelCache implements Cache {
 
     @Override
     public void put(Object key, Object value) {
+        store(scopedKey(key), value);
+    }
+
+    private void store(Object key, Object value) {
         l1.put(key, value); // L1 keeps the caller's instance — only the L2 copy needs normalizing
         if (l2 != null) {
             try {
@@ -155,6 +208,21 @@ class TwoLevelCache implements Cache {
 
     @Override
     public void evict(Object key) {
+        evictScoped(scopedKey(key));
+    }
+
+    /**
+     * Evicts one TENANT entry for an organization the current thread is NOT pinned to — the shape an
+     * after-commit listener needs, because {@code @ApplicationModuleListener} runs in its own
+     * transaction on a pooled thread with no axis, and {@link TenantContext} refuses to pin one there
+     * (correctly: the connection is already bound). Naming the org explicitly is the honest form of
+     * that call, and it is the only way to reach another tenant's key.
+     */
+    void evictForTenant(UUID orgId, Object key) {
+        evictScoped(tenantPrefix(orgId) + key);
+    }
+
+    private void evictScoped(Object key) {
         // L2 strictly before L1: evicting L1 first opens a window where a concurrent reader misses
         // L1, refills it from the still-stale L2 AFTER this method returns — and the invalidation
         // listener skips our own broadcast, so the resurrected entry would live a full L1 TTL.
@@ -177,6 +245,12 @@ class TwoLevelCache implements Cache {
         }
     }
 
+    /**
+     * Drops every entry of every tenant. Deliberately needs no axis: it names no key, it can only
+     * over-evict, and its callers are after-commit listeners that have none. Coarse but correct beats
+     * precise and wrong — and for {@code org-permissions} it is also what makes a probe-axis entry
+     * (see the class note) reachable by an eviction that does not know the prefix it was written under.
+     */
     @Override
     public void clear() {
         // Same ordering rationale as evict(): L2 first, so a concurrent reader cannot repopulate L1
@@ -197,13 +271,45 @@ class TwoLevelCache implements Cache {
         }
     }
 
-    /** Drops the local L1 entry only — used when another instance broadcasts an invalidation. */
+    /**
+     * Drops the local L1 entry only — used when another instance broadcasts an invalidation. The key
+     * arrives ALREADY scoped (the broadcaster published what it evicted), and the listener thread has
+     * no tenant axis, so scoping it again would both double the prefix and throw.
+     */
     void evictLocal(Object key) {
         if (key == null) {
             l1.clear();
         } else {
             l1.evict(key);
         }
+    }
+
+    /**
+     * The key as both levels store it: untouched for a GLOBAL cache, tenant-prefixed for a TENANT one.
+     *
+     * @throws IllegalStateException on a TENANT cache when the thread has declared no tenant — see the
+     *     class note on why this is not a fallback.
+     */
+    private Object scopedKey(Object key) {
+        return scope == CacheScope.TENANT ? currentTenantPrefix() + key : key;
+    }
+
+    private String currentTenantPrefix() {
+        Tenant tenant = TenantContext.current();
+        if (tenant instanceof Tenant.Org org) {
+            return tenantPrefix(org.orgId());
+        }
+        throw new IllegalStateException("Cache '" + name + "' is declared " + CacheScope.TENANT
+                + " and this thread has no tenant axis (" + tenant.getClass().getSimpleName()
+                + "). There is no shared key to fall back to: one would serve the first caller's rows to"
+                + " every other tenant. Pin the organization with TenantContext before the read — outside"
+                + " any transaction — or, to reach one named tenant's entry from a thread that cannot pin"
+                + " (an after-commit listener), use TwoLevelCacheManager.evictForTenant(...).");
+    }
+
+    /** {@code t_<32hex>|} — the tenant's own schema name, so a cache key and a search_path agree. */
+    private static String tenantPrefix(UUID orgId) {
+        return TenantSchemas.siloSchema(orgId) + TENANT_SEPARATOR;
     }
 
     /**

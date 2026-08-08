@@ -1,5 +1,7 @@
 package ug.co.smsone.notification.internal;
 
+import static ug.co.smsone.shared.tenancy.JobAxis.Axis.PLATFORM;
+
 import java.time.Clock;
 import java.time.Instant;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
@@ -7,6 +9,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.shared.tenancy.JobAxis;
 import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
@@ -36,8 +39,31 @@ class NotificationRetentionJob {
         this.meters = meters;
     }
 
+    /**
+     * <b>AXIS: PLATFORM, and it is the tier rather than a leftover — this is the one job where "it
+     * carries an org_id, so surely it is the tenant's" is wrong.</b> {@code notification_delivery} has
+     * a genuinely nullable {@code org_id} (V41 added the column late) and is pure transport claimed by
+     * a cluster-wide {@code SKIP LOCKED} sweep on a one-second poll; ADR 0010 §2 keeps it platform-tier
+     * precisely because per-tenant queues would make an empty discovery pass cost more than the poll
+     * interval. It is also the one retention job that consults NO {@code org_retention_override} — the
+     * delivery log has a single cutoff for everyone — so unlike its webhook and exchange siblings there
+     * is no tenant-tier read to open a second span for.
+     *
+     * <p><b>CURSOR: the delete.</b> Each batch removes terminal deliveries older than the cutoff, so an
+     * interrupted run's remainder is the next run's input; there is no head to re-examine. Worth noting
+     * against this job's own history: the unbounded in-loop DELETE it replaced had no cursor AND no
+     * bound, ran on the poller thread on every instance, and swallowed its failures.
+     *
+     * <p><b>LEASE: PT30M, sized for {@link #MAX_BATCHES} × {@link #BATCH_SIZE} = 100,000 rows on ONE
+     * schema, and that stays true past Phase 5 — this table does not fan out.</b> Which makes this the
+     * simplest lease in the set and the one whose derivation is least likely to go stale. The number it
+     * really depends on is send volume, not tenant count: if a day's terminal deliveries ever exceed
+     * 100,000, the batch cap ends the pass with a backlog and the table grows monotonically, and the
+     * fix is a bigger cap or a second nightly run rather than a longer lease.
+     */
     @Scheduled(cron = "${app.scheduler.notification-retention-cron:0 25 4 * * *}")
     @SchedulerLock(name = "notification-delivery-retention", lockAtMostFor = "PT30M")
+    @JobAxis(PLATFORM)
     public void purgeExpiredDeliveries() {
         Instant cutoff = clock.instant().minus(config.retention());
         // Declares the platform axis around the whole run: each batch commits on its own connection and

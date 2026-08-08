@@ -18,6 +18,7 @@ import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 import ug.co.smsone.notification.NotificationChannelSender;
 import ug.co.smsone.notification.NotificationMessage;
+import ug.co.smsone.shared.queue.QueueSignals;
 import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
@@ -40,7 +41,19 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
     private static final int MAX_BACKOFF_SHIFT = 16;
     private static final Duration SHUTDOWN_GRACE = Duration.ofSeconds(20);
 
+    /**
+     * How many scopes one drain will look at and find nothing in before giving up for this poll.
+     *
+     * <p>A signal can outlive the work it announced — retention purges the last terminal row, a whole
+     * batch dead-letters — and ADR 0010 §2.1 makes that explicitly harmless: the worker that finds
+     * nothing is the thing that cleans it up. The bound stops that cleanup from turning a one-second
+     * poll into an unbounded sweep. Each probe leaves its scope either deleted or not due again, so the
+     * loop never revisits one and whatever it misses this poll it reaches on the next.
+     */
+    private static final int MAX_EMPTY_PROBES = 32;
+
     private final NotificationDeliveryQueue queue;
+    private final QueueSignals signals;
     private final ChannelRegistry channels;
     private final ChannelRateLimiter channelRateLimiter;
     private final NotificationProperties.Delivery config;
@@ -53,10 +66,12 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
     private volatile boolean running;
     private volatile Thread poller;
 
-    NotificationDeliveryWorker(NotificationDeliveryQueue queue, ChannelRegistry channels,
-            ChannelRateLimiter channelRateLimiter, NotificationProperties properties, Clock clock,
+    NotificationDeliveryWorker(NotificationDeliveryQueue queue, QueueSignals signals,
+            ChannelRegistry channels, ChannelRateLimiter channelRateLimiter,
+            NotificationProperties properties, Clock clock,
             io.micrometer.core.instrument.MeterRegistry meters) {
         this.queue = queue;
+        this.signals = signals;
         this.channels = channels;
         this.channelRateLimiter = channelRateLimiter;
         this.config = properties.delivery();
@@ -142,35 +157,67 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
     }
 
     /**
-     * Claim and process up to {@code maxDrainBatches} full batches; returns how many were processed.
+     * Claim and process up to {@code maxDrainBatches} full batches, <b>each from a different tenant</b>;
+     * returns how many were processed.
      *
      * <p>Declares the platform axis for the CLAIM (ADR 0010 §3.4). The poller is its own thread —
      * started in {@link #start()}, not by any executor — so nothing else would, and the axis has to be
      * declared here rather than in {@link #runLoop()} because tests drive this method directly. The
      * sends are pinned separately: see {@link #processBatch}.
      *
-     * <p><b>Phase 2 left this pin PLATFORM, and that is the tier decision rather than an oversight.</b>
-     * {@code notification_delivery} carries an {@code org_id} but stayed platform-tier (ADR 0010 §2):
-     * it is pure transport claimed by a cluster-wide sweep on a one-second poll, and per-tenant queues
-     * would make an empty discovery pass cost more than the poll interval itself. So this claim really
-     * is one statement over one table, and it stays one after Phase 5 — unlike the webhook and exchange
-     * queues, whose rows ARE the tenant's and which do become per-tenant loops.
+     * <p><b>Phase 2 left this pin PLATFORM and Phase 3 left it PLATFORM, and that is the tier decision
+     * rather than an oversight.</b> {@code notification_delivery} carries an {@code org_id} but stayed
+     * platform-tier (ADR 0010 §2): pure transport, highest rate of the three queues, drained rather
+     * than dumped at extraction. So unlike the webhook and exchange queues nothing here is ever pinned
+     * to a tenant — {@code platform.queue_signal} and {@code platform.notification_delivery} are both
+     * named, and both stay named after Phase 5.
+     *
+     * <p><b>What Phase 3 DID change is which rows one batch can contain.</b> The claim used to be a
+     * single cluster-wide sweep, so {@code order by next_attempt_at limit batchSize} handed every batch
+     * to whoever held the oldest rows — one tenant with a five-figure backlog owned the worker until it
+     * drained, which is the cost ADR 0010 §2 accepts in writing and then says to mitigate with fairness.
+     * Each iteration below now takes ONE scope from the signal, drains one batch of it, and stamps it
+     * back with {@code greatest(remaining, now())} — behind everyone who has been waiting longer. The
+     * loop is bounded by scopes rather than by consecutive full batches for the same reason: a scope
+     * with three messages used to end the drain (a short batch meant an empty queue); now it just means
+     * the next scope's turn.
      */
     public int drainOnce() throws InterruptedException {
         int total = 0;
-        for (int i = 0; i < config.maxDrainBatches(); i++) {
-            List<ClaimedDelivery> batch = TenantContext.callAsPlatform(
-                    () -> queue.claim(config.batchSize(), config.staleLock()));
-            if (batch.isEmpty()) {
+        int batches = 0;
+        int emptyProbes = 0;
+        while (batches < config.maxDrainBatches() && emptyProbes < MAX_EMPTY_PROBES) {
+            Optional<QueueSignals.Leased> due = TenantContext.callAsPlatform(
+                    () -> signals.claim(NotificationDeliveryQueue.QUEUE, config.staleLock()));
+            if (due.isEmpty()) {
                 break;
             }
-            processBatch(batch);
-            total += batch.size();
-            if (batch.size() < config.batchSize()) {
-                break;
+            QueueSignals.Leased leased = due.get();
+            List<ClaimedDelivery> batch = TenantContext.callAsPlatform(
+                    () -> queue.claim(leased.scope(), config.batchSize(), config.staleLock()));
+            if (batch.isEmpty()) {
+                emptyProbes++;
+                release(leased);
+                continue;
+            }
+            try {
+                processBatch(batch);
+                total += batch.size();
+                batches++;
+            } finally {
+                // After the sends, so the recomputed due_at sees their final statuses — including a
+                // throttled row's deferred next_attempt_at, which is the whole point of deferring it.
+                // In a finally because a signal still holding this worker's lease is a scope nobody
+                // looks at again until the lease expires.
+                release(leased);
             }
         }
         return total;
+    }
+
+    private void release(QueueSignals.Leased leased) {
+        TenantContext.runAsPlatform(
+                () -> queue.releaseSignal(leased.scope(), leased.lease(), config.staleLock()));
     }
 
     /**

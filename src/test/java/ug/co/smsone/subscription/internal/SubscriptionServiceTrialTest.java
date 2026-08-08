@@ -12,7 +12,9 @@ import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.transaction.support.TransactionTemplate;
 import ug.co.smsone.shared.audit.AuditLog;
+import ug.co.smsone.shared.cache.TwoLevelCacheManager;
 
 /**
  * The trial-on-signup guard in isolation: {@code startTrialForNewOrg} is a no-op when the org already
@@ -30,7 +32,8 @@ class SubscriptionServiceTrialTest {
 
         new SubscriptionService(subscriptions, plans, mock(EntitlementResolver.class),
                 mock(ApplicationEventPublisher.class), mock(AuditLog.class),
-                mock(MeterRegistry.class), Clock.systemUTC())
+                mock(MeterRegistry.class), Clock.systemUTC(),
+                mock(TwoLevelCacheManager.class), mock(TransactionTemplate.class))
                 .startTrialForNewOrg(orgId, "PRO", 30);
 
         // Short-circuited before touching the catalog or writing anything.

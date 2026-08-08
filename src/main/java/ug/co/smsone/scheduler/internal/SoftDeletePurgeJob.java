@@ -2,11 +2,13 @@ package ug.co.smsone.scheduler.internal;
 
 import java.sql.Timestamp;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,6 +17,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import ug.co.smsone.shared.persistence.MappedTables;
 import ug.co.smsone.shared.persistence.SoftDeleteProperties;
+import ug.co.smsone.shared.tenancy.JobAxis;
 import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
@@ -60,6 +63,82 @@ class SoftDeletePurgeJob {
      * and to nothing else.
      */
     private static final UUID POOLED_TENANT = new UUID(0L, 0L);
+
+    /**
+     * How long a whole run may take before it stops itself, against the {@code PT30M} lease on
+     * {@link #purgeExpiredSoftDeletes}. Twenty-five is the same five-minute margin
+     * {@code IdentityReconciliationJob}, {@code UsageExportJob} and {@code OrgMembershipIndexReconciler}
+     * chose, and it is here for a reason this job did not previously acknowledge at all: <b>it had no
+     * deadline.</b> 24 tables × {@code max-batches} (100) × {@code batch-size} (500) is 1.2 million
+     * deletes, every one of them behind a {@code legal_hold} anti-join, and nothing stopped the pass
+     * before the lease expired. A lease that expires under a running pass is not a slow job — it lets a
+     * second replica acquire the lock and start purging the same tables concurrently, which is how two
+     * batches of the same table interleave and how the {@code org_role} FK guard gets evaluated against
+     * a {@code membership} row another instance is in the middle of deleting.
+     *
+     * <p>Whether five minutes is enough margin is <b>a judgement, not a measurement</b>: it has to cover
+     * the last in-flight batch plus the cascade sweeps plus {@link #sweepSearchResidue}, and the only
+     * one of those with a measured number is the residue sweep (212 ms as a Hash Anti Join at 200k
+     * people). Batch cost is the unmeasured term. If a production run ever logs the deadline warning,
+     * the honest response is to measure a batch and re-derive both numbers together — not to raise the
+     * lease, which moves the overrun rather than removing it.
+     */
+    private static final Duration RUN_DEADLINE = Duration.ofMinutes(25);
+
+    /**
+     * The share of {@link #RUN_DEADLINE} the PLATFORM pass may spend, so it cannot starve the tenant
+     * pass that runs after it.
+     *
+     * <p>The two passes are not symmetrical and that asymmetry is the whole derivation. The platform
+     * pass visits 14 tables in ONE schema and will still visit 14 tables in one schema after Phase 7 —
+     * {@code platform} never fans out. The tenant pass visits 13 in (silos + 1) schemas, so it is the
+     * only half whose cost grows with the fleet. A single shared deadline would therefore let the
+     * fixed-size half consume a budget the growing half needs, and the failure would be silent: the
+     * tenant cursor would sit at index 0 forever while the log said the run completed.
+     *
+     * <p>A third of the budget for the smaller, fixed half is deliberately generous and equally
+     * unmeasured. It is not a ratio to defend — it is a floor under the tenant pass, and the property
+     * that matters is that one exists at all. An early-finishing platform pass hands its unspent time
+     * straight to the tenant pass, because the tenant deadline is computed from the run's start and not
+     * from where the platform pass stopped.
+     */
+    private static final Duration PLATFORM_BUDGET = RUN_DEADLINE.dividedBy(3);
+
+    /**
+     * Where each pass resumes: the index into {@link #PURGE_ORDER} the last run was cut at, or absent
+     * when that pass ran to the end. <b>This is the resumable cursor ADR 0010 §3.4 asks every sweeping
+     * job for</b>, and without it the deadline above would have made this job worse rather than better:
+     * a pass that always restarts at index 0 re-purges {@code org_group}, {@code membership} and
+     * {@code org_role} every night and never reaches {@code ticket} or {@code geo_stamp}, so the
+     * tables at the tail of the list would quietly keep their tombstones forever while the job logged a
+     * healthy row count from the head.
+     *
+     * <p><b>It is IN MEMORY, and here is exactly what that buys and what it does not.</b> It survives
+     * across nights within one process, which is the case that matters — a pod lives for days and a
+     * fleet too large for one pass drains over consecutive runs. It does NOT survive a restart (the
+     * next run starts at the head, which is the safe direction: every step is idempotent, so the cost
+     * of re-doing the head is time, never correctness), and it is NOT shared between replicas — each
+     * keeps its own, so when the ShedLock winner alternates the two advance independently and overlap.
+     * Overlap is waste; starvation is data loss. The durable, shared version of this cursor belongs in
+     * a {@code platform} table alongside ADR 0010 Phase 4's {@code tenant_placement}, where the
+     * per-schema position a Phase 5 loop needs will live anyway — writing it now would mean a migration
+     * this slice does not own.
+     *
+     * <p><b>Why resuming mid-list cannot violate {@link #PURGE_ORDER}'s one real constraint.</b> The
+     * order exists for {@code membership.role_id → org_role(id)}, and a resumed pass may reach
+     * {@code org_role} without having visited {@code membership} first that night. It is safe because
+     * {@link #GUARDS} excludes any {@code org_role} still referenced by ANY {@code membership} row —
+     * the anti-join carries no {@code deleted_at} predicate, so soft-deleted memberships hold their
+     * role back too. The order is what stops the guard having to do that work on the common path; the
+     * guard is what makes the order optional on the resumed one. Both, not either.
+     *
+     * <p>Concurrent rather than an {@code EnumMap}, and not because two runs overlap — ShedLock is what
+     * stops that. It is for VISIBILITY: consecutive nightly runs land on whichever thread the scheduler
+     * pool hands out, and a plain field written by one thread and read by another a day later has no
+     * happens-before edge between them. The failure would be silent and would look exactly like the bug
+     * this cursor removes — a pass restarting at the head — which is the worst possible way to lose it.
+     */
+    private final Map<Tier, Integer> resumeAt = new ConcurrentHashMap<>();
 
     /**
      * The tenancy tier of a purge step's table, and therefore WHICH PASS visits it (ADR 0010 §2).
@@ -379,9 +458,20 @@ class SoftDeletePurgeJob {
      * <p>Not one giant transaction, and not one connection: every batch commits on its own, and every
      * one of those borrows reads the axis afresh — which is exactly why the pins wrap the passes
      * rather than sitting inside them (ADR 0010 §3.4).
+     *
+     * <p><b>AXIS: PLATFORM and TENANT, two spans, for the reason spelled out above</b> — this is the
+     * job the {@link JobAxis} annotation's two-valued form exists for. <b>CURSOR:</b> per pass, in
+     * memory, {@link #resumeAt}. <b>LEASE:</b> {@code PT30M} against a {@link #RUN_DEADLINE} of 25
+     * minutes, split by {@link #PLATFORM_BUDGET}; both javadocs say what they are sized for and which
+     * of the two numbers behind them is a guess.
      */
     @Scheduled(cron = "${app.scheduler.soft-delete-purge-cron:0 0 4 * * *}")
     @SchedulerLock(name = "soft-delete-purge", lockAtMostFor = "PT30M")
+    // Written out rather than static-imported, uniquely in this file: `Tier` below declares its OWN
+    // PLATFORM and TENANT constants, and two vocabularies sharing two simple names in one compilation
+    // unit is a thing to read twice. They are not the same enum and they answer different questions —
+    // Tier is which SCHEMA a table lives in, Axis is which span this job opens.
+    @JobAxis({JobAxis.Axis.PLATFORM, JobAxis.Axis.TENANT})
     public void purgeExpiredSoftDeletes() {
         purgeEverything();
     }
@@ -391,21 +481,28 @@ class SoftDeletePurgeJob {
             log.debug("Soft-delete purge is disabled (app.persistence.soft-delete.purge-enabled)");
             return;
         }
-        Instant cutoff = clock.instant().minus(properties.retention());
+        Instant started = clock.instant();
+        Instant cutoff = started.minus(properties.retention());
+        // Both deadlines are absolute and both are computed from the run's start, which is what lets an
+        // early-finishing platform pass hand its unspent budget to the tenant pass rather than have it
+        // expire unused. See PLATFORM_BUDGET.
+        Instant platformDeadline = started.plus(PLATFORM_BUDGET);
+        Instant runDeadline = started.plus(RUN_DEADLINE);
 
         // Not @Transactional on purpose: every batch commits on its own connection, so a long backlog
         // never becomes one giant transaction holding row locks against live traffic.
         Run run = new Run();
-        TenantContext.runAsPlatform(() -> pass(Tier.PLATFORM, cutoff, run));
+        TenantContext.runAsPlatform(() -> pass(Tier.PLATFORM, cutoff, platformDeadline, run));
         // PHASE 5: this single call becomes a loop — one runAs per silo in platform.tenant_placement
         // plus this one for whatever is still pooled. Today the pool IS every tenant, so one pass is
-        // the whole fleet; see POOLED_TENANT.
-        TenantContext.runAs(POOLED_TENANT, () -> pass(Tier.TENANT, cutoff, run));
+        // the whole fleet; see POOLED_TENANT. The loop is also where resumeAt has to grow a schema
+        // dimension: a cursor that says "table 12" is meaningless once "which home" is a second axis.
+        TenantContext.runAs(POOLED_TENANT, () -> pass(Tier.TENANT, cutoff, runDeadline, run));
 
         if (run.total > 0) {
             log.info("Soft-delete purge removed {} rows deleted before {} (retention {}): {}",
                     run.total, cutoff, properties.retention(), run.purged);
-        } else if (run.firstFailure == null) {
+        } else if (run.firstFailure == null && !run.cutShort) {
             log.debug("Soft-delete purge found nothing deleted before {}", cutoff);
         }
         // Three platform-tier tables, all named — but the pin still has to be declared, because this
@@ -425,6 +522,7 @@ class SoftDeletePurgeJob {
     private static final class Run {
         private final Map<String, Integer> purged = new LinkedHashMap<>();
         private int total;
+        private boolean cutShort;
         private RuntimeException firstFailure;
 
         private void failed(RuntimeException ex) {
@@ -432,6 +530,15 @@ class SoftDeletePurgeJob {
                 firstFailure = ex;
             }
         }
+    }
+
+    /**
+     * What one table's batch loop did, and whether it ended because the table was drained or because the
+     * deadline arrived. The second half is what {@link #pass} needs to place the cursor: stopping mid
+     * table means resuming AT that table, not after it, or the remainder of its backlog waits for the
+     * cursor to wrap all the way round.
+     */
+    private record Drain(int rows, boolean stoppedOnDeadline) {
     }
 
     /**
@@ -443,18 +550,52 @@ class SoftDeletePurgeJob {
      * That is not politeness: the tables are independent, so one poisoned FK must not cost every table
      * behind it its retention — and with two passes it must not cost the OTHER TIER its retention
      * either, which a thrown exception here would.
+     *
+     * <p><b>It starts where the last run stopped and ends by clearing the mark.</b> A pass that reaches
+     * the end of {@link #PURGE_ORDER} removes its {@link #resumeAt} entry, so the next run is a full
+     * sweep from the head again; a pass cut by {@code deadline} leaves the index of the table it was
+     * about to purge — or of the table it stopped inside — so the next run continues there. That is the
+     * difference between a fleet that drains over three nights and one that re-purges its first three
+     * tables forever.
+     *
+     * <p>A deliberately-skipped step (wrong tier for this pass) costs no deadline check and moves the
+     * cursor with the loop, so a cursor left mid-list is always an index this pass actually visits.
+     *
+     * <p><b>A cut pass runs no cascades, and that is the right call rather than an oversight.</b> The
+     * one cascade there is reconciles {@code user_device_trust} against {@code platform.user_device}'s
+     * liveness — it is order-independent and idempotent, so deferring it a night costs a night of
+     * revoked-but-still-trusted grants and nothing permanent, while running it past a deadline that
+     * exists to keep the pass inside its lease would defeat the deadline. It runs on the night the pass
+     * completes, which is also the night the platform pass finished its hard deletes.
      */
-    private void pass(Tier passTier, Instant cutoff, Run run) {
-        for (PurgeStep step : PURGE_ORDER) {
+    private void pass(Tier passTier, Instant cutoff, Instant deadline, Run run) {
+        int from = resumeAt.getOrDefault(passTier, 0);
+        if (from > 0) {
+            log.info("Soft-delete purge {} pass resumes at {} — the previous run stopped there",
+                    passTier, PURGE_ORDER.get(from).table());
+        }
+        for (int index = from; index < PURGE_ORDER.size(); index++) {
+            PurgeStep step = PURGE_ORDER.get(index);
             if (!step.tier().visitedOn(passTier)) {
                 continue;
             }
+            if (clock.instant().isAfter(deadline)) {
+                stopAt(passTier, index, run, "before " + step.table());
+                return;
+            }
             try {
-                int rows = purgeTable(step.table(), cutoff);
-                run.total += rows;
-                ug.co.smsone.shared.metrics.PurgeMetrics.purged(meters, "soft-delete-purge", step.table(), rows);
-                if (rows > 0) {
-                    run.purged.merge(step.table(), rows, Integer::sum);
+                Drain drain = purgeTable(step.table(), cutoff, deadline);
+                run.total += drain.rows();
+                ug.co.smsone.shared.metrics.PurgeMetrics.purged(meters, "soft-delete-purge", step.table(),
+                        drain.rows());
+                if (drain.rows() > 0) {
+                    run.purged.merge(step.table(), drain.rows(), Integer::sum);
+                }
+                if (drain.stoppedOnDeadline()) {
+                    // AT this index, not after it: the table still holds a backlog and resuming past it
+                    // would leave that backlog for a full cycle of the cursor.
+                    stopAt(passTier, index, run, "inside " + step.table() + ", which still has a backlog");
+                    return;
                 }
             } catch (RuntimeException ex) {
                 log.error("Soft-delete purge failed on {} ({} pass; continuing with the remaining tables)",
@@ -462,6 +603,8 @@ class SoftDeletePurgeJob {
                 run.failed(ex);
             }
         }
+        // Reached the end: the next run starts from the head again.
+        resumeAt.remove(passTier);
         for (Cascade cascade : CASCADES.values()) {
             if (cascade.tier() != passTier) {
                 continue;
@@ -473,6 +616,26 @@ class SoftDeletePurgeJob {
                 run.failed(ex);
             }
         }
+    }
+
+    /**
+     * Records where the pass stopped and says so at WARN. Both halves matter: the cursor is what makes
+     * the next run continue, and the log line is the only signal that this installation's nightly
+     * retention no longer fits in one pass — a fact that is otherwise indistinguishable from a quiet
+     * night, because a cut pass and a clean one both end with a row count and no exception.
+     *
+     * <p>Not a thrown exception, for {@code OrgMembershipIndexReconciler}'s reason: an incomplete
+     * idempotent pass that recorded its position is a smaller problem than a job failing every night in
+     * a way nobody can tell from a broken one.
+     */
+    private void stopAt(Tier passTier, int index, Run run, String where) {
+        resumeAt.put(passTier, index);
+        run.cutShort = true;
+        log.warn("Soft-delete purge {} pass stopped at its {} deadline {} — the next run resumes there "
+                        + "rather than from the head, so the tables behind it are not starved. A run that "
+                        + "hits this regularly has outgrown one pass: measure a batch and re-derive "
+                        + "RUN_DEADLINE and the PT30M lease together.",
+                passTier, RUN_DEADLINE, where);
     }
 
     /**
@@ -572,20 +735,36 @@ class SoftDeletePurgeJob {
      * tables have one name and two homes. The two are checked against each other in
      * {@code SoftDeletePurgeJobIntegrationTest}, which is what stops them drifting apart.
      */
-    private int purgeTable(String table, Instant cutoff) {
+    private Drain purgeTable(String table, Instant cutoff, Instant deadline) {
         String qualified = tables.qualified(table);
         String sql = DELETE_BATCH.formatted(qualified,
                 GUARDS.getOrDefault(table, "") + heldGuard(qualified));
         int total = 0;
         for (int batch = 0; batch < properties.maxBatches(); batch++) {
+            // Checked between batches and never before the first, so every table this pass reaches gets
+            // at least one batch. Without that a run whose deadline landed mid-table would leave the
+            // cursor parked on a table it never touched, and the cursor would stop meaning progress.
+            //
+            // The check has to be HERE and not only in pass(): max-batches × batch-size is 50,000 rows
+            // on one table, each delete behind a legal_hold anti-join, so a single table can outlast the
+            // whole lease on its own. That is the case where the lease expiring is a correctness bug —
+            // a second replica acquires the lock and starts deleting the same rows — rather than a slow
+            // night, and a per-table check is what makes the deadline able to stop it.
+            if (batch > 0 && clock.instant().isAfter(deadline)) {
+                return new Drain(total, true);
+            }
             int rows = jdbc.update(sql, Timestamp.from(cutoff), properties.batchSize());
             total += rows;
             if (rows < properties.batchSize()) {
-                return total;
+                return new Drain(total, false);
             }
         }
         log.warn("Soft-delete purge stopped at the {}-batch cap on {} with a backlog remaining; "
                 + "raise app.persistence.soft-delete.max-batches or batch-size", properties.maxBatches(), table);
-        return total;
+        // NOT a deadline stop. The batch cap is a per-table bound that leaves the rest of the pass its
+        // time, so the cursor must advance past this table — the remaining backlog is tomorrow's, the
+        // same as it has always been, and parking the cursor here would starve every table behind it
+        // for a reason the cap deliberately does not have.
+        return new Drain(total, false);
     }
 }

@@ -1,5 +1,7 @@
 package ug.co.smsone.exchange.internal;
 
+import static ug.co.smsone.shared.tenancy.JobAxis.Axis.TENANT;
+
 import java.time.Clock;
 import java.util.List;
 import java.util.UUID;
@@ -12,6 +14,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 import ug.co.smsone.exchange.ExchangeHandler;
 import ug.co.smsone.shared.security.OrgAuthorization;
+import ug.co.smsone.shared.tenancy.JobAxis;
 import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
@@ -73,9 +76,32 @@ class ExchangeScheduleFiringJob {
      * An annotation on this method would put the transaction outside anything the body can do, leaving
      * the borrow on {@code no_tenant}. {@link #fireDueSchedules()} lost its annotation for the same
      * reason — it is invoked directly, off any request, so it has to declare its own axis too.
+     *
+     * <p><b>AXIS: TENANT</b>, argued on {@link #fireDueSchedules()}.
+     *
+     * <p><b>CURSOR: {@code exchange_schedule.next_run_at}, in the row, and it advances on EVERY
+     * outcome.</b> {@link #fire} moves it on a successful submission, the {@code catch} in
+     * {@link #doFire} moves it after a failure, and an unauthorised or unknown-handler schedule is
+     * disabled outright — so no schedule can be selected twice by consecutive sweeps and none can sit
+     * at the head of {@code lockDue}'s ordering blocking the ones behind it. That is a resumable cursor
+     * in the strongest available form: shared between replicas, durable across restarts, and advanced
+     * by the failure path as well as the success path. The {@link #BATCH} cap is safe precisely because
+     * of that last property; a cap over an ordering the failure path did not advance would be a
+     * starvation bug rather than a bound.
+     *
+     * <p><b>LEASE: PT5M against a 60-second cron, and the honest reading is that it is sized for a
+     * SKIPPED TICK, not for a long pass.</b> One sweep is {@link #BATCH} = 50 schedules, each a
+     * permission re-resolution plus an {@code exchange_job} insert — sub-second work — so PT5M leaves
+     * four minutes of slack whose purpose is to absorb a stalled instance without letting a second one
+     * start concurrently. A pass that genuinely needed five minutes would be a different problem, and
+     * ShedLock's silent same-name relock skip means a slow tick simply does not fire rather than
+     * queueing. Phase 5's per-home loop is where this needs re-deriving: 50 per sweep becomes 50 per
+     * home, and the cap stops being global — a fairness change, since due schedules are ordered within
+     * a home from then on and not across the installation.
      */
     @Scheduled(cron = "${app.scheduler.exchange-schedule-cron:30 * * * * *}")
     @SchedulerLock(name = "exchange-schedule-fire", lockAtMostFor = "PT5M")
+    @JobAxis(TENANT)
     public void scheduledFire() {
         if (!config.scheduleFireEnabled()) {
             return;

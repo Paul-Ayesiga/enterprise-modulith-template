@@ -1,5 +1,7 @@
 package ug.co.smsone.webhooks.internal;
 
+import static ug.co.smsone.shared.tenancy.JobAxis.Axis.TENANT;
+
 import java.time.Clock;
 import java.util.UUID;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
@@ -10,6 +12,7 @@ import org.springframework.stereotype.Component;
 import ug.co.smsone.shared.retention.RetentionOverrides;
 import ug.co.smsone.shared.retention.RetentionPurges;
 import ug.co.smsone.shared.retention.RetentionScope;
+import ug.co.smsone.shared.tenancy.JobAxis;
 import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
@@ -54,8 +57,31 @@ class WebhookRetentionJob {
         this.meters = meters;
     }
 
+    /**
+     * <b>AXIS: TENANT, one span</b> — see the comment in the body. Both {@code webhook_delivery} and the
+     * {@code org_retention_override} rows {@link RetentionPurges} reads first are tenant-tier, so there
+     * is no platform half to open a second span for.
+     *
+     * <p><b>CURSOR: the delete.</b> Every batch removes terminal deliveries past their cutoff, so a pass
+     * stopped by {@link #MAX_BATCHES} or by an expired lease leaves the untouched remainder as the next
+     * night's head — nothing is re-examined and nothing is skipped, and there is no position worth
+     * holding in memory.
+     *
+     * <p><b>LEASE: PT30M, sized for one default drain of {@link #MAX_BATCHES} × {@link #BATCH_SIZE}
+     * plus one drain per per-org override, all in ONE schema.</b> The per-override pass is what makes
+     * this number fragile in a way the raw batch arithmetic hides: it is O(orgs with an override), not
+     * O(1), so the lease is already sized by a number that grows with the customer base rather than
+     * with traffic. Nobody has measured a batch against a real {@code webhook_delivery}; PT30M rests on
+     * 100 × 1,000 deletes being comfortable in half an hour, which is true by a wide margin and is
+     * arithmetic rather than evidence. ADR 0010 Phase 5 makes both passes run once per home, which is
+     * the point at which this must be re-derived WITH a resumable per-home cursor — a fan-out cut at
+     * home 40 of 200 that restarts at home 1 the next night never reaches the tail, and a retention
+     * promise that never reaches the tail is the failure this job was written to fix in the first
+     * place.
+     */
     @Scheduled(cron = "${app.scheduler.webhook-retention-cron:0 15 4 * * *}")
     @SchedulerLock(name = "webhook-delivery-retention", lockAtMostFor = "PT30M")
+    @JobAxis(TENANT)
     public void purgeExpiredDeliveries() {
         // ONE tenant pin over the whole run, and both things inside it need it for the same reason.
         // webhook_delivery is tenant-tier (ADR 0010 §2) and so is org_retention_override, which

@@ -4,6 +4,7 @@ import java.sql.PreparedStatement;
 import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -17,6 +18,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.KeysetScrollPosition;
 import org.springframework.jdbc.core.JdbcTemplate;
 import ug.co.smsone.shared.persistence.DbDialect;
+import ug.co.smsone.shared.queue.QueueSignals;
 import ug.co.smsone.shared.tenancy.SplitTables;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Component;
@@ -60,9 +62,11 @@ import ug.co.smsone.shared.web.WindowedResult;
  *       tenant is promoted to a schema of its own.</li>
  * </ul>
  *
- * <p>{@link #claimOne} is neither: unclaimed work belongs to no axis yet, so the worker calls it once
- * per home. {@link #purgeTerminalBatch} is the last cross-tenant statement left here and stays on the
- * platform axis until Phase 3 gives the retention job a per-tenant fan-out (§3.4 lists it as PER-TENANT).
+ * <p>{@link #claimOne} is neither: unclaimed work belongs to no axis yet, so Phase 3 has the worker ask
+ * {@code platform.queue_signal} which SCOPE has work and pass that answer in — which is what replaced
+ * the scan-per-home sweep with a lookup. {@link #purgeTerminalBatch} is the last cross-tenant statement
+ * left here and stays on the platform axis until the retention job gets a per-tenant fan-out (§3.4
+ * lists it as PER-TENANT).
  */
 @Component
 class ExchangeJobStore {
@@ -72,6 +76,9 @@ class ExchangeJobStore {
 
     private static final Logger log = LoggerFactory.getLogger(ExchangeJobStore.class);
     private static final int MAX_ERROR = 500;
+
+    /** This queue's discriminator in {@code platform.queue_signal}. */
+    static final String QUEUE = "exchange";
 
     private static final RowMapper<ExchangeJob> JOB = (rs, n) -> new ExchangeJob(
             rs.getObject("id", UUID.class),
@@ -97,12 +104,15 @@ class ExchangeJobStore {
     private final TransactionTemplate transactions;
     private final Clock clock;
     private final DbDialect dialect;
+    private final QueueSignals signals;
 
-    ExchangeJobStore(JdbcTemplate jdbc, TransactionTemplate transactions, Clock clock, DbDialect dialect) {
+    ExchangeJobStore(JdbcTemplate jdbc, TransactionTemplate transactions, Clock clock, DbDialect dialect,
+            QueueSignals signals) {
         this.jdbc = jdbc;
         this.transactions = transactions;
         this.clock = clock;
         this.dialect = dialect;
+        this.signals = signals;
     }
 
     /**
@@ -115,17 +125,25 @@ class ExchangeJobStore {
      * with its schema — claimed and run, but in the wrong tenant's queue, and invisible to that
      * tenant's own listing. The {@code org_id} column stays regardless, which is what makes the
      * disagreement detectable at all (§1).
+     *
+     * <p>The signal is raised in the SAME transaction as the row, and that is not tidiness: the two
+     * have to become visible together or a worker can claim the scope in the window between them, find
+     * nothing, delete the signal, and leave a job PENDING that no poll will ever look at again — no
+     * error, no log line, just an import that never starts. {@code QueueSignals} carries the argument.
      */
     UUID submit(UUID orgId, UUID requesterPersonId, String jobType, String handler, int handlerVersion,
             String format, String sourceKey) {
         UUID id = UUID.randomUUID();
-        jdbc.update("""
-                insert into %s.exchange_job (id, org_id, requester_person_id, job_type, handler,
-                                             handler_version, format, status, source_key, created_at)
-                values (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)
-                """.formatted(SplitTables.homeOf(orgId)),
-                id, orgId, requesterPersonId, jobType, handler, handlerVersion, format, sourceKey,
-                Timestamp.from(clock.instant()));
+        transactions.executeWithoutResult(tx -> {
+            jdbc.update("""
+                    insert into %s.exchange_job (id, org_id, requester_person_id, job_type, handler,
+                                                 handler_version, format, status, source_key, created_at)
+                    values (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)
+                    """.formatted(SplitTables.homeOf(orgId)),
+                    id, orgId, requesterPersonId, jobType, handler, handlerVersion, format, sourceKey,
+                    Timestamp.from(clock.instant()));
+            signals.raise(QUEUE, QueueSignals.scopeOf(orgId));
+        });
         return id;
     }
 
@@ -140,17 +158,24 @@ class ExchangeJobStore {
      * platform-scoped handler). Every other statement here is keyed on a job the caller already holds,
      * so it runs on the axis {@code ExchangeWorker} pinned from that job's own {@code org_id} and the
      * unqualified name resolves to the right home by itself. A claim is different: it is a search for
-     * work that does not yet belong to any axis, so it cannot be routed by one. The worker calls this
-     * once per home and the home is interpolated, never taken from a caller —
-     * {@code SplitTables.homes()} answers with compiled-in constants.
+     * work that does not yet belong to any axis, so it cannot be routed by one.
      *
      * <p>Left unqualified this became a scan of {@code platform.exchange_job} only, on the worker's
      * platform axis: platform jobs would keep draining and every tenant's import and export would sit
-     * at PENDING forever, with no error anywhere. Phase 3 replaces the per-home sweep with
-     * {@code platform.queue_signal} and a two-step claim, which is what stops the cost growing with the
-     * number of homes.
+     * at PENDING forever, with no error anywhere.
+     *
+     * <p><b>Phase 3 replaced the per-home sweep with a scope</b> (ADR 0010 §2.1). The worker takes one
+     * scope from {@code platform.queue_signal} and passes it here; the home is DERIVED from it rather
+     * than passed alongside, so a caller cannot hand in a home and a scope that disagree — which would
+     * search the pool for a platform job and find nothing, forever, silently. Two consequences worth
+     * naming: the cost of a poll stops growing with the number of homes (Phase 5 adds up to 200 silos),
+     * and one tenant's queue can no longer starve another's, because a claim covers one scope and the
+     * release stamps that scope behind everyone who has been waiting longer.
      */
-    Optional<ExchangeJob> claimOne(Duration staleLock, String home) {
+    Optional<ExchangeJob> claimOne(Duration staleLock, UUID scope) {
+        List<Object> args = new ArrayList<>();
+        args.add(staleLock.toMillis());
+        args.addAll(scopeArgs(scope));
         List<ExchangeJob> claimed = jdbc.query("""
                 update %1$s.exchange_job j
                 set locked_at = now(), attempts = attempts + 1, updated_at = now()
@@ -158,14 +183,66 @@ class ExchangeJobStore {
                     select id from %1$s.exchange_job
                     where status in ('PENDING', 'VALIDATING', 'PROCESSING')
                       and (locked_at is null or locked_at < now() - (? * interval '1 millisecond'))
+                      and %3$s
                     order by created_at
                     limit 1
                     %2$s
                 ) c
                 where j.id = c.id
                 returning j.*
-                """.formatted(home, dialect.skipLocked()), JOB, staleLock.toMillis());
+                """.formatted(homeOf(scope), dialect.skipLocked(), scopeFilter(scope)),
+                JOB, args.toArray());
         return claimed.stream().findFirst();
+    }
+
+    /**
+     * Hands a leased scope back to {@code platform.queue_signal} with the time its earliest remaining
+     * job becomes claimable — or deletes the signal when nothing is left. Runs on the platform axis and
+     * names the home, exactly like {@link #claimOne}, because it answers the same question about work
+     * that belongs to no axis.
+     *
+     * <p><b>The expression is {@link #claimOne}'s liveness predicate turned into a time,</b> and it has
+     * to stay that way: {@code locked_at is null} means claimable NOW, anything else becomes claimable
+     * at {@code locked_at + staleLock}. That second arm is the stale-lock reclaim, and dropping it
+     * would mean a job whose claimant died leaves a scope whose signal says "nothing due" — the row
+     * stays PROCESSING at whatever offset it reached, no poll ever reclaims it, and the tenant's import
+     * simply stops with a status that says it is still running. It also carries the retry schedule for
+     * free: {@link #releaseForRetry} writes {@code locked_at = now() + backoff - staleLock}, so this
+     * expression evaluates to {@code now() + backoff} without knowing that is what it is doing.
+     */
+    void releaseSignal(UUID scope, UUID lease, Duration staleLock) {
+        List<Object> args = new ArrayList<>();
+        args.add(staleLock.toMillis());
+        args.addAll(scopeArgs(scope));
+        Timestamp due = jdbc.queryForObject("""
+                select min(case when locked_at is null then now()
+                                else locked_at + (? * interval '1 millisecond') end)
+                  from %1$s.exchange_job
+                 where status in ('PENDING', 'VALIDATING', 'PROCESSING')
+                   and %2$s
+                """.formatted(homeOf(scope), scopeFilter(scope)), Timestamp.class, args.toArray());
+        signals.release(QUEUE, scope, lease, due == null ? null : due.toInstant());
+    }
+
+    /**
+     * The schema a scope's jobs live in. Derived rather than passed: {@code exchange_job} is split on
+     * {@code org_id} nullability (ADR 0010 §2 row 10), so the scope key already decides the home and a
+     * second parameter could only ever contradict it.
+     */
+    private static String homeOf(UUID scope) {
+        return QueueSignals.isPlatformScope(scope) ? SplitTables.PLATFORM : SplitTables.homeOf(scope);
+    }
+
+    /**
+     * The scope predicate and its bound arguments, always produced together — the platform scope's
+     * predicate carries no parameter at all, so building one without the other binds the wrong list.
+     */
+    private static String scopeFilter(UUID scope) {
+        return QueueSignals.isPlatformScope(scope) ? "org_id is null" : "org_id = ?";
+    }
+
+    private static List<Object> scopeArgs(UUID scope) {
+        return QueueSignals.isPlatformScope(scope) ? List.of() : List.of(scope);
     }
 
     /**

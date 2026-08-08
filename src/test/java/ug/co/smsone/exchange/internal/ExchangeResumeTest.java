@@ -10,7 +10,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
-import ug.co.smsone.shared.tenancy.SplitTables;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
 /**
@@ -44,13 +43,9 @@ class ExchangeResumeTest extends AbstractIntegrationTest {
     @BeforeEach
     void reset() {
         handler.reset();
-        // The queue is one shared table and drainOnce() claims strictly oldest-first — leftovers
-        // from other tests would be claimed instead of this test's job.
-        for (String home : ug.co.smsone.shared.tenancy.SplitTables.homes()) {
-            // exchange_job is a split table: leftovers in EITHER home would be claimed ahead of this
-            // test's job, which claims strictly oldest-first (ADR 0010 §2 row 10).
-            jdbc.update("delete from " + home + ".exchange_job");
-        }
+        // Leftovers from other tests would be claimed instead of this test's job — both homes AND the
+        // signals that index them. See ExchangeTestSupport.clearQueue.
+        ExchangeTestSupport.clearQueue(jdbc);
     }
 
     @Test
@@ -83,14 +78,15 @@ class ExchangeResumeTest extends AbstractIntegrationTest {
         UUID jobId = submitCsv(orgId, 1_000);
 
         // "Instance A" claims and then dies without releasing: the row stays locked.
-        // Names the home (ADR 0010 §2 row 10: exchange_job is a split table, so a claim is one scan per
-        // home). This job carries an org, so ExchangeJobStore.submit put it in the TENANT home — the
-        // harness's PLATFORM pin on this thread is not what decides, and that is the point of the rule.
-        assertThat(store.claimOne(Duration.ofMinutes(5), SplitTables.TENANT_POOL)).isPresent();
+        // Names the SCOPE, and the scope decides the home (ADR 0010 §2 row 10: exchange_job is a split
+        // table, and since Phase 3 the worker takes the scope from platform.queue_signal rather than
+        // scanning each home). This job carries an org, so ExchangeJobStore.submit put it in the TENANT
+        // home — the harness's PLATFORM pin on this thread is not what decides, and that is the point
+        // of the rule.
+        assertThat(store.claimOne(Duration.ofMinutes(5), orgId)).isPresent();
         assertThat(worker.drainOnce()).as("a live claim is invisible to the queue").isZero();
 
-        jdbc.update("update " + SplitTables.TENANT_POOL
-                + ".exchange_job set locked_at = locked_at - interval '10 minutes' where id = ?", jobId);
+        ExchangeTestSupport.expireClaim(jdbc, jobId, orgId);
         assertThat(worker.drainOnce()).isEqualTo(1);
 
         ExchangeJob done = store.find(jobId, orgId).orElseThrow();

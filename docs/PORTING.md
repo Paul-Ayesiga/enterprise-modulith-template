@@ -53,6 +53,17 @@ database that isn't Postgres-compatible you rewrite the three claim methods per 
 Cleanest cross-vendor move: **compute the stale-lock cutoff in Java** and pass it as a bound
 parameter (the idempotency store already does this), removing the `interval` arithmetic from SQL.
 
+There is a **fourth** claim, and it carries a requirement the other three do not: `QueueSignals.claim`
+takes the *tenant* (`platform.queue_signal`) before any of them takes a row, and its candidate is a
+`WITH … AS MATERIALIZED` CTE. The word is not decoration. Written as an ordinary subselect the
+candidate is a join input a nested loop may RESCAN, and because row locking skips a row the same
+command already updated, each rescan returns the *next* due tenant — one claim leases every due tenant
+and hands back one, parking the rest behind a lease no worker holds. Whatever the target vendor calls
+it, that statement must evaluate its candidate **exactly once**: a materialized CTE, or a
+`SELECT … FOR UPDATE SKIP LOCKED` and an `UPDATE` by key inside one transaction. A translation that
+merely preserves the shape re-opens the defect, and it re-opens it as a starvation that only appears
+when the optimizer picks the other join order.
+
 ### 3. `ON CONFLICT` upserts
 
 Upserts use Postgres `INSERT … ON CONFLICT (…) DO UPDATE|DO NOTHING`:

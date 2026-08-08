@@ -1,5 +1,10 @@
 package ug.co.smsone.identity.internal;
 
+import static ug.co.smsone.shared.tenancy.JobAxis.Axis.PLATFORM;
+
+import jakarta.persistence.criteria.CriteriaBuilder;
+import jakarta.persistence.criteria.Predicate;
+import jakarta.persistence.criteria.Root;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -19,6 +24,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import ug.co.smsone.identity.ProvisioningStatus;
 import ug.co.smsone.identity.internal.IdentityReconciliationProperties.Action;
 import ug.co.smsone.shared.audit.AuditLog;
+import ug.co.smsone.shared.tenancy.JobAxis;
 import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
@@ -61,9 +67,63 @@ class IdentityReconciliationJob {
 
     private static final Logger log = LoggerFactory.getLogger(IdentityReconciliationJob.class);
 
-    // Well under the PT30M ShedLock lease: a hung-but-answering Keycloak must not run the pass past
-    // the lock and into a second instance's concurrent run.
+    /**
+     * Well under the {@code PT30M} ShedLock lease: a hung-but-answering Keycloak must not run the pass
+     * past the lock and into a second instance's concurrent run.
+     *
+     * <p><b>What the five-minute margin is actually sized for, now that it has been re-derived rather
+     * than inherited.</b> The pass is a remote round trip per person, so the term that decides the
+     * deadline is Keycloak's latency and NOT the fleet: a tenant count of one or of two hundred changes
+     * nothing here, because {@code person} is platform-tier and there is exactly one of it. What has to
+     * fit inside the margin is the LAST in-flight lookup plus, in {@code DISABLE} mode, one
+     * {@link TransactionTemplate} write per orphan found — and that second term is the honest weakness:
+     * {@link #disable} runs AFTER the deadline check, is not itself deadline-bounded, and is
+     * proportional to the orphan count, which the ratio breaker caps as a FRACTION of the examined set
+     * rather than as an absolute number. A pass that examines 100,000 people at a 10% cap could
+     * therefore try 10,000 audited writes outside the deadline. That has never been measured and the
+     * five minutes is a guess against it. It is left as a guess deliberately rather than padded to a
+     * number with no derivation behind it either; the fix, when a real fleet size exists to measure, is
+     * to bound {@link #disable} too.
+     */
     private static final Duration RUN_DEADLINE = Duration.ofMinutes(25);
+
+    /**
+     * Where the next pass starts: the last person the previous pass examined, or {@code null} for the
+     * head of the scan.
+     *
+     * <p><b>This is the resumable cursor ADR 0010 §3.4 asks for, and this job is the case that argues
+     * for it best.</b> The scan already walks in {@code (invited_at, id)} order — that ordering is what
+     * {@code idx_person_scan} exists for, and it replaced an unordered head-truncation precisely
+     * because the head kept being re-examined while the tail starved. The deadline then quietly
+     * reintroduced the same failure one level up: a pass cut at 25 minutes restarted at the head the
+     * next night, so on a person table big enough to need more than one pass, the same prefix was
+     * reconciled every night forever and the accounts past it were never checked against Keycloak at
+     * all. Since this is the only job that can revoke access, "never reached" is not a slow queue — it
+     * is a deleted Keycloak account that keeps an ACTIVE-looking person row indefinitely, which is the
+     * exact condition the class javadoc says this job exists to correct.
+     *
+     * <p><b>In memory, and the trade is the same one {@code SoftDeletePurgeJob.resumeAt} documents.</b>
+     * It survives across nights inside one process, which is the case that matters; a restart resets it
+     * to the head, which is safe because the pass is a pure reader in {@code REPORT} mode and
+     * idempotent in {@code DISABLE} mode (an already-DISABLED person is skipped by the candidate
+     * predicate and again inside {@link #disableOne}); and replicas do not share it, so an alternating
+     * ShedLock winner means each advances its own way through the table and they overlap rather than
+     * starve. The durable home is a {@code platform} cursor row, which needs a migration this slice
+     * does not own — ADR 0010 Phase 4 is where that lands.
+     *
+     * <p><b>A completed pass clears it.</b> The next night is then a full sweep from the head again,
+     * which is what "reconcile every account daily" means; the cursor is a way to finish a sweep that
+     * did not fit in one night, not a way to visit each person once a fortnight.
+     */
+    private volatile ScanCursor resumeFrom;
+
+    /**
+     * One position in the {@code (invited_at, id)} scan. Both columns, because {@code invited_at} is not
+     * unique — several people invited in the same millisecond are ordinary, and a cursor on the
+     * timestamp alone would either skip the rest of that group or loop on it forever.
+     */
+    private record ScanCursor(Instant invitedAt, UUID personId) {
+    }
 
     private final PersonRepository persons;
     private final PersonResolver resolver;
@@ -93,8 +153,17 @@ class IdentityReconciliationJob {
             boolean abandoned) {
     }
 
+    /**
+     * <b>AXIS: PLATFORM, and this is one of the few jobs where that is the permanent answer rather than
+     * today's answer.</b> {@code person} and {@code external_identity} are platform-tier because a human
+     * exists once across the whole installation and their Keycloak account is a property of the person,
+     * not of any tenant. So this never becomes a per-tenant loop, and Phase 5 leaves it a single span
+     * — see {@link #run()}. <b>CURSOR:</b> {@link #resumeFrom}. <b>LEASE:</b> {@code PT30M} against
+     * {@link #RUN_DEADLINE}, both re-derived in that field's javadoc.
+     */
     @Scheduled(cron = "${app.scheduler.identity-reconciliation-cron:0 0 2 * * *}")
     @SchedulerLock(name = "identity-reconciliation", lockAtMostFor = "PT30M")
+    @JobAxis(PLATFORM)
     public void reconcile() {
         run();
     }
@@ -124,13 +193,19 @@ class IdentityReconciliationJob {
     private Reconciliation reconcileAgainstKeycloak() {
         Instant cutoff = clock.instant().minus(properties.gracePeriod());
         Instant deadline = clock.instant().plus(RUN_DEADLINE);
+        ScanCursor resume = resumeFrom;
+        if (resume != null) {
+            log.info("Identity reconciliation resumes after person {} — the previous pass stopped there",
+                    resume.personId());
+        }
         // Soft-deleted rows are excluded by @SQLRestriction — an account already erased here needs no
         // reconciling, and re-disabling it would churn the audit trail nightly.
         Sort scan = Sort.by(Sort.Order.asc("invitedAt"), Sort.Order.asc("id"));
         WindowIterator<Person> candidates = WindowIterator.of(position -> persons.findBy(
                         (root, query, cb) -> cb.and(
                                 cb.notEqual(root.get("status"), ProvisioningStatus.DISABLED),
-                                cb.lessThan(root.get("invitedAt"), cutoff)),
+                                cb.lessThan(root.get("invitedAt"), cutoff),
+                                startingAfter(resume, root, cb)),
                         q -> q.limit(properties.batchSize()).sortBy(scan).scroll(position)))
                 .startingAt(ScrollPosition.keyset());
 
@@ -139,12 +214,19 @@ class IdentityReconciliationJob {
         int unknown = 0;
         int unlinked = 0;
         boolean cutShort = false;
+        ScanCursor reached = null;
         while (candidates.hasNext()) {
             if (clock.instant().isAfter(deadline)) {
                 cutShort = true;
                 break;
             }
             Person person = candidates.next();
+            // Advanced BEFORE the outcome is known, and past the unlinked skip below as well: the cursor
+            // records where the scan got to, not what it decided. A cursor that only moved on a
+            // conclusive answer would park permanently on the first person with no Keycloak link and
+            // every account behind them would go unchecked — the starvation this cursor exists to
+            // remove, reintroduced by being too careful with it.
+            reached = new ScanCursor(person.getInvitedAt(), person.getId());
             // One lookup per person rather than a batched join: the remote round-trip below dominates
             // this by orders of magnitude, and keeping the pairing here is what lets the skip above be
             // a visible, counted outcome instead of a row silently missing from a join.
@@ -159,10 +241,16 @@ class IdentityReconciliationJob {
                 case UNKNOWN -> unknown++; // never acted on, by construction
             }
         }
+        // Set once, here, so every exit below — the empty pass, the ratio breaker's abandonment, the
+        // ordinary end — leaves the same, correct position behind. A pass that ran to the end clears
+        // the cursor and the next night is a full sweep again; only a deadline cut keeps it.
+        resumeFrom = cutShort ? reached : null;
         int examined = present + orphaned.size() + unknown;
         if (cutShort) {
-            log.warn("Identity reconciliation stopped at its {} deadline after {} accounts — the rest "
-                    + "wait for the next run. Is Keycloak slow?", RUN_DEADLINE, examined);
+            log.warn("Identity reconciliation stopped at its {} deadline after {} accounts — the next "
+                    + "run RESUMES after person {} rather than restarting at the oldest, so the accounts "
+                    + "behind it are not starved. Is Keycloak slow?",
+                    RUN_DEADLINE, examined, reached == null ? "<none>" : reached.personId());
         }
         if (examined == 0) {
             return new Reconciliation(0, 0, 0, 0, unlinked, 0, false);
@@ -191,6 +279,26 @@ class IdentityReconciliationJob {
                     examined, unknown, unlinked);
         }
         return new Reconciliation(examined, present, orphaned.size(), unknown, unlinked, acted, false);
+    }
+
+    /**
+     * The keyset resume predicate: {@code (invited_at, id) > (cursor.invitedAt, cursor.personId)},
+     * written out as the two-arm comparison rather than a row-value expression because the Criteria API
+     * has no row constructor. It reads on the same {@code (invited_at, id)} index the {@link Sort}
+     * above uses, so resuming costs an index seek and not a scan-and-discard.
+     *
+     * <p>{@code cb.conjunction()} for the no-cursor case rather than a null the caller has to branch on:
+     * a neutral {@code true} composes into the surrounding {@code and} and Hibernate drops it, so the
+     * full-sweep query is byte-for-byte what it was before this cursor existed.
+     */
+    private static Predicate startingAfter(ScanCursor from, Root<Person> root, CriteriaBuilder cb) {
+        if (from == null) {
+            return cb.conjunction();
+        }
+        return cb.or(
+                cb.greaterThan(root.<Instant>get("invitedAt"), from.invitedAt()),
+                cb.and(cb.equal(root.get("invitedAt"), from.invitedAt()),
+                        cb.greaterThan(root.<UUID>get("id"), from.personId())));
     }
 
     /**

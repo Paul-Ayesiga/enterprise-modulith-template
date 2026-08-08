@@ -12,11 +12,18 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import ug.co.smsone.notification.NotificationChannel;
+import ug.co.smsone.shared.queue.QueueSignals;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
 /**
  * Queue semantics against REAL Postgres: fenced status updates (a stale claimant can never corrupt a
  * re-claimed row), unknown-channel quarantine, and continuous-throttle tracking.
+ *
+ * <p>Every claim below names {@link QueueSignals#PLATFORM_SCOPE} because every row this class enqueues
+ * carries a null {@code org_id} — the platform-scoped notification, which is what most of them are
+ * (ADR 0010 §2 row 27). The scope is the queue's own argument now, not the worker's: since Phase 3 a
+ * claim covers one tenant at a time, and these tests drive {@link NotificationDeliveryQueue} directly
+ * rather than through the worker that would have taken the scope from {@code platform.queue_signal}.
  */
 class NotificationDeliveryQueueTest extends AbstractIntegrationTest {
 
@@ -66,7 +73,7 @@ class NotificationDeliveryQueueTest extends AbstractIntegrationTest {
                 """, poisoned, subject);
         UUID healthy = enqueueOne("healthy-" + UUID.randomUUID());
 
-        List<ClaimedDelivery> claimed = queue.claim(100, WIDE);
+        List<ClaimedDelivery> claimed = queue.claim(QueueSignals.PLATFORM_SCOPE, 100, WIDE);
 
         assertThat(claimed).extracting(ClaimedDelivery::id).contains(healthy).doesNotContain(poisoned);
         assertThat(statusOf(poisoned)).isEqualTo("FAILED");
@@ -107,7 +114,7 @@ class NotificationDeliveryQueueTest extends AbstractIntegrationTest {
 
     /** Claim broadly, then return the one row under test (other tests' rows may ride along). */
     private ClaimedDelivery claimOne(UUID id, Duration staleLock) {
-        return queue.claim(500, staleLock).stream()
+        return queue.claim(QueueSignals.PLATFORM_SCOPE, 500, staleLock).stream()
                 .filter(delivery -> delivery.id().equals(id))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("row " + id + " was not claimed"));
