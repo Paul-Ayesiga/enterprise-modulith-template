@@ -470,35 +470,83 @@ app:
     # rebuild on every call (what the surface did before it had a budget).
     mart-ttl: ${ANALYTICS_MART_TTL:15m}
   tenancy:
+    # HOW LONG A PROCESS REMEMBERS WHERE A TENANT LIVES (ADR 0010 §3.1, §6 hop 0->1). Every connection
+    # borrow on a tenant axis asks TenantRoutes which schema that organization is in; the answer comes
+    # from platform.tenant_placement and is memoized for this long, because it changes once in a
+    # tenant's lifetime and a round trip per borrow to re-learn it would be a permanent tax.
+    #
+    # IT IS NOT A CACHE-SIZE KNOB. It is the width of the window in which one pod can still be routing
+    # a tenant to the schema it has just left, so it is part of the promotion procedure: TenantPromoter
+    # holds its freeze for exactly this long AFTER the placement flip, before it deletes the source
+    # rows and before it unfreezes. Lower means more indexed reads and shorter freezes; higher means
+    # the reverse. 0 disables the memo entirely — correct, and one round trip per borrow.
+    route-ttl: ${TENANT_ROUTE_TTL:30s}
     placement:
-      # WHERE A NEW TENANT IS BORN (ADR 0010 §1, §4.3). `pooled` is the ADR's decision and the default:
-      # every tenant lands in the shared `tenant_pool`, and promoting one to its own `t_<32hex>` schema
-      # later is a placement flip rather than a different code path.
+      # WHERE A NEW TENANT IS BORN (ADR 0010 §1, §4.3). `silo-per-org` is the default since 2026-08-08:
+      # every tenant gets its own `t_<32hex>` schema, created and migrated before it is announced, so
+      # `pg_dump -n t_<hex>` is a complete tenant with no `WHERE org_id = ?` predicate to get wrong.
+      # PlacementPolicy's javadoc carries the decision and the re-measurement it rests on — read it
+      # before changing this line, in either direction.
       #
-      # `silo-per-org` gives every new tenant its own schema at signup. It is here so the numbers below
-      # can be RE-MEASURED rather than taken on faith — flip it in an environment, create tenants, and
-      # watch the catalog and the boot time yourself. What it is not is a production setting somebody
-      # reaches for because the word "isolation" is nearby: schema separation inside one Postgres
-      # cluster buys almost nothing in security terms (the same role reaches every schema), and this
-      # system's real isolation guarantees live in ApiPermissionEvaluator and OrgAuthorization.
+      # `pooled` puts every tenant in the shared `tenant_pool` and remains fully supported: it is the
+      # right answer for a deployment expecting many thousands of small tenants, where the disk cost and
+      # the operator-listing curve both bite. Promotion moves a tenant between the two either way
+      # (§6 hop 0->1), so this is where a tenant STARTS and never where it is stuck.
       #
-      # WHAT WAS MEASURED, against the live database (§1). One tenant schema is 55 tables + 184
-      # indexes = 239 relations, ~3.2 MB of empty files. At the 5,000 orgs that exist today that is:
-      #   * ~16 GB of empty relation files and 5–6 GB of catalog (~1.2M pg_class rows);
-      #   * ~9 s of unfiltered JDBC metadata on EVERY JVM start — measured with pgjdbc's own getColumns
-      #     SQL against 300 real schemas and extrapolated, not guessed;
-      #   * a hard wall in cross-tenant fan-out at ~3,200 UNION branches, because lock slots run out
-      #     (max_locks_per_transaction 64 x max_connections 100, at a measured 2.004 locks per branch).
-      # Signup cost is the smaller half: a full replay of the tenant sequence into a fresh schema is
-      # ~200–330 ms and stays flat to 300 schemas, so it is latency on the signup path, not a wall.
-      # The wall is the fan-out, and there are 5,000 orgs on the other side of it.
+      # WHAT NEITHER SETTING BUYS. Schema separation inside one Postgres cluster is worth almost nothing
+      # in security terms — the same role reaches every schema — and this system's real isolation
+      # guarantees live in ApiPermissionEvaluator and OrgAuthorization, unchanged by this value. Every
+      # org_id column and every org_id predicate stays regardless: in a silo the predicate is redundant
+      # but free, and it is the detector that catches a search_path mistake.
+      #
+      # WHAT IT COSTS, re-measured 2026-08-08 against 200 real silos (§8 Q1). ~126 relations and ~912 KB
+      # of empty files per silo; ~200-330 ms of Flyway on the signup path, flat to 300 schemas; and the
+      # one that grows without bound — a cross-tenant OPERATOR listing merges one query per home at
+      # ~1.29-1.39 ms each, so ~279 ms per page at 200 tenants, linear past it. That degrades
+      # platform-wide admin surfaces (TicketFanOut, SlaEscalationJob) and never tenant-facing traffic,
+      # which is pinned to one schema and does not fan out. §8 Q2's platform.ticket_index is the
+      # designed answer and this default moves it onto the critical path.
       #
       # THE ORDERING IS HANDLED, WHICHEVER WAY THIS IS SET. Under `silo-per-org` the schema is created
       # and migrated BEFORE OrganizationRegistered is published, because the three after-commit
       # listeners on that event (trial, billing account, search indexing) write tenant-tier tables and
       # would otherwise race the schema they need — silently, and retried by the outbox so the failures
       # look like noise. See TenantProvisioner.
-      policy: ${TENANT_PLACEMENT_POLICY:pooled}
+      policy: ${TENANT_PLACEMENT_POLICY:silo-per-org}
+    promotion:
+      # MOVING AN EXISTING TENANT between schemas — ADR 0010 §6 hop 0->1, driven by
+      # docs/runbooks/tenant-promotion.md. Operator-initiated only (§8 Q3): nothing here is scheduled
+      # and no threshold triggers a promotion, so these three numbers only ever bound a run somebody
+      # started.
+      #
+      # THE CEILING (§8 Q1). A silo is one more branch in every cross-tenant fan-out, and two measured
+      # costs scale with branch count without amortizing: ~0.5-0.66 ms of PLANNING per branch, paid on
+      # every execution because a query text that grows with the fleet defeats both the JDBC statement
+      # cache and Postgres' plan cache (50 branches 12-24 ms, 200 branches 69-100 ms, 500 branches
+      # 313-389 ms); and 2.004 LOCK entries per branch against ~6,400 cluster-wide slots
+      # (max_locks_per_transaction 64 x max_connections 100), where exhaustion is "out of shared
+      # memory" and takes the whole transaction with it. At 200 silos that is ~130 ms of planning and
+      # ~403 lock entries per fan-out transaction, plus ~48,000 relations and ~650 MB of empty files
+      # (§5.10) — the budget this number was chosen to sit inside. RAISING IT IS A MEASUREMENT, not a
+      # decision: §8 Q1 asks for the UNION benchmark replayed at N = 50 / 100 / 200 against real
+      # tenant_pool + silo data first. Past 50 silos the intended answer is platform.ticket_index
+      # (§5.1), not a wider fan-out. The promoter refuses at this number; the fan-out deliberately does
+      # NOT truncate at it, because dropping the 201st home silently stops doing that tenant's work.
+      max-silos: ${TENANT_PROMOTION_MAX_SILOS:200}
+      # HOW LONG A PROMOTION MAY HOLD A TENANT'S WRITES. A budget, not an expectation: the promoter
+      # aborts rather than silently extending, and platform.tenant_freeze carries this as a deadline so
+      # a promoter that is killed pauses the tenant's queues for at most this long instead of forever.
+      # Sized against the tenant, not against taste — the ADR measured 1.72 s to copy 150k rows across
+      # the eight largest tables, so 30 minutes is generous for anything this template will meet and is
+      # meant to be lowered rather than raised.
+      freeze: ${TENANT_PROMOTION_FREEZE:PT30M}
+      # THE SETTLE WAIT after the freeze goes on, so requests already in flight finish before the copy
+      # reads anything. It BOUNDS the in-flight window and does not close it — nothing here tracks
+      # in-flight work, and the per-table row-count-and-checksum comparison is what actually makes the
+      # copy correct. Raise it above the webhook queue's stale-lock window when promoting a tenant with
+      # busy queues: a worker that leased that tenant one tick before the freeze is the one writer the
+      # queue-side pause cannot reach.
+      drain: ${TENANT_PROMOTION_DRAIN:PT2S}
   persistence:
     soft-delete:
       # Nightly retention purge for soft-deleted aggregates (the seven AggregateRoot tables). Past this
