@@ -10,6 +10,7 @@ import ug.co.smsone.shared.metrics.PurgeMetrics;
 import ug.co.smsone.shared.retention.RetentionOverrides;
 import ug.co.smsone.shared.retention.RetentionPurges;
 import ug.co.smsone.shared.retention.RetentionScope;
+import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
  * The retention job the V24 terminal index was always waiting for: terminal jobs past
@@ -45,9 +46,15 @@ class ExchangeRetentionJob {
     @Scheduled(cron = "${app.scheduler.exchange-retention-cron:0 45 4 * * *}")
     @SchedulerLock(name = "exchange-job-retention", lockAtMostFor = "PT30M")
     public void purgeExpiredJobs() {
-        int total = RetentionPurges.purge(retentionOverrides, RetentionScope.EXCHANGE_JOB,
-                clock.instant(), config.retention(), BATCH_SIZE, MAX_BATCHES,
-                store::purgeTerminalBatch, store::purgeTerminalBatchForOrg);
+        // Declares the platform axis: no request thread pins one, and the purge reaches every org's
+        // rows. ADR 0010 §3.4.
+        // PHASE 2: RetentionPurges already splits this in two — a default sweep plus one call per org
+        // that carries an override (purgeTerminalBatchForOrg). Once exchange_job moves to the tenant
+        // tier, that per-org arm becomes the ONLY arm and each call wraps in
+        // TenantContext.runAs(orgId, ...); the default sweep becomes the loop over tenants without one.
+        int total = TenantContext.callAsPlatform(() -> RetentionPurges.purge(retentionOverrides,
+                RetentionScope.EXCHANGE_JOB, clock.instant(), config.retention(), BATCH_SIZE, MAX_BATCHES,
+                store::purgeTerminalBatch, store::purgeTerminalBatchForOrg));
         PurgeMetrics.purged(meters, "exchange-job-retention", "exchange_job", total);
         log.info("Purged {} terminal exchange jobs (default retention {})", total, config.retention());
     }

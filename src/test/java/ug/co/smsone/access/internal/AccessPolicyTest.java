@@ -23,6 +23,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 import ug.co.smsone.testsupport.EdgeSeed;
 
@@ -318,10 +319,19 @@ class AccessPolicyTest extends AbstractIntegrationTest {
                 assertThat(grants(device)).as("both grants, not just the revoking org's").isZero());
     }
 
-    /** How many organizations currently trust this device, counted straight out of the table. */
+    /**
+     * How many organizations currently trust this device, counted straight out of the table.
+     *
+     * <p>Pinned explicitly because both callers are inside {@code await().untilAsserted(...)}, and
+     * Awaitility polls on ITS OWN thread — which carries no tenant axis, so the count would fail with
+     * {@code relation "user_device_trust" does not exist} rather than the assertion it was written for.
+     * This is the pooled-thread case ADR 0010 §3.2 singles out: the HTTP path is on virtual threads that
+     * are never reused, so only the scheduler, {@code @Async} executors and helpers like this one can
+     * expose a missing pin. A test that awaits is doing background work and has to say so.
+     */
     private int grants(UUID deviceId) {
-        Integer count = jdbc.queryForObject(
-                "select count(*) from user_device_trust where device_id = ?", Integer.class, deviceId);
+        Integer count = TenantContext.callAsPlatform(() -> jdbc.queryForObject(
+                "select count(*) from user_device_trust where device_id = ?", Integer.class, deviceId));
         return count == null ? 0 : count;
     }
 

@@ -11,6 +11,7 @@ import org.springframework.modulith.events.ApplicationModuleListener;
 import org.springframework.test.context.TestPropertySource;
 import ug.co.smsone.settings.SettingChanged;
 import ug.co.smsone.settings.internal.SettingService;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
 @TestPropertySource(properties = "app.scheduler.event-retention=PT0S")
@@ -49,9 +50,15 @@ class EventPurgeJobIntegrationTest extends AbstractIntegrationTest {
         assertThat(countCompleted()).isZero();
     }
 
+    /**
+     * Pinned because one caller polls: Awaitility runs its condition on its OWN thread, which carries
+     * no tenant axis, so the borrow routes to the empty {@code no_tenant} schema (ADR 0010 §3.4). The
+     * registry is platform-tier — {@code event_publication} holds a listener id and a serialized
+     * payload, nothing tenant-shaped — so PLATFORM is the axis it is read on here and in the job.
+     */
     private int countCompleted() {
-        Integer count = jdbcTemplate.queryForObject(
-                "select count(*) from event_publication where completion_date is not null", Integer.class);
+        Integer count = TenantContext.callAsPlatform(() -> jdbcTemplate.queryForObject(
+                "select count(*) from event_publication where completion_date is not null", Integer.class));
         return count == null ? 0 : count;
     }
 }

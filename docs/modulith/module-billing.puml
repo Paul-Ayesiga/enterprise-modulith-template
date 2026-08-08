@@ -26,8 +26,7 @@ System_Boundary("Application_boundary", "Application", $tags="") {
 
 }
 
-Rel(Application.Application.Organization, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
-Rel(Application.Application.Organization, Application.Application.Subscription, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Subscription, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Notification, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Billing, Application.Application.Subscription, "listens to", $techn="", $tags="", $link="")
 Rel(Application.Application.Billing, Application.Application.Organization, "listens to", $techn="", $tags="", $link="")
@@ -35,7 +34,8 @@ Rel(Application.Application.Billing, Application.Application.Notification, "depe
 Rel(Application.Application.Billing, Application.Application.Subscription, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Billing, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Billing, Application.Application.Organization, "uses", $techn="", $tags="", $link="")
-Rel(Application.Application.Subscription, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Organization, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Organization, Application.Application.Subscription, "uses", $techn="", $tags="", $link="")
 
 SHOW_LEGEND(true)
 hide stereotypes

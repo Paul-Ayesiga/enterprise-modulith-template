@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.subscription.Subscriptions;
 
 /**
@@ -33,7 +34,11 @@ class DunningJob {
     @Scheduled(cron = "${app.scheduler.dunning-cron:0 40 3 * * *}")
     @SchedulerLock(name = "billing-dunning", lockAtMostFor = "PT10M")
     public void run() {
-        int paused = subscriptions.pauseLapsedPastDue(Duration.ofDays(graceDays));
+        // Declares the platform axis: no request, so nothing else does. ADR 0010 §3.4.
+        // PHASE 2: pauseLapsedPastDue sweeps org_subscription across every tenant in one statement.
+        // When that table moves to the tenant tier this becomes a per-tenant loop —
+        // `for each tenant: TenantContext.runAs(orgId, () -> subscriptions.pauseLapsedPastDue(...))`.
+        int paused = TenantContext.callAsPlatform(() -> subscriptions.pauseLapsedPastDue(Duration.ofDays(graceDays)));
         if (paused > 0) {
             log.info("Dunning: paused {} subscription(s) PAST_DUE beyond {} day(s)", paused, graceDays);
         }

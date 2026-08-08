@@ -21,6 +21,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import ug.co.smsone.identity.PersonProvisioned;
 import ug.co.smsone.search.SearchDoc;
 import ug.co.smsone.search.SearchIndex;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 import ug.co.smsone.testsupport.EdgeSeed;
 
@@ -142,17 +143,22 @@ class SearchApiTest extends AbstractIntegrationTest {
         listeners.on(event);
         listeners.on(event);
 
+        // Both counts declare the platform axis: the listener under test is asynchronous, so the only
+        // way to assert on it is from Awaitility's own poll thread — which carries no axis, and would
+        // route these reads to the empty no_tenant schema (ADR 0010 §3.4). Both tables are
+        // platform-tier: search_document has a nullable org_id (person docs have none) and event_inbox
+        // is infrastructure.
         org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
-            Integer docs = jdbc.queryForObject(
+            Integer docs = TenantContext.callAsPlatform(() -> jdbc.queryForObject(
                     "select count(*) from search_document where entity_type = 'user' and entity_id = ?",
-                    Integer.class, personId.toString());
+                    Integer.class, personId.toString()));
             assertThat(docs).as("one document, however many deliveries").isEqualTo(1);
             // The inbox key is namespaced by what the event now identifies: a person id, not a token
             // subject. The projection's entity_type stays 'user' (the API's word for a human with an
             // account) — these are two different vocabularies and only the key moved.
-            Integer inboxRows = jdbc.queryForObject(
+            Integer inboxRows = TenantContext.callAsPlatform(() -> jdbc.queryForObject(
                     "select count(*) from event_inbox where listener_id = 'search' and message_id = ?",
-                    Integer.class, "person:" + personId + "@" + event.occurredAt());
+                    Integer.class, "person:" + personId + "@" + event.occurredAt()));
             assertThat(inboxRows).as("the inbox recorded the message exactly once").isEqualTo(1);
         });
     }

@@ -38,6 +38,17 @@ import ug.co.smsone.shared.error.UnauthorizedException;
  * {@code Authentication} it was not built from. {@link CurrentUserFilter} clears it on the way out and
  * warms it on the way in; the warm-up is what keeps the JPA auditor from issuing a query in the middle of
  * a flush.
+ *
+ * <p><b>Resolution straddles both tenancy tiers, and Phase 1 hides that.</b> Every caller pins PLATFORM
+ * around this class (ADR 0010 §3.4) because the identity half is platform-tier — {@code external_identity}
+ * (§2 table 13), {@code person} (37), {@code external_organization} (14), {@code organization} (35). But
+ * {@link #permissions} reaches {@code membership} (26), {@code org_role} (31) and {@code role_permission}
+ * (43), and all three are TENANT tier. Today that is invisible: every table lives in one schema and both
+ * halves resolve identically. From Phase 2 they do not, and a single flat PLATFORM pin around
+ * {@code currentUser()} will read the identity half correctly and fail on the permission half. The shape
+ * this has to become is two axes in sequence — resolve person and org on PLATFORM, then
+ * {@code callAs(orgId, …)} for the permission set — which is only expressible once the org is known, i.e.
+ * inside this class rather than at the four call sites that pin around it.
  */
 @Component
 public class CurrentUserProvider {

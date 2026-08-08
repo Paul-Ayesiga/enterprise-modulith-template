@@ -18,6 +18,7 @@ import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 import ug.co.smsone.notification.NotificationChannelSender;
 import ug.co.smsone.notification.NotificationMessage;
+import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
  * Drains the delivery queue: claims batches, sends each on a bounded pool of virtual threads
@@ -140,11 +141,24 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
         }
     }
 
-    /** Claim and process up to {@code maxDrainBatches} full batches; returns how many were processed. */
+    /**
+     * Claim and process up to {@code maxDrainBatches} full batches; returns how many were processed.
+     *
+     * <p>Declares the platform axis for the CLAIM (ADR 0010 §3.4). The poller is its own thread —
+     * started in {@link #start()}, not by any executor — so nothing else would, and the axis has to be
+     * declared here rather than in {@link #runLoop()} because tests drive this method directly. The
+     * sends are pinned separately: see {@link #processBatch}.
+     *
+     * <p>PHASE 2: {@code notification_delivery} carries an {@code org_id}, so a queue that has moved to
+     * the tenant tier can no longer be claimed with one statement. This becomes a claim per tenant —
+     * and the {@code SKIP LOCKED} fairness the design leans on becomes a property of the loop's order,
+     * not of the statement.
+     */
     public int drainOnce() throws InterruptedException {
         int total = 0;
         for (int i = 0; i < config.maxDrainBatches(); i++) {
-            List<ClaimedDelivery> batch = queue.claim(config.batchSize(), config.staleLock());
+            List<ClaimedDelivery> batch = TenantContext.callAsPlatform(
+                    () -> queue.claim(config.batchSize(), config.staleLock()));
             if (batch.isEmpty()) {
                 break;
             }
@@ -157,6 +171,21 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
         return total;
     }
 
+    /**
+     * Sends one claimed batch, each on its own virtual thread, and waits.
+     *
+     * <p><b>Each send task declares its own axis, and that is not redundant with {@link #drainOnce()}.</b>
+     * {@link #sendExecutor} is this class's own {@code newVirtualThreadPerTaskExecutor}, not Boot's
+     * shared one, so the {@code TaskDecorator} in {@code shared.config.AsyncConfig} never sees these
+     * tasks — and a thread-local is not inherited by a virtual thread anyway. Every status write
+     * {@link #deliver} makes ({@code markSent}, {@code reschedule}, {@code deadLetter}) borrows a
+     * connection on this thread, so without the pin the send would succeed and the row would never be
+     * marked.
+     *
+     * <p>PHASE 2: the delivery carries {@code orgId}, so this pin becomes
+     * {@code TenantContext.runAs(delivery.orgId(), …)} — with the null case (platform-addressed
+     * notifications) staying on PLATFORM.
+     */
     private void processBatch(List<ClaimedDelivery> batch) throws InterruptedException {
         CountDownLatch done = new CountDownLatch(batch.size());
         ExecutorService executor = this.sendExecutor;
@@ -168,7 +197,7 @@ public class NotificationDeliveryWorker implements SmartLifecycle {
                         // pin the poller and stall claiming for every other channel/recipient.
                         permits.acquire();
                         try {
-                            deliver(delivery);
+                            TenantContext.runAsPlatform(() -> deliver(delivery));
                         } finally {
                             permits.release();
                         }

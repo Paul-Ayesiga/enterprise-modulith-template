@@ -9,6 +9,7 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
 import software.amazon.awssdk.services.s3.model.NoSuchBucketException;
+import ug.co.smsone.shared.tenancy.TenantContext;
 
 /** Idempotently creates the configured bucket at startup (disable via app.storage.bootstrap-bucket). */
 @Component
@@ -29,11 +30,16 @@ class BucketBootstrap implements ApplicationRunner {
         if (!properties.bootstrapBucket()) {
             return;
         }
-        try {
-            s3.headBucket(HeadBucketRequest.builder().bucket(properties.bucket()).build());
-        } catch (NoSuchBucketException e) {
-            s3.createBucket(CreateBucketRequest.builder().bucket(properties.bucket()).build());
-            log.info("Created storage bucket '{}'", properties.bucket());
-        }
+        // Declares the platform axis (ADR 0010 §3.4). Object storage only — no table is touched here —
+        // but every ApplicationRunner in this codebase declares one, so that the invariant is
+        // "a background entry point states its axis" rather than "…unless someone judged it unnecessary".
+        TenantContext.runAsPlatform(() -> {
+            try {
+                s3.headBucket(HeadBucketRequest.builder().bucket(properties.bucket()).build());
+            } catch (NoSuchBucketException e) {
+                s3.createBucket(CreateBucketRequest.builder().bucket(properties.bucket()).build());
+                log.info("Created storage bucket '{}'", properties.bucket());
+            }
+        });
     }
 }

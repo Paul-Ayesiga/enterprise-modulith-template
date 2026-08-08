@@ -1,7 +1,12 @@
 package ug.co.smsone.scheduler.internal;
 
+import java.time.Duration;
+import java.util.Optional;
 import javax.sql.DataSource;
+import net.javacrumbs.shedlock.core.ExtensibleLockProvider;
+import net.javacrumbs.shedlock.core.LockConfiguration;
 import net.javacrumbs.shedlock.core.LockProvider;
+import net.javacrumbs.shedlock.core.SimpleLock;
 import net.javacrumbs.shedlock.provider.jdbctemplate.JdbcTemplateLockProvider;
 import net.javacrumbs.shedlock.spring.annotation.EnableSchedulerLock;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -10,6 +15,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import ug.co.smsone.shared.persistence.SoftDeleteProperties;
+import ug.co.smsone.shared.tenancy.TenantContext;
 
 @Configuration(proxyBeanMethods = false)
 @EnableScheduling
@@ -20,12 +26,74 @@ import ug.co.smsone.shared.persistence.SoftDeleteProperties;
 @EnableConfigurationProperties({SoftDeleteProperties.class, SchedulerRetentionProperties.class})
 class SchedulingConfig {
 
+    /**
+     * The lock provider, wrapped so its own {@code shedlock} reads and writes declare a tenant axis
+     * (ADR 0010 §3.4).
+     *
+     * <p><strong>This is the borrow nobody sees.</strong> {@code @SchedulerLock} is an around-advice:
+     * ShedLock {@code INSERT}s or {@code UPDATE}s the {@code shedlock} row to acquire the lease
+     * <em>before</em> the annotated method's first statement, and {@code DELETE}s/updates it again
+     * after the method returns. Both happen on this {@link JdbcTemplate}, which is built on the
+     * {@code @Primary} routing {@code DataSource} — so with no axis pinned they resolve
+     * {@code search_path} to the empty {@code no_tenant} schema and every scheduled job in the
+     * application dies on {@code relation "shedlock" does not exist} before its body runs. Pinning
+     * inside the job methods cannot reach it; it is outside them by construction.
+     *
+     * <p>On the scheduler's own threads the {@code TaskDecorator} in {@code shared.config.AsyncConfig}
+     * has already pinned PLATFORM and these calls nest harmlessly. This wrapper is what covers the
+     * other callers: tests that invoke a {@code @SchedulerLock} method through its proxy, and any
+     * future manual trigger — neither of which goes near a {@code TaskScheduler}.
+     *
+     * <p>It pins rather than degrading quietly, which means it <em>throws</em> if a transaction is
+     * already open around the lock acquisition. That is the correct failure: an open transaction has
+     * already bound a connection, so the lease and the job would run on whatever {@code search_path}
+     * that borrow got. It is also why no {@code @Scheduled} method in this codebase carries
+     * {@code @Transactional} — the two would order unpredictably (both advisors default to
+     * {@code LOWEST_PRECEDENCE}), and the jobs that need a transaction open it with a
+     * {@code TransactionTemplate} inside their pin instead.
+     */
     @Bean
     LockProvider lockProvider(DataSource dataSource) {
-        return new JdbcTemplateLockProvider(JdbcTemplateLockProvider.Configuration.builder()
+        return new PlatformAxisLockProvider(new JdbcTemplateLockProvider(JdbcTemplateLockProvider.Configuration
+                .builder()
                 .withJdbcTemplate(new JdbcTemplate(dataSource))
                 // DB-server UTC time — instances need no clock agreement
                 .usingDbTime()
-                .build());
+                .build()));
+    }
+
+    /**
+     * Declares the platform axis around every {@code shedlock} statement ShedLock issues on its own
+     * behalf. {@link ExtensibleLockProvider} rather than plain {@link LockProvider} because
+     * {@code JdbcTemplateLockProvider} is one, and a wrapper that dropped the marker would silently
+     * disable {@code LockExtender} for callers that check the type.
+     */
+    private record PlatformAxisLockProvider(ExtensibleLockProvider delegate) implements ExtensibleLockProvider {
+
+        @Override
+        public Optional<SimpleLock> lock(LockConfiguration lockConfiguration) {
+            Optional<SimpleLock> acquired = TenantContext.callAsPlatform(() -> delegate.lock(lockConfiguration));
+            return acquired.<SimpleLock>map(PlatformAxisLock::new);
+        }
+    }
+
+    /**
+     * The other half: release and extension are statements against {@code shedlock} too, and they run
+     * after the job's own pin has been restored (ShedLock unlocks in a {@code finally} outside the
+     * method body), so they need the axis declared again here.
+     */
+    private record PlatformAxisLock(SimpleLock delegate) implements SimpleLock {
+
+        @Override
+        public void unlock() {
+            TenantContext.runAsPlatform(delegate::unlock);
+        }
+
+        @Override
+        public Optional<SimpleLock> extend(Duration lockAtMostFor, Duration lockAtLeastFor) {
+            Optional<SimpleLock> extended =
+                    TenantContext.callAsPlatform(() -> delegate.extend(lockAtMostFor, lockAtLeastFor));
+            return extended.<SimpleLock>map(PlatformAxisLock::new);
+        }
     }
 }

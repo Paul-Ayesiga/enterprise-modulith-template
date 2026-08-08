@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
  * Polls the job queue and runs claimed jobs — ONE at a time per instance, deliberately: a job is
@@ -95,8 +96,27 @@ class ExchangeWorker implements SmartLifecycle {
         }
     }
 
-    /** Claim and fully run one job; returns how many were run (0 or 1). */
+    /**
+     * Claim and fully run one job; returns how many were run (0 or 1).
+     *
+     * <p>Declares the platform axis (ADR 0010 §3.4): the poller is a thread this class starts itself,
+     * so no {@code TaskDecorator} covers it, and tests drive this method directly with no request
+     * behind them either. The pin wraps the claim, the run and {@link #recordOutcome} — the last of
+     * which opens its own transaction, which is the only order that works: the transaction chooses its
+     * connection, and the axis has to already be set when it does.
+     *
+     * <p><b>PHASE 2 SPLITS THIS PIN IN TWO, and the seam is already visible below.</b> The claim is a
+     * cross-tenant {@code SKIP LOCKED} scan over one queue and stays platform work (or becomes a scan
+     * per tenant). Everything from {@code MDC.put("org_id", …)} onwards is one tenant's work — the
+     * handler reads and writes THAT org's rows — so it becomes
+     * {@code TenantContext.runAs(job.orgId(), …)}. The MDC line marks the boundary today; it is not a
+     * coincidence that the value it puts there is exactly the axis the pin will take.
+     */
     public int drainOnce() {
+        return TenantContext.callAsPlatform(this::claimAndRunOne);
+    }
+
+    private int claimAndRunOne() {
         Optional<ExchangeJob> claimed = store.claimOne(config.staleLock());
         if (claimed.isEmpty()) {
             return 0;

@@ -26,6 +26,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
  * The metered-billing bridge: closed days from the api_usage_daily ledger become Kill Bill usage
@@ -100,7 +101,25 @@ class UsageExportJob {
         export();
     }
 
+    /**
+     * Declares the platform axis for the pass (ADR 0010 §3.4). Pinned here rather than in {@link #run()}
+     * because a test calls this method directly, and the axis has to be a property of the work, not of
+     * how it was triggered.
+     *
+     * <p><b>PHASE 2: this is a per-tenant loop already — it just does not say so yet.</b> The backlog
+     * read below scans {@code api_usage_daily} across every org in one statement and then walks
+     * {@code backlog.entrySet()}, one entry per org. Once that table moves to the tenant tier the scan
+     * and the {@link #markExported} write for each org belong inside
+     * {@code TenantContext.runAs(orgId, …)}; the Kill Bill round trip in between does not (it is
+     * remote, and the account mapping in {@code billing_account} is what decides which tier it reads
+     * from). {@link #agedOutDays()} is the other half: a cross-tenant COUNT that becomes a sum over
+     * the loop.
+     */
     Export export() {
+        return TenantContext.callAsPlatform(this::exportBacklog);
+    }
+
+    private Export exportBacklog() {
         // ORDER BY day ascending, and the grouping below preserves it, which buys two things. Within a
         // batch the records reach Kill Bill oldest-first. Across nights it is what makes a run cut
         // short by the deadline FAIR: the orgs it never reached still hold the oldest unexported days,

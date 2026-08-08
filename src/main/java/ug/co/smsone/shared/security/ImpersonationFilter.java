@@ -17,6 +17,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 import ug.co.smsone.shared.error.ErrorCode;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.shared.web.ApiSource;
 import ug.co.smsone.shared.web.EnvelopeErrorWriter;
 import ug.co.smsone.shared.web.RequestPaths;
@@ -46,6 +47,21 @@ import ug.co.smsone.shared.web.RequestPaths;
  * they believed they were wearing someone else — so they would read their own data thinking it was the
  * customer's, and any write would land under the wrong identity with nothing in the trail to say the
  * header was ever sent. A refusal is unambiguous and self-explaining.
+ *
+ * <h2>The tenancy axis (ADR 0010 §3.4)</h2>
+ *
+ * <p>Everything this filter does BEFORE it delegates is platform-tier work, and it all happens two
+ * places ahead of the filter that learns the tenant: resolving the operator reads
+ * {@code external_identity}/{@code person}/{@code external_organization}/{@code organization},
+ * resolving the session reads {@code impersonation_session} — which §2 table 20 keeps in platform for
+ * exactly this reason, "an opaque session id resolved at {@code @Order(-2)}, before any tenant is
+ * known. Hard constraint." Each of those reads therefore declares PLATFORM for itself.
+ *
+ * <p>Three separate pins rather than one spanning the method, and none of them around
+ * {@code chain.doFilter}. The pin must be released before {@link CurrentUserFilter} sets the TARGET's
+ * org, or the axis this filter chose would outlive the moment the real one is known; and pinning per
+ * read keeps each one saying which table it is for, which is what Phase 2 has to act on when these
+ * tables move.
  */
 @Component
 @Order(-2)
@@ -100,7 +116,12 @@ class ImpersonationFilter extends OncePerRequestFilter {
         }
         // The actor is whoever the token resolved to, never a header value: the session is pinned to the
         // operator it was issued to, so an id copied out of a log line is worthless to whoever copied it.
-        CurrentUser actor = currentUserProvider.currentUser().orElse(null);
+        //
+        // Declares the platform axis for that resolution; ADR 0010 §3.4. It is the request's FIRST
+        // identity read — @Order(-2) is two ahead of the filter that pins the tenant — and every table
+        // it walks is platform-tier. callAsPlatform restores rather than clears, so the resolution
+        // cannot cost this thread an axis it already had.
+        CurrentUser actor = TenantContext.callAsPlatform(() -> currentUserProvider.currentUser().orElse(null));
         if (actor == null) {
             chain.doFilter(request, response); // unauthenticated — the security chain owns that answer
             return;
@@ -132,12 +153,17 @@ class ImpersonationFilter extends OncePerRequestFilter {
             }
             // A malformed, unknown, ended or expired id all arrive here as an empty Optional — the port
             // deliberately does not distinguish them, and neither does the answer the caller gets.
-            principal = lookup.activeSession(sessionId.trim(), actorPersonId).orElse(null);
+            //
+            // Declares the platform axis for the impersonation_session probe; ADR 0010 §3.4. The whole
+            // point of the session id is that it names a tenant we do not have yet, so this read cannot
+            // be tenant-scoped and the table is platform-tier (§2 table 20).
+            principal = TenantContext.callAsPlatform(
+                    () -> lookup.activeSession(sessionId.trim(), actorPersonId).orElse(null));
         } catch (RuntimeException ex) {
             // A filter exception would bypass GlobalExceptionHandler and produce a non-envelope 500;
             // render the envelope ourselves (never leak the exception to the client).
             log.error("Impersonation lookup failed for actor {}: {}", actorPersonId, ex.toString(), ex);
-            errorWriter.write(request, response, ErrorCode.INTERNAL_ERROR,
+            PlatformAxisErrors.write(errorWriter, request, response, ErrorCode.INTERNAL_ERROR,
                     "The request could not be processed.", null);
             return;
         }
@@ -169,8 +195,14 @@ class ImpersonationFilter extends OncePerRequestFilter {
         }
     }
 
+    /**
+     * Every refusal above funnels through here, which is also the one place the refusal's own axis is
+     * declared — see {@link PlatformAxisErrors} for why writing an envelope is a database read at all.
+     * Missing it would trade this filter's five deliberate 403s for a 500 out of the error renderer.
+     */
     private void deny(HttpServletRequest request, HttpServletResponse response, String detail)
             throws IOException {
-        errorWriter.write(request, response, ErrorCode.FORBIDDEN, detail, ApiSource.header(IMPERSONATE_HEADER));
+        PlatformAxisErrors.write(errorWriter, request, response, ErrorCode.FORBIDDEN, detail,
+                ApiSource.header(IMPERSONATE_HEADER));
     }
 }

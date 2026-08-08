@@ -19,6 +19,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import ug.co.smsone.identity.ProvisioningStatus;
 import ug.co.smsone.identity.internal.IdentityReconciliationProperties.Action;
 import ug.co.smsone.shared.audit.AuditLog;
+import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
  * Finds people whose Keycloak account no longer exists and, optionally, revokes their access.
@@ -108,8 +109,19 @@ class IdentityReconciliationJob {
      * {@code idx_person_scan} exists for. A person with no Keycloak link is counted and skipped rather
      * than treated as orphaned: they may be federated only elsewhere, or caught between the person row
      * and the link during provisioning, and in neither case has Keycloak deleted anything.
+     *
+     * <p>The axis is declared here rather than in {@link #reconcile()} because a test calls this method
+     * directly (ADR 0010 §3.4). It is genuinely platform work and stays so past Phase 2: {@code person}
+     * and {@code external_identity} are platform-tier — a human exists once across the whole
+     * installation and their Keycloak account is a property of the person, not of any tenant — so this
+     * job never becomes a per-tenant loop. The per-person {@link TransactionTemplate} write in
+     * {@link #disableOne} opens inside this pin, which is the only order that works.
      */
     Reconciliation run() {
+        return TenantContext.callAsPlatform(this::reconcileAgainstKeycloak);
+    }
+
+    private Reconciliation reconcileAgainstKeycloak() {
         Instant cutoff = clock.instant().minus(properties.gracePeriod());
         Instant deadline = clock.instant().plus(RUN_DEADLINE);
         // Soft-deleted rows are excluded by @SQLRestriction — an account already erased here needs no

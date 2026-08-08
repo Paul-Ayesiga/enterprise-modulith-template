@@ -1,5 +1,10 @@
 package ug.co.smsone.access.internal;
 
+import org.springframework.scheduling.annotation.Async;
+import org.springframework.transaction.event.TransactionalEventListener;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.modulith.events.ApplicationModuleListener;
@@ -36,13 +41,40 @@ class DeviceTrustRevocationListener {
     private static final Logger log = LoggerFactory.getLogger(DeviceTrustRevocationListener.class);
 
     private final UserDeviceTrustRepository deviceTrust;
+    private final org.springframework.transaction.support.TransactionTemplate transactions;
 
-    DeviceTrustRevocationListener(UserDeviceTrustRepository deviceTrust) {
+    DeviceTrustRevocationListener(UserDeviceTrustRepository deviceTrust,
+            org.springframework.transaction.support.TransactionTemplate transactions) {
         this.deviceTrust = deviceTrust;
+        this.transactions = transactions;
     }
 
-    @ApplicationModuleListener
+    /**
+     * The axis is declared OUTSIDE the transaction, and that ordering is the whole subtlety.
+     *
+     * <p>{@code @ApplicationModuleListener} bundles {@code @Async} with {@code @Transactional}, so the
+     * moment this method is entered a connection has already been borrowed — with no axis, because a
+     * pooled listener thread carries none and {@code TenantContext} deliberately does not propagate
+     * across threads (ADR 0010 §3.2: the outbox resubmitter has no thread context at all, so an
+     * inherited axis would make the immediate and retried deliveries of the same event behave
+     * differently). Pinning inside would not help and is refused anyway: {@code TenantContext} throws
+     * inside an active transaction precisely because the schema is chosen at borrow, so a pin set after
+     * one is a silent no-op. Hence the split — pin, then transact.
+     */
+    @Async
+    @TransactionalEventListener
     void on(DeviceRevoked event) {
+        TenantContext.runAsPlatform(() -> transactions.executeWithoutResult(tx -> revokeGrants(event)));
+    }
+
+    /**
+     * A {@code TransactionTemplate} and not a {@code @Transactional} method, because the obvious version
+     * of this is broken in a way that passes review: calling an annotated method on {@code this} is a
+     * SELF-INVOCATION, so Spring's proxy never sees it, no transaction starts, and the modifying delete
+     * silently does nothing. The template needs no proxy, so the transaction actually exists — and it
+     * begins INSIDE the pin above, which is the ordering the whole thing depends on.
+     */
+    private void revokeGrants(DeviceRevoked event) {
         int removed = deviceTrust.revokeEverywhere(event.deviceId());
         if (removed > 0) {
             // Logged at INFO because it is a security-relevant state change with no other trail: the

@@ -6,6 +6,7 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
  * Dev bootstrap (off by default, the org dev-bootstrap pattern): tenant, one simple catalog plan
@@ -30,14 +31,19 @@ class BillingBootstrap implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments args) {
         try {
-            killBill.ensureTenant();
-            properties.planMapping().forEach((code, kbPlan) -> killBill.ensureSimplePlan(
-                    kbPlan, code.charAt(0) + code.substring(1).toLowerCase(),
-                    properties.planPrices().getOrDefault(code, java.math.BigDecimal.ONE)));
-            if (!properties.callbackUrl().isBlank()) {
-                killBill.registerNotificationCallback(
-                        properties.callbackUrl() + "?token=" + properties.callbackToken());
-            }
+            // Declares the platform axis (ADR 0010 §3.4). Every call below is remote — this runner
+            // touches no table today — but a runner is exactly where an axis-less borrow appears the
+            // moment one does, on the boot thread where nothing else would ever pin one.
+            TenantContext.runAsPlatform(() -> {
+                killBill.ensureTenant();
+                properties.planMapping().forEach((code, kbPlan) -> killBill.ensureSimplePlan(
+                        kbPlan, code.charAt(0) + code.substring(1).toLowerCase(),
+                        properties.planPrices().getOrDefault(code, java.math.BigDecimal.ONE)));
+                if (!properties.callbackUrl().isBlank()) {
+                    killBill.registerNotificationCallback(
+                            properties.callbackUrl() + "?token=" + properties.callbackToken());
+                }
+            });
         } catch (RuntimeException ex) {
             // Boot must not die because the billing stack is down — the org bootstrap's stance.
             log.warn("Kill Bill bootstrap skipped (is the killbill container up?): {}", ex.toString());

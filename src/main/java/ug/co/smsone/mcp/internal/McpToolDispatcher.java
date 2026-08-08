@@ -20,6 +20,8 @@ import tools.jackson.databind.ObjectMapper;
 import ug.co.smsone.shared.audit.AuditLog;
 import ug.co.smsone.shared.error.ApiException;
 import ug.co.smsone.shared.error.ErrorCode;
+import ug.co.smsone.shared.tenancy.Tenant;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.shared.web.RequestIdFilter;
 import ug.co.smsone.access.OrgSecurityPolicies;
 
@@ -67,6 +69,31 @@ class McpToolDispatcher {
                 .toList();
     }
 
+    /**
+     * <b>The caller's axis is declared here, around the WHOLE dispatch, not around the handler.</b>
+     * (ADR 0010 §3.2, entry point 2.) The obvious reading of that section is that the pin belongs beside
+     * the {@code SecurityContextHolder.setContext} in {@link #callOnCallerContext} — and it is wrong,
+     * because three of the checks above the handler read the caller's own tenant-tier tables:
+     * {@link McpAccessPolicy} resolves permissions through {@code membership}/{@code org_role}/
+     * {@code role_permission}, {@link OrgSecurityPolicies#ipAllowed} reads {@code org_security_policy},
+     * and {@link McpWriteGuard} reads {@code org_subscription}. On the servlet thread that happens to
+     * work — {@code CurrentUserFilter} pinned the request's tenant two filters up — but the SDK owns
+     * scheduling and may hand this method a POOLED thread that nobody pinned, where absent routes to the
+     * empty {@code no_tenant} schema and the IP allowlist read dies with {@code relation
+     * "org_security_policy" does not exist}. The pin has to bracket everything that touches the
+     * database, and the frozen {@link ToolContext} is the only thing on this thread that knows the
+     * tenant.
+     *
+     * <p>Before the axis, deliberately, sits exactly one thing: the missing-principal refusal, which
+     * reads nothing and has no tenant to name.
+     *
+     * <p><b>Restore, not clear.</b> When the SDK does run on the servlet thread the previous state is the
+     * request's own tenant, and clearing would leave everything after the tool call reading
+     * {@code no_tenant} for the rest of that request — with no MCP assertion anywhere to notice. The
+     * restore is safe in a {@code finally} because any transaction a handler opened has already unwound
+     * by the time this frame runs; {@code TenantContext.set} throws inside an active one, and a throw
+     * from here would swallow the handler's own failure.
+     */
     McpSchema.CallToolResult dispatch(ToolDefinition tool, McpTransportContext transportContext,
             McpSchema.CallToolRequest request) {
         ToolContext context = McpRequestContextExtractor.toolContext(transportContext);
@@ -76,6 +103,28 @@ class McpToolDispatcher {
             return outcome(tool, context, "denied",
                     error(ErrorCode.UNAUTHORIZED, "Authentication required.", context));
         }
+        Tenant previousTenant = TenantContext.current();
+        try {
+            TenantContext.set(axisOf(context));
+            return authorizeAndCall(tool, context, request);
+        } finally {
+            TenantContext.restore(previousTenant);
+        }
+    }
+
+    /**
+     * A null org is a PLATFORM-tier key, not a missing tenant: {@link McpAccessPolicy} denies every
+     * org-scoped tool to it, so what such a caller can reach is the permission-free catalog, and that
+     * reads platform-tier facts. Leaving it absent instead would point the whole dispatch at the empty
+     * schema and turn a legitimate {@code whoami} into a 500.
+     */
+    private static Tenant axisOf(ToolContext context) {
+        return context.orgId() == null ? Tenant.PLATFORM : Tenant.of(context.orgId());
+    }
+
+    /** The pipeline proper, running on the caller's axis — see {@link #dispatch}. */
+    private McpSchema.CallToolResult authorizeAndCall(ToolDefinition tool, ToolContext context,
+            McpSchema.CallToolRequest request) {
         if (!accessPolicy.mayCall(context, tool)) {
             return outcome(tool, context, "denied", error(ErrorCode.FORBIDDEN,
                     "This tool requires the '" + tool.requiredPermission() + "' permission.", context));
@@ -111,16 +160,21 @@ class McpToolDispatcher {
 
     /**
      * Handlers may run off the servlet thread (the SDK owns scheduling), but everything downstream
-     * of a port — audit attribution, {@code created_by}, log lines — reads the thread's security
-     * context and MDC. Install the caller's context for the duration and restore in a finally: a
-     * pooled thread must never inherit someone else's identity (the {@code ImpersonationFilter}
-     * rule, applied to the one other place this codebase swaps a context).
+     * of a port — audit attribution, {@code created_by}, log lines — reads the thread's security context
+     * and MDC. Install the caller's facts for the duration and restore them in a finally: a pooled
+     * thread must never inherit someone else's identity (the {@code ImpersonationFilter} rule, applied
+     * to the one other place this codebase swaps a context).
      *
-     * <p>The mutation audit is written INSIDE that window, not after the call returns, for exactly the
-     * same reason: {@link #auditMutation}'s person branch resolves the actor from this thread, and one
-     * line later the finally below has already handed the thread back to whoever owned it. Auditing
-     * outside the window is only harmless while the SDK happens to run handlers on the servlet thread —
-     * the moment it doesn't, a human's mutation is recorded as nobody's.
+     * <p>The tenant is the third such fact and is NOT installed here — {@link #dispatch} declares it one
+     * frame up, because the checks between there and here read the caller's tenant-tier tables too. Read
+     * that javadoc: putting the pin in this method is the plausible-looking version of this class that
+     * 500s on a pooled thread.
+     *
+     * <p>The mutation audit is written INSIDE this window, not after the call returns, for exactly the
+     * same reason the context is installed at all: {@link #auditMutation}'s person branch resolves the
+     * actor from this thread, and one line later the finally below has already handed the thread back to
+     * whoever owned it. Auditing outside the window is only harmless while the SDK happens to run
+     * handlers on the servlet thread — the moment it doesn't, a human's mutation is recorded as nobody's.
      */
     private Object callOnCallerContext(ToolDefinition tool, ToolContext context,
             McpSchema.CallToolRequest request) {

@@ -22,6 +22,14 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * <p>Raw SQL rather than the repositories on purpose: these tables belong to {@code identity.internal},
  * and a test-support class in another package must not reach into another module's entities. The
  * columns are V10's and the insert is what a provisioning run leaves behind.
+ *
+ * <p><strong>Every method here writes unqualified tables, so it needs a tenant axis on the calling
+ * thread</strong> (ADR 0010 §3.1). {@link TenantAxisExtension} supplies one to every ordinary test, so
+ * calls read as they always have. A class carrying {@link NoTenantAxis} must wrap its seeding —
+ * {@code TenantContext.callAsPlatform(() -> EdgeSeed.person(jdbc, subject))} — and so must anything
+ * seeding from a pooled thread. Every table these methods touch is platform-tier under ADR 0010 §2
+ * except {@code org_role} and {@code membership}, which is why the platform axis is enough today and
+ * why {@link #member} is the call that will need a tenant axis of its own in Phase 2.
  */
 public final class EdgeSeed {
 

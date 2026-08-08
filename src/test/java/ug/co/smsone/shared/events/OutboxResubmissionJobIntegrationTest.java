@@ -19,6 +19,7 @@ import org.springframework.modulith.events.ApplicationModuleListener;
 import org.springframework.test.context.TestPropertySource;
 import ug.co.smsone.settings.SettingChanged;
 import ug.co.smsone.settings.internal.SettingService;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
 /**
@@ -99,9 +100,16 @@ class OutboxResubmissionJobIntegrationTest extends AbstractIntegrationTest {
         assertThat(resubmitted(newest)).isTrue();
     }
 
+    /**
+     * Pinned because one of its two callers polls: Awaitility evaluates the condition on ITS OWN
+     * thread, which no filter and no harness ever pinned, so the borrow routes to the empty
+     * {@code no_tenant} schema (ADR 0010 §3.4) — and the wait then times out on a publication that is
+     * really there, which is the least useful failure this test could produce.
+     */
     private List<Map<String, Object>> probeRows() {
-        return jdbc.queryForList("select listener_id, event_type, serialized_event from event_publication "
-                + "where listener_id = ?", FailingProbe.LISTENER_ID);
+        return TenantContext.callAsPlatform(() -> jdbc.queryForList(
+                "select listener_id, event_type, serialized_event from event_publication "
+                        + "where listener_id = ?", FailingProbe.LISTENER_ID));
     }
 
     /** A publication the registry would consider stranded: no completion, never yet resubmitted. */

@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import ug.co.smsone.shared.retention.RetentionOverrides;
 import ug.co.smsone.shared.retention.RetentionPurges;
 import ug.co.smsone.shared.retention.RetentionScope;
+import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
  * Nightly retention for the delivery log — the machinery three in-repo claims described but nothing
@@ -43,9 +44,13 @@ class WebhookRetentionJob {
     @Scheduled(cron = "${app.scheduler.webhook-retention-cron:0 15 4 * * *}")
     @SchedulerLock(name = "webhook-delivery-retention", lockAtMostFor = "PT30M")
     public void purgeExpiredDeliveries() {
-        int total = RetentionPurges.purge(retentionOverrides, RetentionScope.WEBHOOK_DELIVERY,
-                clock.instant(), properties.retention(), BATCH_SIZE, MAX_BATCHES,
-                queue::purgeTerminalBatch, queue::purgeTerminalBatchForOrg);
+        // Declares the platform axis: nothing pins one off a request thread. ADR 0010 §3.4.
+        // PHASE 2: the per-org override arm (purgeTerminalBatchForOrg) is already shaped like the loop
+        // this becomes — once webhook_delivery moves to the tenant tier every arm wraps in
+        // TenantContext.runAs(orgId, ...) and the default sweep becomes the loop over the rest.
+        int total = TenantContext.callAsPlatform(() -> RetentionPurges.purge(retentionOverrides,
+                RetentionScope.WEBHOOK_DELIVERY, clock.instant(), properties.retention(), BATCH_SIZE, MAX_BATCHES,
+                queue::purgeTerminalBatch, queue::purgeTerminalBatchForOrg));
         ug.co.smsone.shared.metrics.PurgeMetrics.purged(meters, "webhook-delivery-retention", "webhook_delivery", total);
         log.info("Purged {} terminal webhook deliveries (default retention {})", total, properties.retention());
     }

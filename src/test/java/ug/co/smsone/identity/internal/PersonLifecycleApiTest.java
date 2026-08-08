@@ -92,9 +92,32 @@ class PersonLifecycleApiTest extends AbstractIntegrationTest {
     @MockitoBean
     private PlatformAdmins platformAdmins;
 
+    /**
+     * The organization every plain caller's token names — seeded fresh per test, and a tenant the caller
+     * is a member of NOTHING in.
+     *
+     * <p>It is what lets a request reach the provisioning gate at all. {@code CurrentUserFilter} runs at
+     * {@code @Order(-1)}, ahead of {@code ProvisioningGateFilter} at {@code @Order(2)}, and refuses a
+     * caller whose credential names no organization on an org-scoped path (ADR 0010 §3.3 layer 1) — so a
+     * token without this claim is
+     * answered {@code FORBIDDEN} by the tenancy edge and every assertion below would be about the wrong
+     * filter's 403. A real suspended human's token names their tenant, which is exactly what this
+     * reproduces; what it does not give them is any membership, so {@link #ORG} keeps meaning "reaching
+     * RBAC at all is the gate's answer".
+     */
+    private Map<String, Object> callersOrganizationClaim;
+
     @BeforeEach
     void providerHoldsEverybodyUnlessATestSaysOtherwise() {
         given(keycloak.accountPresence(any())).willReturn(AccountPresence.PRESENT);
+    }
+
+    @BeforeEach
+    void everyPlainCallerNamesATenant() {
+        String externalOrgId = "kc-" + UUID.randomUUID();
+        String alias = "ext-" + UUID.randomUUID();
+        EdgeSeed.organization(jdbc, externalOrgId, alias);
+        callersOrganizationClaim = Map.of(alias, Map.of("id", externalOrgId));
     }
 
     // --- 1. the suspension has to bite on the NEXT request ----------------------------------------
@@ -396,9 +419,13 @@ class PersonLifecycleApiTest extends AbstractIntegrationTest {
         return ImpersonationFixtures.provisionedPerson(persons, identities, resolver.keycloakIssuer(), status);
     }
 
-    /** A plain signed-in person: a linked token subject and no platform authority whatsoever. */
-    private static RequestPostProcessor token(UUID personId) {
-        return jwt().jwt(t -> t.subject(subjectOf(personId)).claim("iss", EdgeSeed.ISSUER));
+    /**
+     * A plain signed-in person: a linked token subject, one organization, and no platform authority
+     * whatsoever. See {@link #callersOrganizationClaim} for why the organization is not optional.
+     */
+    private RequestPostProcessor token(UUID personId) {
+        return jwt().jwt(t -> t.subject(subjectOf(personId)).claim("iss", EdgeSeed.ISSUER)
+                .claim("organization", callersOrganizationClaim));
     }
 
     /**

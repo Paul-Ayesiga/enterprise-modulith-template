@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
 /**
@@ -60,12 +61,21 @@ class ExchangeJobCompletedFlowTest extends AbstractIntegrationTest {
         // notification_delivery.recipient is text across all five channels (an address for four of
         // them), so the in-app address is the person id RENDERED — binding the raw UUID would ask
         // Postgres for a text = uuid operator that does not exist.
-        await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
-            Integer queued = jdbc.queryForObject(
-                    "select count(*) from notification_delivery "
-                            + "where channel = 'IN_APP' and recipient = ? and body like ?",
-                    Integer.class, requester.toString(), "%" + jobId + "%");
-            assertThat(queued).as("the requester's completion notification is queued").isEqualTo(1);
-        });
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
+                assertThat(queuedInAppFor(requester, jobId))
+                        .as("the requester's completion notification is queued").isEqualTo(1));
+    }
+
+    /**
+     * Pinned because its only caller polls: Awaitility runs the condition on ITS OWN thread, which
+     * carries no tenant axis, so the count would fail with {@code relation "notification_delivery"
+     * does not exist} rather than answering (ADR 0010 §3.4). The consumer under test is asynchronous,
+     * so there is no way to assert on it except from a thread the harness never pinned.
+     */
+    private Integer queuedInAppFor(UUID requester, UUID jobId) {
+        return TenantContext.callAsPlatform(() -> jdbc.queryForObject(
+                "select count(*) from notification_delivery "
+                        + "where channel = 'IN_APP' and recipient = ? and body like ?",
+                Integer.class, requester.toString(), "%" + jobId + "%"));
     }
 }

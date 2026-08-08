@@ -18,6 +18,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import ug.co.smsone.organization.MemberRemoved;
 import ug.co.smsone.organization.Permission;
 import ug.co.smsone.shared.security.OrgAuthorization;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
 /**
@@ -80,6 +81,31 @@ class OrgRbacAuthorityTest extends AbstractIntegrationTest {
 
     private UUID attachToNewRole(UUID personId, String code, Set<Permission> permissions) {
         return OrgRbacFixtures.attachToNewRole(roles, memberships, orgId, personId, code, permissions);
+    }
+
+    /**
+     * The two reads every {@code await()} below makes, with the tenant axis declared on them.
+     *
+     * <p>Awaitility polls on ITS OWN thread, and that thread is not the one the harness pinned
+     * (ADR 0010 §3.4): work arrives there with no axis, so {@code TenantRoutingDataSource} routes the
+     * borrow to the empty {@code no_tenant} schema and {@link PermissionResolver}'s very first
+     * statement fails with {@code relation "organization" does not exist} instead of answering the
+     * question the assertion was written to ask. Every eviction here is asynchronous, so every
+     * assertion about one is polled — which makes this the pooled-thread case ADR 0010 §3.2 singles
+     * out. The direct assertions elsewhere in this class run on the test thread and need nothing.
+     *
+     * <p>PLATFORM rather than {@code runAs(orgId)} because that is what the harness pins and what
+     * Phase 1 resolves everything to; when Phase 2 splits the schemas these two become
+     * {@code TenantContext.callAs(orgId, …)} — the org is right here in the field.
+     */
+    private Set<String> awaitedPermissions(UUID personId) {
+        return TenantContext.callAsPlatform(() -> authorization.permissions(personId, orgId));
+    }
+
+    /** @see #awaitedPermissions */
+    private boolean awaitedHasPermission(UUID personId, Permission permission) {
+        return TenantContext.callAsPlatform(
+                () -> authorization.hasPermission(personId, orgId, permission.code()));
     }
 
     @Test
@@ -157,14 +183,14 @@ class OrgRbacAuthorityTest extends AbstractIntegrationTest {
         organizations.save(organization);
 
         await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
-                assertThat(authorization.permissions(owner, orgId)).isEmpty());
+                assertThat(awaitedPermissions(owner)).isEmpty());
 
         Organization suspended = organizations.findById(orgId).orElseThrow();
         suspended.reactivate();
         organizations.save(suspended);
 
         await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
-                assertThat(authorization.hasPermission(owner, orgId, Permission.ORG_READ.code())).isTrue());
+                assertThat(awaitedHasPermission(owner, Permission.ORG_READ)).isTrue());
     }
 
     @Test
@@ -209,7 +235,7 @@ class OrgRbacAuthorityTest extends AbstractIntegrationTest {
         removeMemberAsProductionDoes(viewer);
 
         await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
-                assertThat(authorization.permissions(viewer, orgId)).isEmpty());
+                assertThat(awaitedPermissions(viewer)).isEmpty());
         assertThat(authorization.hasPermission(viewer, orgId, Permission.ORG_READ.code())).isFalse();
         assertThat(memberships.findByOrgIdAndPersonId(orgId, viewer)).isEmpty();
         // The row is still there: access ended because the restriction hides it, not because it was lost.
@@ -256,7 +282,7 @@ class OrgRbacAuthorityTest extends AbstractIntegrationTest {
                 "select count(*) from membership where org_id = ? and person_id = ?",
                 Integer.class, orgId, viewer)).isEqualTo(2); // one dead, one live
         await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
-                assertThat(authorization.hasPermission(viewer, orgId, Permission.ORG_DELETE.code())).isTrue());
+                assertThat(awaitedHasPermission(viewer, Permission.ORG_DELETE)).isTrue());
     }
 
     /**
@@ -284,6 +310,6 @@ class OrgRbacAuthorityTest extends AbstractIntegrationTest {
         memberships.save(membership);
 
         await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
-                assertThat(authorization.hasPermission(viewer, orgId, Permission.ORG_DELETE.code())).isTrue());
+                assertThat(awaitedHasPermission(viewer, Permission.ORG_DELETE)).isTrue());
     }
 }

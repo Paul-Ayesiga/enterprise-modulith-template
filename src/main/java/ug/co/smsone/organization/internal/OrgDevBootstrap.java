@@ -7,6 +7,7 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
  * Dev-only: seeds a first organization with an OWNER at startup so org RBAC is exercisable out of the
@@ -31,8 +32,12 @@ class OrgDevBootstrap implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments args) {
         try {
-            organizations.ensureBootstrap(properties.alias(), properties.name(), properties.ownerEmail(),
-                    properties.ownerGivenName(), properties.ownerFamilyName());
+            // Declares the platform axis: the boot thread has no request behind it, so nothing else
+            // would (ADR 0010 §3.4). PLATFORM is also the honest axis here — this CREATES the tenant,
+            // so at the moment it runs there is no org axis to take.
+            TenantContext.runAsPlatform(() -> organizations.ensureBootstrap(properties.alias(),
+                    properties.name(), properties.ownerEmail(), properties.ownerGivenName(),
+                    properties.ownerFamilyName()));
             log.info("Dev bootstrap: organization '{}' ready with owner {}",
                     properties.alias(), properties.ownerEmail());
         } catch (RuntimeException ex) {

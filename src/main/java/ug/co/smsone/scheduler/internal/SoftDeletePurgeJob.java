@@ -13,6 +13,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import ug.co.smsone.shared.persistence.SoftDeleteProperties;
+import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
  * Retention for soft-deleted aggregates: once {@code deleted_at} falls outside the window the row is
@@ -241,9 +242,32 @@ class SoftDeletePurgeJob {
                 + holdColumn + " = " + table + "." + column + ")";
     }
 
+    /**
+     * <b>PHASE 2 TURNS THIS INTO A PER-TENANT LOOP, and it is the largest one in the codebase.</b>
+     * {@link #PURGE_ORDER} is 24 tables spanning both tiers, addressed unqualified — so the single
+     * {@code runAsPlatform} below is one pass over one schema only for as long as one schema is all
+     * there is. Once the tables split, the platform-tier names ({@code person}, {@code organization},
+     * {@code person_contact}, {@code external_identity}, {@code external_organization},
+     * {@code person_profile}, {@code user_device}, {@code setting}, {@code feature_flag},
+     * {@code translation}) stay on this pin and the tenant-tier remainder becomes
+     * {@code for each tenant: TenantContext.runAs(orgId, …)} — which also splits
+     * {@link #PURGE_ORDER}'s children-before-parents contract in two, because a tenant's rows and the
+     * {@code organization} row they hang off will no longer be reachable from one connection.
+     * {@link #CASCADES} and {@link #sweepSearchResidue()} are the sharp ones: both are anti-joins
+     * across the two tiers today ({@code user_device_trust} ↔ {@code user_device},
+     * {@code search_document} ↔ {@code person}/{@code organization}), and an anti-join cannot span
+     * schemas the connection is not on.
+     */
     @Scheduled(cron = "${app.scheduler.soft-delete-purge-cron:0 0 4 * * *}")
     @SchedulerLock(name = "soft-delete-purge", lockAtMostFor = "PT30M")
     public void purgeExpiredSoftDeletes() {
+        // Declares the platform axis for the whole pass — see the note above. Outside the batches on
+        // purpose: they each commit on their own connection, and every one of those borrows reads the
+        // axis afresh. ADR 0010 §3.4.
+        TenantContext.runAsPlatform(this::purgeEverything);
+    }
+
+    private void purgeEverything() {
         if (!properties.purgeEnabled()) {
             log.debug("Soft-delete purge is disabled (app.persistence.soft-delete.purge-enabled)");
             return;

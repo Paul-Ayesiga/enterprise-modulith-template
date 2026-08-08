@@ -18,6 +18,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
 import ug.co.smsone.analytics.AnalyticsEngine;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 import ug.co.smsone.testsupport.EdgeSeed;
 
@@ -122,6 +123,15 @@ class AnalyticsMartTtlTest extends AbstractIntegrationTest {
                 Clock.systemUTC());
     }
 
+    /**
+     * The burst, on real threads. Each caller declares the platform axis, because each one stands in
+     * for a request and a request arrives with an axis already pinned by {@code CurrentUserFilter}
+     * (ADR 0010 §3.4) — this pool has no filter above it, so an unpinned caller would route its
+     * refresh to the empty {@code no_tenant} schema, the copy would throw, {@code builtAt} would stay
+     * null, and every caller in the burst would rebuild. That failure looks exactly like the gate
+     * being broken, which is the assertion below, so the axis has to be declared for the assertion to
+     * mean what it says.
+     */
     private static void runConcurrently(int callers, Runnable call) throws Exception {
         CountDownLatch start = new CountDownLatch(1);
         CountDownLatch done = new CountDownLatch(callers);
@@ -130,7 +140,7 @@ class AnalyticsMartTtlTest extends AbstractIntegrationTest {
                 pool.execute(() -> {
                     try {
                         start.await();
-                        call.run();
+                        TenantContext.runAsPlatform(call);
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                     } finally {

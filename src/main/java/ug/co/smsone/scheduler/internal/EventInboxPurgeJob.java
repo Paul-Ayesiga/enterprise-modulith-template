@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import ug.co.smsone.shared.events.EventInbox;
+import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
  * Sweeps inbox dedup rows past retention — previously the one durable table with no cleanup at all.
@@ -37,6 +38,12 @@ class EventInboxPurgeJob {
     @Scheduled(cron = "${app.scheduler.event-inbox-purge-cron:0 45 3 * * *}")
     @SchedulerLock(name = "event-inbox-purge", lockAtMostFor = "PT30M")
     public void purgeExpiredInboxRows() {
+        // Declares the platform axis: nothing pins one off a request thread, and `event_inbox` is
+        // platform-tier bookkeeping. ADR 0010 §3.4.
+        TenantContext.runAsPlatform(this::purge);
+    }
+
+    private void purge() {
         Instant cutoff = clock.instant().minus(properties.eventInboxRetention());
         int total = 0;
         for (int batch = 0; batch < MAX_BATCHES; batch++) {

@@ -7,6 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
  * Nightly retention for {@code notification_delivery}, replacing the worker's in-loop purge — that
@@ -39,14 +40,22 @@ class NotificationRetentionJob {
     @SchedulerLock(name = "notification-delivery-retention", lockAtMostFor = "PT30M")
     public void purgeExpiredDeliveries() {
         Instant cutoff = clock.instant().minus(config.retention());
-        int total = 0;
-        for (int batch = 0; batch < MAX_BATCHES; batch++) {
-            int deleted = queue.purgeTerminalBatch(cutoff, BATCH_SIZE);
-            total += deleted;
-            if (deleted < BATCH_SIZE) {
-                break;
+        // Declares the platform axis around the whole run: each batch commits on its own connection and
+        // every one of those borrows reads the axis afresh, so one pin outside the loop covers them all.
+        // ADR 0010 §3.4.
+        // PHASE 2: notification_delivery carries an org_id — when it moves to the tenant tier this
+        // batch loop nests inside a per-tenant loop, one runAs(orgId) each.
+        int total = TenantContext.callAsPlatform(() -> {
+            int purged = 0;
+            for (int batch = 0; batch < MAX_BATCHES; batch++) {
+                int deleted = queue.purgeTerminalBatch(cutoff, BATCH_SIZE);
+                purged += deleted;
+                if (deleted < BATCH_SIZE) {
+                    break;
+                }
             }
-        }
+            return purged;
+        });
         ug.co.smsone.shared.metrics.PurgeMetrics.purged(meters, "notification-delivery-retention", "notification_delivery", total);
         log.info("Purged {} terminal notification deliveries older than {}", total, config.retention());
     }

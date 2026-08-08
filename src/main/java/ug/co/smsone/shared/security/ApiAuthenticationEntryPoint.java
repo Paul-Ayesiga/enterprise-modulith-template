@@ -14,6 +14,9 @@ import ug.co.smsone.shared.web.EnvelopeErrorWriter;
  * surface the 401 additionally carries the RFC 9728 challenge ({@code WWW-Authenticate} naming the
  * protected-resource metadata URL) so a native OAuth connector can bootstrap its consent flow from
  * the refusal itself.
+ *
+ * <p>Invoked from inside the security chain ({@code @Order -100}), so no tenant axis exists yet and
+ * the write declares its own — {@link PlatformAxisErrors} has the reason a 401 needs one.
  */
 @Component
 public class ApiAuthenticationEntryPoint implements AuthenticationEntryPoint {
@@ -36,7 +39,7 @@ public class ApiAuthenticationEntryPoint implements AuthenticationEntryPoint {
         if (path.equals("/mcp") || path.startsWith("/mcp/")) {
             response.setHeader("WWW-Authenticate", mcpChallenge);
         }
-        errorWriter.write(request, response, ErrorCode.UNAUTHORIZED,
+        PlatformAxisErrors.write(errorWriter, request, response, ErrorCode.UNAUTHORIZED,
                 "A valid bearer token is required to access this resource.", null);
     }
 }

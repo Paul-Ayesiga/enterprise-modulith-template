@@ -26,10 +26,10 @@ System_Boundary("Application_boundary", "Application", $tags="") {
 }
 
 Rel(Application.Application.Subscription, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.IntegrationHub, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Payments, Application.Application.IntegrationHub, "depends on", $techn="", $tags="", $link="")
 Rel(Application.Application.Payments, Application.Application.Subscription, "depends on", $techn="", $tags="", $link="")
 Rel(Application.Application.Payments, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
-Rel(Application.Application.IntegrationHub, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 
 SHOW_LEGEND(true)
 hide stereotypes

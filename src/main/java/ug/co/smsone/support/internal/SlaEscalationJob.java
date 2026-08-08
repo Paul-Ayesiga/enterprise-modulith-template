@@ -12,7 +12,8 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Limit;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.support.TicketEscalated;
 
 /**
@@ -34,20 +35,42 @@ class SlaEscalationJob {
     private final ApplicationEventPublisher events;
     private final MeterRegistry meters;
     private final Clock clock;
+    private final TransactionTemplate transactions;
 
     SlaEscalationJob(TicketRepository tickets, SupportNotifier notifier, ApplicationEventPublisher events,
-            MeterRegistry meters, Clock clock) {
+            MeterRegistry meters, Clock clock, TransactionTemplate transactions) {
         this.tickets = tickets;
         this.notifier = notifier;
         this.events = events;
         this.meters = meters;
         this.clock = clock;
+        this.transactions = transactions;
     }
 
+    /**
+     * <b>The transaction moved from an annotation to a {@link TransactionTemplate}, and that is a
+     * tenancy fix, not a style change.</b> The schema is chosen when the connection is borrowed, so the
+     * axis must be declared before the transaction opens; {@link TenantContext#setPlatform()} throws
+     * inside an active one precisely so this cannot be got wrong silently (ADR 0010 §3.2). With
+     * {@code @Transactional} on this method there was no point in the body early enough to pin — the
+     * borrow had already happened on {@code no_tenant}. The advice order made it worse than that: the
+     * ShedLock advisor and the transaction advisor both default to {@code LOWEST_PRECEDENCE}, so which
+     * one wrapped the other was unspecified, and with the transaction outside, ShedLock's own
+     * {@code shedlock} borrow would have been axis-less too.
+     *
+     * <p>PHASE 2: {@code lockBreached} sweeps tickets across every tenant in one statement. When
+     * {@code ticket} moves to the tenant tier this becomes a loop — {@code runAs(orgId)} plus its own
+     * transaction per tenant — and {@link SupportNotifier#ticketsEscalated} stays one digest per sweep
+     * by collecting across the loop rather than inside it.
+     */
     @Scheduled(cron = "${app.scheduler.support-escalation-cron:15 * * * * *}")
     @SchedulerLock(name = "support-sla-escalation", lockAtMostFor = "PT5M")
-    @Transactional
     public void escalateBreaches() {
+        // Declares the platform axis, then opens the transaction inside it. ADR 0010 §3.4.
+        TenantContext.runAsPlatform(() -> transactions.executeWithoutResult(tx -> escalate()));
+    }
+
+    private void escalate() {
         Instant now = clock.instant();
         List<Ticket> breached = tickets.lockBreached(now, Limit.of(BATCH));
         for (Ticket ticket : breached) {

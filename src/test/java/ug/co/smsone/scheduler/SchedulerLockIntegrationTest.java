@@ -18,12 +18,20 @@ import net.javacrumbs.shedlock.provider.jdbctemplate.JdbcTemplateLockProvider;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
 /**
  * Phase 3 gate: "a scheduled job fires once across 2 app instances" — two independent
  * JdbcTemplateLockProviders (as two instances would have) race for the same named lock on the
  * same real Postgres; exactly one may win.
+ *
+ * <p><strong>The providers here are deliberately RAW.</strong> The application's own
+ * {@code LockProvider} bean wraps this one so that every {@code shedlock} statement declares the
+ * platform axis (see {@code SchedulingConfig}); two instances racing is exactly what that wrapper
+ * must not be allowed to hide, so this test builds the unwrapped provider and declares the axis at
+ * the call site instead — which is what the wrapper, or the scheduler's {@code TaskDecorator}, does
+ * for it in production (ADR 0010 §3.4).
  */
 class SchedulerLockIntegrationTest extends AbstractIntegrationTest {
 
@@ -49,13 +57,17 @@ class SchedulerLockIntegrationTest extends AbstractIntegrationTest {
 
         CountDownLatch start = new CountDownLatch(1);
         try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
+            // Each racer runs on a pooled platform thread with no axis of its own — the same state the
+            // scheduler hands its tasks in. Without the pin the INSERT lands on the empty no_tenant
+            // schema and both instances fail with `relation "shedlock" does not exist` before the race
+            // this test is about ever happens.
             Future<Optional<SimpleLock>> first = pool.submit(() -> {
                 start.await();
-                return instanceA.lock(config);
+                return TenantContext.callAsPlatform(() -> instanceA.lock(config));
             });
             Future<Optional<SimpleLock>> second = pool.submit(() -> {
                 start.await();
-                return instanceB.lock(config);
+                return TenantContext.callAsPlatform(() -> instanceB.lock(config));
             });
             start.countDown();
 

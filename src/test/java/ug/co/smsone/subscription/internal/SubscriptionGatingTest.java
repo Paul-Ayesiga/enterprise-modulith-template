@@ -19,6 +19,7 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 import ug.co.smsone.testsupport.EdgeSeed;
 
@@ -179,11 +180,19 @@ class SubscriptionGatingTest extends AbstractIntegrationTest {
      * through {@code external_organization} — so the claim carries the PROVIDER's org id, read back
      * from the link rather than the local {@code organization.id} the URL uses. The {@code iss} is
      * the seeded issuer; without it neither lookup runs and every gate would 403 for the wrong reason.
+     *
+     * <p>The link read declares the platform axis because one caller builds this token inside
+     * {@code await().untilAsserted(…)}, and Awaitility polls on ITS OWN thread — which nothing pins,
+     * so the borrow routes to the empty {@code no_tenant} schema and the lookup fails with
+     * {@code relation "external_organization" does not exist} before the request under test is even
+     * built (ADR 0010 §3.4). The {@code mockMvc.perform} that follows needs nothing: a request pins
+     * its own axis at the edge. {@code external_organization} is the routing registry and stays
+     * platform-tier through every later phase — it is read BEFORE any tenant is known.
      */
     private org.springframework.test.web.servlet.request.RequestPostProcessor member(UUID orgId, String subject) {
-        Map<String, Object> link = jdbc.queryForMap(
+        Map<String, Object> link = TenantContext.callAsPlatform(() -> jdbc.queryForMap(
                 "select external_org_id, external_alias from external_organization where organization_id = ?",
-                orgId);
+                orgId));
         return jwt().jwt(token -> token.subject(subject)
                 .claim("iss", EdgeSeed.ISSUER)
                 .claim("organization", Map.of(String.valueOf(link.get("external_alias")),

@@ -21,6 +21,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 import ug.co.smsone.testsupport.EdgeSeed;
 
@@ -130,9 +131,17 @@ class AnalyticsApiTest extends AbstractIntegrationTest {
         jdbc.update("update person set deleted_at = ? where id = ?", Timestamp.from(Instant.now()), personId);
     }
 
+    /**
+     * Pinned because one caller reads it from inside {@code await().untilAsserted(…)}: Awaitility
+     * polls on ITS OWN thread, which the harness never pins, so the borrow routes to the empty
+     * {@code no_tenant} schema and the count fails with {@code relation "person" does not exist}
+     * rather than disagreeing with the report (ADR 0010 §3.4). The MockMvc call in that same lambda
+     * needs nothing — a request pins its own axis in {@code CurrentUserFilter}; this raw read is what
+     * has nobody above it.
+     */
     private long livePersonCount() {
-        Long count = jdbc.queryForObject(
-                "select count(*) from person where deleted_at is null", Long.class);
+        Long count = TenantContext.callAsPlatform(() -> jdbc.queryForObject(
+                "select count(*) from person where deleted_at is null", Long.class));
         return count == null ? 0 : count;
     }
 }

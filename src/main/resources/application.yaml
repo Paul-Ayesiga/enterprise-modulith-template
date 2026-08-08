@@ -32,9 +32,25 @@ spring:
       # request-serving traffic. Raise both together (and Postgres max_connections) to scale out.
       maximum-pool-size: ${DB_POOL_SIZE:16}
       connection-timeout: ${DB_CONNECTION_TIMEOUT_MS:30000}
+      # Belt and braces behind TenantRoutingDataSource, not the mechanism itself. Hikari resets a
+      # connection's schema on close ONLY when someone changed it through Connection.setSchema(), which
+      # is what flips its DIRTY_BIT_SCHEMA; the router issues a raw `SET search_path` through a
+      # Statement, which never flips that bit. So this value covers OTHER borrowers (a driver-level
+      # setSchema, Hibernate's schema mapper if it were ever enabled) and never the router — the router
+      # is correct because it sets the path on every single borrow, not because anything resets it.
+      # `public` and not `platform` on purpose while ADR 0010 is at Phase 1: Flyway migrates through the
+      # RAW pool, and a Hikari schema naming a schema that does not exist yet makes current_schema()
+      # NULL, which Flyway 12 reports as "Unable to determine current schema as search_path is empty".
+      # Flips to `platform` in Phase 2, when that schema exists.
+      schema: ${DB_DEFAULT_SCHEMA:public}
   jpa:
     hibernate:
-      ddl-auto: validate
+      # NONE, never validate: validation runs while the EntityManagerFactory is built, which borrows
+      # through TenantRoutingDataSource with no tenant pinned — it would validate all 55 tables against
+      # the empty no_tenant schema. shared.persistence.MappedSchemaValidator does the same check after
+      # ApplicationReadyEvent with the platform axis pinned. Hibernate creates and alters nothing, ever:
+      # the migrations own the schema (ADR 0010 §4.4).
+      ddl-auto: none
     open-in-view: false
     properties:
       hibernate:

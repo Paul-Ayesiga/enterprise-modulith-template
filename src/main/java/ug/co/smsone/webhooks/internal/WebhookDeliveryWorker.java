@@ -14,6 +14,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
  * Drains the webhook queue: claims a batch, sends each on virtual threads (up to batch-size concurrent,
@@ -109,9 +110,23 @@ class WebhookDeliveryWorker implements SmartLifecycle {
         }
     }
 
-    /** Claim and process one batch; returns how many were processed. */
+    /**
+     * Claim and process one batch; returns how many were processed.
+     *
+     * <p>Two pins, and both are needed (ADR 0010 §3.4). The CLAIM runs on the poller — a thread this
+     * class starts itself, which no executor and therefore no {@code TaskDecorator} ever touches — and
+     * each SEND runs on {@link #sendExecutor}, this class's own virtual-thread executor, where the
+     * status write ({@code markDelivered}, {@code reschedule}, {@code deadLetter}) borrows its own
+     * connection. Miss the second and a webhook POSTs successfully and is never marked, which the
+     * stale-lock reclaim then re-POSTs — the duplicate this design already warns receivers about, but
+     * for every delivery rather than after a crash.
+     *
+     * <p>PHASE 2: {@code webhook_delivery} is per-tenant, so the single claim becomes a claim per
+     * tenant and each send pins {@code runAs(delivery.orgId())}.
+     */
     public int drainOnce() throws InterruptedException {
-        List<ClaimedWebhookDelivery> batch = queue.claim(config.batchSize(), config.staleLock());
+        List<ClaimedWebhookDelivery> batch = TenantContext.callAsPlatform(
+                () -> queue.claim(config.batchSize(), config.staleLock()));
         if (batch.isEmpty()) {
             return 0;
         }
@@ -121,7 +136,7 @@ class WebhookDeliveryWorker implements SmartLifecycle {
             try {
                 executor.submit(() -> {
                     try {
-                        deliver(delivery);
+                        TenantContext.runAsPlatform(() -> deliver(delivery));
                     } finally {
                         done.countDown();
                     }

@@ -15,6 +15,7 @@ import org.springframework.modulith.events.IncompleteEventPublications;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
  * Retries publications the outbox never completed — the recovery half of at-least-once delivery, and
@@ -105,8 +106,24 @@ class OutboxResubmissionJob {
      * <p>Split from the scheduled entry the way {@code ExchangeScheduleFiringJob} splits its own, so
      * a test drives the work directly: the entry carries a ShedLock that silently skips a same-name
      * relock, and the trigger is off in the test profile.
+     *
+     * <p><b>The axis is declared HERE, at the one method all three entries share</b> — the startup
+     * pass, the cron pass and a test's direct call — because that is what makes them identical. ADR
+     * 0010 §3.4 forbids a {@code ThreadLocalAccessor} for exactly this job: it has no thread context to
+     * inherit, so if the immediate delivery of an event took an inherited axis and this retry took a
+     * declared one, the same publication would be replayed against a different schema than it was
+     * first published on. Both go through PLATFORM instead, and the registry rows this reads
+     * ({@code event_publication}) are platform-tier anyway.
+     *
+     * <p>Note what this pin does NOT reach: the listeners the resubmission invokes. Each is
+     * {@code @Async}, so it hops to the shared executor and takes its axis from the {@code TaskDecorator}
+     * in {@code shared.config.AsyncConfig} — the same one the first delivery went through.
      */
     int resubmitOnce(String trigger) {
+        return TenantContext.callAsPlatform(() -> resubmit(trigger));
+    }
+
+    private int resubmit(String trigger) {
         Window window = new Window(clock.instant().minus(properties.retryBackoff()));
         incomplete.resubmitIncompletePublications(window);
         if (window.capped) {

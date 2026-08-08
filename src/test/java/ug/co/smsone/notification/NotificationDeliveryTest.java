@@ -20,6 +20,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -33,7 +34,10 @@ import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import ug.co.smsone.notification.internal.NotificationDeliveryWorker;
 import ug.co.smsone.settings.FeatureFlagChanged;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
+import ug.co.smsone.testsupport.TenantAxis;
+import ug.co.smsone.testsupport.TenantAxisExtension;
 
 /**
  * Durable-delivery-queue gate: dispatch enqueues (non-blocking), then the worker fans out
@@ -41,9 +45,23 @@ import ug.co.smsone.testsupport.AbstractIntegrationTest;
  * bounded-concurrency fan-out to hundreds with no duplicate sends. The background poller is off in
  * tests ({@code worker-auto-start=false}); {@link NotificationDeliveryWorker#drainOnce()} is driven
  * explicitly for determinism.
+ *
+ * <p>{@code @ExtendWith(TenantAxisExtension.class)} because this class bootstraps its own slice rather
+ * than extending {@code AbstractIntegrationTest}, and so would otherwise run with no tenant axis
+ * (ADR 0010 §3.4) — {@link #resetQueue()} truncates two tables before every test and is the first thing
+ * that would fail.
+ *
+ * <p><strong>Every drive of the worker runs with the axis taken OFF.</strong> In production
+ * {@code drainOnce()} runs on the worker's own pooled platform thread, where nothing has declared an
+ * axis — so a worker that does not declare its own is broken there. Called plainly from a test method
+ * it would borrow the harness's pin instead, pass, and prove nothing; {@link TenantAxis#withNoAxis} is
+ * what puts the drive back in the state the poller hands it (ADR 0010 §3.4). Inside an
+ * {@code await(…)} the drive is already unpinned — Awaitility polls on its own thread — and
+ * {@link #count} and friends are what need the axis there instead.
  */
 @ApplicationModuleTest(mode = ApplicationModuleTest.BootstrapMode.ALL_DEPENDENCIES)
 @ActiveProfiles("test")
+@ExtendWith(TenantAxisExtension.class)
 class NotificationDeliveryTest {
 
     private static final int MAILPIT_SMTP = 1025;
@@ -104,7 +122,7 @@ class NotificationDeliveryTest {
         // under load drainFully() can return with a send still in flight. Re-drain until the in-app row
         // (keyed by person.id, the platform's only durable answer to "who") has actually landed.
         await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
-            drainFully();
+            drainFullyUnpinned();
             assertThat(inAppFor(ADMIN_PERSON_ID, "new-billing")).isGreaterThanOrEqualTo(1);
         });
         await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
@@ -156,7 +174,7 @@ class NotificationDeliveryTest {
                     List.of(Recipient.webhook(hookUrl), Recipient.inApp(ADMIN_PERSON_ID),
                             Recipient.email("recipient-1@smsone.co.ug")),
                     Map.of()));
-            drainFully();
+            drainFullyUnpinned();
 
             synchronized (webhookBody) {
                 assertThat(webhookBody.toString()).contains("Deploy complete").contains("v1.2.3");
@@ -188,7 +206,7 @@ class NotificationDeliveryTest {
                     .mapToObj(i -> Recipient.webhook(base + "?i=" + i))
                     .toList();
             notifications.dispatch(new NotificationRequest(subject, "payload", recipients, Map.of()));
-            drainFully();
+            drainFullyUnpinned();
 
             // Every recipient hit exactly once (unique URLs) => fan-out worked, no double-sends.
             assertThat(hits.get()).isEqualTo(n);
@@ -216,7 +234,7 @@ class NotificationDeliveryTest {
             notifications.dispatch(new NotificationRequest(subject, "bye",
                     List.of(Recipient.webhook("http://127.0.0.1:" + server.getAddress().getPort() + "/gone")),
                     Map.of()));
-            drainFully();
+            drainFullyUnpinned();
 
             // One attempt, then FAILED — a contract rejection is not retried on a schedule.
             assertThat(hits.get()).isEqualTo(1);
@@ -241,7 +259,7 @@ class NotificationDeliveryTest {
             notifications.dispatch(new NotificationRequest(subject, "retry me",
                     List.of(Recipient.webhook("http://127.0.0.1:" + server.getAddress().getPort() + "/flaky")),
                     Map.of()));
-            drainFully();
+            drainFullyUnpinned();
             assertThat(statusFor(subject)).isEqualTo("PENDING"); // rescheduled, not dead yet
             assertThat(hits.get()).isEqualTo(1);
 
@@ -250,8 +268,8 @@ class NotificationDeliveryTest {
             // poll fast-forwards and retries), instead of assuming exactly one delivery per iteration.
             int maxAttempts = 5; // app.notification.delivery.max-attempts default
             await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
-                jdbc.update("update notification_delivery set next_attempt_at = now() where subject = ?", subject);
-                drainFully();
+                fastForwardBackoff(subject);
+                drainFullyUnpinned();
                 assertThat(statusFor(subject)).isEqualTo("FAILED");
             });
             assertThat(hits.get()).isEqualTo(maxAttempts);
@@ -261,11 +279,33 @@ class NotificationDeliveryTest {
     }
 
     private String statusFor(String subject) {
-        return jdbc.queryForObject(
-                "select status from notification_delivery where subject = ?", String.class, subject);
+        return TenantContext.callAsPlatform(() -> jdbc.queryForObject(
+                "select status from notification_delivery where subject = ?", String.class, subject));
+    }
+
+    /**
+     * Brings a parked retry due now instead of sleeping out its backoff.
+     *
+     * <p>Pinned for the same reason {@link #count} is: its only caller is inside
+     * {@code await().untilAsserted(…)}, and Awaitility's poll thread carries no tenant axis, so the
+     * update would fail with {@code relation "notification_delivery" does not exist} rather than
+     * moving the row (ADR 0010 §3.4).
+     */
+    private void fastForwardBackoff(String subject) {
+        TenantContext.runAsPlatform(() -> jdbc.update(
+                "update notification_delivery set next_attempt_at = now() where subject = ?", subject));
     }
 
     // ---- helpers ----
+
+    /**
+     * Drains with NO axis declared, which is the state the worker's own poller thread arrives in.
+     * See the class note: pinned, this would prove nothing about
+     * {@link NotificationDeliveryWorker#drainOnce()} declaring its own.
+     */
+    private void drainFullyUnpinned() throws Exception {
+        TenantAxis.withNoAxis(this::drainFully);
+    }
 
     private void drainFully() throws InterruptedException {
         while (worker.drainOnce() > 0) {
@@ -282,8 +322,18 @@ class NotificationDeliveryTest {
                 personId, "%" + subjectFragment + "%");
     }
 
+    /**
+     * Every count this class makes, with the tenant axis declared on it.
+     *
+     * <p>Most callers sit inside {@code await(…)} or inside a Modulith {@code Scenario}'s state-change
+     * poll — both of which run on Awaitility's own thread, which the harness never pins (ADR 0010
+     * §3.4). Unpinned, the borrow routes to the empty {@code no_tenant} schema and the count fails
+     * with {@code relation "notification_delivery" does not exist} instead of returning a number the
+     * assertion can be wrong about. Declaring it here covers the callers on the test thread too, where
+     * it is a harmless re-pin of the axis they already hold.
+     */
     private long count(String sql, Object... args) {
-        Long c = jdbc.queryForObject(sql, Long.class, args);
+        Long c = TenantContext.callAsPlatform(() -> jdbc.queryForObject(sql, Long.class, args));
         return c == null ? 0 : c;
     }
 

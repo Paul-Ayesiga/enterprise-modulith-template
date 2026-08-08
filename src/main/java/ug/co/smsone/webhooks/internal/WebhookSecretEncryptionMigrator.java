@@ -9,6 +9,7 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
  * One-way, idempotent startup hop for rows created before secrets were encrypted at rest: any
@@ -38,8 +39,25 @@ class WebhookSecretEncryptionMigrator implements ApplicationRunner {
         this.cipher = cipher;
     }
 
+    /**
+     * Declares the platform axis (ADR 0010 §3.4). An {@code ApplicationRunner} runs on the boot thread
+     * with no request behind it, and this one goes straight to a {@code JdbcTemplate} on the routing
+     * {@code DataSource} — so without the pin its very first probe fails on
+     * {@code relation "webhook_subscription" does not exist}, on every boot, before the application is
+     * ready. That failure would be loud, which is the design working; the pin is what makes it not
+     * happen.
+     *
+     * <p>PHASE 2: {@code webhook_subscription} is tenant-tier, so once the tables split this becomes a
+     * pass per tenant — {@code runAs(orgId)} around the paged walk, with the keyset cursor restarting
+     * inside each. A one-way migrator is exactly the shape that has to be revisited then, because
+     * "every row" stops being a single query.
+     */
     @Override
     public void run(ApplicationArguments args) {
+        TenantContext.runAsPlatform(this::encryptLegacySecrets);
+    }
+
+    private void encryptLegacySecrets() {
         int encrypted = 0;
         UUID after = null;
         while (true) {

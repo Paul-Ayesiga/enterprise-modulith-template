@@ -24,6 +24,15 @@ import java.util.Optional;
  * {@code external_organization}, {@code org_role}, {@code membership},
  * {@code webhook_subscription}, {@code translation}, {@code document}, {@code exchange_schedule},
  * {@code org_subscription}, {@code billing_account}, {@code person_profile}, {@code api_key}, {@code org_group}, {@code user_device}, {@code org_security_policy}, {@code integration}, {@code maintenance_window} and {@code ticket}; {@code notification_delivery} is not one of them.
+ *
+ * <p><b>PHASE 2 (ADR 0010): every {@code sourceSql} here reads a PLATFORM table while running on the
+ * CALLER's axis.</b> {@code person} and {@code notification_delivery} are both platform-tier (§2), but
+ * the refresh borrows its connection on whatever axis the request pinned — a tenant's, for an org
+ * admin asking for a report. Today that is harmless because every axis resolves to the same schema;
+ * once {@code platform} and {@code tenant_pool} are separate, an unqualified {@code from person} on a
+ * tenant path resolves to nothing. These two statements are the ones to schema-qualify (or to run
+ * inside a {@code TenantContext.runAsPlatform(…)} in {@code AnalyticsReportService}) when the tables
+ * move; a report over a tenant-tier table would instead need a refresh per tenant.
  */
 enum AnalyticsReport {
 

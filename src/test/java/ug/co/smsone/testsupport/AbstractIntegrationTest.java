@@ -1,5 +1,6 @@
 package ug.co.smsone.testsupport;
 
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.test.context.ActiveProfiles;
@@ -9,9 +10,30 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  * Base for all integration tests: full Spring context against a REAL Postgres via Testcontainers
  * (no H2, no fakes — template rule). Singleton container: started once for the whole JVM, shared by
  * every test class, reaped by Ryuk on exit.
+ *
+ * <h2>The tenant axis (ADR 0010 §3.4)</h2>
+ *
+ * <p>{@link TenantAxisExtension} declares the PLATFORM axis on the test thread before each test and
+ * takes it off afterwards. Without it nothing here would work: {@code TenantRoutingDataSource} sets
+ * {@code search_path} from {@code TenantContext} on every connection borrow, and a test method is not a
+ * request — no filter ran above it, so the axis is absent and absent routes to the empty
+ * {@code no_tenant} schema. Every unqualified table would fail with {@code relation "…" does not
+ * exist}.
+ *
+ * <p>Today the pin is behaviourally a no-op — Phase 1 resolves platform and tenant to the same schema —
+ * which is exactly why it is worth installing now. Phase 2 splits them, and by then the discipline is
+ * in place and tested rather than being retrofitted against a red suite.
+ *
+ * <p><strong>A blanket pin is also how a suite goes green while the application is broken.</strong> For
+ * most classes here it is honest: the subject runs inside a request, where {@code CurrentUserFilter}
+ * pins for real. For a class whose subject IS the pinning — the router, the fail-closed layers, a job
+ * that must declare its own axis — the harness pin makes the assertion unfalsifiable, and the fix is
+ * {@link NoTenantAxis} on the class or {@link TenantAxis#withNoAxis} around the one call. Read
+ * {@code NoTenantAxis}' javadoc before adding either; read it before deciding you do not need one.
  */
 @SpringBootTest
 @ActiveProfiles("test")
+@ExtendWith(TenantAxisExtension.class)
 public abstract class AbstractIntegrationTest {
 
     @ServiceConnection

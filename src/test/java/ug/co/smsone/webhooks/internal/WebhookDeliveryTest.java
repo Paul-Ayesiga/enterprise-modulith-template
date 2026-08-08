@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
 
 /**
@@ -102,9 +103,13 @@ class WebhookDeliveryTest extends AbstractIntegrationTest {
                     WebhookPayload.of("org.status_changed", orgId, Instant.now()).with("status", "SUSPENDED"));
 
             // Fast-forward the backoff and drain until dead-lettered (max-attempts default = 5).
+            // Everything in this block runs on Awaitility's own thread, which carries no tenant axis
+            // (ADR 0010 §3.4): the fast-forward declares one, and the drain deliberately does not —
+            // that is the worker's own obligation and this is the one place it is really tested.
             await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
-                jdbc.update("update webhook_delivery set next_attempt_at = now() where subscription_id = ?",
-                        subscription.getId());
+                TenantContext.runAsPlatform(() -> jdbc.update(
+                        "update webhook_delivery set next_attempt_at = now() where subscription_id = ?",
+                        subscription.getId()));
                 worker.drainOnce();
                 assertThat(deliveryStatus(subscription.getId())).isEqualTo("FAILED");
             });
@@ -323,9 +328,16 @@ class WebhookDeliveryTest extends AbstractIntegrationTest {
         }
     }
 
+    /**
+     * Pinned because one caller reads it from inside {@code await().untilAsserted(…)}, and Awaitility
+     * polls on ITS OWN thread — never pinned by the harness, so the borrow routes to the empty
+     * {@code no_tenant} schema and the read fails with {@code relation "webhook_delivery" does not
+     * exist} instead of returning a status (ADR 0010 §3.4). Declared here rather than at that one call
+     * site so every reader of this row goes through the same axis.
+     */
     private String deliveryStatus(UUID subscriptionId) {
-        return jdbc.queryForObject(
+        return TenantContext.callAsPlatform(() -> jdbc.queryForObject(
                 "select status from webhook_delivery where subscription_id = ? order by created_at desc limit 1",
-                String.class, subscriptionId);
+                String.class, subscriptionId));
     }
 }

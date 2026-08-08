@@ -7,6 +7,7 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
  * Dev-only: creates the local {@code person} for the platform admin so a realm-imported platform-role
@@ -49,10 +50,15 @@ class PlatformAdminBootstrap implements ApplicationRunner {
             return;
         }
         try {
-            keycloak.findByEmail(email).ifPresentOrElse(
+            // Declares the platform axis: an ApplicationRunner runs on the boot thread with no request
+            // behind it (ADR 0010 §3.4). PLATFORM is also the right axis past Phase 2 — person,
+            // person_contact and external_identity are platform-tier, and this seeds an operator who
+            // belongs to no organization at all.
+            TenantContext.runAsPlatform(() -> keycloak.findByEmail(email).ifPresentOrElse(
                     account -> log.info("Dev bootstrap: platform admin {} is person {}",
                             email, provisioning.adopt(email, account.id())),
-                    () -> log.warn("Dev bootstrap: no Keycloak account for '{}' — platform admin not seeded", email));
+                    () -> log.warn("Dev bootstrap: no Keycloak account for '{}' — platform admin not seeded",
+                            email)));
         } catch (RuntimeException ex) {
             // Do not name a cause this catch cannot know. It used to say "is Keycloak reachable?" for
             // every RuntimeException, and the one it actually caught in practice was a duplicate

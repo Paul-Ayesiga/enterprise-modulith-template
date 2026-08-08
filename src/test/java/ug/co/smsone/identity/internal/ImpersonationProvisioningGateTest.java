@@ -9,15 +9,19 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.jayway.jsonpath.JsonPath;
+import java.util.Map;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import ug.co.smsone.identity.ProvisioningStatus;
 import ug.co.smsone.testsupport.AbstractIntegrationTest;
+import ug.co.smsone.testsupport.EdgeSeed;
 
 /**
  * What {@code ProvisioningGateFilter} does to an impersonated request — the one context in the suite
@@ -51,11 +55,41 @@ class ImpersonationProvisioningGateTest extends AbstractIntegrationTest {
     @Autowired
     private PersonResolver resolver;
 
+    @Autowired
+    private JdbcTemplate jdbc;
+
+    /**
+     * The organization every caller here names, and the one an impersonation session is opened against.
+     * Seeded fresh per test, and nobody is a member of it.
+     *
+     * <p>It is what lets a request reach the gate at all. {@code CurrentUserFilter} runs at
+     * {@code @Order(-1)}, ahead of {@code ProvisioningGateFilter} at {@code @Order(2)}, and refuses a
+     * credential that names no organization on an org-scoped path (ADR 0010 §3.3 layer 1) — so without
+     * it every request below is answered
+     * {@code FORBIDDEN} by the tenancy edge before the gate ever runs, and the two session tests would
+     * assert a target was left untouched by a filter that never looked at it. A brand-new Keycloak user
+     * in an org, with no {@code person} row yet, is precisely the no-JIT case this class is about: their
+     * token names the tenant, and nothing else about them exists.
+     */
+    private UUID callersOrganizationId;
+
+    private Map<String, Object> callersOrganizationClaim;
+
+    @BeforeEach
+    void everyCallerNamesATenant() {
+        String externalOrgId = "kc-" + UUID.randomUUID();
+        String alias = "ext-" + UUID.randomUUID();
+        callersOrganizationId = EdgeSeed.organization(jdbc, externalOrgId, alias);
+        callersOrganizationClaim = Map.of(alias, Map.of("id", externalOrgId));
+    }
+
     /** The control: without a provisioned row the gate refuses, so the gate really is live here. */
     @Test
     void anUnprovisionedSubjectIsRefusedByTheGateInThisContext() throws Exception {
         mockMvc.perform(get(ORG, UUID.randomUUID())
-                        .with(jwt().jwt(token -> token.subject("ghost-" + UUID.randomUUID()))))
+                        .with(jwt().jwt(token -> token.subject("ghost-" + UUID.randomUUID())
+                                .claim("iss", EdgeSeed.ISSUER)
+                                .claim("organization", callersOrganizationClaim))))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errors[0].code").value("ACCOUNT_NOT_PROVISIONED"));
     }
@@ -115,9 +149,18 @@ class ImpersonationProvisioningGateTest extends AbstractIntegrationTest {
 
     // --- fixtures -------------------------------------------------------------------------------
 
-    /** Superadmin so the target's realm-role check short-circuits and no Keycloak stand-in is needed. */
+    /**
+     * Superadmin so the target's realm-role check short-circuits and no Keycloak stand-in is needed.
+     *
+     * <p>The session is scoped to an organization, and that is load-bearing rather than decorative: the
+     * swapped principal's {@code activeOrgId} IS the impersonated request's tenant, and an unscoped
+     * session gives it none — so {@code CurrentUserFilter} would refuse the org-scoped read at
+     * {@code @Order(-1)} with the same {@code FORBIDDEN} the assertions below expect from RBAC, and both
+     * session tests would pass without the gate ever having seen the target.
+     */
     private UUID openReadOnlySession(UUID operator, UUID target) throws Exception {
-        String body = "{\"targetPersonId\":\"" + target + "\",\"reason\":\"ticket 4711 refund missing\"}";
+        String body = "{\"targetPersonId\":\"" + target + "\",\"orgId\":\"" + callersOrganizationId
+                + "\",\"reason\":\"ticket 4711 refund missing\"}";
         String response = mockMvc.perform(post(SESSIONS).with(superadmin(operator))
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isCreated())
@@ -129,9 +172,13 @@ class ImpersonationProvisioningGateTest extends AbstractIntegrationTest {
         return ImpersonationFixtures.provisionedPerson(persons, identities, resolver.keycloakIssuer(), status);
     }
 
-    /** A plain signed-in person — no realm role, so only the gate has anything to say about them. */
+    /**
+     * A plain signed-in person — one organization, no realm role, so only the gate has anything to say
+     * about them. See {@link #callersOrganizationClaim} for why the organization is not optional.
+     */
     private org.springframework.test.web.servlet.request.RequestPostProcessor token(UUID personId) {
         return jwt().jwt(t -> t.subject(ImpersonationFixtures.subjectOf(personId))
-                .claim("iss", ug.co.smsone.testsupport.EdgeSeed.ISSUER));
+                .claim("iss", EdgeSeed.ISSUER)
+                .claim("organization", callersOrganizationClaim));
     }
 }
