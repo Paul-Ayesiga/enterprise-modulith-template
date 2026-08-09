@@ -10,6 +10,7 @@ import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.AbortMultipartUploadRequest;
@@ -19,10 +20,14 @@ import software.amazon.awssdk.services.s3.model.CompletedPart;
 import software.amazon.awssdk.services.s3.model.CreateMultipartUploadRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
+import software.amazon.awssdk.services.s3.model.S3Object;
 import software.amazon.awssdk.services.s3.model.UploadPartRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
@@ -30,6 +35,8 @@ import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignReques
 import ug.co.smsone.files.FileNotFoundException;
 import ug.co.smsone.files.FileStorageException;
 import ug.co.smsone.files.FileStorageProvider;
+import ug.co.smsone.files.ObjectPage;
+import ug.co.smsone.files.StoredObject;
 
 @Component
 class S3StorageProvider implements FileStorageProvider {
@@ -102,6 +109,66 @@ class S3StorageProvider implements FileStorageProvider {
         } catch (S3Exception | IOException e) {
             abortQuietly(key, uploadId);
             throw new FileStorageException("multipart upload failed for key " + key, e);
+        }
+    }
+
+    @Override
+    @CircuitBreaker(name = "storage")
+    public ObjectPage list(String prefix, String startAfter, int maxKeys) {
+        if (maxKeys <= 0) {
+            throw new FileStorageException("a listing page size must be positive, got " + maxKeys);
+        }
+        try {
+            ListObjectsV2Request.Builder request = ListObjectsV2Request.builder()
+                    .bucket(properties.bucket())
+                    .prefix(prefix)
+                    .maxKeys(maxKeys);
+            if (startAfter != null && !startAfter.isBlank()) {
+                request.startAfter(startAfter);
+            }
+            ListObjectsV2Response response = s3.listObjectsV2(request.build());
+            // isTruncated is a boxed Boolean and an S3-compatible store may omit it; absent means "this
+            // is all of it", which is the safe reading only because the caller pages on THIS flag — an
+            // absent flag read as "more" would loop forever on a store that never sets it.
+            return new ObjectPage(response.contents().stream().map(S3Object::key).toList(),
+                    Boolean.TRUE.equals(response.isTruncated()));
+        } catch (S3Exception e) {
+            throw new FileStorageException("list failed for prefix " + prefix, e);
+        }
+    }
+
+    @Override
+    @CircuitBreaker(name = "storage")
+    public StoredObject open(String key) {
+        try {
+            // The response object carries the type and the length, so this is ONE round trip where a
+            // head-then-get would be two — and two would also be a lie, since the object could change
+            // between them and the copy would be written with the previous version's metadata.
+            ResponseInputStream<GetObjectResponse> stream = s3.getObject(GetObjectRequest.builder()
+                    .bucket(properties.bucket())
+                    .key(key)
+                    .build());
+            GetObjectResponse metadata = stream.response();
+            return new StoredObject(key, metadata.contentType(),
+                    metadata.contentLength() == null ? 0L : metadata.contentLength(), stream);
+        } catch (NoSuchKeyException e) {
+            throw new FileNotFoundException("no object for key " + key, e);
+        } catch (S3Exception e) {
+            throw new FileStorageException("open failed for key " + key, e);
+        }
+    }
+
+    @Override
+    @CircuitBreaker(name = "storage")
+    public void write(StoredObject object) {
+        // Annotated even though both branches are annotated too: this delegates through `this`, which is
+        // self-invocation and bypasses the proxy entirely (AGENTS §4.3), so without it a bulk restore
+        // would run with no breaker at all. With it, one logical write counts once — which is what the
+        // breaker's failure rate should be measuring.
+        if (object.sizeBytes() > properties.multipartThreshold().toBytes()) {
+            putLarge(object.key(), object.content(), object.sizeBytes(), object.contentType());
+        } else {
+            put(object.key(), object.content(), object.sizeBytes(), object.contentType());
         }
     }
 

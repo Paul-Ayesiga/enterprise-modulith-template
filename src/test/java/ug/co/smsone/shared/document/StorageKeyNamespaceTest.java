@@ -40,7 +40,10 @@ import ug.co.smsone.files.FileStorageProvider;
  *
  * <p>Its sibling {@code document.internal.DocumentExtractionBoundaryTest} drives the same rule over
  * HTTP against a real container: what this class proves about the shape of a key, that one proves about
- * the keys the live minters actually produce and about the schema the matching row lands in.
+ * the keys the live minters actually produce and about the schema the matching row lands in. A third,
+ * {@code compliance.internal.TenantObjectExtractionTest}, drives the extraction those keys exist for
+ * against a real SeaweedFS — including the same rule checked from the far end, where a key no prefix
+ * covers stops the extraction instead of being left behind.
  */
 class StorageKeyNamespaceTest {
 
@@ -113,6 +116,32 @@ class StorageKeyNamespaceTest {
         assertThatIllegalArgumentException()
                 .as("a prefix match is not a segment match — o/<orgId>abc/ is a different owner")
                 .isThrownBy(() -> document(orgId, owner, "doc/o/" + orgId + "extra/" + UUID.randomUUID()));
+    }
+
+    /**
+     * <b>Naming the organization is necessary and not sufficient</b>, which is the half the rule was
+     * missing until the object extraction was actually built. A bucket is a flat key space: the bundle
+     * LISTS {@link OrgObjectPrefixes#forOrg} — {@code doc/o/<orgId>/} and {@code exch/o/<orgId>/} — it
+     * does not scan for keys containing {@code /o/<orgId>/}, because no such query exists. So
+     * {@code report/o/<orgId>/…} carries the segment, satisfies every "does the key name its org"
+     * reading, and is still a byte no extraction would ever visit.
+     *
+     * <p>The repair is one line and the message says so: declare the root. That is the whole point of
+     * refusing here rather than letting the extraction discover it — at this end the author of the new
+     * namespace is standing right there, and at the other end an operator is mid-runbook.
+     */
+    @Test
+    void anOrgScopedKeyUnderARootNoExtractionWouldVisitIsRefusedEvenThoughItNamesTheOrganization() {
+        UUID orgId = UUID.randomUUID();
+        UUID owner = UUID.randomUUID();
+
+        assertThat(OrgObjectPrefixes.forOrg(orgId))
+                .as("the declared prefixes ARE the extraction's argument list (ADR 0010 §6 item 7)")
+                .containsExactly("doc/o/" + orgId + "/", "exch/o/" + orgId + "/");
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> document(orgId, owner,
+                        "report/o/" + orgId + "/" + UUID.randomUUID() + "/q3.pdf"))
+                .withMessageContaining("OrgObjectPrefixes");
     }
 
     /** The two shapes the live org-scoped minters produce, spelled out so a change to either is visible. */

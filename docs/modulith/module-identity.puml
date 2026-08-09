@@ -17,8 +17,8 @@ top to bottom direction
 
 System_Boundary("Application_boundary", "Application", $tags="") {
   Container_Boundary("Application.Application_boundary", "Application", $tags="") {
-    Component(Application.Application.Identity, "Identity", $techn="Module", $descr="", $tags="", $link="")
     Component(Application.Application.SharedKernel, "Shared Kernel", $techn="Module", $descr="", $tags="", $link="")
+    Component(Application.Application.Identity, "Identity", $techn="Module", $descr="", $tags="", $link="")
   }
 
 }

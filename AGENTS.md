@@ -326,8 +326,9 @@ step by step; copy that reasoning, not just the shape.
 
 ### 4.5 Migrations
 
-- `src/main/resources/db/migration/{platform,tenant}/V<n>__<snake_name>.sql`. **V58 is taken
-  (`platform.tenant_freeze`, ADR 0010 Phase 5's promotion freeze) — so the next free number is V59.** Never
+- `src/main/resources/db/migration/{platform,tenant}/V<n>__<snake_name>.sql`. **V59 is taken
+  (`platform.api_key_prefix_reservation`, ADR 0010 Phase 6's extraction bundle item 8) — so the next
+  free number is V60.** Never
   edit an applied migration; never renumber. One global counter across BOTH directories, and it is
   this line: claim a number by writing the file *and* moving this line in the same change-set, and
   land the file in exactly one directory. Two people deriving "next free" from `ls` in the same hour

@@ -4,7 +4,7 @@ Every table in the database, its columns and its relationships. Generated from
 `src/main/resources/db/migration`, which is the source of truth — and since ADR 0010 Phase 2 that is
 two sequences, `platform/` and `tenant/`. Which one created a table is the same statement as its tier.
 
-**59 tables**, grouped by owning module, alphabetical within each group. Seven of them were created in
+**60 tables**, grouped by owning module, alphabetical within each group. Seven of them were created in
 both schemas and are counted once, here and in every total below. (`flyway_schema_history` is created
 by Flyway itself, is not declared in any migration, and is not counted here.)
 
@@ -50,7 +50,7 @@ tier is now also the answer to *where is this table, and how is it addressed*.
 
 ## The schemas
 
-- `platform` — the 32 platform-tier tables, the platform copy of the seven split ones, and Flyway's own
+- `platform` — the 33 platform-tier tables, the platform copy of the seven split ones, and Flyway's own
   `flyway_schema_history`.
 - `tenant_pool` — the 20 tenant-tier tables and the tenant copy of the seven. Every tenant lives here
   until it is promoted, so inside this schema `org_id` is the only thing separating them: **every
@@ -183,6 +183,22 @@ One machine credential: the public prefix, the hash of the secret, and the permi
 | deleted_at | timestamptz | yes | Soft delete; revoking a key keeps the row |
 
 Relationships: `org_id` → `organization.id` (soft ref, no FK); `owner_person_id`, `created_by`, `updated_by` → `person.id` (soft ref, no FK).
+
+### api_key_prefix_reservation
+The public key prefixes that may never be minted again. Written when a tenant is extracted (ADR 0010 §6 item 8), read by every mint.
+
+**Tier:** platform — the reservation guards `uq_api_key_prefix_live`, which is global, and it is consulted on the same pre-tenant path `api_key` itself lives on.
+
+| Column | Type | Null | Description |
+|---|---|---|---|
+| prefix | varchar(20) | no | The public half that is burned forever; primary key |
+| org_id | uuid | yes | The organization whose key it was; NULL = it was a platform key. Soft ref, no FK — the reservation outlives the row it names |
+| reserved_at | timestamptz | no | When the extraction burned it |
+| reason | varchar(200) | no | Which extraction burned it, for the operator who meets a refused prefix years later |
+
+Relationships: `org_id` → `organization.id` (soft ref, no FK). No `version`, no `deleted_at`, deliberately: a reservation is never edited and never released — releasing one is exactly the failure it exists to prevent.
+
+Revoking a key is a **soft** delete and `uq_api_key_prefix_live` is partial on `deleted_at is null`, so revocation puts the prefix back into a 48-bit space. Re-minting a departed tenant's prefix for another organization makes a stale credential resolve against a different tenant's row on `findByPrefix` — the one lookup that runs before any tenant is known, and the reason `api_key` is platform-tier at all. The hash still has to match, so it is a cross-tenant lookup collision rather than a bypass; this table replaces a probability argument with a constraint. It is deliberately **not** in an extraction bundle: the lifted deployment mints into a prefix space of its own, where the platform's burned prefixes forbid nothing.
 
 ---
 
@@ -320,7 +336,7 @@ The business record of one stored file — who owns it, what it is called, and w
 | id | uuid | no | Primary key |
 | org_id | uuid | yes | The owning tenant; NULL means a personal document, not an unknown tenant |
 | owner_person_id | uuid | no | The person who owns the document |
-| storage_key | varchar(300) | no | Key into the files namespace holding the bytes; unique among live rows |
+| storage_key | varchar(300) | no | Key into the files namespace holding the bytes; unique among live rows — but that index now exists once per schema, so the KEY's own shape is what separates two tenants: an org document sits under `doc/o/<orgId>/` or `exch/o/<orgId>/` and a personal one under `doc/u/<personId>/`, enforced by `NewDocument` against `shared.document.OrgObjectPrefixes` and copied by prefix at extraction (ADR 0010 §6 item 7) |
 | name | varchar(255) | no | Filename shown to users |
 | content_type | varchar(100) | no | MIME type of the stored object |
 | size_bytes | bigint | no | Size of the stored object |

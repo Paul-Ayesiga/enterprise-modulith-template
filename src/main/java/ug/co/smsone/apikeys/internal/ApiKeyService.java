@@ -32,10 +32,20 @@ class ApiKeyService {
     private final CurrentUserProvider currentUser;
     private final AuditLog auditLog;
 
-    ApiKeyService(ApiKeyRepository keys, CurrentUserProvider currentUser, AuditLog auditLog) {
+    /**
+     * The only mint in this module. {@code ApiKeyHashing.mint()} is a pure function and is called from
+     * exactly one place now — a prefix that a tenant extraction permanently reserved (V59, ADR 0010 §6
+     * item 8) must never come back, and a reservation the mint path does not read is a table with a
+     * primary key and no effect.
+     */
+    private final ApiKeyPrefixReservations prefixes;
+
+    ApiKeyService(ApiKeyRepository keys, CurrentUserProvider currentUser, AuditLog auditLog,
+            ApiKeyPrefixReservations prefixes) {
         this.keys = keys;
         this.currentUser = currentUser;
         this.auditLog = auditLog;
+        this.prefixes = prefixes;
     }
 
     record Minted(ApiKey key, String secret) {
@@ -63,7 +73,7 @@ class ApiKeyService {
             throw new ForbiddenException("A key cannot carry permissions you do not hold: "
                     + String.join(", ", escalated));
         }
-        ApiKeyHashing.Minted minted = ApiKeyHashing.mint();
+        ApiKeyHashing.Minted minted = prefixes.mintUnreservedPrefix();
         ApiKey saved = keys.save(ApiKey.orgKey(orgId, name.trim(), minted.prefix(),
                 minted.secretHash(), String.join(",", requested), expiresAt));
         auditLog.record("apikeys.key_created", orgId, saved.getId().toString(), null,
@@ -74,7 +84,7 @@ class ApiKeyService {
     @Transactional
     Minted createPlatformKey(String name, Instant expiresAt) {
         requireName(name);
-        ApiKeyHashing.Minted minted = ApiKeyHashing.mint();
+        ApiKeyHashing.Minted minted = prefixes.mintUnreservedPrefix();
         // Support tier only, deliberately: a platform key reads; changing platform state stays a
         // human, higher-tier act. Widen this the day a machine genuinely needs to.
         ApiKey saved = keys.save(ApiKey.platformKey(name.trim(), minted.prefix(),
@@ -111,7 +121,7 @@ class ApiKeyService {
     Minted rotateOrgKey(UUID orgId, UUID id) {
         ApiKey existing = keys.findByIdAndOrgId(id, orgId)
                 .orElseThrow(() -> new NotFoundException("API key not found."));
-        ApiKeyHashing.Minted minted = ApiKeyHashing.mint();
+        ApiKeyHashing.Minted minted = prefixes.mintUnreservedPrefix();
         ApiKey replacement = keys.save(ApiKey.orgKey(orgId, existing.getName(), minted.prefix(),
                 minted.secretHash(), existing.getPermissions(), existing.getExpiresAt()));
         keys.delete(existing);

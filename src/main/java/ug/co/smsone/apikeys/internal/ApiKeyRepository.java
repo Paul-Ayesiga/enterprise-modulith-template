@@ -1,5 +1,6 @@
 package ug.co.smsone.apikeys.internal;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.Sort;
@@ -18,6 +19,17 @@ interface ApiKeyRepository extends JpaRepository<ApiKey, UUID>, JpaSpecification
     Optional<ApiKey> findByIdAndOrgId(UUID id, UUID orgId);
 
     Optional<ApiKey> findByIdAndOrgIdIsNull(UUID id);
+
+    /**
+     * Every LIVE key of one organization — {@code @SQLRestriction("deleted_at is null")} supplies that
+     * half, so it is not repeated in the method name.
+     *
+     * <p>Unpaged on purpose, and it is the one read in this repository that is. ADR 0002's cursor rule
+     * exists for collections that reach the wire; this one is the extraction's revoke-them-all step
+     * (ADR 0010 §6 item 8), where a page boundary would leave some of a departing tenant's credentials
+     * live. The set is bounded by how many keys one org has minted, which is small and operator-driven.
+     */
+    List<ApiKey> findByOrgIdOrderByCreatedAtAsc(UUID orgId);
 
     /**
      * Throttled usage stamp on a SEPARATE connection (native, no version bump): the hot auth path

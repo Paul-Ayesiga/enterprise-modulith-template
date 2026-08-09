@@ -20,13 +20,6 @@ import java.util.UUID;
 public record NewDocument(UUID orgId, UUID ownerPersonId, String storageKey, String name,
         String contentType, long sizeBytes, String source) {
 
-    /**
-     * The segment that makes an object key an organization's: {@code o/<orgId>/}. Both live org-scoped
-     * minters produce it — {@code doc/o/<orgId>/…} and {@code exch/o/<orgId>/…} — and this is where it
-     * stops being a habit two controllers happen to share.
-     */
-    private static final String ORG_SEGMENT = "/o/";
-
     public NewDocument {
         if (ownerPersonId == null) {
             throw new IllegalArgumentException("NewDocument.ownerPersonId must not be null");
@@ -60,26 +53,34 @@ public record NewDocument(UUID orgId, UUID ownerPersonId, String storageKey, Str
      * namespaces ({@code doc/u/<personId>/}, {@code u/<personId>/}, {@code avatar/p/<personId>/}) are
      * exactly the ones ADR 0010 §2.2 says must NOT travel with a tenant. One letter is the whole
      * difference between "extract this" and "this belongs to a human who has other organizations".
+     *
+     * <p><b>Why it checks the whole prefix and not just the segment.</b> The extraction lists
+     * {@code doc/o/<orgId>/} and {@code exch/o/<orgId>/} — it does not scan the bucket for keys
+     * containing {@code /o/<orgId>/}, because a bucket is a flat key space with no such query. So a key
+     * like {@code report/o/<orgId>/x} carries the segment, satisfies every "does it name its org"
+     * reading, and is still invisible to the bundle. {@link OrgObjectPrefixes} is the single list both
+     * this guard and the extraction read, so the failure lands on the author of the fifth minter rather
+     * than on the operator running the extraction two years later.
      */
     private static void requireOwnerNamespacedKey(UUID orgId, String storageKey) {
-        // Leading slash so the first segment is matched by the same expression as any later one.
-        String path = "/" + storageKey;
         if (orgId == null) {
             // Personal: the key names the human. Refusing an org segment here is the other half of the
             // rule — a personal row whose key sat under o/<someOrg>/ would be swept up by that org's
             // prefix extraction, which is the leak in the direction nobody looks for.
-            if (path.contains(ORG_SEGMENT)) {
+            if (OrgObjectPrefixes.namesAnOrganization(storageKey)) {
                 throw new IllegalArgumentException("NewDocument.storageKey for a PERSONAL document (null orgId)"
                         + " must not sit under an organization's o/<orgId>/ namespace — an extraction takes"
                         + " that prefix whole (ADR 0010 §6). Key: " + storageKey);
             }
             return;
         }
-        if (!path.contains(ORG_SEGMENT + orgId + "/")) {
-            throw new IllegalArgumentException("NewDocument.storageKey for org " + orgId + " must place the"
-                    + " bytes under o/" + orgId + "/ so an extraction can find them by prefix (ADR 0010 §6)"
-                    + " and so two tenants cannot mint the same key now that uq_document_storage_key is"
-                    + " per-schema. Key: " + storageKey);
+        if (!OrgObjectPrefixes.covers(orgId, storageKey)) {
+            throw new IllegalArgumentException("NewDocument.storageKey for org " + orgId + " must start with"
+                    + " one of that organization's declared object prefixes " + OrgObjectPrefixes.forOrg(orgId)
+                    + " so an extraction can find the bytes by prefix (ADR 0010 §6 item 7) and so two tenants"
+                    + " cannot mint the same key now that uq_document_storage_key is per-schema. A new"
+                    + " org-scoped namespace is one root added to OrgObjectPrefixes, after which it is"
+                    + " extracted and restored like the others. Key: " + storageKey);
         }
     }
 

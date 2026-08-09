@@ -1,6 +1,7 @@
 package ug.co.smsone;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.library.GeneralCodingRules.NO_CLASSES_SHOULD_ACCESS_STANDARD_STREAMS;
 import static com.tngtech.archunit.library.GeneralCodingRules.NO_CLASSES_SHOULD_THROW_GENERIC_EXCEPTIONS;
 import static com.tngtech.archunit.library.GeneralCodingRules.NO_CLASSES_SHOULD_USE_FIELD_INJECTION;
@@ -31,6 +32,32 @@ class ArchitectureTests {
 
     @ArchTest
     static final ArchRule noFieldInjection = NO_CLASSES_SHOULD_USE_FIELD_INJECTION;
+
+    /**
+     * <strong>One mint, and it is the one that reads the reservations.</strong> ADR 0010 §6 item 8 has
+     * an extraction revoke a departing tenant's API keys and reserve their prefixes permanently (V59) —
+     * and the reason a second table was needed at all is that revoking is a SOFT delete while
+     * {@code uq_api_key_prefix_live} is partial on {@code deleted_at is null}, so a revoked key hands its
+     * prefix straight back to a 48-bit space.
+     *
+     * <p>A reservation table that the mint path does not consult is a table with a primary key and no
+     * effect, and the failure of forgetting to consult it is silent by construction: the platform
+     * re-mints a departed tenant's prefix for another organization, and a stale credential from the old
+     * tenant starts resolving against the new tenant's row on {@code findByPrefix} — the one lookup that
+     * runs before any tenant is known, which is exactly why {@code api_key} is platform-tier. The hash
+     * still has to match, so it is a cross-tenant lookup collision rather than an authentication bypass,
+     * and it would surface as an inexplicable 401 rather than as anything anyone could trace.
+     *
+     * <p>So {@code ApiKeyHashing.mint()} stays a pure function with exactly one caller, and a fourth key
+     * path added next year cannot quietly go around the reservation: it fails here, at compile-time cost,
+     * naming the class that skipped it. Named as strings because both classes are package-private, which
+     * is itself the point — nothing outside {@code apikeys.internal} can reach either.
+     */
+    @ArchTest
+    static final ArchRule onlyTheReservationAwareMintCallsApiKeyHashingMint =
+            noClasses().that()
+                    .doNotHaveFullyQualifiedName("ug.co.smsone.apikeys.internal.ApiKeyPrefixReservations")
+                    .should().callMethod("ug.co.smsone.apikeys.internal.ApiKeyHashing", "mint");
 
     /**
      * Hibernate resolves neither {@code @SQLDelete} nor {@code @SQLRestriction} from a mapped

@@ -341,6 +341,27 @@ public class TenantPlacements {
                 .stream().findFirst().orElse(null);
     }
 
+    /**
+     * <strong>How many tenants this installation has a home for at all</strong> — every state, every
+     * schema, pooled and siloed together.
+     *
+     * <p>It exists to answer one question that has no other source: <em>is this the shared platform, or
+     * is it one tenant's own deployment?</em> ADR 0010 §6's extracted deployment is restored with exactly
+     * one row here ({@code BundleScriptWriter.writeThePlacementRow} writes it and nothing else adds
+     * another), so a boot check that would be a fleet-wide outage on the platform is, at one, a refusal
+     * that costs precisely the tenant it is about. {@code PlanCatalogGuard} is the caller and its javadoc
+     * argues the line; this is only the count.
+     *
+     * <p>Deliberately not {@code activeSilos().size()}: a pooled single-tenant installation is the same
+     * deployment shape and would answer zero, and an unsettled tenant is still a tenant this deployment
+     * exists for.
+     */
+    public int tenantCount() {
+        Integer tenants = jdbc.queryForObject(
+                "select count(*) from platform.tenant_placement", Integer.class);
+        return tenants == null ? 0 : tenants;
+    }
+
     /** The distinct schemas the fleet occupies — Phase 5's fan-out is O(this), not O(tenants). */
     public List<String> schemas() {
         return jdbc.queryForList(

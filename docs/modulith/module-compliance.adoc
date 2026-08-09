@@ -6,4 +6,7 @@
 |* `u.c.s.s.compliance.LegalHolds` (in Shared Kernel)
 * `u.c.s.s.audit.AuditLog` (in Shared Kernel)
 * `u.c.s.s.persistence.MappedTables` (in Shared Kernel)
+* `u.c.s.s.tenancy.promotion.TenantFreezes` (in Shared Kernel)
+* `u.c.s.a.ApiKeyReminting` (in API Keys)
+* `u.c.s.f.FileStorageProvider` (in Files)
 |===

@@ -14,11 +14,13 @@ _Others_
 * `u.c.s.s.SubscriptionOverview` (via `u.c.s.s.internal.SubscriptionOverviewImpl`)
 |Bean references
 |* `u.c.s.s.security.GatewaySecretVerifier` (in Shared Kernel)
+* `u.c.s.s.tenancy.placement.TenantPlacements` (in Shared Kernel)
 * `u.c.s.s.security.CurrentUserProvider` (in Shared Kernel)
 * `u.c.s.s.web.EnvelopeErrorWriter` (in Shared Kernel)
 * `u.c.s.s.cache.TwoLevelCacheManager` (in Shared Kernel)
 * `u.c.s.s.audit.AuditLog` (in Shared Kernel)
 * `u.c.s.s.tenancy.TenantFanOut` (in Shared Kernel)
 |Events listened to
-|* `u.c.s.s.SubscriptionChanged` (async) 
+|* `org.springframework.boot.context.event.ApplicationReadyEvent` 
+* `u.c.s.s.SubscriptionChanged` (async) 
 |===

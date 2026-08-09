@@ -766,8 +766,8 @@ flowchart TB
     <p class="sec-sub">Five stores, each with one job — plus a two-level cache in front of the hot reads.</p>
     <div class="grid">
       <div class="card c-infra"><h3>Postgres 18</h3><span class="tag">system of record</span><ul>
-        <li>Every module's data — <b>56 tables</b> across <b>two schemas</b>, from two Flyway sequences on one shared version counter</li>
-        <li><code>platform</code> — 29 tables the installation owns; <code>tenant_pool</code> — 20 a tenant owns; <b>7 exist in both</b> and route on <code>org_id</code> (see below)</li>
+        <li>Every module's data — <b>60 tables</b> across <b>two schemas</b>, from two Flyway sequences on one shared version counter</li>
+        <li><code>platform</code> — 33 tables the installation owns; <code>tenant_pool</code> — 20 a tenant owns; <b>7 exist in both</b> and route on <code>org_id</code> (see below)</li>
         <li><code>person</code> + <code>person_contact</code> — the canonical identity, <code>platform</code>-side and never per-tenant; <code>external_identity</code> / <code>external_organization</code> are the only tables holding an id minted by a provider</li>
         <li><code>platform.event_publication</code> — the transactional outbox</li>
         <li>Full-text search: <code>websearch_to_tsquery</code> + <code>pg_trgm</code> typo fallback (p95 ~35ms @ 100k docs); <code>pg_trgm</code> lives in its own <code>ext</code> schema so its operators resolve from every tenant path</li>
@@ -785,6 +785,14 @@ flowchart TB
         <li>Personal + org files, document catalogs</li>
         <li>Exchange artifacts: uploads, results, row-error reports</li>
         <li>Reads hand out <b>short-lived presigned URLs</b> (302) — bytes never proxy through the app</li>
+        <li><b>Every key names its owner, and that is the only separator there is.</b> An organization's bytes
+          sit under <code>doc/o/&lt;orgId&gt;/</code> or <code>exch/o/&lt;orgId&gt;/</code>; a human's under
+          <code>doc/u/&lt;personId&gt;/</code>, <code>u/&lt;personId&gt;/</code> or <code>avatar/p/&lt;personId&gt;/</code>.
+          A bucket is a flat key space — there is no <code>WHERE org_id = ?</code> here and no unique index either,
+          since <code>uq_document_storage_key</code> became per-schema at the tier split</li>
+        <li>The org roots are declared once in <code>shared.document.OrgObjectPrefixes</code> and
+          <code>NewDocument</code> refuses a registration that disagrees with them <b>in both directions</b> — an org
+          document that is not under its org's prefix, and a personal one that is</li>
       </ul></div>
       <div class="card c-infra"><h3>Kill Bill 0.24 + MariaDB</h3><span class="tag">billing engine · kaui :29095</span><ul>
         <li><b>One KB tenant = the platform</b> (<code>smsone</code>); one KB <b>account per org</b> (externalKey = orgId)</li>
@@ -948,6 +956,104 @@ flowchart TB
       project. It is <em>not</em> bought as extra isolation: the same role reaches every schema, tenants sharing
       <code>tenant_pool</code> are still separated by their <code>org_id</code> predicate, and keeping callers apart remains
       the filter chain's job.</p>
+
+    <p class="sec-sub" style="margin-top:18px"><b>Except the dump is one of eleven things, and the other ten are the
+      ones that fail silently.</b> <code>TenantBundler</code> produces ADR 0010 §6's whole list and a manifest that
+      accounts for every item — it <em>cannot be constructed</em> with one missing, because an unreported item is
+      indistinguishable from an item that produced nothing and the operator restoring the bundle has no other source
+      for the difference. It runs on the platform axis and enters the tenant's own only for item 1, outside any
+      transaction: one snapshot held across a whole tenant pins the oldest xmin cluster-wide and blocks vacuum for
+      every other tenant on the box, so consistency comes from the freeze instead, at the right layer.</p>
+    <div class="chain">
+      <div class="stagebox"><span class="ord">1</span>
+        <span class="what"><b>What must arrive FRESH is a property of the code, not a rule someone remembers.</b> A
+          disposition that carries no rows has no read SQL anywhere in the package, so asking for
+          <code>shedlock</code> throws rather than returning it. It matters because both failures are silent and
+          opposite: a copied <code>shedlock</code> row gives two deployments the same lock names and the new one runs
+          <em>no jobs at all</em>; a copied <code>event_publication</code> replays deliveries the platform already
+          made. The set comes from the catalogue, which is why it holds <b>six</b> tables and not the document's four —
+          <code>queue_signal</code> and <code>tenant_freeze</code> both arrived after §6 was written.</span>
+        <span class="fail"><span class="pill ok">no read exists</span></span></div>
+      <div class="stagebox"><span class="ord">2</span>
+        <span class="what"><b>A platform table nobody has judged stops the bundle, naming itself.</b> On the tenant
+          side a forgotten table under-copies and the tenant's next request 500s. On the platform side it is invisible
+          in both directions and has no later detector — nobody misses <code>plan</code> until every quota is
+          unlimited and every gated feature 403s at the same time. The only catchable moment is the moment the table
+          is added.</span>
+        <span class="fail"><span class="pill bad">refuse at plan time</span></span></div>
+      <div class="stagebox"><span class="ord">3</span>
+        <span class="what"><b>The catalogue travels whole, ids included</b> — and the symptom that actually happens is
+          neither of the two §6 names. A restored deployment does not boot with an empty <code>plan</code> table:
+          <code>PlanSeeder</code> re-creates the plans with <em>new</em> uuids, the tenant's
+          <code>org_subscription.plan_id</code> matches nothing, and an ENTERPRISE tenant is served the FREE
+          entitlements — <em>downgraded</em>, with no error and no failing request. <code>PlanCatalogGuard</code> fails
+          startup on the far side rather than serving that. <b>Scoped to the schema a deployment cannot serve anybody
+          without</b> — <code>tenant_pool</code>, or the single silo of an installation whose
+          <code>tenant_placement</code> holds exactly one tenant. On the shared fleet the same finding is a WARN
+          naming the org and the query: the defect is one tenant's downgrade and the refusal would be every pod's
+          boot. A silo whose schema the registry names and the database does not hold is reported by the same
+          check, never thrown out of the ready listener.</span>
+        <span class="fail"><span class="pill bad">fail startup — one tenant, or the pool</span></span></div>
+      <div class="stagebox"><span class="ord">4</span>
+        <span class="what"><b>Keys are re-minted and their prefixes burned forever.</b> Revoking is a <em>soft</em>
+          delete and <code>uq_api_key_prefix_live</code> is partial on <code>deleted_at is null</code>, so revocation
+          hands the prefix back to a 48-bit space; re-minting a departed tenant's prefix for someone else makes a
+          stale credential resolve against another tenant's row on the one lookup that runs before any tenant is
+          known. <code>V59</code> replaces that probability argument with a constraint, and one ArchUnit rule keeps the
+          mint path the only caller that reads it.</span>
+        <span class="fail"><span class="pill store">reserved, permanently</span></span></div>
+      <div class="stagebox"><span class="ord">5</span>
+        <span class="what"><b>The restored tenant has to be ROUTABLE, and "written fresh" named no writer.</b>
+          <code>platform.tenant_placement</code> is the one table an extracted deployment writes rather than receives —
+          but <code>TenantRoutes</code> answers <code>tenant_pool</code> for an organization the registry does not
+          name, which is right on the platform and is §1's worst outcome on the far side, where the migration set has
+          just built an empty <code>tenant_pool</code> for it to fall into. A restore without that row serves an
+          organization with no members and no history and writes into a schema its <code>org_id</code> disagrees with,
+          silently, at every layer — and since <code>silo-per-org</code> became the default that is the shape of every
+          extraction. The script now writes it, deriving the schema from <code>current_schema()</code> so it follows
+          the one editable <code>search_path</code> line instead of being a second thing to edit.</span>
+        <span class="fail"><span class="pill store">one row, ACTIVE, its own</span></span></div>
+    </div>
+    <p class="sec-sub">Item 8 is destructive, so there are two modes — <code>REHEARSAL</code> counts the keys a cutover
+      would revoke, <code>CUTOVER</code> revokes them — and the manifest records which, because a bundle you cannot
+      tell apart from a rehearsal is a bundle whose keys you do not know the state of. Nothing here is on an HTTP
+      route: the output carries live credentials and is unbounded, and neither is fixable by adding a cap, which would
+      only be the GDPR disclosure bundle again. It is <code>docs/runbooks/tenant-extraction.md</code>.</p>
+
+    <p class="sec-sub" style="margin-top:18px"><b>The dump is a complete tenant, and a tenant is not only a dump.</b>
+      The other half lives in the object store, where there is no <code>pg_dump</code> and no predicate — only the key.
+      <code>TenantObjectExtractionService</code> is that half: it <em>lists</em>
+      <code>OrgObjectPrefixes.forOrg(orgId)</code> and takes whatever it finds there, <b>whatever any row says</b>, and
+      puts a bundle back the same way. Three things about it are load-bearing and none is obvious.</p>
+    <div class="chain">
+      <div class="stagebox"><span class="ord">1</span>
+        <span class="what"><b>The prefix list IS the argument list.</b> A key that names its org under a root nobody
+          declared — <code>report/o/&lt;orgId&gt;/…</code> — satisfies every reading of "the key names its org" and is
+          still a byte no extraction ever visits, because a bucket has no query that would find it. So naming the
+          organization is <em>necessary and not sufficient</em>: <code>NewDocument</code> checks the whole prefix, and a
+          new namespace is one root added to <code>OrgObjectPrefixes</code>.</span>
+        <span class="fail"><span class="pill store">declared roots</span></span></div>
+      <div class="stagebox"><span class="ord">2</span>
+        <span class="what"><b>The database is the detector, not the source.</b> Before a byte moves, the extraction
+          reads every object key the <em>tenant's own schema</em> records — <code>document.storage_key</code> plus
+          <code>exchange_job</code>'s three — and refuses if one falls outside the prefixes it is about to list. It runs
+          pinned to the tenant for that reason: from the platform axis it would be reading the platform copies of two
+          split tables, which is every human's personal documents. Catching a third namespace at the far end means a
+          download that 404s and nothing else.</span>
+        <span class="fail"><span class="pill bad">refuse, never under-copy</span></span></div>
+      <div class="stagebox"><span class="ord">3</span>
+        <span class="what"><b>Paging terminates on the store's own truncation flag</b>, never on a short page — S3
+          permits fewer keys than asked while more remain, so inferring it from the page size is exactly how a bundle
+          ends up short by one page, silently. The restore mirrors the extraction's guard per object, because a bundle
+          is a file somebody moved between machines and its word is not authority.</span>
+        <span class="fail"><span class="pill ok">isTruncated</span></span></div>
+    </div>
+    <p class="sec-sub"><b>A person's bytes stay, and promotion moves none of them.</b> A human in orgs X, Y and Z has
+      ONE personal document store, addressed by their <code>person.id</code> — sending it with X leaks it to X, and
+      copying it to X <em>and</em> keeping it makes two divergent copies of private files with no erasure path. So the
+      person namespaces are absent from the prefix list on purpose, and an extracted deployment's
+      <code>/api/v1/documents</code> is empty for its members: a runbook line, not a bug. Promotion (hop 0→1) copies no
+      bytes at all — a key names the organization, not the schema — so the object store only moves at hop 2→3.</p>
 
     <p class="sec-sub" style="margin-top:18px"><b>The two-level cache</b> (shared kernel, backing entitlements,
       permissions, settings…): L1 is per-node Caffeine, L2 is shared Valkey; a pub/sub invalidation channel

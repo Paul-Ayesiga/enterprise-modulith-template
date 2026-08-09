@@ -25,6 +25,8 @@ import ug.co.smsone.exchange.InvalidRecordException;
 import ug.co.smsone.exchange.RecordWriter;
 import ug.co.smsone.files.FileNotFoundException;
 import ug.co.smsone.files.FileStorageProvider;
+import ug.co.smsone.files.ObjectPage;
+import ug.co.smsone.files.StoredObject;
 
 /**
  * Shared context for the exchange tests: storage swapped for an inspectable in-memory map at the
@@ -93,10 +95,21 @@ public class ExchangeTestSupport {
 
         public final Map<String, byte[]> objects = new ConcurrentHashMap<>();
 
+        /**
+         * Kept beside {@link #objects} rather than folded into it because several tests write straight
+         * into that map. Such a key has no recorded type, and {@link #open} answers the store's own
+         * fallback for it — a double that invented one would let a copy pass here and lose the type
+         * against a real store.
+         */
+        private final Map<String, String> contentTypes = new ConcurrentHashMap<>();
+
         @Override
         public void put(String key, InputStream content, long contentLength, String contentType) {
             try {
                 objects.put(key, content.readAllBytes());
+                if (contentType != null) {
+                    contentTypes.put(key, contentType);
+                }
             } catch (IOException ex) {
                 throw new UncheckedIOException(ex);
             }
@@ -105,6 +118,37 @@ public class ExchangeTestSupport {
         @Override
         public void putLarge(String key, InputStream content, long contentLength, String contentType) {
             put(key, content, contentLength, contentType);
+        }
+
+        /**
+         * Lexicographic and keyset, and {@code more} is computed from what is actually left rather than
+         * from the page being full — the two readings differ exactly when a page exhausts the prefix, and
+         * a double that conflated them would hide the bug it exists to let tests run past.
+         * {@code FileStorageIntegrationTest} pins the same semantics against real SeaweedFS.
+         */
+        @Override
+        public ObjectPage list(String prefix, String startAfter, int maxKeys) {
+            List<String> matching = objects.keySet().stream()
+                    .filter(key -> key.startsWith(prefix))
+                    .filter(key -> startAfter == null || key.compareTo(startAfter) > 0)
+                    .sorted()
+                    .toList();
+            return new ObjectPage(matching.stream().limit(maxKeys).toList(), matching.size() > maxKeys);
+        }
+
+        @Override
+        public StoredObject open(String key) {
+            byte[] bytes = objects.get(key);
+            if (bytes == null) {
+                throw new FileNotFoundException("No such object: " + key, null);
+            }
+            return new StoredObject(key, contentTypes.get(key), bytes.length,
+                    new ByteArrayInputStream(bytes));
+        }
+
+        @Override
+        public void write(StoredObject object) {
+            put(object.key(), object.content(), object.sizeBytes(), object.contentType());
         }
 
         @Override
