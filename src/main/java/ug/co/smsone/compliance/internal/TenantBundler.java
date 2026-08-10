@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import ug.co.smsone.apikeys.ApiKeyReminting;
 import ug.co.smsone.shared.audit.AuditLog;
+import ug.co.smsone.shared.deployment.DeploymentIdentity;
 import ug.co.smsone.shared.document.OrgObjectPrefixes;
 import ug.co.smsone.shared.tenancy.Tenant;
 import ug.co.smsone.shared.tenancy.TenantContext;
@@ -166,9 +167,10 @@ class TenantBundler {
      * {@link #requireComplete()} throws until {@link #withObjectBytes} says otherwise. That is a seam
      * that cannot be forgotten, as opposed to a sentence in a runbook that can.
      */
-    record Manifest(UUID orgId, String tenantSchema, Mode mode, List<PartReport> parts,
-            List<String> objectPrefixes, ObjectBytes objectBytes, List<String> reservedPrefixes,
-            String identityProviderDecision, List<String> doesNotTravel, List<String> warnings) {
+    record Manifest(UUID orgId, String tenantSchema, Mode mode, String sourceDeployment,
+            List<PartReport> parts, List<String> objectPrefixes, ObjectBytes objectBytes,
+            List<String> reservedPrefixes, String identityProviderDecision, List<String> doesNotTravel,
+            List<String> warnings) {
 
         Manifest {
             parts = inDocumentOrder(parts);
@@ -211,8 +213,35 @@ class TenantBundler {
                         + " is satisfied by a count, even a count of zero, from whoever ran the"
                         + " extractor");
             }
-            return new Manifest(orgId, tenantSchema, mode, parts, objectPrefixes, taken,
-                    reservedPrefixes, identityProviderDecision, doesNotTravel, warnings);
+            return new Manifest(orgId, tenantSchema, mode, sourceDeployment, parts, objectPrefixes,
+                    taken, reservedPrefixes, identityProviderDecision, doesNotTravel, warnings);
+        }
+
+        /**
+         * <strong>ADR 0010 §6 hop 2→3's non-table half, carried as a decision rather than as a value.</strong>
+         * §6 item 6 names four tables that must be fresh and then adds one sentence more: "<em>Also
+         * fresh: the Valkey cache/rate-limit key prefixes and the SeaweedFS bucket root.</em>" The
+         * tables are safe because {@code TenantBundlePlan} made them structural — the disposition
+         * carries no rows and there is no SQL that could ask for them. These two cannot be made
+         * structural by the same trick, because they are not in this database at all: they are the
+         * destination's configuration, and a bundle cannot reach into it.
+         *
+         * <p>So what travels is the RULE and the source's own name — never a namespace to paste. A
+         * bundle that printed the destination's prefix would be a bundle whose prefix gets pasted
+         * twice, which is the failure it exists to prevent.
+         */
+        String freshInfrastructureIdentity() {
+            return "the destination MUST run with an app.deployment.id of its own — anything except '"
+                    + sourceDeployment + "', which is this bundle's source. That one value is what"
+                    + " gives a deployment its Valkey cache and rate-limit namespace (dep:<id>:…) and"
+                    + " its object-store bucket (<app.storage.bucket>-dep-<id>). Left at the source's,"
+                    + " the two deployments share both: the source's eviction clears the destination's"
+                    + " cache entry, the source's CACHED VALUE answers the destination's read, one"
+                    + " tenant's rate-limit quota is spent by two deployments, and the source's"
+                    + " SoftDeletePurgeJob deletes objects the destination is serving — because both"
+                    + " sides hold byte-identical object keys by design (ADR 0010 §2.2 keeps"
+                    + " organization.id, so document.storage_key travels verbatim). Every one of those"
+                    + " is silent on both sides.";
         }
 
         /**
@@ -244,10 +273,12 @@ class TenantBundler {
     private final TenantFreezes freezes;
     private final ApiKeyReminting apiKeys;
     private final AuditLog auditLog;
+    /** Only ever asked for its NAME — see {@link Manifest#freshInfrastructureIdentity()}. */
+    private final DeploymentIdentity deployment;
 
     TenantBundler(JdbcTemplate jdbc, TenantExtractionService extraction, TenantBundlePlan plan,
             PersonProjector projector, TenantFreezes freezes, ApiKeyReminting apiKeys,
-            AuditLog auditLog) {
+            AuditLog auditLog, DeploymentIdentity deployment) {
         this.jdbc = jdbc;
         this.extraction = extraction;
         this.plan = plan;
@@ -255,6 +286,7 @@ class TenantBundler {
         this.freezes = freezes;
         this.apiKeys = apiKeys;
         this.auditLog = auditLog;
+        this.deployment = deployment;
     }
 
     /**
@@ -376,10 +408,19 @@ class TenantBundler {
                         + " absence makes every quota unlimited AND every gated feature 403 at once,"
                         + " with no error either way"));
 
-        // ---- 6: the tables the bundle is INCAPABLE of carrying -------------------------------------
+        // ---- 6: the tables the bundle is INCAPABLE of carrying, and the two things that are not tables
+        // §6 item 6 ends with a sentence the table list hides: "Also fresh: the Valkey cache/rate-limit
+        // key prefixes and the SeaweedFS bucket root." Those two cannot be made structural the way the
+        // tables were — they are the DESTINATION's configuration, which no bundle taken here can reach
+        // — so the part carries the rule and the source's own name instead. See
+        // Manifest.freshInfrastructureIdentity for why it names what the destination must NOT be rather
+        // than handing it a namespace to paste.
         parts.add(new PartReport(BundlePart.FRESH_INFRASTRUCTURE, BundleDisposition.FRESH_AND_EMPTY, 0,
                 "created empty by the migration set and unreadable by this bundler: "
-                        + String.join(", ", plan.freshAndEmpty())));
+                        + String.join(", ", plan.freshAndEmpty())
+                        + ". Not tables, and not carried either — " + deployment.id()
+                        + " is the deployment this bundle came out of, and the destination needs its own"
+                        + " app.deployment.id for its Valkey namespace and its object bucket"));
 
         // ---- 7: the object store, which this class does not extract --------------------------------
         // Read from OrgObjectPrefixes rather than spelled again here, and that is the difference between
@@ -405,8 +446,8 @@ class TenantBundler {
                         + " exchange_job travel in the dump with no in-flight row, which was verified"
                         + " before this bundle was allowed to exist (§6 item 11)"));
 
-        Manifest manifest = new Manifest(orgId, tenantSchema, mode, parts, prefixes, null,
-                keys.reservedPrefixes(), IDP_DECISION, plan.whatDoesNotTravel(), warnings);
+        Manifest manifest = new Manifest(orgId, tenantSchema, mode, deployment.id(), parts, prefixes,
+                null, keys.reservedPrefixes(), IDP_DECISION, plan.whatDoesNotTravel(), warnings);
         // Distinct from compliance.tenant_extracted (item 1's own row) and from compliance.org_exported
         // (the disclosure bundle's). Three artifacts, three actions: the only question anyone will ever
         // ask this trail is which of them left the database and when, and an action name that could not

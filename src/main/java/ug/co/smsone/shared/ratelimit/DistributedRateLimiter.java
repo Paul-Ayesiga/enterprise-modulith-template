@@ -21,12 +21,21 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.shared.deployment.DeploymentIdentity;
 
 /**
  * Distributed token-bucket limiter over Valkey (Bucket4j) — shared by the edge filter and the
  * notification egress limiter. Fail-open by default: if the backend is unavailable the request is
  * allowed (a limiter must never be a single point of failure); callers may opt into fail-closed.
  * When rate limiting is disabled (no client bean) every check allows.
+ *
+ * <p><b>Every bucket key is namespaced by the deployment here</b> (ADR 0010 §6 hop 2→3), and here
+ * rather than in the two callers that build keys, because this is the only class in the application
+ * that addresses a Bucket4j bucket at all. A caller cannot forget an axis it never applies: the edge
+ * filter's {@code RateLimitKeyResolver} composes {@code <prefix>:<tier>:<scope>:<value>} and
+ * {@code ChannelRateLimiter} composes {@code notif:rate:<channel>}, and both arrive here to be given
+ * the deployment. Two deployments sharing a Valkey would otherwise share one tenant's quota — the
+ * second deployment silently halving the throughput the first one sold.
  *
  * <p>Resilience: the connection is opened lazily with a tight timeout so neither startup nor an
  * outage blocks anything. After any backend error a short "don't retry" window keeps the outage from
@@ -44,6 +53,7 @@ public class DistributedRateLimiter {
     private static final long BACKOFF_NANOS = Duration.ofSeconds(2).toNanos();
 
     private final ObjectProvider<RedisClient> clientProvider;
+    private final DeploymentIdentity deployment;
     private final ReentrantLock initLock = new ReentrantLock();
 
     private volatile StatefulRedisConnection<String, byte[]> connection;
@@ -55,11 +65,13 @@ public class DistributedRateLimiter {
     private final ConcurrentHashMap<ConfigKey, Supplier<BucketConfiguration>> configurations =
             new ConcurrentHashMap<>();
 
-    public DistributedRateLimiter(ObjectProvider<RedisClient> clientProvider) {
+    public DistributedRateLimiter(ObjectProvider<RedisClient> clientProvider, DeploymentIdentity deployment) {
         this.clientProvider = clientProvider;
+        this.deployment = deployment;
     }
 
     public RateLimitVerdict tryConsume(String key, long capacity, Duration refillPeriod, boolean failClosed) {
+        String bucketKey = deployment.valkeyKey(key);
         long window = Math.max(1, refillPeriod.toSeconds());
         RedisClient client = clientProvider.getIfAvailable();
         if (client == null) {
@@ -74,7 +86,7 @@ public class DistributedRateLimiter {
             return failOpen(capacity, window, failClosed);
         }
         try {
-            BucketProxy bucket = manager.builder().build(key, configuration(capacity, refillPeriod));
+            BucketProxy bucket = manager.builder().build(bucketKey, configuration(capacity, refillPeriod));
             ConsumptionProbe probe = bucket.tryConsumeAndReturnRemaining(1);
             if (probe.isConsumed()) {
                 return RateLimitVerdict.allowed(capacity, Math.max(0, probe.getRemainingTokens()), window);
@@ -83,13 +95,16 @@ public class DistributedRateLimiter {
             return RateLimitVerdict.denied(capacity, retryAfter, window);
         } catch (RuntimeException ex) {
             retryNotBefore = System.nanoTime() + BACKOFF_NANOS;
-            log.warn("Rate-limit backend error for '{}' (fail-{}): {}", redact(key), failClosed ? "closed" : "open", ex.toString());
+            log.warn("Rate-limit backend error for '{}' (fail-{}): {}", redact(bucketKey), failClosed ? "closed" : "open", ex.toString());
             return failOpen(capacity, window, failClosed);
         }
     }
 
     /** Best-effort return of one token — used to refund a send that never reached its provider. */
     public void addToken(String key, long capacity, Duration refillPeriod) {
+        // The SAME namespacing as tryConsume, and it has to be: a refund addressed to an un-namespaced
+        // key would credit a bucket nobody debits, leaving the real one permanently one token short.
+        String bucketKey = deployment.valkeyKey(key);
         RedisClient client = clientProvider.getIfAvailable();
         if (client == null || System.nanoTime() - retryNotBefore < 0) {
             return;
@@ -99,7 +114,7 @@ public class DistributedRateLimiter {
             return;
         }
         try {
-            manager.builder().build(key, configuration(capacity, refillPeriod)).addTokens(1); // capped at capacity
+            manager.builder().build(bucketKey, configuration(capacity, refillPeriod)).addTokens(1); // capped at capacity
         } catch (RuntimeException ex) {
             retryNotBefore = System.nanoTime() + BACKOFF_NANOS;
         }

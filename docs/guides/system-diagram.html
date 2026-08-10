@@ -151,8 +151,9 @@ flowchart TB
     auth["authorize: JWT via JWKS · API-key introspection"]
     shape["shape: quota (fixed window) · rate limit (token bucket)<br/>timeout 15s · body cap 10MB · lifecycle 410/Sunset"]
     resil["protect: circuit breaker (R4j) · retries (GET) · edge cache (tenant-keyed)"]
+    place["place: route by the organization claim<br/>own deployment if configured, else shared · never a silent fallback"]
     lb["load balance: Spring Cloud LoadBalancer → service instances"]
-    auth --> shape --> resil --> lb
+    auth --> shape --> resil --> place --> lb
   end
 
   subgraph CORE["SPRING MODULITH :28080 — servlet + JDBC"]
@@ -176,6 +177,8 @@ flowchart TB
 
   recv["Webhook receivers (customer endpoints)"]
 
+  silo["TENANT DEPLOYMENT — opt-in, none today<br/>the SAME jar, wired differently: own database (ADR 0011),<br/>fresh outbox/shedlock/idempotency, own Valkey prefix + bucket root"]
+
   subgraph STORES["DATA PLANE"]
     direction LR
     pg[("Postgres 18 — schemas platform + tenant_pool<br/>records + outbox + FTS")]
@@ -193,6 +196,7 @@ flowchart TB
   kc -. "JWKS" .-> EDGE
   kc -. "JWKS + admin API" .-> CORE
   EDGE -- "proxy /api/v1/**" --> CORE
+  EDGE -. "proxy, when the org claim names a<br/>configured upstream (gateway.tenancy)" .-> silo
   EDGE -- "proxy /mcp (route mcp-api)" --> mcp
   EDGE -. "seams: introspect · audit · quota<br/>(shared GATEWAY_SECRET)" .-> CORE
   CORE --> ASYNC
@@ -242,6 +246,10 @@ flowchart TB
         <span class="what"><b>Route match</b> — <code>RouteCatalog</code>: YAML-seeded (durable, git-reviewed) + runtime-registered via <code>gatewayroutes</code> (instant). A runtime route can be marked <b>durable</b> ("keep after restart") — stored in Valkey and re-applied on every boot over the YAML seed. Most-specific wins by ascending <code>order</code>; 8 API products; <code>platform-api</code> catch-all keeps ungrouped paths working.</span>
         <span class="fail"><span class="pill bad">404</span><span class="pill">in-memory map</span></span></div>
       <div class="connector">│▼</div>
+      <div class="stagebox"><span class="ord">+25</span>
+        <span class="what"><b>Tenant placement</b> — the matched route names the shared modulith; this is where an organization with a <b>deployment of its own</b> is sent to it instead (ADR 0010 §7 Phase 8). The key is the caller's <code>organization</code> claim (Keycloak mints it as a map keyed by alias — both the alias and the id inside it are accepted), or, for an API key, the organization introspection answered. The table is <b>configuration</b> (<code>gateway.tenancy.upstreams</code> → a <code>gateway.services</code> id), never a query against <code>platform.tenant_placement</code>: the edge may hold no business database (ADR 0007), and a live lookup would make the platform a single point of failure for the one tenant paying not to have one. Resolved against the live service registry and re-resolved on every <code>RefreshRoutesEvent</code>. Three outcomes: <b>no organization</b> (public routes — signup, the payment IPNs, the Kill Bill hook — pass untouched, structurally, because an unauthenticated route names none) · <b>no entry</b> → shared, which is every tenant today · <b>an entry</b> → the tenant's own deployment, the route swapped in place so the load balancer, the response timeout and the route id all still apply. A configured upstream that is unregistered or refuses the connection is <b>503 + Retry-After for that tenant only</b> — never a fallback to the shared deployment, whose database no longer holds its rows. A timeout stays a 504: unreachable is a connection answer, never a data answer (ADR 0011 §2.2). On a route carrying <code>circuit-breaker: true</code> the route's breaker is <b>skipped</b> for a re-targeted request: it is named per route and measures the route's own service, so one dead tenant deployment would otherwise open the circuit for every tenant on that path, and its fallback would swallow the per-tenant refusal into a bare 503. Live table at <code>gatewaytenants</code>, which also reports <code>matches</code> per key — a key spelled in an id-space no credential carries resolves perfectly and matches nobody, and that count is the only thing that shows it.</span>
+        <span class="fail"><span class="pill bad">503 + Retry-After</span><span class="pill">config × service registry</span></span></div>
+      <div class="connector">│▼</div>
       <div class="stagebox"><span class="ord">traffic</span>
         <span class="what"><b>Rate limiter — token bucket</b> (SCG <code>RedisRateLimiter</code>): replenish <b>20 tokens/s</b>, burst <b>40</b>, per caller — key falls back <code>principal → tenant → IP</code>. Advertises its bucket under a <b>namespaced</b> <code>X-Edge-RateLimit-*</code> so it never collides with the plan quota's standard <code>X-RateLimit-*</code>; a denial adds <code>Retry-After</code>. The burst guard, distinct from the plan quota above.</span>
         <span class="fail"><span class="pill bad">429</span><span class="pill store">Valkey</span></span></div>
@@ -263,7 +271,7 @@ flowchart TB
         <span class="fail"><span class="pill bad">503 fallback</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox"><span class="ord">balance</span>
-        <span class="what"><b>Load balancer</b> — Spring Cloud LoadBalancer (<code>lb://</code> via a registry-backed reactive discovery client): round-robin across each service's instances from the service registry; per-service <code>health-path</code> (<code>/actuator/health</code>). One backend today — the seam is where the modulith splits later.</span>
+        <span class="what"><b>Load balancer</b> — Spring Cloud LoadBalancer (<code>lb://</code> via a registry-backed reactive discovery client): round-robin across each service's instances from the service registry; per-service <code>health-path</code> (<code>/actuator/health</code>). One backend today — the seam is where the modulith splits later, and it is also how a tenant's own deployment (+25) gets balancing and failover for free: the placement filter addresses a multi-instance upstream as <code>lb://</code> through this same stage.</span>
         <span class="fail"><span class="pill">round-robin</span></span></div>
       <div class="connector">│▼</div>
       <div class="stagebox"><span class="ord">egress</span>
@@ -272,7 +280,10 @@ flowchart TB
     </div>
     <p class="sec-sub" style="margin-top:14px">Admin plane (<code>:29090</code>, never routed publicly):
       <code>gatewayroutes</code> (CRUD + lifecycle + auth/rate flags) · <code>gatewaycatalog</code> ·
-      <code>gatewayopenapi</code> · <code>gatewayusage</code> · Prometheus. Optional credential: set
+      <code>gatewayopenapi</code> · <code>gatewayusage</code> · <code>gatewaytenants</code> (read-only: which
+      organizations have their own deployment, whether that upstream resolves right now, and how many real
+      callers each configured key has matched — the table an operator watches during a cutover) · Prometheus.
+      Optional credential: set
       <code>GATEWAY_ADMIN_TOKEN</code> and every call must carry <code>X-Admin-Token</code> (constant-time
       compare; <code>/actuator/health</code> stays open for probes).</p>
   </section>
@@ -780,6 +791,12 @@ flowchart TB
         <li>App rate-limit windows — per-tenant read/write counters</li>
         <li>Idempotency replay store — 24 h response snapshots</li>
         <li><b>L2 cache</b> + pub/sub invalidation channel (below)</li>
+        <li><b>Every key above is namespaced by the DEPLOYMENT</b> (<code>app.deployment.id</code>, ADR 0010
+          §6 hop 2→3). The reserved <code>platform</code> writes the keys shown here verbatim; any other
+          deployment writes <code>dep:&lt;id&gt;:…</code>, so an extracted tenant sharing this Valkey neither reads
+          nor evicts the platform's entries and does not spend its rate-limit buckets. A shared namespace is
+          worse than a copied <code>shedlock</code> row: it does not stop work, it <em>answers with the wrong
+          installation's data</em></li>
       </ul></div>
       <div class="card c-infra"><h3>SeaweedFS</h3><span class="tag">s3 object store</span><ul>
         <li>Personal + org files, document catalogs</li>
@@ -793,6 +810,13 @@ flowchart TB
         <li>The org roots are declared once in <code>shared.document.OrgObjectPrefixes</code> and
           <code>NewDocument</code> refuses a registration that disagrees with them <b>in both directions</b> — an org
           document that is not under its org's prefix, and a personal one that is</li>
+        <li><b>The BUCKET is what separates two deployments, never the key.</b> A key names an organization and
+          <code>organization.id</code> survives an extraction unchanged, so <code>document.storage_key</code> travels
+          verbatim and both sides legitimately hold the same key — which is exactly what makes a restore a copy
+          rather than a column rewrite. So the deployment sits one level up: <code>app.deployment.id</code> derives
+          <code>&lt;app.storage.bucket&gt;-dep-&lt;id&gt;</code> (the reserved <code>platform</code> keeps the configured
+          name). Sharing a bucket would let the source's soft-delete purge remove bytes the extracted deployment is
+          serving, with no error on either side</li>
       </ul></div>
       <div class="card c-infra"><h3>Kill Bill 0.24 + MariaDB</h3><span class="tag">billing engine · kaui :29095</span><ul>
         <li><b>One KB tenant = the platform</b> (<code>smsone</code>); one KB <b>account per org</b> (externalKey = orgId)</li>

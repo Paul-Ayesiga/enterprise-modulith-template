@@ -65,6 +65,22 @@ import ug.co.smsone.shared.tenancy.TenantSchemas;
  * reached by a key an outside caller can name, so every eviction of {@code org-permissions} is a
  * {@link #clear()} that spans all prefixes. {@link TenantPromotionCaches} is where that is written down
  * per cache, for the one event that invalidates answers without changing any row: a promotion.
+ *
+ * <h2>The DEPLOYMENT axis is L2-only, and that is not an inconsistency</h2>
+ *
+ * <p>ADR 0010 §6 hop 2→3 requires a second axis above the tenant one: two deployments sharing a Valkey
+ * must not share a namespace, or one's eviction clears the other's entry and — the failure that
+ * matters — one's cached value answers the other's read. That axis lives on the L2 key PREFIX
+ * ({@code CacheConfig}, via {@code shared.deployment.DeploymentIdentity}) and is deliberately absent
+ * from L1 and from the key format above.
+ *
+ * <p>It is the "both levels, or neither" rule applied rather than broken. That rule exists because
+ * tenants share a JVM, so an unprefixed L1 entry is reachable by another tenant on the next request.
+ * Deployments do not share a JVM: one process is one deployment for its whole life, so there is no
+ * second writer for a Caffeine entry to collide with, and the invalidation broadcast a peer sends
+ * arrives on a topic only this deployment subscribes to. Adding the deployment to {@link #scopedKey}
+ * would lengthen every key — and add a third separator to a format whose ':' vs '|' choice is already
+ * load-bearing — to prove something a process boundary already proves.
  */
 class TwoLevelCache implements Cache {
 

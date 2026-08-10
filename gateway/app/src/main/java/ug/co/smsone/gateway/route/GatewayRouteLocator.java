@@ -1,12 +1,15 @@
 package ug.co.smsone.gateway.route;
 
-import java.net.URI;
 import java.time.Duration;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.cloud.gateway.filter.factory.SpringCloudCircuitBreakerFilterFactory;
 import org.springframework.cloud.gateway.filter.ratelimit.KeyResolver;
 import org.springframework.cloud.gateway.filter.ratelimit.RedisRateLimiter;
 import org.springframework.cloud.gateway.route.RouteLocator;
@@ -35,21 +38,25 @@ import ug.co.smsone.gateway.core.transform.TransformPolicy;
  * factories. This is the only place the core's model meets the runtime — the core never sees SCG.
  */
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties(GatewayProperties.class)
+@EnableConfigurationProperties({GatewayProperties.class, TenantUpstreamProperties.class})
 class GatewayRouteLocator {
 
     private static final Logger log = LoggerFactory.getLogger(GatewayRouteLocator.class);
 
     @Bean
     RouteLocator gatewayRoutes(RouteLocatorBuilder builder, RouteSource routeSource, ServiceRegistry services,
-            RedisRateLimiter rateLimiter, KeyResolver keyResolver) {
+            RedisRateLimiter rateLimiter, KeyResolver keyResolver, TenantUpstreamProperties tenancy,
+            ObjectProvider<SpringCloudCircuitBreakerFilterFactory> circuitBreakers) {
         // Re-read the mutable route source on each getRoutes(): a RefreshRoutesEvent (fired by the
         // RouteRegistrar) makes SCG's caching locator rebuild, so a runtime route change takes effect.
-        return () -> buildRoutes(builder, routeSource, services, rateLimiter, keyResolver).getRoutes();
+        return () -> buildRoutes(builder, routeSource, services, rateLimiter, keyResolver, tenancy,
+                circuitBreakers).getRoutes();
     }
 
     private static RouteLocator buildRoutes(RouteLocatorBuilder builder, RouteSource routeSource,
-            ServiceRegistry services, RedisRateLimiter rateLimiter, KeyResolver keyResolver) {
+            ServiceRegistry services, RedisRateLimiter rateLimiter, KeyResolver keyResolver,
+            TenantUpstreamProperties tenancy,
+            ObjectProvider<SpringCloudCircuitBreakerFilterFactory> circuitBreakers) {
         RouteLocatorBuilder.Builder routes = builder.routes();
         for (RouteDefinition route : routeSource.routes()) {
             if (route.predicates().isEmpty()) {
@@ -67,21 +74,23 @@ class GatewayRouteLocator {
             routes.route(route.id(), spec -> {
                 UriSpec withFilters = match(spec, route.predicates())
                         .filters(filters -> applyTraffic(
-                                applyTransform(filters, route.transform()), traffic, route.id(), rateLimiter, keyResolver));
+                                applyTransform(filters, route.transform()), traffic, route.id(), rateLimiter,
+                                keyResolver, tenancy, circuitBreakers));
                 if (traffic.hasTimeout()) {
                     // Per-route response timeout — a slow backend fails fast (504) rather than hanging.
                     withFilters = withFilters.metadata("response-timeout", traffic.responseTimeoutMs());
                 }
                 // A multi-instance service is addressed as lb://id so Spring Cloud LoadBalancer picks an
                 // instance per request; a single-instance service goes straight to its uri.
-                return withFilters.uri(service.loadBalanced() ? URI.create("lb://" + service.id()) : service.uri());
+                return withFilters.uri(ServiceAddress.of(service));
             });
         }
         return routes.build();
     }
 
     private static UriSpec applyTraffic(GatewayFilterSpec filters, TrafficPolicy traffic, String routeId,
-            RedisRateLimiter rateLimiter, KeyResolver keyResolver) {
+            RedisRateLimiter rateLimiter, KeyResolver keyResolver, TenantUpstreamProperties tenancy,
+            ObjectProvider<SpringCloudCircuitBreakerFilterFactory> circuitBreakers) {
         GatewayFilterSpec spec = filters;
         if (traffic.hasMaxRequestBytes()) {
             spec = spec.setRequestSize(DataSize.ofBytes(traffic.maxRequestBytes()));
@@ -101,9 +110,21 @@ class GatewayRouteLocator {
         }
         if (traffic.circuitBreaker()) {
             // A backend 5xx counts as a failure (not just an exception/timeout), tripping the circuit.
-            spec = spec.circuitBreaker(config -> config.setName("cb-" + routeId)
+            // The breaker is named per ROUTE, which is only safe while a route means one upstream — see
+            // TenantAwareCircuitBreaker for what happens on a route a tenant has been re-targeted off.
+            Consumer<SpringCloudCircuitBreakerFilterFactory.Config> config = c -> c.setName("cb-" + routeId)
                     .setFallbackUri("forward:/__fallback")
-                    .setStatusCodes(java.util.Set.of("500", "502", "503", "504")));
+                    .setStatusCodes(Set.of("500", "502", "503", "504"));
+            spec = tenancy.upstreams().isEmpty()
+                    // Nobody has a deployment of their own — which is every deployment today — so the
+                    // route is built through SCG's own DSL call, byte-for-byte as it always has been.
+                    // The wrapper is not merely inert here, it is absent from the chain entirely.
+                    ? spec.circuitBreaker(config)
+                    // Same filter, same name, same fallback, same statuses — but it does not answer for
+                    // a request that has been sent to a tenant's own deployment. Added through
+                    // filter(), which assigns the identical order (0) circuitBreaker() would have.
+                    : spec.filter(new TenantAwareCircuitBreaker(
+                            circuitBreakers.getObject().apply(routeId, config)));
         }
         if (traffic.hasCache()) {
             // Cache GET responses for the TTL; the key is tenant-scoped (TenantAwareCacheKeyGenerator).

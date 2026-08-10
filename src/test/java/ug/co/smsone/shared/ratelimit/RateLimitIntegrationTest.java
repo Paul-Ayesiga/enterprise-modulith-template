@@ -84,6 +84,10 @@ class RateLimitIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private io.micrometer.core.instrument.MeterRegistry meters;
 
+    /** For building limiters that differ from the wired one only in their deployment identity. */
+    @Autowired
+    private org.springframework.beans.factory.ObjectProvider<io.lettuce.core.RedisClient> redisClients;
+
     /** Summed across tiers so the assert does not care which tier id the test profile configured. */
     private double denied() {
         return meters.find("smsone.ratelimit.denied").counters().stream()
@@ -104,6 +108,55 @@ class RateLimitIntegrationTest extends AbstractIntegrationTest {
         // an independent key (= a different tenant/principal) has its own bucket
         String keyB = "rl:test:" + UUID.randomUUID();
         assertThat(limiter.tryConsume(keyB, 3, Duration.ofMinutes(1), false).allowed()).isTrue();
+    }
+
+    /**
+     * <b>ADR 0010 §6 hop 2→3: two deployments on ONE Valkey do not share a tenant's quota.</b> The two
+     * limiters below are the production class over the same connection, differing only in
+     * {@code app.deployment.id} — so the isolation asserted here is the one an extracted deployment
+     * actually gets, not a property of a key the test built itself.
+     *
+     * <p>The failure it forbids is quiet in both directions and neither side logs anything: a tenant
+     * whose organization id survives an extraction unchanged (§2.2) would have one bucket spent by two
+     * deployments, so the platform throttles it for traffic the extracted deployment served, and the
+     * extracted deployment throttles it for traffic the platform served. The third assertion is the
+     * falsifier — with the SAME identity the same key IS one bucket, so the first two are not passing
+     * because the keys happened to differ.
+     */
+    @Test
+    void twoDeploymentsSharingOneValkeyDoNotShareARateLimitBucket() {
+        String key = "rl:write:tenant:" + UUID.randomUUID();
+        DistributedRateLimiter platform = limiterFor(
+                ug.co.smsone.shared.deployment.DeploymentIdentity.PLATFORM);
+        DistributedRateLimiter extracted = limiterFor("acme");
+        // A SECOND instance of the same deployment, held back as the falsifier below.
+        DistributedRateLimiter extractedPeer = limiterFor("acme");
+        try {
+            assertThat(platform.tryConsume(key, 1, Duration.ofMinutes(1), false).allowed()).isTrue();
+            assertThat(platform.tryConsume(key, 1, Duration.ofMinutes(1), false).allowed())
+                    .as("the platform's own bucket is spent")
+                    .isFalse();
+            assertThat(extracted.tryConsume(key, 1, Duration.ofMinutes(1), false).allowed())
+                    .as("the extracted deployment's bucket for the SAME tenant key is untouched")
+                    .isTrue();
+
+            assertThat(extractedPeer.tryConsume(key, 1, Duration.ofMinutes(1), false).allowed())
+                    .as("same deployment id, different instance, same key: ONE bucket — so the"
+                            + " isolation above is the deployment's doing and not the test's, and not"
+                            + " an artefact of each limiter holding its own connection")
+                    .isFalse();
+        } finally {
+            // Hand-built limiters get no @PreDestroy, and each holds a Lettuce connection for the rest
+            // of the JVM's life otherwise — the suite shares one container across every cached context.
+            platform.closeConnection();
+            extracted.closeConnection();
+            extractedPeer.closeConnection();
+        }
+    }
+
+    private DistributedRateLimiter limiterFor(String deploymentId) {
+        return new DistributedRateLimiter(redisClients,
+                new ug.co.smsone.shared.deployment.DeploymentIdentity(deploymentId));
     }
 
     @Test

@@ -43,7 +43,7 @@ class EdgeAuthorizationFilterTest {
         RouteDefinition route = new RouteDefinition("r1", 0, null, "svc",
                 new AuthPolicy(true, Set.of(), null), null, null, null, null);
         RouteSource routeSource = () -> List.of(route);
-        SecurityProperties properties = new SecurityProperties(null, null, "tenant", null,
+        SecurityProperties properties = new SecurityProperties(null, null, "tenant", "organization", null,
                 List.of(new SecurityProperties.InternalToken("svc", INTERNAL_TOKEN, Set.of("api"))));
         return new EdgeAuthorizationFilter(routeSource, properties, none(), none(), none());
     }

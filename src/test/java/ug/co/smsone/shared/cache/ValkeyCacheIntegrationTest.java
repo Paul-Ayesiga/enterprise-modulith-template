@@ -77,6 +77,15 @@ class ValkeyCacheIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private StringRedisTemplate redisTemplate;
 
+    @Autowired
+    private CacheInvalidationBroadcaster broadcaster;
+
+    @Autowired
+    private org.springframework.data.redis.connection.RedisConnectionFactory connectionFactory;
+
+    @Autowired
+    private CacheProperties cacheProperties;
+
     @Test
     void cachesReadsAndEvictsOnWrite() {
         settingService.put("cache.probe", "v1", null);
@@ -189,7 +198,7 @@ class ValkeyCacheIntegrationTest extends AbstractIntegrationTest {
         assertThat(caffeineCacheManager.getCache(SettingService.VALUES_CACHE).get("cache.bcast")).isNotNull();
 
         // simulate ANOTHER instance broadcasting an eviction (different instance id)
-        redisTemplate.convertAndSend(CacheInvalidationBroadcaster.TOPIC,
+        redisTemplate.convertAndSend(broadcaster.topic(),
                 "some-other-instance\n" + SettingService.VALUES_CACHE + "\ncache.bcast");
 
         org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5))
@@ -197,5 +206,77 @@ class ValkeyCacheIntegrationTest extends AbstractIntegrationTest {
                         caffeineCacheManager.getCache(SettingService.VALUES_CACHE).get("cache.bcast"))
                         .as("L1 entry evicted by foreign broadcast")
                         .isNull());
+    }
+
+    /**
+     * <b>ADR 0010 §6 hop 2→3, proved rather than declared: two deployments on ONE Valkey do not see each
+     * other's entries.</b> The unit gate ({@code shared.deployment.DeploymentNamespaceTest}) pins the key
+     * strings; this pins the thing that actually matters, which is that the two managers are built by
+     * the SAME production code path and still cannot reach one another.
+     *
+     * <p>The direction that would be a defect rather than a nuisance is the second half: the extracted
+     * deployment must not READ the platform's value. A shared namespace does not merely over-evict — it
+     * answers a question with another installation's data, and for {@code org-permissions} that is an
+     * authorization decision computed against a database this deployment has never seen.
+     */
+    @Test
+    void twoDeploymentsSharingOneValkeyCannotReadOrEvictEachOthersEntries() {
+        String key = "isolation-" + java.util.UUID.randomUUID();
+        Cache platform = l2Of(new ug.co.smsone.shared.deployment.DeploymentIdentity(
+                ug.co.smsone.shared.deployment.DeploymentIdentity.PLATFORM));
+        Cache extracted = l2Of(new ug.co.smsone.shared.deployment.DeploymentIdentity("acme"));
+
+        platform.put(key, "the platform's answer");
+        assertThat(extracted.get(key))
+                .as("the extracted deployment must MISS — a hit here is the platform's cached value"
+                        + " answering another installation's read")
+                .isNull();
+
+        extracted.put(key, "the extracted deployment's answer");
+        assertThat(platform.get(key).get()).isEqualTo("the platform's answer");
+        assertThat(extracted.get(key).get()).isEqualTo("the extracted deployment's answer");
+
+        extracted.evict(key);
+        assertThat(platform.get(key))
+                .as("one deployment's eviction must not clear the other's entry")
+                .isNotNull();
+    }
+
+    /**
+     * The same separation for the invalidation topic. It carries no data, so sharing it could only
+     * over-evict — but a permanent, unattributable hit-rate hole in a deployment where nothing is being
+     * written is exactly the kind of thing nobody ever traces back to a shared Valkey.
+     */
+    @Test
+    void anotherDeploymentsInvalidationBroadcastIsNotHeard() throws Exception {
+        settingService.put("cache.foreign-topic", "original", null);
+        assertThat(settingService.valueOf("cache.foreign-topic")).isEqualTo("original");
+        assertThat(caffeineCacheManager.getCache(SettingService.VALUES_CACHE)
+                .get("cache.foreign-topic")).isNotNull();
+
+        String otherDeploymentsTopic = new ug.co.smsone.shared.deployment.DeploymentIdentity("acme")
+                .valkeyKey(CacheInvalidationBroadcaster.TOPIC);
+        assertThat(otherDeploymentsTopic).isNotEqualTo(broadcaster.topic());
+        redisTemplate.convertAndSend(otherDeploymentsTopic,
+                "some-other-instance\n" + SettingService.VALUES_CACHE + "\ncache.foreign-topic");
+
+        // A negative across a network hop needs a settle: the positive case above completes well inside
+        // five seconds, so a second of quiet is evidence rather than optimism.
+        Thread.sleep(1000);
+        assertThat(caffeineCacheManager.getCache(SettingService.VALUES_CACHE).get("cache.foreign-topic"))
+                .as("this deployment is not subscribed to the other's topic")
+                .isNotNull();
+    }
+
+    /**
+     * One deployment's L2 cache, built through the production {@code @Bean} method so the test cannot
+     * pass by re-implementing the prefix it is checking. {@code afterPropertiesSet} is what a container
+     * would call — without it {@code AbstractCacheManager} is not "dynamic" and hands back null.
+     */
+    private Cache l2Of(ug.co.smsone.shared.deployment.DeploymentIdentity deployment) {
+        org.springframework.data.redis.cache.RedisCacheManager manager =
+                new CacheConfig().redisCacheManager(connectionFactory, cacheProperties, deployment);
+        manager.afterPropertiesSet();
+        return manager.getCache("cache.typeprobe");
     }
 }

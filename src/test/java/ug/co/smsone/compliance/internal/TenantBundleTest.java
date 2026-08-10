@@ -104,10 +104,45 @@ class TenantBundleTest extends AbstractIntegrationTest {
         }
 
         assertThatThrownBy(() -> new TenantBundler.Manifest(UUID.randomUUID(), "tenant_pool",
-                TenantBundler.Mode.REHEARSAL, short_, List.of(), null, List.of(), "x", List.of(),
-                List.of()))
+                TenantBundler.Mode.REHEARSAL, "platform", short_, List.of(), null, List.of(), "x",
+                List.of(), List.of()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("CATALOG_SNAPSHOT");
+    }
+
+    /**
+     * <b>ADR 0010 §6 item 6 has a half that is not a table</b> — "<em>Also fresh: the Valkey
+     * cache/rate-limit key prefixes and the SeaweedFS bucket root</em>" — and it is the one part of the
+     * bundle that cannot be made structural the way the seven tables were, because it lives in the
+     * DESTINATION's configuration and no bundle taken here can reach that.
+     *
+     * <p>So the manifest has to carry the decision, and this pins the two properties that make it a
+     * decision rather than a courtesy: it names the deployment the bundle came OUT of (so the operator
+     * knows the one value they must not reuse) and it never hands over a namespace to paste — a bundle
+     * that printed one would be a bundle whose namespace gets pasted twice, which is the collision it
+     * exists to prevent.
+     */
+    @Test
+    void theBundleCarriesTheFreshInfrastructureDecisionAndNotTheSourcesNamespaces() {
+        UUID orgId = seedTenant("Namespaces");
+
+        TenantBundler.Manifest manifest = bundle(orgId, TenantBundler.Mode.REHEARSAL);
+
+        assertThat(manifest.sourceDeployment())
+                .describedAs("the shipped app.deployment.id, which the destination must NOT reuse")
+                .isEqualTo(ug.co.smsone.shared.deployment.DeploymentIdentity.PLATFORM);
+        assertThat(manifest.freshInfrastructureIdentity())
+                .contains("app.deployment.id")
+                .contains(ug.co.smsone.shared.deployment.DeploymentIdentity.PLATFORM)
+                .describedAs("the failures are silent on both sides, so the manifest names them")
+                .contains("CACHED VALUE")
+                .contains("SoftDeletePurgeJob");
+        assertThat(manifest.parts().stream()
+                .filter(part -> part.part() == BundlePart.FRESH_INFRASTRUCTURE)
+                .map(TenantBundler.PartReport::note).findFirst().orElseThrow())
+                .describedAs("item 6 reports the tables AND the two things that are not tables")
+                .contains("shedlock")
+                .contains("app.deployment.id");
     }
 
     /**

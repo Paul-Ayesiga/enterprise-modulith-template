@@ -53,7 +53,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus,metrics,gatewayroutes,gatewaycatalog,gatewayopenapi,gatewayusage,gatewayblocklist   # route-admin + catalog/OpenAPI + usage + ip-blocklist
+        include: health,info,prometheus,metrics,gatewayroutes,gatewaycatalog,gatewayopenapi,gatewayusage,gatewayblocklist,gatewaytenants   # route-admin + catalog/OpenAPI + usage + ip-blocklist + tenant upstreams
 
 # The route/service catalog (config-driven). Today the gateway fronts one backend — the modulith;
 # add services and routes here as the platform splits into more.
@@ -68,6 +68,13 @@ gateway:
   security:
     jwk-set-uri: ${KEYCLOAK_JWKS:http://localhost:8081/realms/smsone/protocol/openid-connect/certs}
     tenant-claim: ${GATEWAY_TENANT_CLAIM:tenant}
+    # Which claim names the caller's ORGANIZATION — the routing key for a tenant that has its own
+    # deployment (ADR 0010 §7 Phase 8). Distinct from tenant-claim above, which is a flat string
+    # compared against a {tenant} path variable and is a guard, not a router. Keycloak mints this one
+    # as a map keyed by alias — {"acme":{"id":"01H…"}} — and both spellings are accepted as keys under
+    # gateway.tenancy.upstreams; a flat string claim works too. It is the same claim the modulith's
+    # CurrentUserProvider resolves a tenant from, so the two ends agree on what "the organization" is.
+    organization-claim: ${GATEWAY_ORG_CLAIM:organization}
     # Front-door deny-list, checked before ANY other policy (auth, quotas, routing). Entries here are
     # durable; runtime additions via the gatewayblocklist admin endpoint last until restart.
     # trusted-proxy-hops: 0 = gateway hit directly (X-Forwarded-For is client-writable and IGNORED);
@@ -186,6 +193,43 @@ gateway:
     platform:
       name: Platform (catch-all)
       description: Any /api/v1 path not yet grouped into a product still routes to the backend here.
+  # Which organizations are served by a DEPLOYMENT of their own (ADR 0010 §7 Phase 8). Empty here, and
+  # empty is the whole platform today: with no entry a tenant routes to the shared modulith exactly as
+  # it always has, so this block is a no-op until somebody moves a tenant.
+  #
+  # An entry maps an organization — spelled as the caller's token spells it, i.e. the alias key or the
+  # id inside the `organization` claim, or the organization id an API key introspects to — onto an id
+  # in `gateway.services` below. List every spelling that tenant can arrive as; they must agree on one
+  # service, because two spellings pointing at two deployments is a coin flip the edge refuses to take.
+  #
+  # This is configuration and NOT a lookup against platform.tenant_placement, deliberately: see the
+  # class note on TenantUpstreamProperties. Short version — the edge may not hold a business database
+  # (ADR 0007), the table is keyed on an organization.id the edge cannot derive from a claim, and a
+  # live lookup would make the platform a single point of failure for the one tenant that is paying to
+  # not have one. The cost is that a cutover is a gateway config change; the runbook order that makes
+  # that safe is: add the service + the entry here and roll the gateway FIRST, flip
+  # platform.tenant_placement LAST.
+  #
+  # A tenant whose upstream is missing or unreachable is refused 503 + Retry-After — it is NEVER served
+  # by the shared deployment, whose database no longer holds its rows. That refusal is per tenant: a
+  # broken entry cannot take the edge down for anybody else.
+  #
+  #   tenancy:
+  #     upstreams:
+  #       acme: modulith-acme
+  #       "01H8XV…": modulith-acme
+  #   services:
+  #     - id: modulith-acme
+  #       uri: https://acme.internal:8080
+  #       health-path: /actuator/health
+  #
+  # `upstreams` is OMITTED here rather than written as an empty map, and it must stay omitted while it is
+  # empty. SnakeYAML turns both `upstreams: {}` and a bare `upstreams:` into the SCALAR property
+  # gateway.tenancy.upstreams="", and the binder has no String → Map converter — so the gateway fails to
+  # start, with a ConverterNotFoundException that says nothing about tenancy. Absent binds to an empty
+  # map, which is what "no tenant has its own deployment" means. ShippedRouteTableTest pins this.
+  tenancy:
+    retry-after: ${GATEWAY_TENANT_RETRY_AFTER:PT30S}
   services:
     - id: modulith
       uri: ${MODULITH_URI:http://localhost:8080}

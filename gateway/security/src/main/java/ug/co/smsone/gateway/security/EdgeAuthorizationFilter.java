@@ -34,6 +34,7 @@ import ug.co.smsone.gateway.core.route.RouteDefinition;
 import ug.co.smsone.gateway.core.route.RouteSource;
 import ug.co.smsone.gateway.core.security.ApiKeyIntrospector;
 import ug.co.smsone.gateway.core.security.AuthPolicy;
+import ug.co.smsone.gateway.core.security.EdgeOrganization;
 import ug.co.smsone.gateway.core.security.EdgePrincipal;
 import ug.co.smsone.gateway.core.web.GatewayAttributes;
 
@@ -46,6 +47,12 @@ import ug.co.smsone.gateway.core.web.GatewayAttributes;
  * success the subject + tenant are stamped downstream ({@code X-Auth-Subject}, {@code X-Tenant-Id})
  * and the credential is forwarded — services keep their own fine-grained checks. Runs before the
  * routing/proxy filter, so a denial never reaches a backend.
+ *
+ * <p>It is also where the caller's {@link EdgeOrganization} is resolved onto the exchange, because this
+ * is the only stage holding BOTH the validated JWT and the introspected key principal. Writing it here
+ * rather than re-reading the credential later is what makes "an unauthenticated route names no
+ * organization" structural instead of a list somebody maintains — see
+ * {@code GatewayAttributes.organization}.
  */
 @Component
 public class EdgeAuthorizationFilter implements GlobalFilter, Ordered, ApplicationListener<RefreshRoutesEvent> {
@@ -58,6 +65,7 @@ public class EdgeAuthorizationFilter implements GlobalFilter, Ordered, Applicati
     private final RouteSource routeSource;
     private volatile Map<String, CompiledPolicy> policies;
     private final String tenantClaim;
+    private final String organizationClaim;
     private final ApiKeyIntrospector introspector;
     private final List<SecurityProperties.InternalToken> internalTokens;
     private final MeterRegistry meterRegistry;
@@ -68,6 +76,7 @@ public class EdgeAuthorizationFilter implements GlobalFilter, Ordered, Applicati
             ObjectProvider<AuditSink> auditSink) {
         this.routeSource = routeSource;
         this.tenantClaim = properties.tenantClaim();
+        this.organizationClaim = properties.organizationClaim();
         this.introspector = introspector.getIfAvailable();
         this.internalTokens = properties.internalTokens();
         this.meterRegistry = meterRegistry.getIfAvailable();
@@ -131,12 +140,16 @@ public class EdgeAuthorizationFilter implements GlobalFilter, Ordered, Applicati
             apiKey = bearerApiKey(exchange); // Bearer sk_… — the only spelling remote MCP clients have
         }
         if (apiKey != null && !apiKey.isBlank() && introspector != null) {
-            return introspector.introspect(apiKey);
+            // A key carries no organization claim — introspection answers with the platform's own
+            // organization id, which is the only spelling this credential has (ADR 0010 Phase 8).
+            return introspector.introspect(apiKey)
+                    .doOnNext(principal -> GatewayAttributes.putOrganization(exchange,
+                            new EdgeOrganization(null, principal.tenant())));
         }
         return exchange.getPrincipal()
                 .filter(JwtAuthenticationToken.class::isInstance)
                 .cast(JwtAuthenticationToken.class)
-                .map(token -> fromJwt(token.getToken()));
+                .map(token -> fromJwt(exchange, token.getToken()));
     }
 
     /** A trusted service token → a service principal (constant-time match); empty if none matches. */
@@ -171,8 +184,37 @@ public class EdgeAuthorizationFilter implements GlobalFilter, Ordered, Applicati
         return chain.filter(stamp(exchange, principal));
     }
 
-    private EdgePrincipal fromJwt(Jwt jwt) {
+    private EdgePrincipal fromJwt(ServerWebExchange exchange, Jwt jwt) {
+        GatewayAttributes.putOrganization(exchange, organizationOf(jwt));
         return new EdgePrincipal(jwt.getSubject(), jwt.getClaimAsString(tenantClaim), scopesOf(jwt), false);
+    }
+
+    /**
+     * The organization this token names, or {@link EdgeOrganization#NONE}. Keycloak mints the claim as
+     * a MAP keyed by alias — {@code {"acme":{"id":"01H…"}}} — and a flat string spelling is accepted
+     * too, because a second IdP (or a claim mapper) may produce one and this is the only place that
+     * would need to know.
+     *
+     * <p><b>A claim naming zero or several organizations names none</b>, deliberately, and the platform
+     * decides the same way ({@code CurrentUserProvider} takes an organization only from a claim of size
+     * one). A person seated in three tenants holds one token for all three: picking the first entry
+     * would route two of those tenants to a deployment that does not hold their rows, which is the
+     * misroute ADR 0011 §2.4 calls the worst failure available. Falling back to the shared upstream is
+     * the correct answer for a caller the edge cannot place.
+     */
+    private EdgeOrganization organizationOf(Jwt jwt) {
+        Object claim = jwt.getClaim(organizationClaim);
+        if (claim instanceof String flat) {
+            return new EdgeOrganization(null, flat);
+        }
+        if (!(claim instanceof Map<?, ?> map) || map.size() != 1) {
+            return EdgeOrganization.NONE;
+        }
+        Map.Entry<?, ?> entry = map.entrySet().iterator().next();
+        String alias = entry.getKey() instanceof String key ? key : null;
+        String id = entry.getValue() instanceof Map<?, ?> value && value.get("id") instanceof String claimed
+                ? claimed : null;
+        return new EdgeOrganization(alias, id);
     }
 
     private CompiledPolicy policyFor(ServerWebExchange exchange) {

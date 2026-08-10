@@ -49,11 +49,19 @@ class S3StorageProvider implements FileStorageProvider {
     private final S3Client s3;
     private final S3Presigner presigner;
     private final StorageProperties properties;
+    /**
+     * Not {@code properties.bucket()} — see {@link DeploymentBucket}. Two deployments hold byte-
+     * identical object keys after an extraction (ADR 0010 §2.2 keeps {@code organization.id}), so the
+     * bucket is the only thing that separates them and every request here has to name this one.
+     */
+    private final DeploymentBucket bucket;
 
-    S3StorageProvider(S3Client s3, S3Presigner presigner, StorageProperties properties) {
+    S3StorageProvider(S3Client s3, S3Presigner presigner, StorageProperties properties,
+            DeploymentBucket bucket) {
         this.s3 = s3;
         this.presigner = presigner;
         this.properties = properties;
+        this.bucket = bucket;
     }
 
     // The breaker guards REMOTE calls only — presigning is local crypto and must not
@@ -64,7 +72,7 @@ class S3StorageProvider implements FileStorageProvider {
     public void put(String key, InputStream content, long contentLength, String contentType) {
         try {
             s3.putObject(PutObjectRequest.builder()
-                            .bucket(properties.bucket())
+                            .bucket(bucket.name())
                             .key(key)
                             .contentType(contentType)
                             .build(),
@@ -80,7 +88,7 @@ class S3StorageProvider implements FileStorageProvider {
         String uploadId = null;
         try {
             uploadId = s3.createMultipartUpload(CreateMultipartUploadRequest.builder()
-                    .bucket(properties.bucket())
+                    .bucket(bucket.name())
                     .key(key)
                     .contentType(contentType)
                     .build()).uploadId();
@@ -91,7 +99,7 @@ class S3StorageProvider implements FileStorageProvider {
             while ((read = readFully(content, buffer)) > 0) {
                 byte[] chunk = read == buffer.length ? buffer : java.util.Arrays.copyOf(buffer, read);
                 String etag = s3.uploadPart(UploadPartRequest.builder()
-                                .bucket(properties.bucket())
+                                .bucket(bucket.name())
                                 .key(key)
                                 .uploadId(uploadId)
                                 .partNumber(partNumber)
@@ -101,7 +109,7 @@ class S3StorageProvider implements FileStorageProvider {
                 partNumber++;
             }
             s3.completeMultipartUpload(CompleteMultipartUploadRequest.builder()
-                    .bucket(properties.bucket())
+                    .bucket(bucket.name())
                     .key(key)
                     .uploadId(uploadId)
                     .multipartUpload(CompletedMultipartUpload.builder().parts(parts).build())
@@ -120,7 +128,7 @@ class S3StorageProvider implements FileStorageProvider {
         }
         try {
             ListObjectsV2Request.Builder request = ListObjectsV2Request.builder()
-                    .bucket(properties.bucket())
+                    .bucket(bucket.name())
                     .prefix(prefix)
                     .maxKeys(maxKeys);
             if (startAfter != null && !startAfter.isBlank()) {
@@ -145,7 +153,7 @@ class S3StorageProvider implements FileStorageProvider {
             // head-then-get would be two — and two would also be a lie, since the object could change
             // between them and the copy would be written with the previous version's metadata.
             ResponseInputStream<GetObjectResponse> stream = s3.getObject(GetObjectRequest.builder()
-                    .bucket(properties.bucket())
+                    .bucket(bucket.name())
                     .key(key)
                     .build());
             GetObjectResponse metadata = stream.response();
@@ -183,7 +191,7 @@ class S3StorageProvider implements FileStorageProvider {
         }
         try {
             s3.abortMultipartUpload(AbortMultipartUploadRequest.builder()
-                    .bucket(properties.bucket())
+                    .bucket(bucket.name())
                     .key(key)
                     .uploadId(uploadId)
                     .build());
@@ -198,7 +206,7 @@ class S3StorageProvider implements FileStorageProvider {
     public InputStream get(String key) {
         try {
             return s3.getObject(GetObjectRequest.builder()
-                    .bucket(properties.bucket())
+                    .bucket(bucket.name())
                     .key(key)
                     .build());
         } catch (NoSuchKeyException e) {
@@ -213,7 +221,7 @@ class S3StorageProvider implements FileStorageProvider {
     @CircuitBreaker(name = "storage")
     public boolean exists(String key) {
         try {
-            s3.headObject(HeadObjectRequest.builder().bucket(properties.bucket()).key(key).build());
+            s3.headObject(HeadObjectRequest.builder().bucket(bucket.name()).key(key).build());
             return true;
         } catch (NoSuchKeyException e) {
             return false;
@@ -229,7 +237,7 @@ class S3StorageProvider implements FileStorageProvider {
     @CircuitBreaker(name = "storage")
     public void delete(String key) {
         try {
-            s3.deleteObject(DeleteObjectRequest.builder().bucket(properties.bucket()).key(key).build());
+            s3.deleteObject(DeleteObjectRequest.builder().bucket(bucket.name()).key(key).build());
         } catch (S3Exception e) {
             // the port's contract: SDK types never cross the module boundary (AGENTS §2.3)
             throw new FileStorageException("delete failed for key " + key, e);
@@ -241,7 +249,7 @@ class S3StorageProvider implements FileStorageProvider {
         return presigner.presignGetObject(GetObjectPresignRequest.builder()
                 .signatureDuration(ttl)
                 .getObjectRequest(GetObjectRequest.builder()
-                        .bucket(properties.bucket())
+                        .bucket(bucket.name())
                         .key(key)
                         .build())
                 .build()).url();
@@ -252,7 +260,7 @@ class S3StorageProvider implements FileStorageProvider {
         return presigner.presignPutObject(PutObjectPresignRequest.builder()
                 .signatureDuration(ttl)
                 .putObjectRequest(PutObjectRequest.builder()
-                        .bucket(properties.bucket())
+                        .bucket(bucket.name())
                         .key(key)
                         .contentType(contentType)
                         .build())

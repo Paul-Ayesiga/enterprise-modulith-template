@@ -30,7 +30,7 @@ who would ever have known the difference.
 | 3 | Person projection | id, names, status and one **unverified** display contact, for every `person_id` the bundle references anywhere |
 | 4 | Catalogue snapshot | `plan`, `plan_entitlement`, `sla_policy`, `translation`, `setting`, `feature_flag`, whole, **ids included** |
 | 5 | `impersonation_session` | the org's rows, so its audit entries can resolve their stated reason |
-| 6 | `event_publication`, `event_inbox`, `idempotency_key`, `shedlock`, `queue_signal`, `tenant_freeze`, `tenant_cutover` | **nothing.** The bundler has no SQL that could read them |
+| 6 | `event_publication`, `event_inbox`, `idempotency_key`, `shedlock`, `queue_signal`, `tenant_freeze`, `tenant_cutover` — **and the Valkey namespace and the object bucket**, which are not tables | **nothing.** The bundler has no SQL that could read the tables; the two non-tables are the destination's own `app.deployment.id` and are carried as a decision, not a value — see *The deployment identity* below |
 | 7 | Object store | **not produced here** — see below |
 | 8 | `api_key` | REHEARSAL counts them; CUTOVER revokes them and reserves their prefixes forever |
 | 9 | Identity provider | a recorded decision: federate to the platform issuer. `external_identity` is rewritten, never copied |
@@ -170,6 +170,99 @@ values ('<orgId>', '<the schema you restored into>', 'primary', 'ACTIVE', now())
 *behind*, `TenantSchemaFloor` serves an unknown version rather than 503ing it, and the destination's
 own migration runner fills it in on its next pass. Copying the source's version would be recording a
 fact about another installation's schema.
+
+### The deployment identity, which is item 6's half that is not a table
+
+ADR §6 item 6 lists four tables that must arrive fresh and then adds one sentence more: *"Also fresh:
+the Valkey cache/rate-limit key prefixes and the SeaweedFS bucket root."* The tables are handled
+structurally — `TenantBundlePlan` gives them a disposition that carries no rows and there is no SQL in
+the package that could ask for them. **These two cannot be**, because they are not in the source
+database at all: they are the destination's configuration, and nothing taken here can reach it.
+
+So set it yourself, before the first boot:
+
+```
+DEPLOYMENT_ID=<something that is not the source's>     # app.deployment.id
+```
+
+One lowercase segment (`^[a-z][a-z0-9-]{0,30}$`); a bad value fails startup naming itself. That one
+value moves **both** namespaces together:
+
+| | the source (`platform`) | a deployment named `acme` |
+|---|---|---|
+| Valkey cache keys | `smsone:cache:…` | `dep:acme:smsone:cache:…` |
+| Cache invalidation topic | `smsone:cache:invalidations` | `dep:acme:smsone:cache:invalidations` |
+| Rate-limit buckets | `rl:…`, `notif:rate:…` | `dep:acme:rl:…`, `dep:acme:notif:rate:…` |
+| Object bucket | `${S3_BUCKET}` | `${S3_BUCKET}-dep-acme` |
+
+`platform` is **reserved** and is the source's: its keys and its bucket are byte-for-byte what the
+platform already writes, because renaming either would orphan every object already stored and split a
+rolling deploy's cache in two. Everything else namespaces both. The emitted script prints the source's
+id in its manifest and tells you not to reuse it; it deliberately does **not** print a value to paste,
+because a namespace handed over in a file is a namespace that gets pasted twice.
+
+**If you leave it at the source's, nothing fails and four things go wrong**, all of them silent on both
+sides:
+
+- the source's eviction clears the destination's cache entry, and the source's **cached value answers
+  the destination's read** — for `org-permissions` that is an authorization decision computed against a
+  database this deployment has never seen;
+- one tenant's rate-limit bucket is spent by two deployments, so each throttles the tenant for traffic
+  the other served;
+- the two share the cache invalidation topic, so each deployment's writes drop the other's L1 entries
+  forever;
+- the source's `SoftDeletePurgeJob` **deletes objects the destination is serving.** This is the one that
+  is guaranteed rather than possible: `organization.id` does not change on extraction (§2.2) and
+  `document.storage_key` travels verbatim, so both deployments hold byte-identical object keys — that is
+  precisely what makes the restore a copy instead of a column rewrite. Nothing inside a key can separate
+  them; only the bucket can.
+
+Only relevant if the two share infrastructure — a destination with its own Valkey and its own S3
+endpoint collides with nobody. Set it anyway: sharing is the case you find out about afterwards.
+
+### Pointing traffic at it, which the gateway does and this table does not
+
+`platform.tenant_placement` tells the *modulith* which schema an organization lives in. It says nothing
+about which **deployment** a request reaches — that is `gateway.tenancy.upstreams` in the gateway's own
+configuration, and the two are edited in different repositories at different times. The order is fixed
+and it is not arbitrary:
+
+1. register the destination as a `gateway.services` entry and add the organization's keys to
+   `gateway.tenancy.upstreams`, then roll the gateway;
+2. confirm the tenant's traffic is actually arriving there (below);
+3. **only then** flip `platform.tenant_placement` on the source.
+
+Backwards, and the window between the two changes points callers at a database that no longer holds
+their rows. In the correct order the window is harmless: routing already leads to the new deployment
+while the old one still has everything.
+
+**Take the key from a token, not from this table.** Three id-spaces can name one organization and only
+two of them ever reach the edge:
+
+| where the gateway sees it | the spelling | comes from |
+|---|---|---|
+| JWT `organization` claim key | the Keycloak **alias** (`acme`) | the token, always present |
+| JWT `organization` claim `id` | the Keycloak **provider id** | the token, always present |
+| API key | the platform **`organization.id`** | introspection |
+
+`tenant_placement.org_id` is that third one. It is also the only spelling written down anywhere on the
+platform side, which makes it the one that gets pasted into `gateway.tenancy.upstreams` — and then every
+JWT caller for that tenant matches **neither** configured key, falls through to the shared deployment,
+and is served an organization with no members out of a database that no longer holds it. Nothing logs,
+because nothing is malfunctioning. Configure **both** token spellings; add the API-key one too if the
+tenant uses keys.
+
+That is why step 2 is a gate rather than a glance:
+
+```
+GET :29090/actuator/gatewaytenants
+```
+
+Each configured key reports `resolved` (does the upstream exist) **and** `matches` / `lastMatched` (has
+any real credential ever carried this spelling). `resolved: true, matches: 0` on a tenant whose users are
+signing in is a **wrong key**, not a quiet tenant — and it is the only signal that separates the two. The
+gateway also logs `tenant_upstream_first_match` once per key. Do not flip the placement row until the
+tenant's key has a non-zero count.
 
 ### After the restore, before serving anybody
 

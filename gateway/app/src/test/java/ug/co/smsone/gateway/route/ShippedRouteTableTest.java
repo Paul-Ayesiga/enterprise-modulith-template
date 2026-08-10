@@ -159,6 +159,31 @@ class ShippedRouteTableTest {
                 .orElseThrow(() -> new AssertionError("no shipped route matches " + path));
     }
 
+    /**
+     * The shipped {@code gateway.tenancy} block must BIND, and this exists because the obvious way to
+     * write "no tenant has its own deployment yet" does not.
+     *
+     * <p>SnakeYAML turns both {@code upstreams: {}} and a bare {@code upstreams:} into the SCALAR
+     * property {@code gateway.tenancy.upstreams=""}, and the binder has no String → Map converter — so
+     * the gateway fails to START, on every deployment, with a {@code ConverterNotFoundException} that
+     * names a type and not the block that produced it. Omitting the key binds to an empty map, which is
+     * the state we actually ship. Nothing else in the suite would notice: every other test binds the
+     * test-resources copy, which has real entries.
+     */
+    @Test
+    void theShippedTenantPlacementBlockBindsAndPlacesNobody() {
+        TenantUpstreamProperties tenancy = Binder.get(ENV)
+                .bind("gateway.tenancy", TenantUpstreamProperties.class)
+                .orElseGet(() -> new TenantUpstreamProperties(null, null));
+
+        assertThat(tenancy.upstreams())
+                .as("silo-per-org is the DEFAULT placement; a dedicated DEPLOYMENT is opt-in and nobody has opted in")
+                .isEmpty();
+        assertThat(tenancy.retryAfterSeconds())
+                .as("a per-tenant refusal must carry a real Retry-After, not zero")
+                .isPositive();
+    }
+
     /** Loads the shipped application.yml into an Environment — deliberately NOT the test resources copy. */
     private static StandardEnvironment shippedEnvironment() {
         // Gradle runs tests with the module as the working directory; tolerate a repo-root runner too.

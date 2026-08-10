@@ -105,6 +105,63 @@ gateway:
         scopes: [reports]
 ```
 
+## Routing a tenant to its own deployment (`gateway.tenancy.*`, ADR 0010 Phase 8)
+
+Everything above routes by PATH to one upstream. An organization that has been moved onto a deployment
+of its own is routed to it by the caller's **organization claim** instead — the claim the modulith's
+`CurrentUserProvider` resolves a tenant from. Keycloak mints it as a map keyed by alias
+(`{"acme":{"id":"01H…"}}`), so both the alias and the id inside it are accepted keys; an API key is
+keyed by the organization its introspection answers.
+
+```yaml
+gateway:
+  security:
+    organization-claim: organization    # NOT tenant-claim — that one guards a {tenant} path segment
+  tenancy:
+    upstreams:
+      acme: modulith-acme               # organization name -> a gateway.services id
+      "01H8XV…": modulith-acme          # the same tenant's other spelling, same deployment
+    retry-after: PT30S
+  services:
+    - id: modulith-acme
+      uri: https://acme.internal:8080
+      health-path: /actuator/health
+```
+
+**No entry means the shared modulith**, which is every tenant today — the block is a no-op until
+somebody moves one. An unauthenticated route (signup, the payment IPNs, the Kill Bill hook) names no
+organization at all and is untouched by construction.
+
+**Take the key from a token, never from `platform.tenant_placement`.** Three id-spaces can name one
+organization and only two of them reach the edge: a JWT carries the Keycloak **alias** and the
+**provider id** inside its claim, an API key introspects to the **platform `organization.id`**.
+`tenant_placement` is keyed on that last one — and since it is the only spelling written down anywhere,
+it is the one that gets copied here by mistake, at which point every JWT caller for that tenant matches
+nothing and is served by the shared deployment. That is the one failure in this block that is silent, so
+`gatewaytenants` counts the callers each key matches and the first match logs once. Configure **both**
+spellings a token can carry, and treat `matches: 0` on a live tenant as a wrong key, not a quiet tenant.
+
+**Why configuration and not a lookup against `platform.tenant_placement`:** the edge may hold no
+business database (ADR 0007), that table is keyed on an `organization.id` the edge cannot derive from a
+claim, and a live lookup would make the platform a single point of failure for the one tenant paying
+not to have one. The cost is that a cutover is a gateway config change — so the runbook order is **add
+the service and the entry here, roll the gateway, THEN flip `platform.tenant_placement`**.
+
+**A broken placement refuses; it never falls back.** An upstream that no `gateway.services` entry
+registers, or one that refuses the connection, answers `503` + `Retry-After` **for that organization
+only** — falling through to the shared deployment would serve a tenant from a database that no longer
+holds its rows. A slow upstream still answers 504: unreachable is a connection answer, never a data
+answer (ADR 0011 §2.2). Watch the live table during a cutover at `/actuator/gatewaytenants`; metrics
+are `gateway.tenant.routed{upstream}` and `gateway.tenant.refusals{reason}`.
+
+**A route's circuit breaker does not follow a tenant off that route.** `circuit-breaker: true` names its
+breaker per ROUTE, and the retarget deliberately keeps the route id — so without this, one dead tenant
+deployment would trip the circuit every *other* tenant on that path shares, and the breaker's fallback
+would swallow the per-tenant refusal into a bare 503 with no `Retry-After` and no log line. A re-targeted
+request therefore skips it (`TenantAwareCircuitBreaker`) and gets the refusal instead; the route's
+`response-timeout` still applies. Shared traffic is unchanged, and while `upstreams` is empty the
+wrapper is not built at all.
+
 ## Phase 1 (shipped)
 
 Config-driven routing to a backend by any predicate kind; a `NO_ROUTE` 404 envelope for no match;

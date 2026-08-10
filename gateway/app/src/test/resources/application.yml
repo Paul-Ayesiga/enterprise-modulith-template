@@ -19,7 +19,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus,metrics,gatewayroutes,gatewaycatalog,gatewayopenapi,gatewayusage,gatewayblocklist
+        include: health,info,prometheus,metrics,gatewayroutes,gatewaycatalog,gatewayopenapi,gatewayusage,gatewayblocklist,gatewaytenants
 
 # One backend stub (its uri + the JWKS uri are set per-run to the test server's random port), plus
 # routes for the predicate tests (Phase 1) and the auth-policy tests (Phase 2).
@@ -30,6 +30,7 @@ gateway:
   security:
     jwk-set-uri: "${jwks.uri:http://localhost:1/jwks}"   # SecurityTest points this at the stub's JWKS
     tenant-claim: tenant
+    organization-claim: organization                     # TenantUpstreamTest routes on this one
     # Auto-blocking OFF in the shared test baseline — the abuse guard would otherwise trip on the
     # many deliberate 401/403s the auth tests fire. AutoBlockTest opts back in with its own Valkey.
     blocklist:
@@ -63,6 +64,20 @@ gateway:
     sms-api:
       name: SMS API
       description: Send and manage messages
+  # Phase 8 — organizations with a deployment of their own. Deliberately inert for every other test in
+  # this module: none of these keys can be produced by a token or an introspection stub except in
+  # TenantUpstreamTest, and a route only leaves the shared backend when a claim matches one of them.
+  # (ApiKeyAuthTest introspects to tenant "acme", which is why no key here is spelled "acme".)
+  tenancy:
+    upstreams:
+      tenant-alias: tenant-backend            # healthy dedicated deployment, reached by the claim's ALIAS
+      "org-11111111": tenant-backend          # …and by the id the same claim carries — one deployment
+      org-key-tenant: tenant-backend          # the organization an API key introspects to
+      unreachable-alias: unreachable-backend  # registered, but nothing is listening there
+      ghost-alias: no-such-service            # no gateway.services entry registers this id
+      split-alias: tenant-backend             # its own id spelling disagrees (below) → refused
+      "org-22222222": unreachable-backend
+    retry-after: PT7S                         # distinctive, so the Retry-After header is provably ours
   services:
     - id: backend
       uri: "${backend.uri:http://localhost:1}"
@@ -71,6 +86,12 @@ gateway:
       instances:
         - "${lb.a.uri:http://localhost:1}"
         - "${lb.b.uri:http://localhost:1}"
+      health-path: /health
+    - id: tenant-backend                      # a tenant's own deployment; only TenantUpstreamTest starts it
+      uri: "${tenant.uri:http://localhost:1}"
+      health-path: /health
+    - id: unreachable-backend                 # deliberately never started — port 1 refuses the connection
+      uri: "http://localhost:1"
       health-path: /health
   routes:
     - id: by-path
@@ -292,3 +313,13 @@ gateway:
       policy-ref: must-auth
       auth:
         authenticated: false
+    - id: cb-tenant-route                     # authenticated AND circuit-broken — the Phase 8 collision:
+      order: 34                               # the only route shape where a tenant can be re-targeted OFF
+      service-id: backend                     # a route whose breaker is named for the shared service.
+      predicates:
+        - kind: PATH
+          args: [/cbtenant/**]
+      auth:
+        authenticated: true
+      traffic:
+        circuit-breaker: true

@@ -7,6 +7,7 @@
 
 * `u.c.s.s.cache.CacheProperties`
 * `u.c.s.s.cache.IdentityStaleProperties`
+* `u.c.s.s.deployment.DeploymentIdentity`
 * `u.c.s.s.idempotency.IdempotencyProperties`
 * `u.c.s.s.keycloak.KeycloakAdminProperties`
 * `u.c.s.s.persistence.SoftDeleteProperties`

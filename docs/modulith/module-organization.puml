@@ -27,16 +27,16 @@ System_Boundary("Application_boundary", "Application", $tags="") {
 
 }
 
-Rel(Application.Application.Subscription, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
-Rel(Application.Application.Exchange, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
-Rel(Application.Application.Exchange, Application.Application.Subscription, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Identity, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Organization, Application.Application.Access, "depends on", $techn="", $tags="", $link="")
 Rel(Application.Application.Organization, Application.Application.Exchange, "depends on", $techn="", $tags="", $link="")
 Rel(Application.Application.Organization, Application.Application.Identity, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Organization, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Organization, Application.Application.Subscription, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Subscription, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Access, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
-Rel(Application.Application.Identity, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Exchange, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
+Rel(Application.Application.Exchange, Application.Application.Subscription, "uses", $techn="", $tags="", $link="")
 
 SHOW_LEGEND(true)
 hide stereotypes

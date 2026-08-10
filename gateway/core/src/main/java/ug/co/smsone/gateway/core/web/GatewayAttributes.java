@@ -1,6 +1,7 @@
 package ug.co.smsone.gateway.core.web;
 
 import org.springframework.web.server.ServerWebExchange;
+import ug.co.smsone.gateway.core.security.EdgeOrganization;
 import ug.co.smsone.gateway.core.security.EdgePrincipal;
 
 /**
@@ -16,8 +17,27 @@ public final class GatewayAttributes {
     public static final String TRACE_ID = "gw.traceId";
     public static final String TENANT = "gw.tenant";
     public static final String PRINCIPAL = "gw.principal";
+    public static final String ORGANIZATION = "gw.organization";
 
     private GatewayAttributes() {
+    }
+
+    /**
+     * The organization the authenticated credential names, or {@link EdgeOrganization#NONE}.
+     *
+     * <p><b>Never null, and never populated on a route the edge does not authenticate.</b> The
+     * authorization filter writes this only after it has resolved and accepted a credential, so a
+     * public route ({@code /api/v1/signup}, the payment IPNs) reads {@code NONE} here by construction
+     * rather than by an exclusion list somebody has to maintain. Anything routing on the organization
+     * therefore leaves those paths exactly where they were.
+     */
+    public static EdgeOrganization organization(ServerWebExchange exchange) {
+        Object organization = exchange.getAttributes().get(ORGANIZATION);
+        return organization == null ? EdgeOrganization.NONE : (EdgeOrganization) organization;
+    }
+
+    public static void putOrganization(ServerWebExchange exchange, EdgeOrganization organization) {
+        exchange.getAttributes().put(ORGANIZATION, organization == null ? EdgeOrganization.NONE : organization);
     }
 
     public static EdgePrincipal principal(ServerWebExchange exchange) {

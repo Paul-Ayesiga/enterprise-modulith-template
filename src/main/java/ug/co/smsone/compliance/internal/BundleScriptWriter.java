@@ -134,6 +134,15 @@ final class BundleScriptWriter implements TenantBundler.Sink, AutoCloseable {
                         : "  taken: " + manifest.objectBytes().objects() + " objects, "
                                 + manifest.objectBytes().bytes() + " bytes"));
         write("-- Identity provider (item 9): " + manifest.identityProviderDecision());
+        write("--");
+        // Item 6's non-table half, and the one line in this manifest that is an instruction rather than
+        // a record. It is here — in the file the operator has just run, next to the placement row that
+        // decides whether the tenant is reachable at all — because the two failures rhyme: an unwritten
+        // placement row routes every statement to an empty schema in silence, and a copied deployment
+        // id routes every cache read and every object delete into somebody else's namespace, also in
+        // silence. Neither is visible from inside the restored deployment.
+        write("-- Fresh infrastructure (item 6), the half that is not a table:");
+        write("--   " + manifest.freshInfrastructureIdentity());
         if (!manifest.reservedPrefixes().isEmpty()) {
             write("-- API key prefixes permanently reserved on the platform: "
                     + String.join(", ", manifest.reservedPrefixes()));

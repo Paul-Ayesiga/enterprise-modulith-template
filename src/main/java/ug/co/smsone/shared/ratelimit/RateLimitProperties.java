@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Locale;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.util.AntPathMatcher;
+import ug.co.smsone.shared.deployment.DeploymentIdentity;
 
 /**
  * Rate-limit configuration. Requests to {@code /api/**} are matched against {@code tiers} in order
@@ -26,6 +27,19 @@ public record RateLimitProperties(
     public RateLimitProperties {
         if (keyPrefix == null || keyPrefix.isBlank()) {
             keyPrefix = "rl";
+        }
+        keyPrefix = keyPrefix.trim();
+        // ONE segment, and it may not be the deployment marker (ADR 0010 §6 hop 2→3). A non-platform
+        // deployment's keys all begin `dep:<id>:`, and the platform's begin with this prefix — so the
+        // two namespaces are disjoint exactly while no platform key can start `dep:`. A prefix free to
+        // spell its own separators could: `key-prefix: dep:acme` would put the platform's buckets in
+        // the deployment `acme`'s namespace, silently, and one tenant's quota would be two tenants'.
+        if (keyPrefix.contains(":") || DeploymentIdentity.MARKER.equals(keyPrefix)) {
+            throw new IllegalArgumentException("app.rate-limit.key-prefix '" + keyPrefix + "' must be a"
+                    + " single segment: no ':' and never '" + DeploymentIdentity.MARKER + "', which is"
+                    + " the reserved first segment of an extracted deployment's Valkey namespace. A"
+                    + " prefix that can spell that segment can put this installation's rate-limit"
+                    + " buckets inside another deployment's namespace (ADR 0010 §6 hop 2->3).");
         }
         if (tenantClaim == null || tenantClaim.isBlank()) {
             tenantClaim = "tenant";

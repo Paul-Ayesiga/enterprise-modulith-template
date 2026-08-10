@@ -18,13 +18,22 @@ import org.springframework.data.redis.listener.ChannelTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import tools.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
 import tools.jackson.databind.jsontype.PolymorphicTypeValidator;
+import ug.co.smsone.shared.deployment.DeploymentIdentity;
 
 @Configuration(proxyBeanMethods = false)
 @EnableCaching
 @EnableConfigurationProperties({CacheProperties.class, IdentityStaleProperties.class})
 public class CacheConfig {
 
-    private static final String CACHE_PREFIX = "smsone:cache:";
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(CacheConfig.class);
+
+    /**
+     * The cache subsystem's own Valkey namespace, before the deployment's (ADR 0010 §6 hop 2→3). It is
+     * never used raw: {@link DeploymentIdentity#valkeyKey} is what reaches Valkey, so two deployments
+     * sharing one instance cannot read each other's entries. See {@code DeploymentIdentity} for why a
+     * shared cache namespace is worse than a copied {@code shedlock} row.
+     */
+    static final String CACHE_PREFIX = "smsone:cache:";
 
     /**
      * L2 stores JSON, which is type-free: without type ids a cached {@code Set<String>} reads back as
@@ -54,12 +63,26 @@ public class CacheConfig {
         return manager;
     }
 
+    /**
+     * <b>The deployment's namespace goes on the L2 prefix and nowhere else, and that is deliberate.</b>
+     * L1 is in-process: one JVM is one deployment, so there is no second writer for a Caffeine entry to
+     * collide with. That is exactly the asymmetry {@code TwoLevelCache}'s "both levels, or neither"
+     * rule does NOT have — tenants share a JVM, deployments do not — so scoping L1 by deployment would
+     * lengthen every key to prove something a JVM boundary already proves. Applying it here also means
+     * a cache added tomorrow inherits the namespace by existing, rather than by its author remembering.
+     */
     @Bean
     @ConditionalOnProperty(name = "app.cache.l2-enabled", havingValue = "true", matchIfMissing = true)
-    RedisCacheManager redisCacheManager(RedisConnectionFactory connectionFactory, CacheProperties properties) {
+    RedisCacheManager redisCacheManager(RedisConnectionFactory connectionFactory, CacheProperties properties,
+            DeploymentIdentity deployment) {
+        String prefix = deployment.valkeyKey(CACHE_PREFIX);
+        // Named at INFO on the way up because the far side of an extraction is where this matters and
+        // nobody there can see it any other way: a deployment restored with the platform's identity
+        // reads the platform's cached answers, and every layer above is behaving correctly.
+        log.info("Deployment '{}' caches into Valkey under '{}'", deployment.id(), prefix);
         RedisCacheConfiguration cacheConfiguration = RedisCacheConfiguration.defaultCacheConfig()
                 .entryTtl(properties.l2Ttl())
-                .prefixCacheNameWith(CACHE_PREFIX)
+                .prefixCacheNameWith(prefix)
                 // Jackson 3 JSON values (readable in Valkey, no Serializable/JVM coupling), carrying
                 // the type id needed to reconstruct non-scalar values — see CACHE_TYPE_VALIDATOR.
                 .serializeValuesWith(RedisSerializationContext.SerializationPair.fromSerializer(
@@ -76,8 +99,9 @@ public class CacheConfig {
 
     @Bean
     @ConditionalOnProperty(name = "app.cache.l2-enabled", havingValue = "true", matchIfMissing = true)
-    CacheInvalidationBroadcaster cacheInvalidationBroadcaster(StringRedisTemplate redisTemplate) {
-        return new CacheInvalidationBroadcaster(redisTemplate);
+    CacheInvalidationBroadcaster cacheInvalidationBroadcaster(StringRedisTemplate redisTemplate,
+            DeploymentIdentity deployment) {
+        return new CacheInvalidationBroadcaster(redisTemplate, deployment);
     }
 
     /**
@@ -101,10 +125,16 @@ public class CacheConfig {
                 redisCacheManager.getIfAvailable(), broadcaster.getIfAvailable(), meters);
     }
 
+    /**
+     * Subscribes to THIS deployment's invalidation topic. The topic is namespaced for the same reason
+     * the entries are: a shared topic would have one deployment's cache churn dropping another's L1
+     * entries — over-eviction rather than a wrong answer, but a permanent, unattributable hit-rate hole
+     * in a deployment where nothing is being written.
+     */
     @Bean
     @ConditionalOnProperty(name = "app.cache.l2-enabled", havingValue = "true", matchIfMissing = true)
     RedisMessageListenerContainer cacheInvalidationListenerContainer(RedisConnectionFactory connectionFactory,
-            TwoLevelCacheManager cacheManager) {
+            TwoLevelCacheManager cacheManager, CacheInvalidationBroadcaster broadcaster) {
         RedisMessageListenerContainer container = new RedisMessageListenerContainer();
         container.setConnectionFactory(connectionFactory);
         container.addMessageListener((message, pattern) -> {
@@ -113,7 +143,7 @@ public class CacheConfig {
                 return; // own broadcast — the local caches were already updated synchronously
             }
             cacheManager.evictLocal(parts[1], parts.length == 3 ? parts[2] : null);
-        }, new ChannelTopic(CacheInvalidationBroadcaster.TOPIC));
+        }, new ChannelTopic(broadcaster.topic()));
         return container;
     }
 }

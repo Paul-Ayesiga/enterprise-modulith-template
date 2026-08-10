@@ -29,6 +29,16 @@ import java.util.UUID;
  * <p><b>Adding a root is one line here and nothing else.</b> The extraction reads this list, the
  * registration guard reads this list, and the restore's mirror check reads this list — so a root added
  * here is extracted, refused-when-foreign and restorable the same day.
+ *
+ * <p><b>A key names an organization and never a deployment, and that is deliberate.</b> ADR 0010 §6 hop
+ * 2→3 also requires a fresh object-store root per deployment, and the temptation is to spend a segment
+ * of the key on it. There is none to spend: {@code organization.id} does not change on extraction
+ * (§2.2), {@code document.storage_key} travels in the tenant's dump verbatim, and the restore's whole
+ * correctness argument is that the key it writes back is the key the row already names — which is what
+ * makes {@link #covers} true on the far side without anybody rewriting a column. So after a cutover
+ * both deployments legitimately hold the same key, and nothing inside the key can ever separate them.
+ * The separation lives one level up, in the bucket: {@code files.internal.DeploymentBucket} carries
+ * that decision and the purge-after-cutover failure it prevents.
  */
 public final class OrgObjectPrefixes {
 

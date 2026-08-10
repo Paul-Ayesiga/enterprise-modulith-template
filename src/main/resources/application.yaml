@@ -180,6 +180,26 @@ server:
       enabled: false
 
 app:
+  # WHICH DEPLOYMENT THIS IS, and therefore which shared infrastructure it owns (ADR 0010 §6 hop 2->3:
+  # "Also fresh: the Valkey cache/rate-limit key prefixes and the SeaweedFS bucket root").
+  #
+  # `platform` is RESERVED and is the deployment that was here first: its Valkey keys and its object
+  # bucket are byte-for-byte what this system already writes, because renaming either would orphan
+  # every object in the bucket and split a rolling deploy's cache in two. Every OTHER value namespaces
+  # both — Valkey keys become `dep:<id>:…`, the bucket becomes `<app.storage.bucket>-dep-<id>` — which
+  # is what an extracted deployment needs and what it must NOT inherit from the deployment it left.
+  #
+  # Sharing this value between two deployments is the cache and object-store equivalent of a copied
+  # `shedlock` row, and it is quieter: the source's eviction clears the destination's entry, the
+  # source's CACHED VALUE answers the destination's read, and the source's soft-delete purge deletes
+  # objects the destination is serving — the last one because both sides hold byte-identical object
+  # keys ON PURPOSE (§2.2 keeps organization.id across an extraction, so document.storage_key travels
+  # verbatim; the separation therefore has to be the bucket, never a segment of the key).
+  #
+  # One lowercase segment, ^[a-z][a-z0-9-]{0,30}$ — no ':' (the Valkey separator) and no '_' or
+  # uppercase (S3 bucket names forbid both). A bad value fails startup, naming itself.
+  deployment:
+    id: ${DEPLOYMENT_ID:platform}
   # The single shared secret the API gateway presents on every internal seam (introspection, audit,
   # quota). Must match the gateway's gateway.platform.secret. ALWAYS override in production.
   gateway:

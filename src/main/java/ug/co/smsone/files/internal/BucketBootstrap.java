@@ -11,7 +11,13 @@ import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
 import software.amazon.awssdk.services.s3.model.NoSuchBucketException;
 import ug.co.smsone.shared.tenancy.TenantContext;
 
-/** Idempotently creates the configured bucket at startup (disable via app.storage.bootstrap-bucket). */
+/**
+ * Idempotently creates THIS DEPLOYMENT's bucket at startup (disable via app.storage.bootstrap-bucket).
+ *
+ * <p>The bucket it creates is {@link DeploymentBucket}'s, never {@code StorageProperties.bucket()} —
+ * which is what makes an extracted deployment's first boot produce its own container rather than
+ * finding the platform's already there and quietly writing into it (ADR 0010 §6 hop 2→3).
+ */
 @Component
 class BucketBootstrap implements ApplicationRunner {
 
@@ -19,10 +25,12 @@ class BucketBootstrap implements ApplicationRunner {
 
     private final S3Client s3;
     private final StorageProperties properties;
+    private final DeploymentBucket bucket;
 
-    BucketBootstrap(S3Client s3, StorageProperties properties) {
+    BucketBootstrap(S3Client s3, StorageProperties properties, DeploymentBucket bucket) {
         this.s3 = s3;
         this.properties = properties;
+        this.bucket = bucket;
     }
 
     @Override
@@ -35,10 +43,10 @@ class BucketBootstrap implements ApplicationRunner {
         // "a background entry point states its axis" rather than "…unless someone judged it unnecessary".
         TenantContext.runAsPlatform(() -> {
             try {
-                s3.headBucket(HeadBucketRequest.builder().bucket(properties.bucket()).build());
+                s3.headBucket(HeadBucketRequest.builder().bucket(bucket.name()).build());
             } catch (NoSuchBucketException e) {
-                s3.createBucket(CreateBucketRequest.builder().bucket(properties.bucket()).build());
-                log.info("Created storage bucket '{}'", properties.bucket());
+                s3.createBucket(CreateBucketRequest.builder().bucket(bucket.name()).build());
+                log.info("Created storage bucket '{}'", bucket.name());
             }
         });
     }
