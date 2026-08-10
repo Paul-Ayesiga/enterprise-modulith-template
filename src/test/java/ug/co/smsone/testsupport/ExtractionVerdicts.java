@@ -101,6 +101,9 @@ public final class ExtractionVerdicts {
             // AUTHORIZES, drift is harmless in the direction that matters, and OrgMembershipIndexReconciler
             // rebuilds it from the memberships that arrived in the dump. Same class as search_document.
             Map.entry("org_membership_index", Verdict.REBUILT),
+            // V61, Phase 7. Same reasoning as org_membership_index: a projection of tenant-tier rows
+            // that the far side rebuilds from its own schema, which is the authority.
+            Map.entry("ticket_index", Verdict.REBUILT),
             // NOT IN §6's list, but item 6's rule covers it exactly: a claim signal is a statement about
             // work THIS installation still owes. Carried across, it leases a tenant nobody is serving.
             Map.entry("queue_signal", Verdict.FRESH_AND_EMPTY),
@@ -110,6 +113,12 @@ public final class ExtractionVerdicts {
             // §2: the row exists before its tenant does and org_id is set only at completion. A signup is
             // a platform lifecycle event, not a tenant's record of itself.
             Map.entry("signup_request", Verdict.STAYS_ON_THE_PLATFORM),
+            // NOT IN §6's list — V60, Phase 7. A cutover row is the SOURCE deployment's record of a move
+            // IT is running: publication, subscription and slot names that live in somebody else's
+            // database. Carried across, the new deployment's abandoned-slot detector reports slots it
+            // cannot see and a reverse path would read a confirmed_flush_lsn of a stream it never
+            // opened. The org_id says which tenant is mid-move, not whose data the row is.
+            Map.entry("tenant_cutover", Verdict.FRESH_AND_EMPTY),
             // NOT IN §6's list. A freeze is an operational state of THIS installation's copy of the
             // tenant; carried across, the extracted deployment starts life refusing its own writes.
             Map.entry("tenant_freeze", Verdict.FRESH_AND_EMPTY),

@@ -13,7 +13,9 @@ import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+import ug.co.smsone.shared.cache.PlatformUnreachableException;
 import ug.co.smsone.shared.error.ErrorCode;
+import ug.co.smsone.shared.persistence.UnknownTenantDataSourceException;
 import ug.co.smsone.shared.tenancy.Tenant;
 import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.shared.tenancy.TenantSchemaFloor;
@@ -198,6 +200,18 @@ class CurrentUserFilter extends OncePerRequestFilter {
      */
     private static final Pattern ORG_SCOPED_PATH = Pattern.compile("^/api/v1/orgs/[^/]+(/.*)?$");
 
+    /**
+     * The one sentence every "this tenant is not serviceable right now" refusal says, whichever of the
+     * two facts produced it and wherever it was discovered — the floor's own read, or the borrow that
+     * beat the floor to it. Deliberately says nothing about which: the caller's remedy is the same
+     * {@code Retry-After}, and "your organization is on a datasource nobody configured" is operator
+     * information that belongs in the log line beside the config key that fixes it (AGENTS §9).
+     */
+    private static final String TENANT_NOT_SERVICEABLE =
+            "This organization's data store cannot safely serve this release right now. "
+                    + "Nothing is lost and no action is needed — retry after the interval "
+                    + "in the Retry-After header.";
+
     private final CurrentUserProvider currentUserProvider;
     private final EnvelopeErrorWriter errorWriter;
     private final TenantSchemaFloor schemaFloor;
@@ -242,7 +256,50 @@ class CurrentUserFilter extends OncePerRequestFilter {
         CurrentUser caller;
         try {
             caller = currentUserProvider.currentUser().orElse(null);
+        } catch (PlatformUnreachableException unreachable) {
+            // ADR 0011 §2.3: the identity authority is unreachable AND the last-known answer has aged
+            // past the ceiling. This failure has a contract of its own — 503 + Retry-After in the
+            // envelope, the TenantSchemaFloor shape — and it must be rendered as such rather than fall
+            // into the generic catch below: an INTERNAL_ERROR says "we broke", a 403 would say "you are
+            // known and refused", and ACCOUNT_NOT_PROVISIONED would tell a paying user they don't exist
+            // because a database is down. None of those is true.
+            if (!tenantScoped) {
+                // Same deferral as the generic catch: a route that never asks who is calling is
+                // unaffected, and one that does re-resolves inside the dispatcher, where
+                // GlobalExceptionHandler renders the SAME 503 + Retry-After from the same exception.
+                return true;
+            }
+            response.setHeader(HttpHeaders.RETRY_AFTER, String.valueOf(unreachable.retryAfterSeconds()));
+            errorWriter.write(request, response, ErrorCode.SERVICE_UNAVAILABLE, unreachable.detail(), null);
+            return false;
         } catch (RuntimeException ex) {
+            if (namesADatasourceNobodyConfigured(ex)) {
+                // ADR 0011 §4.2, and the one case the floor below CANNOT answer for. The floor reads
+                // the same fact off the same row and turns it into this exact 503 — but it is asked
+                // with an orgId, and the orgId is the OUTPUT of the resolution that just failed:
+                // CurrentUserProvider enters the caller's own tenant for membership/org_role/
+                // role_permission (the paragraph in this class's javadoc that names those three
+                // tables), so on a tenant placed where this deployment has no pool the borrow throws
+                // before the floor has anything to compare. Rendering the generic INTERNAL_ERROR
+                // below would tell a caller "we broke" — with no Retry-After — about a state that is
+                // usually one config key, or one cutover's route TTL, old.
+                //
+                // Same shape as the PlatformUnreachableException branch above and the floor's own
+                // refusal: 503 + Retry-After + the envelope, so the fact reads identically on the
+                // wire wherever it was discovered. The interval is the floor's, because the floor is
+                // what will change its mind — a placement re-pointed at a configured pool, or a
+                // configuration rolled forward, is served on that cadence with no restart.
+                if (!tenantScoped) {
+                    return true; // the same deferral the generic catch makes, for the same reason
+                }
+                log.warn("Refusing a request for a tenant this deployment has no pool for: {}",
+                        ex.toString());
+                response.setHeader(HttpHeaders.RETRY_AFTER,
+                        String.valueOf(schemaFloor.retryAfterSeconds()));
+                errorWriter.write(request, response, ErrorCode.SERVICE_UNAVAILABLE,
+                        TENANT_NOT_SERVICEABLE, null);
+                return false;
+            }
             // A failure here must not become the response verbatim. Throwing from a filter bypasses
             // GlobalExceptionHandler and renders a non-envelope 500.
             log.warn("Deferred caller resolution after a failure at the edge: {}", ex.toString(), ex);
@@ -268,10 +325,13 @@ class CurrentUserFilter extends OncePerRequestFilter {
             // same way.
             if (!schemaFloor.admits(orgId)) {
                 response.setHeader(HttpHeaders.RETRY_AFTER, String.valueOf(schemaFloor.retryAfterSeconds()));
+                // One detail for every reason this tenant is not serviceable — a schema behind this
+                // release, a placement naming a datasource this deployment has no pool for (ADR 0011
+                // §4.2), whichever of the two the borrow above discovered first: the caller's remedy
+                // is identical, and which one it was is operator information that lives in the
+                // floor's own log line, not on the wire.
                 errorWriter.write(request, response, ErrorCode.SERVICE_UNAVAILABLE,
-                        "This organization's storage has not finished upgrading for the running release, "
-                                + "so its data is not yet safe to read. Nothing is lost and no action is "
-                                + "needed — retry after the interval in the Retry-After header.", null);
+                        TENANT_NOT_SERVICEABLE, null);
                 return false;
             }
             TenantContext.set(orgId);
@@ -310,5 +370,31 @@ class CurrentUserFilter extends OncePerRequestFilter {
      */
     private static boolean isPlatformOperator(CurrentUser caller) {
         return caller != null && caller.hasRole(PlatformRole.SUPPORT);
+    }
+
+    /**
+     * Is this failure "the placement row names a datasource this deployment has no pool for"
+     * (ADR 0011 §4.2)?
+     *
+     * <p><b>Walked, not caught by type</b>, and that is the whole of why this method exists: the
+     * throw happens in {@code TenantDataSources.poolFor} on a connection borrow, and every layer
+     * between there and here re-wraps it — Spring's {@code DataSourceUtils} into
+     * {@code CannotGetJdbcConnectionException}, Hibernate's translator into
+     * {@code InvalidDataAccessApiUsageException}. A {@code catch (UnknownTenantDataSourceException)}
+     * would compile, never fire, and leave the 500 exactly where it was.
+     *
+     * <p>Guarded against a self-referential cause chain the same way {@code TenantReplication}'s
+     * SQLSTATE walk is: a cycle here would hang a request thread inside a filter.
+     */
+    private static boolean namesADatasourceNobodyConfigured(Throwable failure) {
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof UnknownTenantDataSourceException) {
+                return true;
+            }
+            if (cause.getCause() == cause) {
+                return false;
+            }
+        }
+        return false;
     }
 }

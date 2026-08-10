@@ -57,6 +57,16 @@ class SlaEscalationJob {
      * ADR 0010 §5.2's {@code platform.ticket_index}, which turns the fan-out's N from the tenant count
      * into the breach count.
      *
+     * <p><b>That table exists now (V61) and this job still fans out, deliberately.</b> The queue
+     * ({@code TicketFanOut}) reads it because a LISTING can be served from a projection; a breach sweep
+     * cannot, and the difference is the row lock. {@code lockBreached} is a
+     * {@code PESSIMISTIC_WRITE}/{@code SKIP LOCKED} select on the tenant's own table, which is what stops
+     * two instances escalating one ticket twice — a projection cannot lock a row in another schema, let
+     * alone in another database (ADR 0011). Reading candidates from the index would mean re-reading and
+     * re-locking each one in its own home anyway, so it only pays once the breach count is far below the
+     * home count. Until it is measured to be, this stays a fan-out and the deadline above is what bounds
+     * it.
+     *
      * <p>The visible cost of hitting it is that a sweep taking four minutes skips three ticks. That is
      * the right trade: a skipped tick delays an escalation by a minute, an overrun runs two of them.
      */
@@ -72,16 +82,19 @@ class SlaEscalationJob {
     private final SupportNotifier notifier;
     private final ApplicationEventPublisher events;
     private final MeterRegistry meters;
+    private final TicketIndex index;
     private final Clock clock;
     private final TransactionTemplate transactions;
     private final TenantFanOut fanOut;
 
     SlaEscalationJob(TicketRepository tickets, SupportNotifier notifier, ApplicationEventPublisher events,
-            MeterRegistry meters, Clock clock, TransactionTemplate transactions, TenantFanOut fanOut) {
+            MeterRegistry meters, TicketIndex index, Clock clock, TransactionTemplate transactions,
+            TenantFanOut fanOut) {
         this.tickets = tickets;
         this.notifier = notifier;
         this.events = events;
         this.meters = meters;
+        this.index = index;
         this.clock = clock;
         this.transactions = transactions;
         this.fanOut = fanOut;
@@ -183,6 +196,11 @@ class SlaEscalationJob {
             String bumped = bump(ticket.getPriority());
             ticket.escalate(bumped);
             tickets.save(ticket);
+            // Both columns this touches — priority and escalated — are rendered by the operator queue,
+            // and an escalation the queue does not show is the one drift an operator would act on. Per
+            // ticket rather than per home because the row is what changed; the upsert rides this home's
+            // own transaction while the tenant is co-located with primary (TicketIndex).
+            index.record(ticket);
             Counter.builder("smsone.support.breached")
                     .description("Tickets escalated on an SLA breach, by new priority")
                     .tag("priority", bumped)

@@ -76,9 +76,23 @@ public class TenantSchemaMigrator {
      * @return the version the schema now sits at, e.g. {@code "53"}
      */
     public String migrate(String schemaName) {
+        return migrate(pool, schemaName);
+    }
+
+    /**
+     * The same creation-and-migrate against a caller-supplied database — ADR 0011 §7.2 step 1: a
+     * cutover's destination is built "by the same code that builds any silo", and this overload is
+     * what makes that sentence literal rather than aspirational. Same scripts (one
+     * {@link MigrationScripts} instance, so the two paths cannot drift), same refusals, same
+     * idempotence; only which database the schema comes into existence in moves.
+     *
+     * @param dataSource a RAW pool for the destination — never the routing DataSource, for the class
+     *     note's reason
+     */
+    public String migrate(javax.sql.DataSource dataSource, String schemaName) {
         String schema = requireTenantSchema(schemaName);
         Flyway flyway = Flyway.configure()
-                .dataSource(pool)
+                .dataSource(dataSource)
                 .resourceProvider(scripts)
                 .javaMigrationClassProvider(scripts)
                 .schemas(schema)

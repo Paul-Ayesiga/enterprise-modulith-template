@@ -35,6 +35,24 @@ import ug.co.smsone.shared.queue.QueueSignals;
  * a predicate. Everything this class writes therefore keeps the signal honest: {@link #enqueue} and
  * {@link #requeueFailed} raise it in the same transaction as the rows, and {@link #releaseSignal}
  * recomputes it from what the tenant has left.
+ *
+ * <h2>ADR 0011: this queue straddles the boundary, and it is the only one of the three that does</h2>
+ *
+ * <p>{@code webhook_delivery} and {@code webhook_subscription} are TENANT-tier, so for a tenant served
+ * from another database they are over there; {@code queue_signal} is platform-tier and stays on primary
+ * (§5). Every cycle of this queue therefore touches two databases for such a tenant, which §5 states as
+ * the accepted cost. Three consequences land in this class rather than in the ADR:
+ *
+ * <ul>
+ *   <li>{@link #releaseSignal} reads tenant rows and then writes a platform row. {@code QueueSignals
+ *       .release} now pins the platform axis itself, which is what makes that second half reach primary
+ *       from the tenant pin this method necessarily runs under.</li>
+ *   <li>{@link #enqueue} and {@link #requeueFailed} can no longer commit rows and signal together for a
+ *       remote tenant. {@code QueueSignals.raise} defers the signal to after their transaction commits
+ *       and says exactly what that costs; nothing changes for a co-located one.</li>
+ *   <li>{@link #reconcileSignal} is the sweep that closes the residue that deferral can leave — the
+ *       {@code sweepSearchResidue} shape, one query per remote home per pass.</li>
+ * </ul>
  */
 @Component
 class WebhookDeliveryQueue {
@@ -239,14 +257,47 @@ class WebhookDeliveryQueue {
      * is not a close call.
      */
     void releaseSignal(UUID orgId, UUID lease, Duration staleLock) {
-        Timestamp due = jdbc.queryForObject("""
+        Timestamp due = remainingWork(orgId, staleLock);
+        signals.release(QUEUE, orgId, lease, due == null ? null : due.toInstant());
+    }
+
+    /**
+     * <strong>The reconciling sweep for this queue</strong> (ADR 0011 §5): announce a tenant that has
+     * claimable deliveries and no {@code queue_signal} row at all. Runs on the TENANT's axis — the
+     * caller pins it, exactly as {@link #releaseSignal}'s caller does — because the question it asks is
+     * about that tenant's own rows.
+     *
+     * <p>It asks the same "what is left" expression the release already computes, deliberately: a second
+     * definition of "due" that drifted from the first would either announce work the claim cannot see
+     * (an empty probe forever) or miss work the claim could have taken (the residue this exists to
+     * remove). One expression, two readers, and {@code announceIfUnsignalled} refuses to disturb a
+     * signal that is already there, so a healthy tenant mid-batch is untouched by a pass over it.
+     *
+     * @return true when a signal was created — which means this tenant's deliveries had been orphaned
+     *     by a process that died between committing them and announcing them
+     */
+    boolean reconcileSignal(UUID orgId, Duration staleLock) {
+        Timestamp due = remainingWork(orgId, staleLock);
+        if (due == null) {
+            return false;
+        }
+        return signals.announceIfUnsignalled(QUEUE, orgId, due.toInstant());
+    }
+
+    /**
+     * When this tenant's earliest claimable delivery becomes claimable, or null when it has none —
+     * {@link #releaseSignal}'s two-armed expression, extracted so the release and the reconciliation
+     * cannot drift apart. Unqualified and therefore on the caller's pinned axis, which for a remote
+     * tenant is another database entirely.
+     */
+    private Timestamp remainingWork(UUID orgId, Duration staleLock) {
+        return jdbc.queryForObject("""
                 select least(
                     (select min(next_attempt_at) from webhook_delivery
                       where org_id = ? and status = 'PENDING'),
                     (select min(locked_at) + (? * interval '1 millisecond') from webhook_delivery
                       where org_id = ? and status = 'PROCESSING'))
                 """, Timestamp.class, orgId, staleLock.toMillis(), orgId);
-        signals.release(QUEUE, orgId, lease, due == null ? null : due.toInstant());
     }
 
     void markDelivered(UUID id, int expectedAttempts, int responseStatus) {

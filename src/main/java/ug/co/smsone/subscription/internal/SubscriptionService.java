@@ -22,12 +22,22 @@ import ug.co.smsone.shared.error.ValidationException;
 import ug.co.smsone.shared.tenancy.TenantContext;
 import ug.co.smsone.shared.web.ApiSource;
 import ug.co.smsone.subscription.EntitlementKeys;
+import ug.co.smsone.subscription.PlanCatalog;
+import ug.co.smsone.subscription.PlanSnapshot;
 import ug.co.smsone.subscription.SubscriptionChanged;
 
 /**
  * Assigning plans (platform act, audited) and reading an org's effective commercial state. Also
  * implements the {@link ug.co.smsone.subscription.Subscriptions} write port — the billing
  * integration drives plan state through the SAME audited paths the admin surface uses.
+ *
+ * <p><b>Two ways to reach a plan, split on purpose (ADR 0011 §6).</b> READS that cross the tier
+ * boundary — an {@code org_subscription} row's plan, a lapsed trial's code for its event — go through
+ * {@link PlanCatalog} and inherit its cache and staleness contract. WRITE paths ({@link #assign},
+ * {@link #beginTrial}) and the catalog's own administration keep {@link PlanRepository}: a plan
+ * assignment must be built on an authoritative read, never on a snapshot that may be 60 seconds
+ * behind an operator's edit — a subscription created against a just-deleted plan would be exactly the
+ * dangling soft ref {@code PlanCatalogGuard} exists to catch.
  */
 @Service
 class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
@@ -54,6 +64,8 @@ class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
 
     private final OrgSubscriptionRepository subscriptions;
     private final PlanRepository plans;
+    private final PlanCatalog catalog;
+    private final PlanCatalogCache planCatalogCache;
     private final EntitlementResolver resolver;
     private final ApplicationEventPublisher events;
     private final AuditLog auditLog;
@@ -63,11 +75,13 @@ class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
     private final TransactionTemplate transactions;
 
     SubscriptionService(OrgSubscriptionRepository subscriptions, PlanRepository plans,
-            EntitlementResolver resolver, ApplicationEventPublisher events, AuditLog auditLog,
-            MeterRegistry meters, Clock clock, TwoLevelCacheManager caches,
-            TransactionTemplate transactions) {
+            PlanCatalog catalog, PlanCatalogCache planCatalogCache, EntitlementResolver resolver,
+            ApplicationEventPublisher events, AuditLog auditLog, MeterRegistry meters, Clock clock,
+            TwoLevelCacheManager caches, TransactionTemplate transactions) {
         this.subscriptions = subscriptions;
         this.plans = plans;
+        this.catalog = catalog;
+        this.planCatalogCache = planCatalogCache;
         this.resolver = resolver;
         this.events = events;
         this.auditLog = auditLog;
@@ -83,15 +97,15 @@ class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
 
     @Transactional(readOnly = true)
     SubscriptionView view(UUID orgId) {
-        Plan plan = resolver.planOf(orgId)
+        PlanSnapshot plan = resolver.planOf(orgId)
                 .orElseThrow(() -> new NotFoundException("No plan catalog is seeded."));
         OrgSubscription subscription = subscriptions.findByOrgId(orgId).orElse(null);
         // On the wire, feature-on is a null VALUE (the documented encoding); the storage sentinel
         // is an implementation detail that must not leak.
         Map<String, Long> entitlements = new LinkedHashMap<>();
-        plan.getEntitlements().forEach((key, value) ->
+        plan.entitlements().forEach((key, value) ->
                 entitlements.put(key, value == null || value < 0 ? null : value));
-        return new SubscriptionView(orgId, plan.getCode(), plan.getName(),
+        return new SubscriptionView(orgId, plan.code(), plan.name(),
                 subscription == null ? OrgSubscription.Status.ACTIVE.name()
                         : subscription.getStatus().name(),
                 subscription == null ? null : subscription.getCurrentPeriodEnd(),
@@ -125,9 +139,10 @@ class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
     @Transactional
     SubscriptionView assign(UUID orgId, String planCode) {
         String normalized = planCode == null ? "" : planCode.trim().toUpperCase();
+        // The repository, not the catalog port: a WRITE is built on an authoritative read (class note).
         Plan plan = plans.findByCode(normalized)
                 .orElseThrow(() -> new NotFoundException("No plan named '" + normalized + "'."));
-        String previous = resolver.planOf(orgId).map(Plan::getCode).orElse(null);
+        String previous = resolver.planOf(orgId).map(PlanSnapshot::code).orElse(null);
         OrgSubscription subscription = subscriptions.findByOrgId(orgId)
                 .map(existing -> {
                     existing.changePlan(plan.getId());
@@ -159,7 +174,7 @@ class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
         }
         int days = trialDays <= 0 ? DEFAULT_TRIAL_DAYS : trialDays;
         Instant endsAt = clock.instant().plus(Duration.ofDays(days));
-        String previous = resolver.planOf(orgId).map(Plan::getCode).orElse(null);
+        String previous = resolver.planOf(orgId).map(PlanSnapshot::code).orElse(null);
         OrgSubscription subscription = subscriptions.findByOrgId(orgId)
                 .map(existing -> {
                     existing.startTrial(plan.getId(), endsAt);
@@ -219,21 +234,20 @@ class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
     }
 
     /**
-     * The plan CODE behind each lapsed row, in one query. A {@code findById} inside the sweep loop was
-     * only ever de-duplicated by the shared persistence context; this states the intent instead of
-     * relying on it, and an unknown plan id is simply absent from the map — the same null the event
-     * carried before.
+     * The plan CODE behind each lapsed row — one {@link PlanCatalog} read per DISTINCT plan id, because
+     * this is a cross-tier read (tenant rows naming platform catalog) and the port is the seam ADR 0011
+     * §6 routes it through. Each read is a 60 s-cached GLOBAL entry, and a sweep names at most a
+     * handful of distinct plans, so this is not the 1+N it resembles. An unknown plan id is simply
+     * absent from the map — the same null the event carried before.
      */
     private Map<UUID, String> planCodesOf(List<OrgSubscription> lapsed) {
-        Set<UUID> planIds = lapsed.stream()
+        Map<UUID, String> codes = new java.util.HashMap<>();
+        lapsed.stream()
                 .map(OrgSubscription::getPlanId)
                 .filter(java.util.Objects::nonNull)
-                .collect(java.util.stream.Collectors.toSet());
-        if (planIds.isEmpty()) {
-            return Map.of();
-        }
-        Map<UUID, String> codes = new java.util.HashMap<>();
-        plans.findAllById(planIds).forEach(plan -> codes.put(plan.getId(), plan.getCode()));
+                .distinct()
+                .forEach(planId -> catalog.plan(planId)
+                        .ifPresent(plan -> codes.put(planId, plan.code())));
         return codes;
     }
 
@@ -245,6 +259,11 @@ class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
             EntitlementKeys.MEMBERS_MAX, EntitlementKeys.WEBHOOKS_MAX, EntitlementKeys.EXCHANGE_ENABLED,
             EntitlementKeys.EXCHANGE_SCHEDULES_MAX, EntitlementKeys.API_REQUESTS_PER_MINUTE);
 
+    /**
+     * No {@code plan-catalog} eviction here, and its absence is deliberate: the catalog cache does not
+     * cache absences ({@code unless = "#result == null"}), so no entry can exist for a code or id that
+     * did not resolve — a freshly created plan is visible on the very next catalog read.
+     */
     @Transactional
     Plan createPlan(String code, String name, int rank, Map<String, Long> entitlements) {
         String normalized = normalizeCode(code);
@@ -288,6 +307,10 @@ class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
                     "name=" + existing.getName() + " rank=" + rank);
             return existing;
         });
+        // The catalog snapshot strictly BEFORE the per-org entitlements: a resolve racing the second
+        // eviction re-reads the catalog, and evicting in this order means it re-reads the edited plan
+        // rather than re-caching the old snapshot behind an entitlement eviction already spent.
+        evictCatalogSnapshotOf(plan);
         evictEntitlementsOfOrgsOn(plan);
         return plan;
     }
@@ -318,21 +341,43 @@ class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
     }
 
     /**
-     * No cache eviction here, and its absence is the point: the guard below refuses the delete unless NO
-     * organization is on the plan, so nothing cached anywhere was derived from it. The {@code allEntries}
-     * evict this used to carry threw away every tenant's entitlements to invalidate nothing at all.
+     * No ENTITLEMENT eviction here, and its absence is the point: the guard below refuses the delete
+     * unless NO organization is on the plan, so no per-org entitlement anywhere was derived from it.
+     * The {@code allEntries} evict this used to carry threw away every tenant's entitlements to
+     * invalidate nothing at all. The CATALOG snapshot is different — {@code planByCode} could hold this
+     * plan for any caller — so that one is dropped, after the commit for the same reason
+     * {@link #updatePlan}'s evictions run there (a pre-commit evict lets a concurrent reader re-cache
+     * the doomed row behind it), which is why this is a {@link TransactionTemplate} and no longer an
+     * annotation.
      */
-    @Transactional
     void deletePlan(String code) {
-        Plan plan = requirePlan(normalizeCode(code));
-        if (FREE_PLAN.equals(plan.getCode())) {
-            throw new ConflictException("FREE is the default fallback plan and cannot be deleted.");
-        }
-        if (subscriptions.existsByPlanId(plan.getId())) {
-            throw new ConflictException("This plan is assigned to organizations — reassign them before deleting it.");
-        }
-        plans.delete(plan);
-        auditLog.record("subscription.plan_deleted", null, plan.getCode(), "name=" + plan.getName(), null);
+        Plan plan = transactions.execute(status -> {
+            Plan existing = requirePlan(normalizeCode(code));
+            if (FREE_PLAN.equals(existing.getCode())) {
+                throw new ConflictException("FREE is the default fallback plan and cannot be deleted.");
+            }
+            if (subscriptions.existsByPlanId(existing.getId())) {
+                throw new ConflictException(
+                        "This plan is assigned to organizations — reassign them before deleting it.");
+            }
+            plans.delete(existing);
+            auditLog.record("subscription.plan_deleted", null, existing.getCode(),
+                    "name=" + existing.getName(), null);
+            return existing;
+        });
+        evictCatalogSnapshotOf(plan);
+    }
+
+    /**
+     * Drops both remembered forms of one plan — the Spring cache's two keys AND the
+     * stale-while-unreachable holdover behind them, because an eviction that cleared the cache but left
+     * the holdover would serve the superseded snapshot through the next outage (ADR 0011 §2).
+     */
+    private void evictCatalogSnapshotOf(Plan plan) {
+        org.springframework.cache.Cache cache = caches.getCache(PlanCatalogCache.CACHE);
+        cache.evict(PlanCatalogCache.idKey(plan.getId()));
+        cache.evict(PlanCatalogCache.codeKey(plan.getCode()));
+        planCatalogCache.forget(plan.getId(), plan.getCode());
     }
 
     private Plan requirePlan(String code) {
@@ -395,9 +440,11 @@ class SubscriptionService implements ug.co.smsone.subscription.Subscriptions {
         String before = subscription.getStatus().name();
         subscription.markStatus(parsed);
         subscriptions.save(subscription);
-        Plan plan = plans.findById(subscription.getPlanId()).orElse(null);
+        // Cross-tier read (a tenant row naming the platform catalog) — through the port, like every
+        // other one. The code only decorates the event; a 60 s-stale code on a status flip is harmless.
+        String planCode = catalog.plan(subscription.getPlanId()).map(PlanSnapshot::code).orElse(null);
         events.publishEvent(new SubscriptionChanged(organizationId,
-                plan == null ? null : plan.getCode(), parsed.name(), Instant.now()));
+                planCode, parsed.name(), Instant.now()));
         auditLog.record("subscription.status_changed", organizationId, organizationId.toString(),
                 "status=" + before, "status=" + parsed.name());
     }

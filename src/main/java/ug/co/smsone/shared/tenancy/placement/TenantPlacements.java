@@ -198,9 +198,11 @@ public class TenantPlacements {
     }
 
     /**
-     * <strong>The three writes that move a SERVING tenant, and the only ones in this class that may.</strong>
-     * ADR 0010 §6 hop 0→1, Phase 5 — {@code shared.tenancy.promotion.TenantPromoter} is the only caller,
-     * and the class note above is the reason they are here rather than there: {@link #reserve} declines
+     * <strong>The writes that move a SERVING tenant, and the only ones in this class that may.</strong>
+     * ADR 0010 §6 hop 0→1, Phase 5 — {@code shared.tenancy.promotion.TenantPromoter} drives the three
+     * schema-axis ones; ADR 0011 adds {@link #beginCutover}/{@link #completeDatasourceMove} for the
+     * datasource axis, driven only by {@code shared.tenancy.cutover.TenantCutover}.
+     * The class note above is the reason they are here rather than there: {@link #reserve} declines
      * an ACTIVE row precisely so nothing can move a serving tenant by accident, and the deliberate
      * exception belongs beside the refusal it makes an exception to.
      *
@@ -226,11 +228,51 @@ public class TenantPlacements {
      * @return true iff this call took the tenant out of service for a move
      */
     public boolean beginRelocation(UUID orgId, String fromSchema) {
+        // The not-exists arm is ADR 0011's guard, in SQL so `promotion` need not import `cutover`: a
+        // tenant whose silo is mid-move to another DATABASE has a live publication on that schema, and
+        // a promotion/demotion would copy, flip and DELETE rows out from under the stream. One
+        // statement makes the refusal atomic with the claim, same as the state arm beside it.
         return jdbc.update("""
                 update platform.tenant_placement
                    set state = 'PROVISIONING', last_error = null, updated_at = now()
                  where org_id = ? and schema_name = ? and state = 'ACTIVE'
-                """, orgId, fromSchema) == 1;
+                   and not exists (select 1 from platform.tenant_cutover c where c.org_id = ?)
+                """, orgId, fromSchema, orgId) == 1;
+    }
+
+    /**
+     * The cutover's freeze-window claim (ADR 0011 §7.2 step 5) — {@link #beginRelocation}'s statement
+     * WITHOUT the cutover-refusal arm, because for this caller the live {@code tenant_cutover} row is
+     * not a conflict, it is the operation itself. Same PROVISIONING meaning, same effect on the
+     * fan-outs, same {@link #abandonRelocation} on the abort path.
+     *
+     * @return true iff this call took the tenant out of service for its flip window
+     */
+    public boolean beginCutover(UUID orgId, String schemaName) {
+        return jdbc.update("""
+                update platform.tenant_placement
+                   set state = 'PROVISIONING', last_error = null, updated_at = now()
+                 where org_id = ? and schema_name = ? and state = 'ACTIVE'
+                """, orgId, schemaName) == 1;
+    }
+
+    /**
+     * <strong>The fourth write that moves a serving tenant, and the only one that touches
+     * {@code datasource_name}</strong> — ADR 0011 §7.2 step 7's flip, {@code TenantCutover} the only
+     * caller. The same compare-and-swap discipline as {@link #completeRelocation} rotated onto the
+     * other axis: {@code schema_name} is named and UNCHANGED (a cutover moves the schema between
+     * databases, never renames it), and the expected {@code datasource_name} is in the predicate so a
+     * re-run, a rollback racing a decommission, or two operators moves nothing twice.
+     *
+     * @return true iff the tenant was still where the caller left it and now routes to {@code toDatasource}
+     */
+    public boolean completeDatasourceMove(UUID orgId, String schemaName, String fromDatasource,
+            String toDatasource) {
+        return jdbc.update("""
+                update platform.tenant_placement
+                   set datasource_name = ?, state = 'ACTIVE', last_error = null, updated_at = now()
+                 where org_id = ? and schema_name = ? and datasource_name = ? and state = 'PROVISIONING'
+                """, toDatasource, orgId, schemaName, fromDatasource) == 1;
     }
 
     /**

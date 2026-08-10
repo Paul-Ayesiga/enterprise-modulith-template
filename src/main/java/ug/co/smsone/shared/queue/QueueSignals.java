@@ -9,7 +9,10 @@ import java.util.UUID;
 import org.springframework.dao.IncorrectResultSizeDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import ug.co.smsone.shared.persistence.DbDialect;
+import ug.co.smsone.shared.tenancy.CrossDatabaseWrites;
 
 /**
  * {@code platform.queue_signal} — one row per (queue, tenant) that has unfinished work, and the
@@ -29,6 +32,23 @@ import ug.co.smsone.shared.persistence.DbDialect;
  * and cannot fill another worker's batch. The outage {@code WebhookDeliveryQueue.claim}'s javadoc
  * narrates — one paused subscription's rows occupying every slot until NO tenant got a webhook — is
  * impossible in this shape rather than prevented by a predicate a future edit could drop.
+ *
+ * <h2>ADR 0011: the same-transaction rule survives where it can and is traded where it cannot</h2>
+ *
+ * <p>This table is platform-tier and lives on PRIMARY only (ADR 0011 §5, and the reason is in the
+ * paragraph above: a claim searches for work before a tenant is chosen, so the table that answers
+ * "which tenant" cannot follow a tenant). For every tenant co-located with primary — which is every
+ * tenant on every deployment with no remote datasource configured — nothing below changes: the signal
+ * still commits inside the transaction that writes the rows, and the invariant in rule 1 is held
+ * exactly as it always was.
+ *
+ * <p>For a tenant served from ANOTHER database that invariant is not weakened, it is
+ * <strong>unachievable</strong>: the rows are in one database, the signal in another, and this project
+ * has no XA and wants none. {@link #raise} therefore takes the only honest alternative — the signal
+ * becomes a separate transaction on primary, deferred until <em>after</em> the rows commit — and the
+ * residue that ordering can still leave is swept by {@link #announceIfUnsignalled}. Both halves are
+ * written up in ADR 0011 §5, including what is lost. See {@link #raise} for the ordering argument and
+ * why after-the-rows is not merely the other choice but the strictly better one.
  *
  * <p><strong>Three rules, and each one is load-bearing:</strong>
  *
@@ -53,9 +73,11 @@ import ug.co.smsone.shared.persistence.DbDialect;
  * </ul>
  *
  * <p><strong>A stale signal is harmless and is meant to be.</strong> A worker that claims a tenant and
- * finds nothing releases it, which deletes the row when the tenant has nothing left at all. Nothing
- * else reconciles this table, and nothing needs to: it is only ever consulted to decide where to look
- * next, never to decide what is true.
+ * finds nothing releases it, which deletes the row when the tenant has nothing left at all. It is only
+ * ever consulted to decide where to look next, never to decide what is true — which is why a signal
+ * that is too EARLY costs one empty probe and a signal that is MISSING costs the work. Before ADR 0011
+ * nothing reconciled this table and nothing needed to, because the missing case could not happen;
+ * {@link #announceIfUnsignalled} exists because across two databases it can.
  */
 @Component
 public class QueueSignals {
@@ -79,10 +101,12 @@ public class QueueSignals {
 
     private final JdbcTemplate jdbc;
     private final DbDialect dialect;
+    private final CrossDatabaseWrites platformTier;
 
-    QueueSignals(JdbcTemplate jdbc, DbDialect dialect) {
+    QueueSignals(JdbcTemplate jdbc, DbDialect dialect, CrossDatabaseWrites platformTier) {
         this.jdbc = jdbc;
         this.dialect = dialect;
+        this.platformTier = platformTier;
     }
 
     /** The signal key for an org, mapping the org-less case onto {@link #PLATFORM_SCOPE}. */
@@ -116,14 +140,98 @@ public class QueueSignals {
      * tenant on a time computed before the new work existed. Clearing the token makes that release a
      * no-op by the same rule that fences every other stale one, so the {@code due_at = now()} written
      * here stands and the next poll finds the rows.
+     *
+     * <h2>The one place ADR 0011 costs this class an invariant, and exactly how much</h2>
+     *
+     * <p>The rule above — raise inside the rows' transaction — is held whenever it CAN be, which is
+     * whenever the caller's axis is on the platform database ({@code CrossDatabaseWrites
+     * .onPlatformDatabase()}). That is every enqueue on every deployment today, so this branch is the
+     * shipped behaviour and the shipped guarantee, unchanged.
+     *
+     * <p>A caller on a REMOTE tenant's axis cannot have it. Its rows commit on that tenant's database
+     * and this row commits on primary; two databases, two commits, no snapshot, and no XA. So the raise
+     * is <strong>deferred to after the rows commit</strong> and issued in its own transaction on
+     * primary. That ordering is not a coin flip between two equally bad choices:
+     *
+     * <ul>
+     *   <li><em>Raise BEFORE the rows commit</em> reproduces the exact failure rule 1 names: a worker
+     *       claims the tenant, probes, finds nothing because the rows are still uncommitted, and
+     *       {@code release(dueAt = null)} DELETES the signal — then the rows commit, indexed by
+     *       nothing. That race needs only a concurrent poll, which is the normal state of a running
+     *       fleet.</li>
+     *   <li><em>Raise AFTER the rows commit</em> makes that same race self-healing: the probe may
+     *       delete a signal, but the raise that follows re-creates one over rows that are now visible.
+     *       What is left is a strictly smaller hole — the process dying in the window between the two
+     *       commits — and unlike the first it cannot be provoked by load.</li>
+     * </ul>
+     *
+     * <p><strong>What is lost, stated plainly:</strong> for a remote tenant, queued work is invisible to
+     * every poll between its own commit and the signal's — sub-millisecond in the normal case, and
+     * until the next reconciliation if this process dies in between. {@link #announceIfUnsignalled} is
+     * that reconciliation, and it is not optional: without it a single ill-timed crash leaves a
+     * tenant's webhooks or exports queued forever with no error anywhere, which is precisely the
+     * silent-loss shape rule 1 was written to forbid.
+     *
+     * <p>The deferral rides {@code afterCommit} rather than a queue of our own, so a rolled-back
+     * enqueue raises nothing — there are no rows to announce — and so the raise cannot run while the
+     * caller's transaction still holds its locks.
      */
     public void raise(String queue, UUID scope) {
+        if (CrossDatabaseWrites.onPlatformDatabase()) {
+            upsertSignal(queue, scope);
+            return;
+        }
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            // Nothing to wait for: no transaction means the rows this announces are already committed
+            // (or there are none and the caller is a test driving the signal directly).
+            platformTier.runOnPlatform(() -> upsertSignal(queue, scope));
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                // Outside the caller's transaction by contract, so the platform pin is legal here and
+                // the borrow that follows is a fresh one from primary.
+                platformTier.runOnPlatform(() -> upsertSignal(queue, scope));
+            }
+        });
+    }
+
+    private void upsertSignal(String queue, UUID scope) {
         jdbc.update("""
                 insert into platform.queue_signal (queue, org_id, due_at, lease)
                 values (?, ?, now(), null)
                 on conflict (queue, org_id)
                 do update set due_at = least(queue_signal.due_at, excluded.due_at), lease = null
                 """, queue, scope);
+    }
+
+    /**
+     * <strong>The reconciling half: announce a scope that HAS claimable work and NO signal.</strong>
+     * The repair for the hole {@link #raise} opens for a remote tenant, and modelled on
+     * {@code SoftDeletePurgeJob.sweepSearchResidue} — this codebase's precedent for "a projection with
+     * no delete path leaves residue forever, so something has to go looking for it".
+     *
+     * <p><strong>{@code do nothing}, never {@code do update}, and the difference is a live worker's
+     * lease.</strong> A scope that already has a signal is already accounted for — possibly leased by a
+     * worker mid-batch — and pulling its {@code due_at} forward or clearing its lease would void that
+     * worker's release and park the tenant behind a lease nobody holds, which is the starvation this
+     * whole table exists to remove. Reconciliation may only ever create what is missing.
+     *
+     * <p>{@code greatest(dueAt, now())} for the same reason {@code release} clamps: a backlog reports a
+     * time in the past, and writing it literally would sort a recovered tenant ahead of everyone who
+     * has been waiting honestly.
+     *
+     * @param dueAt when this scope's earliest claimable row becomes claimable — the queue's own
+     *     remaining-work expression, so a queue never needs a second definition of "due"
+     * @return true when a signal was created, which means work HAD been orphaned and is now visible
+     */
+    public boolean announceIfUnsignalled(String queue, UUID scope, Instant dueAt) {
+        return platformTier.callOnPlatform(() -> jdbc.update("""
+                insert into platform.queue_signal (queue, org_id, due_at, lease)
+                values (?, ?, greatest(?, now()), null)
+                on conflict (queue, org_id) do nothing
+                """, queue, scope, Timestamp.from(dueAt))) == 1;
     }
 
     /**
@@ -189,7 +297,10 @@ public class QueueSignals {
      */
     public Optional<Leased> claim(String queue, Duration lease) {
         UUID token = UUID.randomUUID();
-        List<Leased> leased = jdbc.query("""
+        // Pinned rather than trusted: all three workers already claim under callAsPlatform, and this
+        // costs nothing when they do. It is here so that the class is correct for its callers rather
+        // than correct because of them — the release below is exactly where that stopped being true.
+        List<Leased> leased = platformTier.callOnPlatform(() -> jdbc.query("""
                 with candidate as materialized (
                     select queue, org_id from platform.queue_signal
                     where queue = ? and due_at <= now()
@@ -206,7 +317,7 @@ public class QueueSignals {
                 returning s.org_id
                 """.formatted(dialect.skipLocked()),
                 (rs, rowNum) -> new Leased(rs.getObject("org_id", UUID.class), token),
-                queue, lease.toMillis(), token);
+                queue, lease.toMillis(), token));
         if (leased.size() > 1) {
             throw new IncorrectResultSizeDataAccessException(
                     "One claim leased " + leased.size() + " tenants on queue " + queue
@@ -234,17 +345,28 @@ public class QueueSignals {
      * That is the design, not a lost write, and it is why this returns void. It also clears the token
      * on the way out: a tenant sitting at its next due time is held by nobody, and leaving a spent
      * token behind would make the row read as leased for as long as it sat there.
+     *
+     * <p><strong>Explicitly on the platform axis, and this is one of the call sites ADR 0011 §5.1's
+     * "known set" missed.</strong> {@code WebhookDeliveryWorker.release} pins the TENANT — necessarily,
+     * because {@code WebhookDeliveryQueue.releaseSignal} first computes the remaining-work time from
+     * {@code webhook_delivery}, which is tenant-tier and unqualified — and then hands that time here.
+     * So this statement ran on the tenant's connection, and for a remote tenant that is a database with
+     * no {@code queue_signal} in it: the release throws, the lease is never given back, and the tenant
+     * disappears from the queue for a whole stale-lock window every single batch.
      */
     public void release(String queue, UUID scope, UUID lease, Instant dueAt) {
-        if (dueAt == null) {
-            jdbc.update("delete from platform.queue_signal where queue = ? and org_id = ? and lease = ?",
-                    queue, scope, lease);
-            return;
-        }
-        jdbc.update("""
-                update platform.queue_signal set due_at = greatest(?, now()), lease = null
-                where queue = ? and org_id = ? and lease = ?
-                """, Timestamp.from(dueAt), queue, scope, lease);
+        platformTier.runOnPlatform(() -> {
+            if (dueAt == null) {
+                jdbc.update(
+                        "delete from platform.queue_signal where queue = ? and org_id = ? and lease = ?",
+                        queue, scope, lease);
+                return;
+            }
+            jdbc.update("""
+                    update platform.queue_signal set due_at = greatest(?, now()), lease = null
+                    where queue = ? and org_id = ? and lease = ?
+                    """, Timestamp.from(dueAt), queue, scope, lease);
+        });
     }
 
     /**

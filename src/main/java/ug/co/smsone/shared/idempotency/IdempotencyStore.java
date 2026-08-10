@@ -7,8 +7,30 @@ import java.time.Instant;
 import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.shared.tenancy.CrossDatabaseWrites;
 
-/** JDBC-backed store for idempotency claims and completed responses, scoped per principal. */
+/**
+ * JDBC-backed store for idempotency claims and completed responses, scoped per principal.
+ *
+ * <h2>Every statement here is on the PLATFORM axis, explicitly, and that is not decoration</h2>
+ *
+ * <p>{@code idempotency_key} is platform-tier and lives on primary only (ADR 0011 §5): the key is
+ * per-principal, a person is not a tenant, and one human retrying the same request against two of
+ * their organizations must land on one key. But the CALLER is a request thread, and by the time
+ * {@code IdempotencyFilter} ({@code @Order(1)}) runs, {@code CurrentUserFilter} ({@code @Order(-1)})
+ * has already pinned that request's organization. So every statement below was being issued on the
+ * TENANT's connection — invisible while every tenant is on primary, because the schema is right there
+ * and named explicitly, and a hard {@code relation "platform.idempotency_key" does not exist} the
+ * first time a tenant is served from another database. The whole endpoint 500s: not the write, the
+ * <em>claim</em>, so an idempotent POST to a remote tenant never reaches its controller at all.
+ *
+ * <p>{@link CrossDatabaseWrites} is the conversion. It is a no-op — same connection, same transaction —
+ * for a caller whose axis is already co-located with primary, so a co-located tenant's request costs
+ * exactly what it costs today; a remote tenant's claim takes its own borrow from the primary pool.
+ * There is no transactional coupling to lose here, which is what makes this the simplest of the
+ * conversions: the filter runs before the controller's transaction opens and completes after it has
+ * committed, so the claim was never in the same transaction as the work it fences.
+ */
 @Component
 public class IdempotencyStore {
 
@@ -27,10 +49,12 @@ public class IdempotencyStore {
 
     private final JdbcTemplate jdbcTemplate;
     private final Clock clock;
+    private final CrossDatabaseWrites platformTier;
 
-    public IdempotencyStore(JdbcTemplate jdbcTemplate, Clock clock) {
+    public IdempotencyStore(JdbcTemplate jdbcTemplate, Clock clock, CrossDatabaseWrites platformTier) {
         this.jdbcTemplate = jdbcTemplate;
         this.clock = clock;
+        this.platformTier = platformTier;
     }
 
     /**
@@ -44,19 +68,19 @@ public class IdempotencyStore {
         Instant now = clock.instant();
         // PORTING: Postgres UPSERT with a conditional DO UPDATE. On another RDBMS this is a whole-
         // statement rewrite (Oracle/SQL Server MERGE, MySQL ON DUPLICATE KEY) — see docs/PORTING.md.
-        int changed = jdbcTemplate.update("""
+        int changed = platformTier.callOnPlatform(() -> jdbcTemplate.update("""
                 insert into platform.idempotency_key (principal, idem_key, request_hash, created_at)
                 values (?, ?, ?, ?)
                 on conflict (principal, idem_key) do update
                     set request_hash = excluded.request_hash, created_at = excluded.created_at
                     where idempotency_key.response_status is null
                       and idempotency_key.created_at < ?
-                """, principal, key, requestHash, Timestamp.from(now), Timestamp.from(now.minus(lease)));
+                """, principal, key, requestHash, Timestamp.from(now), Timestamp.from(now.minus(lease))));
         return changed == 1 ? Optional.of(now) : Optional.empty();
     }
 
     public Optional<StoredResponse> find(String principal, String key) {
-        return jdbcTemplate.query("""
+        return platformTier.callOnPlatform(() -> jdbcTemplate.query("""
                         select request_hash, response_status, response_body, content_type
                         from platform.idempotency_key where principal = ? and idem_key = ?
                         """,
@@ -65,18 +89,18 @@ public class IdempotencyStore {
                                 rs.getObject("response_status", Integer.class),
                                 rs.getString("response_body"),
                                 rs.getString("content_type")),
-                        principal, key)
+                        principal, key))
                 .stream().findFirst();
     }
 
     /** Fenced on {@code claimedAt}: after a lease takeover this claimant's write matches zero rows. */
     public void complete(String principal, String key, Instant claimedAt, int status, String body,
             String contentType) {
-        jdbcTemplate.update("""
+        platformTier.runOnPlatform(() -> jdbcTemplate.update("""
                 update platform.idempotency_key
                 set response_status = ?, response_body = ?, content_type = ?
                 where principal = ? and idem_key = ? and created_at = ?
-                """, status, body, contentType, principal, key, Timestamp.from(claimedAt));
+                """, status, body, contentType, principal, key, Timestamp.from(claimedAt)));
     }
 
     /**
@@ -85,9 +109,9 @@ public class IdempotencyStore {
      * a third duplicate would then re-claim and re-execute the side effect.
      */
     public void release(String principal, String key, Instant claimedAt) {
-        jdbcTemplate.update(
+        platformTier.runOnPlatform(() -> jdbcTemplate.update(
                 "delete from platform.idempotency_key where principal = ? and idem_key = ? and created_at = ?",
-                principal, key, Timestamp.from(claimedAt));
+                principal, key, Timestamp.from(claimedAt)));
     }
 
     /**
@@ -124,14 +148,21 @@ public class IdempotencyStore {
         return total;
     }
 
-    /** One batch. Package-private so a test can drive a single one and see the bound hold. */
+    /**
+     * One batch. Package-private so a test can drive a single one and see the bound hold.
+     *
+     * <p>Pinned like everything else here even though {@code IdempotencyPurgeJob} already wraps the
+     * whole run in {@code callAsPlatform}: the pin costs nothing when the axis is already primary, and
+     * a store whose correctness depends on remembering which of its six methods the caller pinned is a
+     * store that will be called wrong.
+     */
     int purgeBatch(Timestamp cutoff) {
-        return jdbcTemplate.update("""
+        return platformTier.callOnPlatform(() -> jdbcTemplate.update("""
                 delete from platform.idempotency_key where (principal, idem_key) in (
                     select principal, idem_key from platform.idempotency_key
                     where created_at < ?
                     order by created_at
                     limit ?)
-                """, cutoff, PURGE_BATCH_SIZE);
+                """, cutoff, PURGE_BATCH_SIZE));
     }
 }

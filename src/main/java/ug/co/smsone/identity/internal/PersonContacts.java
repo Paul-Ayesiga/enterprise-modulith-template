@@ -14,6 +14,7 @@ import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ug.co.smsone.shared.audit.AuditLog;
+import ug.co.smsone.shared.tenancy.CrossDatabaseWrites;
 import ug.co.smsone.shared.error.ConflictException;
 import ug.co.smsone.shared.error.NotFoundException;
 import ug.co.smsone.shared.error.ValidationException;
@@ -87,11 +88,14 @@ class PersonContacts {
 
     private final PersonContactRepository contacts;
     private final AuditLog auditLog;
+    private final CrossDatabaseWrites platformTier;
     private final Clock clock;
 
-    PersonContacts(PersonContactRepository contacts, AuditLog auditLog, Clock clock) {
+    PersonContacts(PersonContactRepository contacts, AuditLog auditLog,
+            CrossDatabaseWrites platformTier, Clock clock) {
         this.contacts = contacts;
         this.auditLog = auditLog;
+        this.platformTier = platformTier;
         this.clock = clock;
     }
 
@@ -141,8 +145,16 @@ class PersonContacts {
         if (email == null || email.isBlank()) {
             return Optional.empty();
         }
-        return contacts.findVerifiedPersonIdsByValue(ContactKind.EMAIL, email.trim(), Limit.of(1))
-                .stream().findFirst();
+        // person_contact is PLATFORM-tier and person is global (ADR 0010 §2.2), but this is reached from
+        // the request path, where CurrentUserFilter has pinned the caller's ORG axis on every
+        // authenticated route — not only /orgs/**. On a tenant served from its own database that axis
+        // resolves to a schema with no platform.person_contact in it, and this threw
+        // `relation "platform.person_contact" does not exist` on the first ticket a remote tenant opened,
+        // through SupportNotifier's recipient resolution. The hop compares DATABASES, never axes, so it
+        // is the same connection and the same transaction wherever no remote datasource is configured.
+        return platformTier.callOnPlatform(() ->
+                contacts.findVerifiedPersonIdsByValue(ContactKind.EMAIL, email.trim(), Limit.of(1))
+                        .stream().findFirst());
     }
 
     /** The caller's own contact book, best-first within each kind. */

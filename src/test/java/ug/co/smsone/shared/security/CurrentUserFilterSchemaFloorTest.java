@@ -174,13 +174,16 @@ class CurrentUserFilterSchemaFloorTest extends AbstractIntegrationTest {
      * request. Asserted by changing the registry underneath a decision already made and watching the
      * answer NOT change — the only way to observe a read that did not happen.
      *
-     * <p>Both halves are the documented cache contract, not incidental behaviour. The refusal is
-     * remembered for {@code RECHECK_AFTER} (the test stays well inside it) and the {@code Retry-After}
-     * this process hands out is that same interval, which is what stops the staleness from being
-     * permanent. The serve is remembered for the life of the process, because the transition it records
-     * is one-way: {@code schema_version} only increases and the floor is compiled in, so a tenant that
-     * has met this binary's floor cannot stop meeting it — the row rewritten downwards here is a state
-     * only a hand-run Flyway repair could produce, and a rollout is what re-reads it.
+     * <p>Both halves are the documented cache contract, not incidental behaviour, and since ADR 0011
+     * they are the SAME half: every verdict the floor has read — served and refused alike — is
+     * remembered for {@code RECHECK_AFTER}, and this test stays well inside it. The serve used to be
+     * remembered for the life of the process on a one-way argument ({@code schema_version} only
+     * increases, the floor is compiled in), and that argument stopped covering the whole verdict the
+     * moment an admission also rested on {@code datasource_name} — which any cutover rewrites and any
+     * config rollback moves. What expires is asserted where an expiry can be watched inside a test:
+     * {@code TenantSchemaFloorTest.anAdmissionIsReEarnedBecauseTheDatasourceHalfOfItCanChange} and its
+     * sibling for the refusal lifting. This class stays inside the interval on purpose, because its
+     * subject is the memo, not the timer.
      */
     @Test
     void theFloorIsReadOncePerTenantAndNotOnEveryRequest() throws Exception {
@@ -194,6 +197,45 @@ class CurrentUserFilterSchemaFloorTest extends AbstractIntegrationTest {
 
         assertRefused(behind);
         assertServed(fine);
+    }
+
+    /**
+     * <strong>ADR 0011 §4.2 on the wire: a placement naming a datasource this deployment has no pool
+     * for is THAT tenant's 503 with {@code Retry-After}, at the edge — not a 500 at the borrow.</strong>
+     *
+     * <p>The two failures are the same fact discovered in two places, and only one of them is a
+     * failure a client can act on. Admitted here, the tenant reaches {@code TenantRoutingDataSource},
+     * whose borrow throws {@code UnknownTenantDataSourceException} — rendered as {@code INTERNAL_ERROR}
+     * with no {@code Retry-After}, which tells a caller "we are broken" about a state that is usually
+     * one config key old. Refused here, it is the schema floor's own shape: 503, the interval this
+     * process will next re-read on, the request's own id, and <em>the chain never entered</em> — which
+     * is the assertion that distinguishes the two, because on the wire a 500 and a 503 both look like
+     * a number until you ask whether anything downstream ran.
+     *
+     * <p>Bracketed by a serve, as everything in this class is: the whole point of refusing at the edge
+     * rather than at boot is that the pod keeps serving every other tenant.
+     */
+    @Test
+    void aTenantPlacedOnADatasourceNobodyConfiguredIsRefusedAtTheEdgeWith503() throws Exception {
+        Seat marooned = tenantAtSchemaVersion(AT_FLOOR);
+        placeOnDatasource(marooned.orgId(), "nobody-configured-this");
+        Seat fine = tenantAtSchemaVersion(AT_FLOOR);
+        String requestId = "ds-" + UUID.randomUUID().toString().replace("-", "");
+
+        assertRefused(marooned);
+        assertServed(fine);
+
+        mockMvc.perform(get("/api/v1/orgs/" + marooned.orgId() + "/tickets")
+                        .header("X-Request-Id", requestId)
+                        .with(jwt().jwt(token -> token.subject(marooned.subject())
+                                .claim("iss", EdgeSeed.ISSUER)
+                                .claim("organization", marooned.organizationClaim()))))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string("Retry-After",
+                        String.valueOf(schemaFloor.retryAfterSeconds())))
+                .andExpect(jsonPath("$.errors[0].code").value("SERVICE_UNAVAILABLE"))
+                .andExpect(jsonPath("$.errors[0].status").value("503"))
+                .andExpect(jsonPath("$.meta.requestId").value(requestId));
     }
 
     // --- driving ------------------------------------------------------------------------------------
@@ -306,5 +348,29 @@ class CurrentUserFilterSchemaFloorTest extends AbstractIntegrationTest {
                 on conflict (org_id) do update set schema_version = excluded.schema_version,
                                                    updated_at = now()
                 """, orgId, TenantSchemas.TENANT_POOL, schemaVersion);
+    }
+
+    /**
+     * Point an already-placed tenant at a datasource by name — the one column ADR 0011 added to the
+     * routing decision, and the only thing that separates the served tenants above from the refused
+     * one below. Written as an UPDATE rather than folded into {@link #placeAtSchemaVersion} so the
+     * fixture cannot accidentally make every tenant here depend on a pool.
+     */
+    private void placeOnDatasource(UUID orgId, String datasourceName) {
+        int rows = jdbc.update("""
+                update platform.tenant_placement
+                   set datasource_name = ?, updated_at = now()
+                 where org_id = ?
+                """, datasourceName, orgId);
+        if (rows != 1) {
+            throw new IllegalStateException("expected exactly one placement row for " + orgId
+                    + " to point at '" + datasourceName + "', updated " + rows + " — the fixture and"
+                    + " the registry disagree, and every assertion after this would be about nothing");
+        }
+        // The floor memoizes per tenant; this row moved after the seat was created, and in production
+        // the mover (a cutover) drops the memo itself. Nothing has been read for this tenant yet, but
+        // saying so explicitly is what stops a reordering of this method from passing for stale
+        // reasons.
+        schemaFloor.forget(orgId);
     }
 }

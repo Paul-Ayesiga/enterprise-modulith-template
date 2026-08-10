@@ -1,9 +1,14 @@
 package ug.co.smsone.shared.persistence;
 
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -54,9 +59,20 @@ import ug.co.smsone.shared.tenancy.TenantContext;
  * recorded here rather than papered over: {@code TenancyTierBoundaryTest} covers column drift against
  * {@code docs/DATA_MODEL.md} in the test suite, which is where that check belongs — it needs the whole
  * schema, not a running application.
+ *
+ * <p><strong>Remote datasources are REPORTED, never validated-or-refused (ADR 0011 §3, §4.2).</strong>
+ * The two passes above throw, and rightly: a pod that cannot reach its own primary tables serves
+ * nobody. A remote database is the opposite case — it serves SOME tenants, and a pod that refused to
+ * boot because one remote was down would be the availability coupling ADR 0011 §3 exists to prevent,
+ * hand-built into startup. So the third pass probes each configured name, wrapped so nothing it finds
+ * can throw: unreachable is an ERROR line counting the tenants it currently costs (each of whom fails
+ * per tenant, 503, at the floor), and a configured name no placement row uses is a WARN, because
+ * config may legitimately lead placement by a release.
  */
 @Component
 class MappedSchemaValidator {
+
+    private static final Logger log = LoggerFactory.getLogger(MappedSchemaValidator.class);
 
     /**
      * The org whose axis the tenant pass borrows. It names no organization on purpose: a tenant that
@@ -74,11 +90,13 @@ class MappedSchemaValidator {
     private static final UUID POOLED_TENANT_PROBE = new UUID(0L, 0L);
 
     private final JdbcTemplate jdbc;
+    private final TenantDataSources dataSources;
     private final List<String> platformTables;
     private final List<String> tenantTables;
 
-    MappedSchemaValidator(JdbcTemplate jdbc, MappedTables tables) {
+    MappedSchemaValidator(JdbcTemplate jdbc, MappedTables tables, TenantDataSources dataSources) {
         this.jdbc = jdbc;
+        this.dataSources = dataSources;
         Map<String, String> mapped = tables.all();
         // Split on what the mapping itself declares, never on a list kept here — that list would be a
         // second copy of the tier assignment and the one that goes stale.
@@ -90,6 +108,46 @@ class MappedSchemaValidator {
     void validateMappedTablesAreReachable() {
         TenantContext.runAsPlatform(() -> check(platformTables, "platform"));
         TenantContext.runAs(POOLED_TENANT_PROBE, () -> check(tenantTables, "pooled tenant"));
+        // AFTER the two refusing passes: a report about somebody else's database must never delay or
+        // obscure the refusal about our own.
+        reportRemoteDatasources();
+    }
+
+    /**
+     * The non-refusing pass — see the class note. Cost is bounded and stated: an unreachable remote
+     * holds this listener for its {@code connection-timeout} (5 s default), at most once per configured
+     * name against the cap of ten, and the pod is already serving when this runs.
+     */
+    private void reportRemoteDatasources() {
+        for (String name : dataSources.remoteNames()) {
+            Integer placed;
+            try {
+                placed = TenantContext.callAsPlatform(() -> jdbc.queryForObject(
+                        "select count(*) from platform.tenant_placement where datasource_name = ?",
+                        Integer.class, name));
+            } catch (RuntimeException registryUnreadable) {
+                // The registry read is on primary, which the two passes above just proved reachable —
+                // so this is a blip, and a report is not worth a boot noise escalation.
+                log.warn("could not count the tenants placed on datasource '{}': {}",
+                        name, registryUnreadable.toString());
+                placed = null;
+            }
+            if (placed != null && placed == 0) {
+                log.warn("datasource '{}' is configured and no placement row names it — legitimate when"
+                        + " config leads placement by a release (ADR 0011 §4.2), worth a look when it"
+                        + " does not.", name);
+            }
+            try (Connection connection = dataSources.poolFor(name).getConnection();
+                    Statement probe = connection.createStatement()) {
+                probe.execute("select 1");
+            } catch (SQLException | RuntimeException unreachable) {
+                log.error("remote datasource '{}' is unreachable at startup ({} tenant(s) placed on it)."
+                        + " This pod boots and serves anyway — each of those tenants fails per tenant,"
+                        + " 503 with Retry-After, and every other tenant is unaffected (ADR 0011 §3,"
+                        + " §4.2): {}",
+                        name, placed == null ? "an unknown number of" : placed, unreachable.toString());
+            }
+        }
     }
 
     private void check(List<String> tables, String axis) {

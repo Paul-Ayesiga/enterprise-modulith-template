@@ -113,22 +113,50 @@ class OrgResolver {
         return keycloakIssuer.equals(issuer) ? OrgProvider.KEYCLOAK : null;
     }
 
-    /** Cached. The guards and the trim run here so the cache key is the normalized triple. */
+    /**
+     * Cached. The guards and the trim run here so the cache key is the normalized triple.
+     *
+     * <p>Stale-while-unreachable (ADR 0011 §2): when the platform database cannot be ASKED, the
+     * last-known translation this process holds is served up to the hard ceiling, measured from that
+     * entry's own last refresh; past it, 503 + Retry-After rather than empty — empty here would strip
+     * the caller's tenant and every org-scoped check would answer 403, which is a lie about their
+     * credentials. Query-shaped failures rethrow untouched.
+     */
     private Optional<UUID> byExternalId(OrgProvider provider, String issuer, String externalOrgId) {
         if (externalOrgId == null || externalOrgId.isBlank()) {
             return Optional.empty();
         }
         // Text, then parsed here: see OrgResolutionCache on why a bare UUID cannot cross L2.
-        String organizationId = cache.organizationIdTextOf(provider, issuer, externalOrgId.trim());
+        String organizationId;
+        try {
+            organizationId = cache.organizationIdTextOf(provider, issuer, externalOrgId.trim());
+        } catch (RuntimeException failure) {
+            organizationId = cache.lastKnownOr(provider, issuer, externalOrgId.trim(), failure);
+        }
         return organizationId == null ? Optional.empty() : Optional.of(UUID.fromString(organizationId));
     }
 
-    /** Uncached, deliberately — an alias is mutable and reusable. See {@link OrgResolutionCache}. */
+    /**
+     * Uncached, deliberately — an alias is mutable and reusable. See {@link OrgResolutionCache}.
+     *
+     * <p>Which means it has NO stale answer during an outage, and that too is deliberate: serving a
+     * last-known {@code alias → org} is the one shape that could hand a caller a tenant that no longer
+     * owns the name. A connection-shaped failure here becomes the contract's 503 ("we could not ask")
+     * rather than a raw 500; a deployment whose claims carry the provider id — Keycloak's do — never
+     * reaches this leg on the outage path, because the id leg above answered.
+     */
     private Optional<UUID> byAlias(OrgProvider provider, String issuer, String externalAlias) {
         if (externalAlias == null || externalAlias.isBlank()) {
             return Optional.empty();
         }
-        return links.findByProviderAndIssuerAndExternalAlias(provider, issuer, externalAlias.trim())
-                .map(ExternalOrganization::getOrganizationId);
+        String trimmed = externalAlias.trim();
+        String organizationId;
+        try {
+            return links.findByProviderAndIssuerAndExternalAlias(provider, issuer, trimmed)
+                    .map(ExternalOrganization::getOrganizationId);
+        } catch (RuntimeException failure) {
+            organizationId = cache.noAliasAnswerFor(provider, issuer, trimmed, failure);
+        }
+        return organizationId == null ? Optional.empty() : Optional.of(UUID.fromString(organizationId));
     }
 }

@@ -19,6 +19,7 @@ The rest are not wired to an alert — nothing pages you, you come looking:
 | [restore.md](restore.md) | restoring from backup, or running the DR drill |
 | [ci-jenkins.md](ci-jenkins.md) | signing in to the self-hosted Jenkins, wiring its two CI credentials, or recovering the local k3s node after a build exhausts it |
 | [tenant-promotion.md](tenant-promotion.md) | moving one organization out of `tenant_pool` into a schema of its own — or back — and recovering a promotion whose process died (ADR 0010 §6 hop 0→1) |
+| [tenant-cutover.md](tenant-cutover.md) | moving one organization's silo to another database with a seconds-long freeze — watching it, rolling it back, decommissioning the source copy, and every state a crash can leave (ADR 0011 §7 hop 1→2) |
 | [tenant-extraction.md](tenant-extraction.md) | producing the extraction bundle for an organization that is leaving — the eleven items of ADR 0010 §6, what the bundler refuses to do without, and what to do on the far side before serving anybody |
 
 Shared context for every incident:

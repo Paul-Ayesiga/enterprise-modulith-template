@@ -35,24 +35,32 @@ class RateLimitKeyResolver {
 
     String resolve(HttpServletRequest request, Tier tier) {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-
-        if (tier.scope() == RateLimitScope.TENANT) {
-            String tenant = tenantKey(authentication);
-            if (tenant != null) {
-                return key(tier, "tenant", tenant);
+        try {
+            if (tier.scope() == RateLimitScope.TENANT) {
+                String tenant = tenantKey(authentication);
+                if (tenant != null) {
+                    return key(tier, "tenant", tenant);
+                }
             }
-        }
-        if (tier.scope() == RateLimitScope.TENANT || tier.scope() == RateLimitScope.PRINCIPAL) {
-            // The durable principal key (person:<uuid> | key:<uuid>), not the display name. A
-            // username-keyed bucket is escapable (rename yourself for a fresh quota) and inheritable
-            // (a recycled username lands in the previous holder's bucket). The key type is "principal"
-            // rather than "sub" because the value is no longer a token subject — a machine has none,
-            // and papering over that collision is what the namespace prefix exists to stop. Falls
-            // through to IP when there is no authenticated principal.
-            String principal = currentUserProvider.currentPrincipalKey().orElse(null);
-            if (principal != null) {
-                return key(tier, "principal", principal);
+            if (tier.scope() == RateLimitScope.TENANT || tier.scope() == RateLimitScope.PRINCIPAL) {
+                // The durable principal key (person:<uuid> | key:<uuid>), not the display name. A
+                // username-keyed bucket is escapable (rename yourself for a fresh quota) and inheritable
+                // (a recycled username lands in the previous holder's bucket). The key type is "principal"
+                // rather than "sub" because the value is no longer a token subject — a machine has none,
+                // and papering over that collision is what the namespace prefix exists to stop. Falls
+                // through to IP when there is no authenticated principal.
+                String principal = currentUserProvider.currentPrincipalKey().orElse(null);
+                if (principal != null) {
+                    return key(tier, "principal", principal);
+                }
             }
+        } catch (RuntimeException resolutionFailed) {
+            // A bucket key is not worth deciding the request's fate over. Resolution can FAIL here —
+            // the platform database unreachable, ADR 0011 §2.3's ceiling throwing — because
+            // CurrentUserFilter memoizes nothing on a failed resolution and this filter (order 0) is a
+            // caller that asks again. A throw from here escapes the chain as a non-envelope 500 and
+            // pre-empts the layer that owns the real answer; keying by IP instead is the same posture
+            // this resolver already takes for a caller it cannot name.
         }
         return key(tier, "ip", clientIp(request));
     }

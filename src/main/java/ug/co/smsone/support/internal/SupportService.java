@@ -8,6 +8,7 @@ import org.springframework.data.domain.Window;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ug.co.smsone.shared.audit.AuditLog;
+import ug.co.smsone.shared.tenancy.CrossDatabaseWrites;
 import ug.co.smsone.shared.error.ForbiddenException;
 import ug.co.smsone.shared.error.NotFoundException;
 import ug.co.smsone.shared.error.ValidationException;
@@ -23,6 +24,14 @@ import ug.co.smsone.shared.web.CursorPageRequest;
  * <p>Openers, authors and assignees are {@code person.id}s. This service is the single place both
  * protocol surfaces (REST and the {@code SupportDesk} port) funnel through, so it is where the
  * "a ticket needs a person" rule is stated once — see {@link #requirePerson}.
+ *
+ * <p><b>It is also the single place the cross-tenant operator queue is maintained from</b>
+ * ({@link TicketIndex}, V61). Every method here that changes a column the operator's queue renders calls
+ * {@code index.record(ticket)} immediately after the save and inside the same transaction — which is
+ * exactly why the maintenance belongs here and not in the two controllers: being the one funnel is what
+ * makes "every ticket write updates the queue" a property of the code rather than a convention two
+ * protocol surfaces have to remember. The upsert is idempotent and guarded by
+ * {@code is distinct from}, so calling it on a write that changed nothing indexed costs no row.
  */
 @Service
 class SupportService {
@@ -37,17 +46,22 @@ class SupportService {
     private final OrgSlaOverrideRepository slaOverrides;
     private final SupportNotifier notifier;
     private final AuditLog auditLog;
+    private final TicketIndex index;
+    private final CrossDatabaseWrites platformTier;
     private final Clock clock;
 
     SupportService(TicketRepository tickets, TicketMessageRepository messages,
             SlaPolicyRepository slaPolicies, OrgSlaOverrideRepository slaOverrides,
-            SupportNotifier notifier, AuditLog auditLog, Clock clock) {
+            SupportNotifier notifier, AuditLog auditLog, TicketIndex index,
+            CrossDatabaseWrites platformTier, Clock clock) {
         this.tickets = tickets;
         this.messages = messages;
         this.slaPolicies = slaPolicies;
         this.slaOverrides = slaOverrides;
         this.notifier = notifier;
         this.auditLog = auditLog;
+        this.index = index;
+        this.platformTier = platformTier;
         this.clock = clock;
     }
 
@@ -68,21 +82,40 @@ class SupportService {
         Ticket ticket = tickets.save(Ticket.open(orgId, opener, subject.trim(), category, normalizedPriority,
                 now.plusSeconds(sla[0] * 60L),
                 now.plusSeconds(sla[1] * 60L)));
+        // AFTER the save, never before it: the id and the created stamp are assigned at persist, and
+        // they are half the queue's keyset. Inside the transaction, so a rolled-back open leaves no
+        // queue row on any deployment where the tenant is co-located with primary (TicketIndex).
+        index.record(ticket);
         auditLog.record("support.ticket_opened", orgId, ticket.getId().toString(), null,
                 "priority=" + normalizedPriority);
         notifier.ticketOpened(ticket); // support queue awareness
         return ticket;
     }
 
-    /** The SLA minutes for an org+priority: the org's override if set, else the seeded default. */
+    /**
+     * The SLA minutes for an org+priority: the org's override if set, else the seeded default.
+     *
+     * <p><b>The two reads are on opposite sides of the tenancy boundary and only one of them can use
+     * the caller's connection.</b> {@code org_sla_override} is TENANT-tier, so it must be read on the
+     * axis the caller already has — that is the whole point of an override. {@code sla_policy} is
+     * PLATFORM-tier ({@code @Table(schema = "platform")}), and a tenant served from its own database
+     * has no {@code platform.sla_policy} there: ADR 0011 §5.1's minimal remote schema holds only
+     * {@code event_publication}. Left unhopped this threw
+     * {@code relation "platform.sla_policy" does not exist} on the first ticket a remote tenant opened —
+     * loudly, which is the tripwire working, but a tenant that cannot open a ticket is not served.
+     *
+     * <p>{@link CrossDatabaseWrites#callOnPlatform} compares DATABASES, never axes, so on every
+     * deployment with no remote datasource this is the same connection and the same transaction it
+     * always was.
+     */
     private int[] resolveSlaMinutes(UUID orgId, String priority) {
         return slaOverrides.findByOrgIdAndPriority(orgId, priority)
                 .map(override -> new int[]{override.getFirstResponseMinutes(), override.getResolutionMinutes()})
-                .orElseGet(() -> {
+                .orElseGet(() -> platformTier.callOnPlatform(() -> {
                     SlaPolicy sla = slaPolicies.findByPriority(priority)
                             .orElseThrow(() -> new NotFoundException("No SLA policy seeded for " + priority));
                     return new int[]{sla.getFirstResponseMinutes(), sla.getResolutionMinutes()};
-                });
+                }));
     }
 
     @Transactional
@@ -124,10 +157,11 @@ class SupportService {
         return tickets.pageByOrg(orgId, page);
     }
 
-    @Transactional(readOnly = true)
-    Window<Ticket> queue(String status, CursorPageRequest page) {
-        return tickets.pageForQueue(status == null || status.isBlank() ? null : status.trim().toUpperCase(), page);
-    }
+    // There is no `queue(status, page)` here any more, and its absence is the V61 change seen from this
+    // side: the cross-tenant operator queue is not a per-home read that something merges, it is one
+    // keyset statement against platform.ticket_index (TicketIndex, TicketFanOut). A per-home queue read
+    // kept "just in case" would be a second definition of the operator's collection, and the two would
+    // disagree about ordering or filtering the first time either moved.
 
     @Transactional(readOnly = true)
     Ticket requireInOrg(UUID orgId, UUID id) {
@@ -160,6 +194,10 @@ class SupportService {
         if ("WAITING_ON_CUSTOMER".equals(ticket.getStatus())) {
             ticket.changeStatus("IN_PROGRESS");
             tickets.save(ticket);
+            // A tenant reply is the one write that moves a ticket's status without an operator doing
+            // anything, so it is also the one whose queue row goes stale unnoticed — the desk would keep
+            // showing WAITING_ON_CUSTOMER for a customer who has already answered.
+            index.record(ticket);
         }
         return messages.save(TicketMessage.of(ticket.getId(), author, body.trim(), false, clock.instant()));
     }
@@ -173,6 +211,9 @@ class SupportService {
         if (!internal) {
             ticket.firstResponded(clock.instant());
             tickets.save(ticket);
+            // Only the public branch: an internal note changes no column the queue renders, so indexing
+            // it would be a write the `is distinct from` guard would discard anyway.
+            index.record(ticket);
             notifier.ticketReplied(ticket);
         }
         return messages.save(TicketMessage.of(ticket.getId(), author, body.trim(), internal, clock.instant()));
@@ -187,6 +228,7 @@ class SupportService {
         Ticket ticket = requireAnyOrg(id);
         ticket.assign(assigneePersonId);
         Ticket saved = tickets.save(ticket);
+        index.record(saved);
         auditLog.record("support.ticket_assigned", ticket.getOrgId(), id.toString(), null,
                 "assignee=" + assigneePersonId);
         return saved;
@@ -203,6 +245,7 @@ class SupportService {
         String before = ticket.getStatus();
         ticket.changeStatus(normalized);
         Ticket saved = tickets.save(ticket);
+        index.record(saved);
         auditLog.record("support.ticket_status_changed", ticket.getOrgId(), id.toString(),
                 "status=" + before, "status=" + normalized);
         return saved;

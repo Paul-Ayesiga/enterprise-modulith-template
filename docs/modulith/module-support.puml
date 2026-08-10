@@ -24,9 +24,9 @@ System_Boundary("Application_boundary", "Application", $tags="") {
 
 }
 
+Rel(Application.Application.Notification, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Support, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 Rel(Application.Application.Support, Application.Application.Notification, "uses", $techn="", $tags="", $link="")
-Rel(Application.Application.Notification, Application.Application.SharedKernel, "uses", $techn="", $tags="", $link="")
 
 SHOW_LEGEND(true)
 hide stereotypes

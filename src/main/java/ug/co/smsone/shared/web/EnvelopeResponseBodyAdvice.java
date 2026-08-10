@@ -48,8 +48,13 @@ public class EnvelopeResponseBodyAdvice implements ResponseBodyAdvice<Object> {
             PageMeta page = windowed.page();
             String next = page.nextCursor() == null ? null
                     : selfPath + "?page[size]=" + page.size() + "&page[after]=" + page.nextCursor();
+            // included is null for every collection that does not sideload, and non_null inclusion then
+            // omits the field — so this line is invisible to every response that existed before it.
+            // The `next` link deliberately does NOT carry `include`: it is built from the page cursor
+            // alone, and a client that wants the sideload on page two sends the parameter again, the
+            // same way it sends any other filter it chose.
             return ApiResponse.of(windowed.items(), metaFactory.create().withPage(page),
-                    new ApiLinks(selfPath, next));
+                    new ApiLinks(selfPath, next), windowed.included());
         }
         return ApiResponse.of(body, metaFactory.create(), ApiLinks.self(selfPath));
     }

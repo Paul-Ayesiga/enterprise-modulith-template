@@ -51,8 +51,21 @@ public class OrgMdcFilter extends OncePerRequestFilter {
         // why the shared @Order(-1) makes this necessary rather than belt-and-braces. When
         // CurrentUserFilter won the tie this is a pure ThreadLocal set/restore — the memo answers and
         // no connection is borrowed — and callAsPlatform restores, so the tenant it pinned survives.
-        UUID orgId = TenantContext.callAsPlatform(
-                () -> currentUser.currentUser().map(CurrentUser::organizationId).orElse(null));
+        UUID orgId;
+        try {
+            orgId = TenantContext.callAsPlatform(
+                    () -> currentUser.currentUser().map(CurrentUser::organizationId).orElse(null));
+        } catch (RuntimeException failure) {
+            // The MDC is decoration, and this filter owns no rendering. A resolution that cannot be
+            // answered — the platform database down, the ADR 0011 §2.3 ceiling throwing — surfaces on
+            // a failure-path this filter can reach FIRST: CurrentUserFilter memoizes nothing when
+            // resolution fails, so its deferral hands the same failure to whichever caller asks next,
+            // and a throw from here would escape the chain as a non-envelope 500. Proceed without the
+            // org on the MDC; the layer that owns rendering (CurrentUserFilter for tenant-scoped
+            // routes, GlobalExceptionHandler behind the dispatcher for the rest) shows the caller the
+            // real answer.
+            orgId = null;
+        }
         if (orgId == null) {
             chain.doFilter(request, response);
             return;

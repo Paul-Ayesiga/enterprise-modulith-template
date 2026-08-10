@@ -116,6 +116,7 @@ shared            ──►  nothing in a business module (compile-time)
 |---|---|---|---|
 | `shared.security.OrgAuthorization` | `shared` | `organization.internal.OrgAuthorizationImpl` | method security lives in `shared`; the RBAC data lives in `organization`. `ApiPermissionEvaluator` resolves it via `ObjectProvider` and **default-denies** when absent |
 | `shared.security.ImpersonationLookup` | `shared` | `identity.internal.ImpersonationLookupImpl` | `ImpersonationFilter` lives in `shared` (it swaps the `SecurityContext` before every other filter); the session table lives in `identity`. Same seam as `OrgAuthorization` — absent impl means the header cannot be authorized, so it is **denied**, never ignored |
+| `shared.directory.PersonProjections` | `shared` | `identity.internal.PersonProjectionsImpl` | batch `person.id` → name/status/display-address, for the member rosters' `?include=person` sideload. In `shared` and not beside `identity.PersonDirectory` because `person` is **platform-only forever** (ADR 0010 §2.2, ADR 0011 §3): a tenant that must render its own roster after the split cannot compile against a module that is not there. The one port here that **degrades rather than denies** when absent — see below |
 | `shared.audit.AuditLog` | `shared` | `audit.internal.AuditLogImpl` (`@Primary`) | any module must be able to audit without depending on `audit` |
 | `subscription.Subscriptions` | `subscription` (API pkg) | `subscription.internal.SubscriptionService` | billing drives plan/standing changes through the SAME audited paths the admin surface uses — one entitlement authority, two callers |
 | `identity.UserProvisioning` | `identity` (API pkg) | `identity.internal.UserProvisioningService` | `organization` provisions members without touching Keycloak itself |
@@ -125,6 +126,13 @@ shared            ──►  nothing in a business module (compile-time)
 
 Rule: **the interface belongs to the consumer's world, the implementation to the owner's.** A
 `shared` port + `ObjectProvider` + default-deny is the pattern when `shared` is the consumer.
+
+The absence posture follows the QUESTION, not the mechanism: a port that answers *may they* denies
+when it cannot answer, a port that answers *what is this called* degrades. `PersonProjections` is the
+second kind and is the only one today — an unresolvable name renders as the bare id (the surface as
+it stood before the port existed), where an unresolvable permission must refuse. Do not "fix" one to
+match the other; a rendering that 500s because a directory is unreachable is a worse answer than the
+one it replaced, and an authorization that shrugs is a hole.
 
 ### 2.4 Adding a module
 
@@ -326,9 +334,9 @@ step by step; copy that reasoning, not just the shape.
 
 ### 4.5 Migrations
 
-- `src/main/resources/db/migration/{platform,tenant}/V<n>__<snake_name>.sql`. **V59 is taken
-  (`platform.api_key_prefix_reservation`, ADR 0010 Phase 6's extraction bundle item 8) — so the next
-  free number is V60.** Never
+- `src/main/resources/db/migration/{platform,tenant}/V<n>__<snake_name>.sql`. **V61 is taken
+  (`platform.ticket_index`, ADR 0010 §8 Q2's cross-tenant operator queue) — so the next
+  free number is V62.** Never
   edit an applied migration; never renumber. One global counter across BOTH directories, and it is
   this line: claim a number by writing the file *and* moving this line in the same change-set, and
   land the file in exactly one directory. Two people deriving "next free" from `ls` in the same hour

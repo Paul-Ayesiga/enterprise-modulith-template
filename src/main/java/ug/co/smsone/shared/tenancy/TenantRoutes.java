@@ -16,10 +16,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.shared.tenancy.placement.TenantPlacement;
 
 /**
- * <strong>Which schema one organization's rows are in, answered fast enough to ask on every connection
- * borrow.</strong> This is the placement router ADR 0010 §3.1 and §7 Phase 5 describe, and it is the
+ * <strong>Which schema one organization's rows are in — and since ADR 0011, which DATABASE — answered
+ * fast enough to ask on every connection borrow.</strong> This is the placement router ADR 0010 §3.1
+ * and §7 Phase 5 describe, extended by ADR 0011 §4.3 to the (schema, datasource) pair, and it is the
  * single fact that turns {@code platform.tenant_placement} from a registry somebody queries into the
  * thing that actually decides where a statement lands.
  *
@@ -35,11 +37,14 @@ import org.springframework.stereotype.Component;
  * <h2>Three properties that are not optional</h2>
  *
  * <ol>
- *   <li><strong>It reads through the RAW pool, never through the routing DataSource.</strong> The
- *       router is what calls this; resolving a route by borrowing from the router would recurse until
- *       the stack ended. Taking {@link HikariDataSource} rather than {@code DataSource} is the guard —
- *       the routing wrapper is a {@code DelegatingDataSource}, so the type itself proves which one this
- *       got.</li>
+ *   <li><strong>It reads through the RAW pool, never through the routing DataSource — and the raw pool
+ *       is the PRIMARY.</strong> The router is what calls this; resolving a route by borrowing from the
+ *       router would recurse until the stack ended. Taking {@link HikariDataSource} rather than
+ *       {@code DataSource} is the guard — the routing wrapper is a {@code DelegatingDataSource}, so the
+ *       type itself proves which one this got. Since ADR 0011 "primary, always" carries its own weight
+ *       too: {@code platform.tenant_placement} exists on no other database, so a route for a tenant
+ *       served remotely is still resolved on primary — proven against two real containers before this
+ *       shipped, with both pools at size one and eight threads borrowing.</li>
  *   <li><strong>The query names {@code platform.} explicitly</strong>, so the {@code search_path} the
  *       previous borrower left on that pooled connection is irrelevant. AGENTS §1 states the same rule
  *       as a build gate, and here it is also what makes it safe to resolve a route without first having
@@ -113,10 +118,15 @@ public final class TenantRoutes {
 
     /**
      * Qualified, and by {@code org_id} which is the primary key. {@code state} is read but deliberately
-     * NOT used to choose a schema — see {@link #readHome}.
+     * NOT used to choose a schema — see {@link #readRoute}. Since ADR 0011 the row's
+     * {@code datasource_name} is the second half of the answer: WHICH DATABASE, then which schema in
+     * it. Both halves ride one memo, one TTL and one refusal policy, because they are one fact — a
+     * cutover flips the datasource exactly the way a promotion flips the schema, and a reader that
+     * could hold a fresh schema beside a stale datasource would route to a database the tenant has
+     * left.
      */
     private static final String LOOKUP =
-            "select schema_name, state from platform.tenant_placement where org_id = ?";
+            "select schema_name, datasource_name, state from platform.tenant_placement where org_id = ?";
 
     /** Every schema the fleet occupies, for {@link SplitTables#homes()}. Ordered so a sweep is stable. */
     private static final String ALL_HOMES =
@@ -144,7 +154,7 @@ public final class TenantRoutes {
      * and a per-instance map would make a route resolved under one context invisible to the next while
      * both describe the same rows.
      */
-    private static final ConcurrentHashMap<UUID, Route> ROUTES = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<UUID, Memo> ROUTES = new ConcurrentHashMap<>();
 
     private final DataSource pool;
     private final Duration ttl;
@@ -182,15 +192,34 @@ public final class TenantRoutes {
      * has never heard of (ADR 0010 §4.3: a signup writes no DDL and a tenant with no row is pooled and
      * serving) — and {@code t_<32hex>} for one that has been.
      *
-     * <p>Answered from memory on all but the first call per tenant per {@link #routeTtl()}.
+     * <p>Answered from memory on all but the first call per tenant per {@link #routeTtl()}. Callers that
+     * are about to BORROW A CONNECTION want {@link #routeOf} instead — the schema alone does not say
+     * which database it is in, and since ADR 0011 those are two different answers.
      *
      * @throws IllegalStateException if the registry cannot be read, or names a schema that is not this
      *     tenant's. Both are refusals to guess: see the class note.
      */
     public static String homeOf(UUID orgId) {
+        return routeOf(orgId).schema();
+    }
+
+    /**
+     * <strong>Where {@code orgId}'s next statement belongs: (schema, datasource), as one answer</strong>
+     * (ADR 0011 §4.3). {@code TenantRoutingDataSource} calls this on every tenant-axis borrow, picks the
+     * pool by {@link Route#datasourceName()} and sets the {@code search_path} from
+     * {@link Route#schema()} — in that order, resolve before borrow, for the reason its javadoc states.
+     *
+     * <p>Everything {@link #homeOf} promises holds for the pair: one memo, one TTL, one refusal policy.
+     * A tenant the registry has never heard of is pooled on {@code primary}; an unreadable registry is a
+     * thrown borrow, never a guess. The datasource NAME is not validated here — whether a pool of that
+     * name exists is deployment configuration, and {@code TenantDataSources.poolFor} is where an
+     * unconfigured name fails, per tenant, with {@code TenantSchemaFloor} refusing the same tenant at
+     * the edge before a borrow ever happens.
+     */
+    public static Route routeOf(UUID orgId) {
         if (orgId == null) {
             throw new IllegalArgumentException(
-                    "a tenant home is looked up by organization id; null names no tenant."
+                    "a tenant route is looked up by organization id; null names no tenant."
                             + " SplitTables.homeOf answers PLATFORM for a null org before it gets here.");
         }
         TenantRoutes routes = installed;
@@ -199,13 +228,14 @@ public final class TenantRoutes {
             // and both resolve without ever coming here. Loud once, because if it is ever NOT startup it
             // is a tenant being routed by a default instead of by its registry row.
             if (WARNED_UNINSTALLED.compareAndSet(false, true)) {
-                log.warn("A tenant home was asked for before TenantRoutes was built, so organization {}"
-                        + " resolved to {} from naming policy alone. That is correct for every pooled"
-                        + " tenant and WRONG for a promoted one. If this line appears outside application"
-                        + " startup, something is routing before the context is ready.",
+                log.warn("A tenant route was asked for before TenantRoutes was built, so organization {}"
+                        + " resolved to {} on the primary datasource from naming policy alone. That is"
+                        + " correct for every pooled tenant and WRONG for a promoted or relocated one. If"
+                        + " this line appears outside application startup, something is routing before"
+                        + " the context is ready.",
                         orgId, TenantSchemas.TENANT_POOL);
             }
-            return TenantSchemas.TENANT_POOL;
+            return Route.POOLED_ON_PRIMARY;
         }
         return routes.resolve(orgId);
     }
@@ -252,24 +282,27 @@ public final class TenantRoutes {
         ROUTES.clear();
     }
 
-    private String resolve(UUID orgId) {
+    private Route resolve(UUID orgId) {
         long now = System.nanoTime();
-        Route cached = ROUTES.get(orgId);
+        Memo cached = ROUTES.get(orgId);
         if (cached != null && cached.validAt(now)) {
-            return cached.schema();
+            return cached.route();
         }
-        String schema = readHome(orgId);
+        Route route = readRoute(orgId);
         if (ROUTES.size() >= MAX_TRACKED_TENANTS) {
             ROUTES.clear();
         }
-        ROUTES.put(orgId, Route.expiringIn(schema, ttl));
-        if (cached != null && !cached.schema().equals(schema)) {
-            // The only way this happens without a local forget() is another process having promoted or
-            // demoted this tenant. Worth a line: it is the observable half of the ROUTE_TTL window.
-            log.info("tenant {} now routes to {} (was {}) — the registry moved it while this process was"
-                    + " holding the previous answer", orgId, schema, cached.schema());
+        ROUTES.put(orgId, Memo.expiringIn(route, ttl));
+        if (cached != null && !cached.route().equals(route)) {
+            // The only way this happens without a local forget() is another process having promoted,
+            // demoted or cut this tenant over. Worth a line: it is the observable half of the ROUTE_TTL
+            // window.
+            log.info("tenant {} now routes to {} on '{}' (was {} on '{}') — the registry moved it while"
+                    + " this process was holding the previous answer",
+                    orgId, route.schema(), route.datasourceName(),
+                    cached.route().schema(), cached.route().datasourceName());
         }
-        return schema;
+        return route;
     }
 
     /**
@@ -281,22 +314,30 @@ public final class TenantRoutes {
      * statement precisely so no reader can ever see a new home beside a stale state. So routing by
      * {@code schema_name} alone is correct in every state, and refusing to route a PROVISIONING tenant
      * would turn a promotion into an outage for the tenant being promoted.
+     *
+     * <p>{@code datasource_name} rides along verbatim, null spelled as the column's own default: the
+     * column is {@code not null default 'primary'} (V57), so a null can only reach here through a
+     * restored dump predating it, and "no answer recorded" and "primary" are V57's same fact.
      */
-    private String readHome(UUID orgId) {
+    private Route readRoute(UUID orgId) {
         try (Connection connection = pool.getConnection();
                 PreparedStatement statement = connection.prepareStatement(LOOKUP)) {
             statement.setObject(1, orgId);
             try (ResultSet rows = statement.executeQuery()) {
                 if (!rows.next()) {
-                    return TenantSchemas.TENANT_POOL;
+                    return Route.POOLED_ON_PRIMARY;
                 }
-                return requireThisTenantsSchema(orgId, rows.getString("schema_name"));
+                String datasource = rows.getString("datasource_name");
+                return new Route(
+                        requireThisTenantsSchema(orgId, rows.getString("schema_name")),
+                        datasource == null ? TenantPlacement.PRIMARY_DATASOURCE : datasource);
             }
         } catch (SQLException failure) {
-            throw new IllegalStateException("could not read the home of organization " + orgId
-                    + " from platform.tenant_placement, so there is no schema this statement may be"
-                    + " addressed to. Guessing tenant_pool here is how a promoted tenant's write lands"
-                    + " in a schema its org_id disagrees with (ADR 0010 §1), so this fails instead.",
+            throw new IllegalStateException("could not read the route of organization " + orgId
+                    + " from platform.tenant_placement, so there is no schema and no database this"
+                    + " statement may be addressed to. Guessing tenant_pool on primary here is how a"
+                    + " promoted or relocated tenant's write lands in a schema its org_id disagrees with"
+                    + " (ADR 0010 §1), so this fails instead.",
                     failure);
         }
     }
@@ -346,17 +387,42 @@ public final class TenantRoutes {
     }
 
     /**
-     * One remembered home and when this process stops believing it.
+     * Where one organization's rows are: the schema, and the database the schema is in (ADR 0011 §4.3).
+     * The two travel as one value because they go stale as one value — a promotion rewrites the first,
+     * a cutover the second, and both flips hold the freeze one {@link #routeTtl()} so no process can be
+     * holding either half stale while the tenant serves.
+     *
+     * <p>{@link #datasourceName} is a registry value, not a promise: whether a pool of that name exists
+     * in THIS deployment is {@code TenantDataSources}' question, asked at borrow time and refused per
+     * tenant. It is never interpolated into SQL, which is why it carries no shape validation here —
+     * unlike the schema, which went through {@code TenantSchemas.requireSiloSchema} on the way in.
+     */
+    public record Route(String schema, String datasourceName) {
+
+        /** The shipped case and the no-row answer: pooled, on the platform database. */
+        static final Route POOLED_ON_PRIMARY =
+                new Route(TenantSchemas.TENANT_POOL, TenantPlacement.PRIMARY_DATASOURCE);
+
+        public Route {
+            if (schema == null || datasourceName == null) {
+                throw new IllegalArgumentException(
+                        "a route is a (schema, datasource) pair; half of one routes nothing");
+            }
+        }
+    }
+
+    /**
+     * One remembered route and when this process stops believing it.
      *
      * <p>{@code nanoTime} rather than a wall clock, and the {@code now - expiresAt < 0} comparison, for
      * the reason {@link TenantSchemaFloor}'s own {@code Entry} states: this is an interval nobody reads
      * and no row holds, and a clock that steps backwards under an NTP correction must not be able to
      * extend it.
      */
-    private record Route(String schema, long expiresAtNanos) {
+    private record Memo(Route route, long expiresAtNanos) {
 
-        static Route expiringIn(String schema, Duration ttl) {
-            return new Route(schema, System.nanoTime() + ttl.toNanos());
+        static Memo expiringIn(Route route, Duration ttl) {
+            return new Memo(route, System.nanoTime() + ttl.toNanos());
         }
 
         boolean validAt(long now) {

@@ -30,7 +30,8 @@ class SubscriptionServiceTrialTest {
         UUID orgId = UUID.randomUUID();
         given(subscriptions.findByOrgId(orgId)).willReturn(Optional.of(mock(OrgSubscription.class)));
 
-        new SubscriptionService(subscriptions, plans, mock(EntitlementResolver.class),
+        new SubscriptionService(subscriptions, plans, mock(ug.co.smsone.subscription.PlanCatalog.class),
+                mock(PlanCatalogCache.class), mock(EntitlementResolver.class),
                 mock(ApplicationEventPublisher.class), mock(AuditLog.class),
                 mock(MeterRegistry.class), Clock.systemUTC(),
                 mock(TwoLevelCacheManager.class), mock(TransactionTemplate.class))

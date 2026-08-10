@@ -10,10 +10,12 @@
 
 _Others_
 
+* `u.c.s.s.PlanCatalog` (via `u.c.s.s.internal.PlanCatalogImpl`)
 * `u.c.s.s.SubscriptionGate` (via `u.c.s.s.internal.SubscriptionGateImpl`)
 * `u.c.s.s.SubscriptionOverview` (via `u.c.s.s.internal.SubscriptionOverviewImpl`)
 |Bean references
 |* `u.c.s.s.security.GatewaySecretVerifier` (in Shared Kernel)
+* `u.c.s.s.cache.StaleWhileUnreachable` (in Shared Kernel)
 * `u.c.s.s.tenancy.placement.TenantPlacements` (in Shared Kernel)
 * `u.c.s.s.security.CurrentUserProvider` (in Shared Kernel)
 * `u.c.s.s.web.EnvelopeErrorWriter` (in Shared Kernel)

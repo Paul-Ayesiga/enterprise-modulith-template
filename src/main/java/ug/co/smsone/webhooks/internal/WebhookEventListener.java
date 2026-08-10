@@ -176,9 +176,23 @@ class WebhookEventListener {
      * transaction would start and the {@code EventInbox} row would commit independently of the
      * deliveries it is meant to make idempotent. That is precisely the split that turns an at-least-once
      * redelivery into a silently dropped fan-out: the inbox says "done", the queue holds nothing.
+     *
+     * <p><strong>The {@code catch} is ADR 0011's, and it is not defensive coding.</strong> On a tenant
+     * served from another database the {@code EventInbox} claim cannot commit with the deliveries — two
+     * databases, no atomic write — so a fan-out that throws would leave the message marked processed and
+     * nothing queued, and the at-least-once redelivery this listener depends on would be de-duplicated
+     * into silence. Handing the claim back restores that redelivery. It is deliberately unconditional:
+     * for a co-located tenant the claim rolled back with the work and the delete matches nothing, and a
+     * failure path that had to first ask which topology it was in is a failure path that will ask wrong.
      */
     private void fanOut(String messageId, UUID orgId, String code, WebhookPayload payload) {
-        TenantContext.runAs(orgId, () ->
-                transactions.executeWithoutResult(tx -> dispatcher.dispatch(messageId, orgId, code, payload)));
+        try {
+            TenantContext.runAs(orgId, () ->
+                    transactions.executeWithoutResult(tx ->
+                            dispatcher.dispatch(messageId, orgId, code, payload)));
+        } catch (RuntimeException failure) {
+            dispatcher.unclaim(messageId);
+            throw failure;
+        }
     }
 }

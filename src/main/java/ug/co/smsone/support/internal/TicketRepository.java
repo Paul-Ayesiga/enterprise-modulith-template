@@ -24,27 +24,13 @@ interface TicketRepository extends JpaRepository<Ticket, UUID>, JpaSpecification
                 q -> q.limit(page.size()).sortBy(sort).scroll(page.scrollPosition(sort)));
     }
 
-    /**
-     * The cross-tenant queue's total order, {@code created_at desc, id desc}.
-     *
-     * <p>A constant since Phase 5 rather than a local, because it is no longer used in one place: this
-     * query orders ONE home's rows by it, and {@code TicketFanOut} merges the homes' pages by the same
-     * order in Java. Two definitions of a keyset sort that must agree are two definitions that will
-     * eventually disagree, and the symptom would be a cursor that skips or repeats a row — so there is
-     * one of them, and the comparator says in its javadoc that it is a copy.
-     */
-    Sort QUEUE_SORT = Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
-
-    /**
-     * One home's page of the platform queue. Unqualified, so the connection's {@code search_path}
-     * decides whose tickets these are — which is what makes {@code TicketFanOut} able to run it once per
-     * home with no change to the query (ADR 0010 §5.1).
-     */
-    default Window<Ticket> pageForQueue(String status, CursorPageRequest page) {
-        return findBy((root, query, cb) -> status == null ? cb.conjunction()
-                        : cb.equal(root.get("status"), status),
-                q -> q.limit(page.size()).sortBy(QUEUE_SORT).scroll(page.scrollPosition(QUEUE_SORT)));
-    }
+    // `pageForQueue` and its QUEUE_SORT constant are gone with V61. The cross-tenant operator queue is
+    // no longer (one query per home) merged in Java — ADR 0010 §8 Q1 measured that merge at 279 ms per
+    // page at 200 homes, linear in the fleet — it is one keyset statement against
+    // platform.ticket_index. Its cursor deliberately kept THESE key names, `createdAt` and `id`, so a
+    // cursor minted before the change still decodes; see TicketIndex.decode. What must not come back is
+    // a second per-home definition of the operator's collection, because two definitions of one
+    // collection's sort will eventually disagree and the symptom is a page that skips or repeats a row.
 
     /** Breach candidates: past resolution due, not escalated, not terminal. Row-locked, SKIP LOCKED. */
     @Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)

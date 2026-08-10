@@ -631,9 +631,9 @@ class TenantSchemaSelfContainmentTest extends AbstractIntegrationTest {
      * ({@code ExtractionVerdictAgreementTest}), and the enumeration test above makes the catalogue
      * unable to grow an org-scoped platform table the mirror does not answer for. So this loop covers
      * the whole judgement by construction: a table added in V60 with an {@code org_id} is asserted here
-     * on the day its verdict is written, with no edit to this file. Twelve tables today — one
+     * on the day its verdict is written, with no edit to this file. Thirteen tables today — one
      * {@code SEEDED_FOR_THIS_ORG} that must arrive, one {@code WRITTEN_FRESH} that must be exactly the
-     * destination's own, and ten absences for eight different reasons.
+     * destination's own, and eleven absences for eight different reasons.
      *
      * <p>The origin deliberately seeds four of them so the zeros are the absence of rows that <em>really
      * existed</em>: a released legal hold, a day of metered usage, an API key and the membership index

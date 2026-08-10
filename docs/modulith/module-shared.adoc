@@ -6,9 +6,11 @@
 |_Configuration properties_
 
 * `u.c.s.s.cache.CacheProperties`
+* `u.c.s.s.cache.IdentityStaleProperties`
 * `u.c.s.s.idempotency.IdempotencyProperties`
 * `u.c.s.s.keycloak.KeycloakAdminProperties`
 * `u.c.s.s.persistence.SoftDeleteProperties`
+* `u.c.s.s.persistence.TenantDataSourceProperties`
 * `u.c.s.s.ratelimit.RateLimitProperties`
 * `u.c.s.s.web.ForwardedClientIp.HttpForwardingProperties`
 
@@ -18,6 +20,7 @@ _Others_
 * `u.c.s.s.cache.CacheConfig`
 * `u.c.s.s.cache.CacheInvalidationBroadcaster`
 * `u.c.s.s.cache.CacheRegistry`
+* `u.c.s.s.cache.StaleWhileUnreachable`
 * `u.c.s.s.cache.TenantPromotionCaches`
 * `u.c.s.s.cache.TwoLevelCacheManager`
 * `u.c.s.s.config.AsyncConfig`
@@ -31,6 +34,7 @@ _Others_
 * `u.c.s.s.persistence.JpaAuditingConfig`
 * `u.c.s.s.persistence.MappedTables`
 * `u.c.s.s.persistence.SoftDeleteRecovery`
+* `u.c.s.s.persistence.TenantDataSources`
 * `u.c.s.s.queue.QueueSignals`
 * `u.c.s.s.ratelimit.DistributedRateLimiter`
 * `u.c.s.s.ratelimit.RateLimitFilter`
@@ -46,9 +50,12 @@ _Others_
 * `u.c.s.s.security.McpTokenAuthorizationManager`
 * `u.c.s.s.security.OrgMdcFilter`
 * `u.c.s.s.security.SecurityConfig`
+* `u.c.s.s.tenancy.CrossDatabaseWrites`
 * `u.c.s.s.tenancy.TenantFanOut`
 * `u.c.s.s.tenancy.TenantRoutes`
 * `u.c.s.s.tenancy.TenantSchemaFloor`
+* `u.c.s.s.tenancy.cutover.TenantCutover`
+* `u.c.s.s.tenancy.cutover.TenantCutovers`
 * `u.c.s.s.tenancy.placement.TenantPlacements`
 * `u.c.s.s.tenancy.placement.TenantProvisioner`
 * `u.c.s.s.tenancy.placement.TenantSchemaMigrator`

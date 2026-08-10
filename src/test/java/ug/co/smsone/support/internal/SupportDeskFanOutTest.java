@@ -35,6 +35,19 @@ import ug.co.smsone.testsupport.TenantSilos;
  * promoted tenant, lists none of its tickets, and answers 404 for every one of them — and does all three
  * without an exception, a log line or a metric moving. {@code SupportFlowTest} proves the lifecycle
  * within one schema and would have passed throughout.
+ *
+ * <p><b>Since V61 the queue is a projection, and the three queue tests here seed AROUND the write
+ * path.</b> {@link #insertTicket} writes {@code ticket} in raw SQL — it has to, because these
+ * assertions depend on controlling {@code created_at} — so {@code platform.ticket_index} has never
+ * heard of those rows. That is not a fixture problem to paper over: it is exactly the state
+ * {@code SoftDeleteRecovery} and any pre-V61 ticket leave behind, so the honest stand-in for the write
+ * path is {@link TicketIndexReconciler}, called explicitly before the read. The claim under test is
+ * unchanged — a promoted tenant's ticket must reach the operator's queue — and it now also covers the
+ * backfill arm getting it there.
+ *
+ * <p>{@code TicketIndexTest} is the sibling that drives the projection through the real write path and
+ * pins the reconciler's two directions; this class stays the one that pins what still fans out per
+ * home: the SLA sweep and the single-ticket routes.
  */
 @AutoConfigureMockMvc
 class SupportDeskFanOutTest extends AbstractIntegrationTest {
@@ -56,6 +69,9 @@ class SupportDeskFanOutTest extends AbstractIntegrationTest {
 
     @Autowired
     private SlaEscalationJob escalationJob;
+
+    @Autowired
+    private TicketIndexReconciler ticketIndex;
 
     /**
      * The job the ADR names as the one the split hurts most (§5.2): {@code lockBreached} is unqualified,
@@ -99,6 +115,7 @@ class SupportDeskFanOutTest extends AbstractIntegrationTest {
         UUID pooledTicket = insertOpenTicket(pooled);
         UUID siloedTicket = insertOpenTicket(siloed);
         TenantSilos.assertRowIsPhysicallyInTheSilo(jdbc, siloed, "ticket", "id", siloedTicket);
+        indexTheSeededTickets();
 
         List<String> ids = queuePage("?status=OPEN&page[size]=100");
 
@@ -124,6 +141,7 @@ class SupportDeskFanOutTest extends AbstractIntegrationTest {
         UUID middle = insertOpenTicket(siloed, QUEUE_EPOCH.plus(Duration.ofMinutes(20)));
         UUID newest = insertOpenTicket(pooled, QUEUE_EPOCH.plus(Duration.ofMinutes(30)));
         TenantSilos.assertRowIsPhysicallyInTheSilo(jdbc, siloed, "ticket", "id", middle);
+        indexTheSeededTickets();
 
         List<String> ids = queuePage("?status=OPEN&page[size]=100");
 
@@ -150,6 +168,7 @@ class SupportDeskFanOutTest extends AbstractIntegrationTest {
         UUID d = insertOpenTicket(siloed, epoch.plus(Duration.ofMinutes(40)));
         TenantSilos.assertRowIsPhysicallyInTheSilo(jdbc, siloed, "ticket", "id", b);
         TenantSilos.assertRowIsPhysicallyInTheSilo(jdbc, siloed, "ticket", "id", d);
+        indexTheSeededTickets();
 
         List<String> walked = new java.util.ArrayList<>();
         String query = "?status=OPEN&page[size]=1";
@@ -199,6 +218,16 @@ class SupportDeskFanOutTest extends AbstractIntegrationTest {
         mockMvc.perform(get("/api/v1/admin/tickets/{id}", UUID.randomUUID()).with(support()))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.errors[0].code").value("RESOURCE_NOT_FOUND"));
+    }
+
+    /**
+     * The write path's stand-in for rows this class seeds in raw SQL — see the class note. It is the
+     * production repair and not a fixture shortcut, which is what keeps the assertions above honest: if
+     * the reconciler stopped reaching silos, these tests would go red for the same reason the queue
+     * would go wrong in production.
+     */
+    private void indexTheSeededTickets() {
+        ticketIndex.reconcileEveryHome();
     }
 
     private List<String> queuePage(String query) throws Exception {

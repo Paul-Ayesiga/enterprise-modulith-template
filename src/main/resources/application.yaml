@@ -481,6 +481,49 @@ app:
     # rows and before it unfreezes. Lower means more indexed reads and shorter freezes; higher means
     # the reverse. 0 disables the memo entirely — correct, and one round trip per borrow.
     route-ttl: ${TENANT_ROUTE_TTL:30s}
+    # NAMED DATABASES A TENANT MAY BE PLACED ON (ADR 0011 §4.1). Empty by default, deliberately: with
+    # no entries the registry holds only the primary pool and routing is byte-for-byte what it was
+    # before ADR 0011. Each entry is selected by platform.tenant_placement.datasource_name; 'primary'
+    # is RESERVED (it means spring.datasource, and defining it here would be two truths about one
+    # database — the deployment refuses to start). Names match ^[a-z][a-z0-9_-]{0,31}$, at most 10
+    # (§10 Q3: each is a Hikari pool per pod; past ten the connection budget needs measuring, not
+    # another entry). url/username/password are required, password ALWAYS via env indirection; pool
+    # numbers default to maximum-pool-size 8 / minimum-idle 0 / connection-timeout 5s — the timeout
+    # doubles as the "unreachable" detector (§2.2). Pools build eagerly but do NOT connect at boot: a
+    # remote that is down is its tenants' outage (per-tenant 503), never this deployment's boot
+    # failure (§4.2). Shape, for the release that first adds one:
+    #
+    # datasources:
+    #   analytics-eu:
+    #     url: ${TENANT_DS_ANALYTICS_EU_URL}
+    #     username: ${TENANT_DS_ANALYTICS_EU_USER}
+    #     password: ${TENANT_DS_ANALYTICS_EU_PASSWORD}
+    #     pool:
+    #       maximum-pool-size: 8
+    cutover:
+      # HOW LONG THE REVERSE STREAM INSURES A CUTOVER (ADR 0011 §7.2 step 10, §10 Q4). After the flip,
+      # the destination replicates every write BACK to the origin for this long, so rolling back is a
+      # brief freeze and one row — decommission() refuses to destroy that insurance earlier. P7D
+      # because the defect the window exists for is the one discovered on day three in a weekly
+      # report, not in the first hour's smoke test; the stream itself costs one slot and the tenant's
+      # own write rate. Lowering it trades rollback insurance for an earlier reclaim of the source
+      # copy's disk; the day it needs raising past a WAL-retention budget, revisit
+      # max_slot_wal_keep_size (4GB, docker/docker-compose.yml) in the same change.
+      watch-window: ${TENANT_CUTOVER_WATCH_WINDOW:P7D}
+    # HOW LONG A LAST-KNOWN IDENTITY ANSWER MAY BE SERVED while the platform database is unreachable
+    # (ADR 0011 §2). Covers person-by-subject, org-by-external-id and plan-catalog — the reads that are
+    # allowed to degrade — and each cached entry ages from ITS OWN last successful refresh, never from
+    # the start of the outage: an entry last confirmed 14 minutes before the outage has one minute of
+    # grace, not fifteen. At the ceiling the caller gets 503 + Retry-After (never 401/403/
+    # ACCOUNT_NOT_PROVISIONED — a database being down is not a fact about their credentials).
+    #
+    # PT15M is the ADR's number, and it is a PROMISE, not a tuning default: "a revoked identity is
+    # honored within fifteen minutes" is written against it. Lower is legal; higher fails startup
+    # (IdentityStaleProperties) because raising it would silently rewrite the ADR. What NEVER degrades,
+    # at any setting: OrgAuthorization (a revoked membership denies the very next request, AGENTS §5.5)
+    # and TenantRoutes (a misroute is worse than a refusal, ADR 0011 §2.4).
+    identity-stale:
+      ceiling: ${TENANT_IDENTITY_STALE_CEILING:PT15M}
     placement:
       # WHERE A NEW TENANT IS BORN (ADR 0010 §1, §4.3). `silo-per-org` is the default since 2026-08-08:
       # every tenant gets its own `t_<32hex>` schema, created and migrated before it is announced, so

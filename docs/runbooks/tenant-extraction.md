@@ -30,7 +30,7 @@ who would ever have known the difference.
 | 3 | Person projection | id, names, status and one **unverified** display contact, for every `person_id` the bundle references anywhere |
 | 4 | Catalogue snapshot | `plan`, `plan_entitlement`, `sla_policy`, `translation`, `setting`, `feature_flag`, whole, **ids included** |
 | 5 | `impersonation_session` | the org's rows, so its audit entries can resolve their stated reason |
-| 6 | `event_publication`, `event_inbox`, `idempotency_key`, `shedlock`, `queue_signal`, `tenant_freeze` | **nothing.** The bundler has no SQL that could read them |
+| 6 | `event_publication`, `event_inbox`, `idempotency_key`, `shedlock`, `queue_signal`, `tenant_freeze`, `tenant_cutover` | **nothing.** The bundler has no SQL that could read them |
 | 7 | Object store | **not produced here** — see below |
 | 8 | `api_key` | REHEARSAL counts them; CUTOVER revokes them and reserves their prefixes forever |
 | 9 | Identity provider | a recorded decision: federate to the platform issuer. `external_identity` is rewritten, never copied |

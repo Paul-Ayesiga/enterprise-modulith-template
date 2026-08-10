@@ -10,6 +10,7 @@
 * `u.c.s.s.tenancy.TenantFanOut` (in Shared Kernel)
 * `u.c.s.s.security.GatewaySecretVerifier` (in Shared Kernel)
 * `u.c.s.o.OrgDirectory` (in Organization)
+* `u.c.s.s.tenancy.CrossDatabaseWrites` (in Shared Kernel)
 |Events listened to
 |* `u.c.s.s.SubscriptionChanged` (async) 
 * `u.c.s.o.OrganizationRegistered` (async) 

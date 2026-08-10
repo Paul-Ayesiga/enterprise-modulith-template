@@ -17,6 +17,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 import ug.co.smsone.notification.NotificationChannel;
 import ug.co.smsone.shared.queue.QueueSignals;
+import ug.co.smsone.shared.tenancy.CrossDatabaseWrites;
 
 /**
  * The delivery queue, backed by {@code notification_delivery} and driven with plain JDBC (a job
@@ -37,6 +38,23 @@ import ug.co.smsone.shared.queue.QueueSignals;
  * fairness rather than with per-tenant tables. {@code platform.queue_signal} is that mitigation. The
  * claim is now scoped to one tenant at a time, so a tenant sitting on ten thousand queued messages
  * takes one batch and goes to the back of the queue instead of owning every batch until it drains.
+ *
+ * <h2>ADR 0011: "every statement here names platform" is only half of reaching it</h2>
+ *
+ * <p>The claim path was already right: {@code NotificationDeliveryWorker} pins PLATFORM around the
+ * claim, the sends and the release, because these rows belong to no tenant's database. The ENQUEUE path
+ * was not, and nothing said so. {@code Notifications.dispatch} is a port other modules call from
+ * wherever they are — {@code SupportNotifier} on a ticket write, {@code BillingReceipts} on an invoice,
+ * a controller inside an org request — so {@link #enqueue} runs on the CALLER'S axis, which on an org
+ * route is that organization's. On a tenant served from another database, {@code platform
+ * .notification_delivery} is not there and the whole enclosing request fails; the notification is not
+ * merely delayed, the action that would have sent it is rolled back.
+ *
+ * <p>{@link #enqueue} is therefore the only method here that converts, and it converts the WHOLE
+ * transaction rather than the statement: the rows and the signal are both platform-tier, so on a hop
+ * they move together and the same-transaction rule this queue depends on is preserved even across the
+ * boundary — the one queue of the three for which that is true, because it is the one whose rows never
+ * left primary.
  */
 @Component
 class NotificationDeliveryQueue {
@@ -52,14 +70,17 @@ class NotificationDeliveryQueue {
     private final DbDialect dialect;
     private final QueueSignals signals;
     private final TransactionTemplate transactions;
+    private final CrossDatabaseWrites platformTier;
 
     NotificationDeliveryQueue(JdbcTemplate jdbc, io.micrometer.core.instrument.MeterRegistry meters,
-            DbDialect dialect, QueueSignals signals, TransactionTemplate transactions) {
+            DbDialect dialect, QueueSignals signals, TransactionTemplate transactions,
+            CrossDatabaseWrites platformTier) {
         this.jdbc = jdbc;
         this.meters = meters;
         this.dialect = dialect;
         this.signals = signals;
         this.transactions = transactions;
+        this.platformTier = platformTier;
     }
 
     /**
@@ -73,12 +94,21 @@ class NotificationDeliveryQueue {
      * <p>A null {@code orgId} is not a missing tenant here — it is a platform-scoped notification, and
      * V41 added the column late precisely because most of them are. Those rows key on
      * {@link QueueSignals#PLATFORM_SCOPE}, which is what lets one not-null column serve both.
+     *
+     * <p><strong>The platform pin wraps the transaction, not the statements inside it</strong> (ADR 0011
+     * §5.1). Both writes are platform-tier, so hopping them together keeps them in one transaction on
+     * primary and the paragraph above stays literally true even for a caller on another database. The
+     * price of the hop is stated where it is paid: a caller whose own transaction later rolls back has
+     * already committed these rows, so a remote tenant can see a notification for a change that did not
+     * happen. That is the {@code AuditLogImpl} trade in the other module's clothes and it points the
+     * same way — a notification for an action that was undone is visible and correctable; an action
+     * whose notification was silently dropped is neither.
      */
     void enqueue(List<NewDelivery> deliveries, int maxAttempts) {
         if (deliveries.isEmpty()) {
             return;
         }
-        transactions.executeWithoutResult(tx -> {
+        platformTier.runOnPlatform(() -> transactions.executeWithoutResult(tx -> {
             jdbc.batchUpdate("""
                     insert into platform.notification_delivery
                         (id, channel, recipient, subject, body, org_id, status, attempts, max_attempts, next_attempt_at, created_at)
@@ -103,7 +133,7 @@ class NotificationDeliveryQueue {
             });
             deliveries.stream().map(d -> QueueSignals.scopeOf(d.orgId())).distinct()
                     .forEach(scope -> signals.raise(QUEUE, scope));
-        });
+        }));
     }
 
     /**

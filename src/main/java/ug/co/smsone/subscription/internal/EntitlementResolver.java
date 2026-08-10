@@ -7,12 +7,22 @@ import java.util.UUID;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import ug.co.smsone.subscription.PlanCatalog;
+import ug.co.smsone.subscription.PlanSnapshot;
 
 /**
  * Resolves an org's effective entitlement map (subscription's plan, or FREE when none), cached per
  * org. A separate bean from {@code EntitlementsImpl} for the same reason {@code PermissionResolver}
  * and {@code TranslationBundles} are: {@code @Cacheable} on a self-invoked method never reaches
  * the proxy. Values are wrapped so the map survives the L2 JSON round trip with nulls intact.
+ *
+ * <p><b>The plan side of this read goes through {@link PlanCatalog}, and that seam is the point
+ * (ADR 0011 §6).</b> {@code org_subscription} is tenant-tier and moves with its tenant; {@code plan}
+ * is platform catalog and stays — this method used to be the in-process join between them, which two
+ * databases make impossible. The repository read below is the tenant half only; the platform half is
+ * the port, with the port's staleness contract: cached 60 s, stale-while-unreachable to the ceiling,
+ * and a THROW (503) past it rather than empty — because from an empty map {@code limitOf} answers
+ * null and {@code requireWithinLimit} passes, so "plan unknowable" must never read as "no limits".
  */
 @Component
 class EntitlementResolver {
@@ -41,34 +51,36 @@ class EntitlementResolver {
     static final long FEATURE = Long.MIN_VALUE;
 
     private final OrgSubscriptionRepository subscriptions;
-    private final PlanRepository plans;
+    private final PlanCatalog catalog;
 
-    EntitlementResolver(OrgSubscriptionRepository subscriptions, PlanRepository plans) {
+    EntitlementResolver(OrgSubscriptionRepository subscriptions, PlanCatalog catalog) {
         this.subscriptions = subscriptions;
-        this.plans = plans;
+        this.catalog = catalog;
     }
 
     @Cacheable(cacheNames = CACHE, key = KEY, sync = true)
     @Transactional(readOnly = true)
     public Map<String, Long> resolve(UUID orgId) {
-        Plan plan = subscriptions.findByOrgId(orgId)
-                .flatMap(subscription -> plans.findById(subscription.getPlanId()))
-                .or(() -> plans.findByCode("FREE"))
-                .orElse(null);
+        PlanSnapshot plan = planOf(orgId).orElse(null);
         if (plan == null) {
             return Map.of(); // seeder not run (fresh empty DB mid-migration): fail toward FREE-less
         }
         Map<String, Long> effective = new LinkedHashMap<>();
         // Features are stored as negative sentinels (Hibernate drops null map VALUES on load);
         // normalized here so consumers see exactly one encoding.
-        plan.getEntitlements().forEach((key, value) ->
+        plan.entitlements().forEach((key, value) ->
                 effective.put(key, value == null || value < 0 ? FEATURE : value));
         return effective;
     }
 
-    Optional<Plan> planOf(UUID orgId) {
+    /**
+     * The tenant-half read joined to the platform-half port: a dangling {@code plan_id} (the soft ref
+     * ADR 0010 §6 cut the FK out of) falls through to FREE exactly as the in-process join did — that
+     * fall-through is {@code PlanCatalogGuard}'s whole subject, not something this seam may change.
+     */
+    Optional<PlanSnapshot> planOf(UUID orgId) {
         return subscriptions.findByOrgId(orgId)
-                .flatMap(subscription -> plans.findById(subscription.getPlanId()))
-                .or(() -> plans.findByCode("FREE"));
+                .flatMap(subscription -> catalog.plan(subscription.getPlanId()))
+                .or(() -> catalog.planByCode("FREE"));
     }
 }

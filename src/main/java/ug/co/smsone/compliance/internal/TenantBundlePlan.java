@@ -29,11 +29,13 @@ import org.springframework.stereotype.Component;
  *
  * <p><b>That refusal has already earned its place, and the evidence is in this file.</b> §6 names four
  * tables as "fresh and empty, never copied": {@code event_publication}, {@code event_inbox},
- * {@code idempotency_key}, {@code shedlock}. The catalogue now holds <b>six</b> — Phase 3 added
- * {@code platform.queue_signal} (V56) and Phase 5 added {@code platform.tenant_freeze} (V58), both
- * after §6 was written, and both carry exactly the hazard §6 describes: a copied {@code queue_signal}
- * row hands the new deployment a lease token the platform still believes it holds, and a copied
- * {@code tenant_freeze} row pauses every queue in a deployment where nothing is being promoted. A hand
+ * {@code idempotency_key}, {@code shedlock}. The catalogue now holds <b>seven</b> — Phase 3 added
+ * {@code platform.queue_signal} (V56), Phase 5 added {@code platform.tenant_freeze} (V58) and Phase 7
+ * added {@code platform.tenant_cutover} (V60), each after §6 was written, and each carrying exactly
+ * the hazard §6 describes: a copied {@code queue_signal} row hands the new deployment a lease token
+ * the platform still believes it holds, a copied {@code tenant_freeze} row pauses every queue in a
+ * deployment where nothing is being promoted, and a copied {@code tenant_cutover} row claims
+ * replication objects in a database the new deployment cannot even reach. A hand
  * list would have shipped four. The catalogue asked, and the answer had to be written down.
  *
  * <h2>The reasons are data, not comments</h2>
@@ -363,6 +365,16 @@ class TenantBundlePlan {
         // deployment where no promotion is running, until its expires_at lapses.
         put(tables, "tenant_freeze", BundleDisposition.FRESH_AND_EMPTY, null,
                 "a copied freeze pauses the new deployment's queues for a promotion that is not happening");
+        // V60, Phase 7 — newer again, and the clearest vindication of the refuse-at-plan-time rule this
+        // class enforces: it arrived in the same session as the guard and the guard caught it, before any
+        // bundle could ship without an answer for it. A cutover row is the SOURCE deployment's record of a
+        // move it is running — publication, subscription, slot names and the LSN the freeze waited on.
+        // Copied, the new deployment inherits a claim on replication objects that live in somebody else's
+        // database: its abandoned-slot detector reports slots it cannot see, and a reverse cutover would
+        // read a confirmed_flush_lsn belonging to a stream it never opened.
+        put(tables, "tenant_cutover", BundleDisposition.FRESH_AND_EMPTY, null,
+                "a copied cutover record claims replication objects in a database the new deployment "
+                        + "cannot reach, and points its reverse path at somebody else's slot");
 
         // ---- written fresh / rebuilt ----------------------------------------------------------------
         put(tables, "tenant_placement", BundleDisposition.WRITTEN_FRESH, null,
@@ -371,6 +383,16 @@ class TenantBundlePlan {
                 "derived data; the far side reindexes from its own rows (§6 item 10)");
         put(tables, "org_membership_index", BundleDisposition.REBUILT, null,
                 "a routing projection of membership; the tenant schema is the authority (§2.1)");
+        // V61, Phase 7 — the third platform table this guard has caught arriving without a judgement,
+        // after queue_signal and tenant_cutover. REBUILT for the same reason org_membership_index is: it
+        // is a projection of tenant-tier `ticket` rows kept on the platform side so an operator can page
+        // one queue across every schema, and those rows travel in the tenant's own dump. Carrying the
+        // index too would restore a second copy that the far side's reconciler then has to disagree with
+        // — and the far side has exactly one tenant, which is the case the cross-tenant index exists to
+        // avoid needing.
+        put(tables, "ticket_index", BundleDisposition.REBUILT, null,
+                "a cross-tenant operator projection of ticket; the tenant's own schema is the authority "
+                        + "and its reconciler rebuilds the index from it (§8 Q2)");
 
         // ---- credentials and identities -------------------------------------------------------------
         put(tables, "api_key", BundleDisposition.REMINTED, null,

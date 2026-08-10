@@ -19,6 +19,7 @@ import org.springframework.data.domain.KeysetScrollPosition;
 import org.springframework.jdbc.core.JdbcTemplate;
 import ug.co.smsone.shared.persistence.DbDialect;
 import ug.co.smsone.shared.queue.QueueSignals;
+import ug.co.smsone.shared.tenancy.CrossDatabaseWrites;
 import ug.co.smsone.shared.tenancy.SplitTables;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Component;
@@ -105,14 +106,16 @@ class ExchangeJobStore {
     private final Clock clock;
     private final DbDialect dialect;
     private final QueueSignals signals;
+    private final CrossDatabaseWrites homes;
 
     ExchangeJobStore(JdbcTemplate jdbc, TransactionTemplate transactions, Clock clock, DbDialect dialect,
-            QueueSignals signals) {
+            QueueSignals signals, CrossDatabaseWrites homes) {
         this.jdbc = jdbc;
         this.transactions = transactions;
         this.clock = clock;
         this.dialect = dialect;
         this.signals = signals;
+        this.homes = homes;
     }
 
     /**
@@ -134,7 +137,11 @@ class ExchangeJobStore {
     UUID submit(UUID orgId, UUID requesterPersonId, String jobType, String handler, int handlerVersion,
             String format, String sourceKey) {
         UUID id = UUID.randomUUID();
-        transactions.executeWithoutResult(tx -> {
+        // ADR 0011: the home is a schema in a DATABASE, so the transaction has to open where the schema
+        // is. runInHomeOf is the caller's own connection whenever they agree — every submit on every
+        // deployment with no remote datasource — and a borrow from the tenant's own pool when they do
+        // not, which is how an operator's platform-axis submit reaches a remote tenant's queue at all.
+        homes.runInHomeOf(orgId, () -> transactions.executeWithoutResult(tx -> {
             jdbc.update("""
                     insert into %s.exchange_job (id, org_id, requester_person_id, job_type, handler,
                                                  handler_version, format, status, source_key, created_at)
@@ -143,7 +150,7 @@ class ExchangeJobStore {
                     id, orgId, requesterPersonId, jobType, handler, handlerVersion, format, sourceKey,
                     Timestamp.from(clock.instant()));
             signals.raise(QUEUE, QueueSignals.scopeOf(orgId));
-        });
+        }));
         return id;
     }
 
@@ -176,7 +183,7 @@ class ExchangeJobStore {
         List<Object> args = new ArrayList<>();
         args.add(staleLock.toMillis());
         args.addAll(scopeArgs(scope));
-        List<ExchangeJob> claimed = jdbc.query("""
+        List<ExchangeJob> claimed = homes.callInHomeOf(orgOf(scope), () -> jdbc.query("""
                 update %1$s.exchange_job j
                 set locked_at = now(), attempts = attempts + 1, updated_at = now()
                 from (
@@ -191,7 +198,7 @@ class ExchangeJobStore {
                 where j.id = c.id
                 returning j.*
                 """.formatted(homeOf(scope), dialect.skipLocked(), scopeFilter(scope)),
-                JOB, args.toArray());
+                JOB, args.toArray()));
         return claimed.stream().findFirst();
     }
 
@@ -211,17 +218,49 @@ class ExchangeJobStore {
      * expression evaluates to {@code now() + backoff} without knowing that is what it is doing.
      */
     void releaseSignal(UUID scope, UUID lease, Duration staleLock) {
+        Timestamp due = remainingWork(scope, staleLock);
+        signals.release(QUEUE, scope, lease, due == null ? null : due.toInstant());
+    }
+
+    /**
+     * <strong>The reconciling sweep for this queue</strong> (ADR 0011 §5): announce a scope that has
+     * claimable jobs and no {@code queue_signal} row at all — the residue a deferred raise can leave
+     * when the process that committed the job dies before it announces it. The
+     * {@code sweepSearchResidue} shape: a projection with no delete path leaves residue forever, so
+     * something has to go looking, and here the projection is the signal and the residue is a job
+     * nobody will ever poll.
+     *
+     * <p>Asks {@link #remainingWork} — the release's own expression, not a second copy of it — so what
+     * gets announced and what the claim can take cannot drift apart. {@code announceIfUnsignalled}
+     * refuses to touch a signal that already exists, so a pass over a healthy scope changes nothing.
+     *
+     * @return true when a signal was created, which means work HAD been orphaned
+     */
+    boolean reconcileSignal(UUID scope, Duration staleLock) {
+        Timestamp due = remainingWork(scope, staleLock);
+        if (due == null) {
+            return false;
+        }
+        return signals.announceIfUnsignalled(QUEUE, scope, due.toInstant());
+    }
+
+    /**
+     * When this scope's earliest claimable job becomes claimable, or null when it has none. Extracted
+     * from {@link #releaseSignal} so the release and {@link #reconcileSignal} share one definition of
+     * "due", and wrapped in {@code callInHomeOf} because since ADR 0011 the home it names may be in
+     * another database than the platform axis this runs under.
+     */
+    private Timestamp remainingWork(UUID scope, Duration staleLock) {
         List<Object> args = new ArrayList<>();
         args.add(staleLock.toMillis());
         args.addAll(scopeArgs(scope));
-        Timestamp due = jdbc.queryForObject("""
+        return homes.callInHomeOf(orgOf(scope), () -> jdbc.queryForObject("""
                 select min(case when locked_at is null then now()
                                 else locked_at + (? * interval '1 millisecond') end)
                   from %1$s.exchange_job
                  where status in ('PENDING', 'VALIDATING', 'PROCESSING')
                    and %2$s
-                """.formatted(homeOf(scope), scopeFilter(scope)), Timestamp.class, args.toArray());
-        signals.release(QUEUE, scope, lease, due == null ? null : due.toInstant());
+                """.formatted(homeOf(scope), scopeFilter(scope)), Timestamp.class, args.toArray()));
     }
 
     /**
@@ -231,6 +270,16 @@ class ExchangeJobStore {
      */
     private static String homeOf(UUID scope) {
         return QueueSignals.isPlatformScope(scope) ? SplitTables.PLATFORM : SplitTables.homeOf(scope);
+    }
+
+    /**
+     * The same scope key as an ORGANIZATION, or null for the platform scope — what
+     * {@code CrossDatabaseWrites} needs in order to answer WHICH DATABASE {@link #homeOf} named. The two
+     * are derived from the same key on purpose: a home and a database resolved from different inputs
+     * could disagree, and disagreeing here means addressing one tenant's schema on another's server.
+     */
+    private static UUID orgOf(UUID scope) {
+        return QueueSignals.isPlatformScope(scope) ? null : scope;
     }
 
     /**
@@ -366,28 +415,29 @@ class ExchangeJobStore {
      * home: the retention job runs one platform-axis sweep over every org that carries an override.
      */
     int purgeTerminalBatchForOrg(java.time.Instant cutoff, UUID orgId, int batchSize) {
-        return jdbc.update("""
+        return homes.callInHomeOf(orgId, () -> jdbc.update("""
                 delete from %1$s.exchange_job where id in (
                     select id from %1$s.exchange_job
                     where status in ('COMPLETED', 'COMPLETED_WITH_ERRORS', 'FAILED', 'CANCELLED')
                       and created_at < ? and org_id = ?
                     order by created_at
                     limit ?)
-                """.formatted(SplitTables.homeOf(orgId)), Timestamp.from(cutoff), orgId, batchSize);
+                """.formatted(SplitTables.homeOf(orgId)), Timestamp.from(cutoff), orgId, batchSize));
     }
 
     /** Named home: the caller supplies the org, so this works from an operator's axis as well as the tenant's. */
     boolean requestCancel(UUID id, UUID orgId) {
-        return jdbc.update("""
+        return homes.callInHomeOf(orgId, () -> jdbc.update("""
                 update %s.exchange_job set cancel_requested = true, updated_at = now()
                 where id = ? and org_id = ?
                   and status in ('PENDING', 'VALIDATING', 'PROCESSING')
-                """.formatted(SplitTables.homeOf(orgId)), id, orgId) == 1;
+                """.formatted(SplitTables.homeOf(orgId)), id, orgId)) == 1;
     }
 
     Optional<ExchangeJob> find(UUID id, UUID orgId) {
-        return jdbc.query("select * from " + SplitTables.homeOf(orgId) + ".exchange_job"
-                        + " where id = ? and org_id = ?", JOB, id, orgId)
+        return homes.callInHomeOf(orgId, () -> jdbc.query(
+                        "select * from " + SplitTables.homeOf(orgId) + ".exchange_job"
+                                + " where id = ? and org_id = ?", JOB, id, orgId))
                 .stream().findFirst();
     }
 
@@ -420,10 +470,11 @@ class ExchangeJobStore {
         }
         params.add(page.size() + 1);
         // Named home: an org's listing must show that org's queue whatever axis the reader is on.
-        List<ExchangeJob> rows = jdbc.query(
-                "select * from " + SplitTables.homeOf(orgId) + ".exchange_job where org_id = ?" + keyset
+        String where = keyset; // effectively final for the lambda; keyset is assigned above
+        List<ExchangeJob> rows = homes.callInHomeOf(orgId, () -> jdbc.query(
+                "select * from " + SplitTables.homeOf(orgId) + ".exchange_job where org_id = ?" + where
                         + " order by created_at desc, id desc limit ?",
-                JOB, params.toArray());
+                JOB, params.toArray()));
         boolean hasMore = rows.size() > page.size();
         List<ExchangeJob> pageRows = hasMore ? rows.subList(0, page.size()) : rows;
         String next = null;

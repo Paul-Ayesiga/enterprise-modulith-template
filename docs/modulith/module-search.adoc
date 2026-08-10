@@ -7,6 +7,7 @@
 * `u.c.s.s.SearchQueries` (via `u.c.s.s.internal.SearchQueriesImpl`)
 |Bean references
 |* `u.c.s.s.events.EventInbox` (in Shared Kernel)
+* `u.c.s.s.tenancy.CrossDatabaseWrites` (in Shared Kernel)
 |Events listened to
 |* `u.c.s.o.OrganizationRegistered` (async) 
 * `u.c.s.i.PersonProvisioned` (async) 

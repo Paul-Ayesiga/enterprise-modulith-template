@@ -243,9 +243,11 @@ public class TenantPromoter {
         try {
             if (!placements.beginRelocation(orgId, from)) {
                 throw new TenantPromotionException("organization " + orgId + " is not ACTIVE in '" + from
-                        + "' — either something moved it since this call started, or another promotion"
-                        + " holds it. `select * from platform.tenant_placement where org_id = '" + orgId
-                        + "'`. Nothing was moved and both freezes have been lifted.");
+                        + "' — either something moved it since this call started, another promotion"
+                        + " holds it, or a CUTOVER to another database is in flight (beginRelocation"
+                        + " refuses those in SQL). `select * from platform.tenant_placement where org_id"
+                        + " = '" + orgId + "'` and `select * from platform.tenant_cutover where org_id ="
+                        + " '" + orgId + "'`. Nothing was moved and both freezes have been lifted.");
             }
         } catch (RuntimeException refused) {
             closeHttpFreeze(orgId, window, warnings);
@@ -552,6 +554,15 @@ public class TenantPromoter {
                     + " a FAILED one has a home nothing has proved fit. `select * from"
                     + " platform.tenant_freeze where org_id = '" + orgId + "'` says whether a promotion"
                     + " still holds it or a process died holding it.");
+        }
+        // ADR 0011: the promoter's copy is INSERT … SELECT between two schemas on ONE connection, and
+        // a tenant served from another database has no pair of schemas one connection can see. The
+        // reverse cutover is the move that brings it home (docs/runbooks/tenant-cutover.md).
+        if (!TenantPlacement.PRIMARY_DATASOURCE.equals(placement.dataSourceName())) {
+            throw new TenantPromotionException("organization " + orgId + " is served from datasource '"
+                    + placement.dataSourceName() + "', not the platform database, so a schema-to-schema"
+                    + " copy cannot reach its rows. Run a reverse cutover to 'primary' first"
+                    + " (docs/runbooks/tenant-cutover.md), then promote or demote it here.");
         }
         return placement;
     }

@@ -60,6 +60,13 @@ class PersonResolver {
      * through {@link PersonResolutionCache}; that class documents the whole invalidation story. The
      * provider derivation, the blank check and the trim happen HERE so the cache key is the normalized
      * triple and an unresolvable issuer never reaches the cache at all.
+     *
+     * <p><b>Stale-while-unreachable (ADR 0011 §2).</b> When the read cannot be ANSWERED — the platform
+     * database unreachable, never an answer we dislike — the last authoritative answer this process
+     * holds is served instead, up to the hard ceiling measured from that entry's own last refresh. Past
+     * it, {@code PlatformUnreachableException} (503 + Retry-After) rather than empty: empty here flows
+     * into the provisioning gate as ACCOUNT_NOT_PROVISIONED, which would tell a paying user they don't
+     * exist because a database is down. Query-shaped failures rethrow untouched.
      */
     Optional<UUID> personIdOf(String issuer, String externalSubject) {
         IdentityProvider provider = providerOf(issuer);
@@ -67,7 +74,12 @@ class PersonResolver {
             return Optional.empty();
         }
         // Text, then parsed here: see PersonResolutionCache on why a bare UUID cannot cross L2.
-        String personId = cache.personIdTextOf(provider, issuer, externalSubject.trim());
+        String personId;
+        try {
+            personId = cache.personIdTextOf(provider, issuer, externalSubject.trim());
+        } catch (RuntimeException failure) {
+            personId = cache.lastKnownOr(provider, issuer, externalSubject.trim(), failure);
+        }
         return personId == null ? Optional.empty() : Optional.of(UUID.fromString(personId));
     }
 

@@ -3,6 +3,7 @@ package ug.co.smsone.shared.tenancy;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -14,6 +15,7 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.shared.persistence.TenantDataSources;
 import ug.co.smsone.shared.tenancy.placement.PlacementState;
 import ug.co.smsone.shared.tenancy.placement.TenantPlacement;
 import ug.co.smsone.shared.tenancy.placement.TenantPlacements;
@@ -143,10 +145,12 @@ public class TenantFanOut {
 
     private final TenantPlacements placements;
     private final TenantFreezes freezes;
+    private final TenantDataSources dataSources;
 
-    TenantFanOut(TenantPlacements placements, TenantFreezes freezes) {
+    TenantFanOut(TenantPlacements placements, TenantFreezes freezes, TenantDataSources dataSources) {
         this.placements = placements;
         this.freezes = freezes;
+        this.dataSources = dataSources;
     }
 
     /**
@@ -178,12 +182,14 @@ public class TenantFanOut {
                     .filter(TenantFanOut::hasNoSettledHome)
                     .map(TenantPlacement::orgId)
                     .collect(Collectors.toCollection(LinkedHashSet::new));
-            // ACTIVE is not on its own a promise that the schema is THERE — see aHomeNobodyBuilt. The
-            // tenants it drops join `unsettled`, so Fleet.homeOf refuses them too rather than letting
-            // them fall through to the pool, which is not where the router is sending them either.
+            // ACTIVE is not on its own a promise that the schema is THERE — see aHomeNobodyBuilt — nor,
+            // since ADR 0011, that this deployment can REACH it — see aDatasourceNobodyConfigured. The
+            // tenants either drops join `unsettled`, so Fleet.homeOf refuses them too rather than
+            // letting them fall through to the pool, which is not where the router is sending them
+            // either.
             List<TenantPlacement> silos = new ArrayList<>(placements.activeSilos());
             silos.removeIf(silo -> {
-                if (aHomeNobodyBuilt(silo)) {
+                if (aHomeNobodyBuilt(silo) || aDatasourceNobodyConfigured(silo)) {
                     unsettled.add(silo.orgId());
                     return true;
                 }
@@ -359,6 +365,34 @@ public class TenantFanOut {
     }
 
     /**
+     * <strong>An ACTIVE row naming a datasource this deployment has no pool for is withheld the same
+     * way, for the same arithmetic</strong> (ADR 0011 §4.2, applying {@link #aHomeNobodyBuilt}'s
+     * doctrine before the bug is written instead of after). Handed to the sweep, the visit's first
+     * borrow throws {@code UnknownTenantDataSourceException} — fail-loud and correct on the request
+     * path, and in a fan-out it is one registry row failing every run's report for every other tenant,
+     * which drowns the signal exactly as a missing schema would.
+     *
+     * <p>Reported at ERROR on every run, never repaired from here, and not counted in
+     * {@link Fleet#withheldHomes()} — a config key that is absent this run will be absent next run too,
+     * so a thrown-and-retried publication would be permanently stuck rather than eventually done. The
+     * tenant joins {@code unsettled}, so {@link Fleet#homeOf} refuses it rather than answering the pool
+     * the router is not sending it to; its per-request refusal is {@code TenantSchemaFloor}'s, with the
+     * same memoized cadence.
+     */
+    private boolean aDatasourceNobodyConfigured(TenantPlacement silo) {
+        if (dataSources.isConfigured(silo.dataSourceName())) {
+            return false;
+        }
+        log.error("tenant {} is placed on datasource '{}' and this deployment has no such pool —"
+                        + " app.tenancy.datasources.{}.url is the config key that would create it"
+                        + " (ADR 0011 §4.2). Its home is withheld from this run: swept anyway, the first"
+                        + " borrow throws and takes the run's report down with it for every other tenant,"
+                        + " and guessing a different pool would be ADR 0010 §1's misroute.",
+                silo.orgId(), silo.dataSourceName(), silo.dataSourceName());
+        return true;
+    }
+
+    /**
      * One run's view of the fleet. Immutable: it is read once and then walked, so nothing a concurrent
      * promotion does can move a home out from under a cursor mid-pass.
      */
@@ -393,7 +427,8 @@ public class TenantFanOut {
                 if (frozen.contains(placement.orgId())) {
                     continue;
                 }
-                byOrg.put(placement.orgId(), TenantHome.silo(placement.orgId(), placement.schemaName()));
+                byOrg.put(placement.orgId(), TenantHome.silo(
+                        placement.orgId(), placement.schemaName(), placement.dataSourceName()));
             }
             // The pool stands down for a frozen tenant that is NOT already siloed — which is every
             // tenant mid-promotion, since a promotion freezes the tenant while its rows are still in the
@@ -408,7 +443,18 @@ public class TenantFanOut {
                 // to serve the exception. TenantHomeSweep gives it its own budget for the same reason.
                 ordered.add(TenantHome.pool());
             }
-            ordered.addAll(byOrg.values());
+            // Silos GROUPED BY DATASOURCE (ADR 0011 §4.3): primary's first, then each remote's in name
+            // order, schema order within a group. A sweep then drains one database before dialing the
+            // next — connection churn on a remote is bounded by its own silo count rather than
+            // interleaved across the rotation, and an unreachable remote's failures cluster into one
+            // contiguous stretch of the run instead of being sprinkled through every other database's
+            // report. Still fully deterministic, which is what TenantHomeSweep's resumable cursor needs.
+            List<TenantHome> siloHomes = new ArrayList<>(byOrg.values());
+            siloHomes.sort(Comparator
+                    .comparing((TenantHome home) -> !home.onPrimary())
+                    .thenComparing(TenantHome::datasource)
+                    .thenComparing(TenantHome::schema));
+            ordered.addAll(siloHomes);
             this.homes = List.copyOf(ordered);
             this.siloByOrg = Map.copyOf(byOrg);
             this.frozen = Set.copyOf(frozen);
@@ -418,12 +464,13 @@ public class TenantFanOut {
         }
 
         /**
-         * Every home a tenant-axis sweep must visit this run, pool first and silos in a stable order.
+         * Every home a tenant-axis sweep must visit this run: pool first, then silos grouped by
+         * datasource (primary's, then each remote's in name order), schema order within a group.
          *
          * <p>Stable ordering is not cosmetic: {@code TenantHomeSweep}'s resumable cursor remembers a
          * SCHEMA NAME, and a list whose order moved between runs would make "resume after t_ab…" mean a
-         * different set of survivors every night. {@link TenantPlacements#activeSilos} orders by schema
-         * name for exactly that.
+         * different set of survivors every night. The grouped sort above is total over
+         * (datasource, schema), so the order can only move when a placement actually moves.
          */
         public List<TenantHome> homes() {
             return homes;

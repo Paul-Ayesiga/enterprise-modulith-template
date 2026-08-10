@@ -2,8 +2,10 @@ package ug.co.smsone.organization.internal;
 
 import io.swagger.v3.oas.annotations.Operation;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.springframework.data.domain.Window;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -34,10 +36,13 @@ class AdminOrganizationController {
 
     private final OrganizationService organizations;
     private final MemberService members;
+    private final MemberSideload sideload;
 
-    AdminOrganizationController(OrganizationService organizations, MemberService members) {
+    AdminOrganizationController(OrganizationService organizations, MemberService members,
+            MemberSideload sideload) {
         this.organizations = organizations;
         this.members = members;
+        this.sideload = sideload;
     }
 
     record AdminOrgAttributes(String alias, String name, String status, Instant createdAt) {
@@ -83,23 +88,56 @@ class AdminOrganizationController {
      * <p>The mapping runs INSIDE the tenant span, not after it: {@code roleCodes} is read there and the
      * lambda is what consumes it, so keeping them together means one axis for one question rather than
      * a window whose rows outlive the schema they came from.
+     *
+     * <p><b>And a THIRD question, which is why the span now returns the ids as well as the page.</b>
+     * {@code ?include=person} sideloads the people behind those ids — the roster's answer to a support
+     * operator who had to open {@code GET /api/v1/admin/users/{personId}} once per row to put names on
+     * a screen. {@code person} is platform-tier, so that read belongs on the platform axis and is done
+     * AFTER the span closes rather than inside it. It would in fact work inside — both person tables
+     * are {@code platform.}-qualified — and that is exactly why it is worth doing properly: a read
+     * that happens to be correct from the wrong axis is one nobody re-examines when the qualification
+     * changes.
      */
     @GetMapping("/{orgId}/members")
     @Operation(summary = "List an organization's members as the platform",
             description = """
                     The support view of a tenant's roster — person ids and role codes, read-only. \
-                    Managing members stays a tenant action (or an impersonation session's).""")
+                    Managing members stays a tenant action (or an impersonation session's). Add \
+                    `?include=person` to get the people in the same response: a top-level `included` \
+                    array of `user` resources (`name`, `email`), resolved in one batch whatever the \
+                    page size, instead of one `GET /api/v1/admin/users/{personId}` per row. Without \
+                    the parameter the response is unchanged and `included` is absent.""")
     @PreAuthorize("hasRole('platform-support')")
-    WindowedResult<ResourceObject> listMembers(@PathVariable UUID orgId, CursorPageRequest page) {
+    WindowedResult<ResourceObject> listMembers(@PathVariable UUID orgId,
+            @RequestParam(name = "include", required = false) String include, CursorPageRequest page) {
+        // Parsed first: an unknown relationship must 422 without entering a tenant's schema at all.
+        boolean withPeople = sideload.wantsPeople(include);
         organizations.require(orgId); // unknown org answers 404, not an empty page — platform axis
-        return TenantContext.callAs(orgId, () -> {
+        MemberPage roster = TenantContext.callAs(orgId, () -> {
             Map<UUID, String> roleCodes = members.roleCodes(orgId);
-            return WindowedResult.of(members.list(orgId, page), page,
+            Window<Membership> window = members.list(orgId, page);
+            return new MemberPage(WindowedResult.of(window, page,
                     membership -> new ResourceObject(membership.getId().toString(), "membership",
                             new AdminMemberAttributes(membership.getPersonId(),
                                     roleCodes.get(membership.getRoleId()),
-                                    membership.getStatus().name(), membership.getCreatedAt())));
+                                    membership.getStatus().name(), membership.getCreatedAt()))),
+                    window.getContent().stream().map(Membership::getPersonId).toList());
         });
+        return withPeople
+                ? roster.page().withIncluded(sideload.peopleFor(roster.personIds()))
+                : roster.page();
+    }
+
+    /**
+     * What the tenant span hands back: the rendered page, and the people it names.
+     *
+     * <p>The ids have to be collected inside the span because they come from tenant-tier
+     * {@code membership} rows, and they have to be USED outside it because the people are platform
+     * rows. Reading them back out of the rendered resources would mean casting
+     * {@link ResourceObject#attributes()} — the same fact recovered by downcast, one refactor away
+     * from a {@code ClassCastException} in a 200 path.
+     */
+    private record MemberPage(WindowedResult<ResourceObject> page, List<UUID> personIds) {
     }
 
     @DeleteMapping("/{orgId}")

@@ -219,8 +219,27 @@ class TenantPromotionTest extends AbstractIntegrationTest {
                 if (frozen) {
                     // Ask the same question the notification, webhook and exchange workers ask, at the
                     // same statement, while the copy is in flight.
-                    queueSignals.claim(probeQueue, Duration.ofMillis(200))
-                            .ifPresent(leased -> claimedDuringTheFreeze.add(leased.scope()));
+                    //
+                    // RE-CHECKED ON THE FAR SIDE, and the assertion is worthless without it. The read
+                    // above and this claim are two statements, and the promoter lifts the freeze as its
+                    // LAST act while this probe keeps running until promote() returns — so the final
+                    // iterations straddle the thaw by construction. A sample taken across it recorded a
+                    // claim that was legitimate at the moment it was made and then failed the assertion
+                    // for it. Under the full suite's contention that window is wide enough to hit, which
+                    // is why this passed alone and failed in the suite.
+                    //
+                    // Only samples where the freeze was demonstrably up on BOTH sides of the claim are
+                    // evidence about what a freeze blocks. This narrows what is observed, never what is
+                    // asserted: every surviving sample must still not name the frozen tenant.
+                    queueSignals.claim(probeQueue, Duration.ofMillis(200)).ifPresent(leased -> {
+                        if (freezes.isFrozen(orgId)) {
+                            claimedDuringTheFreeze.add(leased.scope());
+                        } else {
+                            // Taken across the thaw: put it back, or the neighbour assertion below can
+                            // starve on a lease this probe parked after the run it was measuring.
+                            queueSignals.raise(probeQueue, leased.scope());
+                        }
+                    });
                 }
                 try {
                     // The test pool holds three connections and Flyway takes two of them while the silo

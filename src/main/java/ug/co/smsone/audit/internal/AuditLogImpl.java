@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import ug.co.smsone.shared.audit.AuditLog;
 import ug.co.smsone.shared.security.CurrentUser;
 import ug.co.smsone.shared.security.CurrentUserProvider;
+import ug.co.smsone.shared.tenancy.CrossDatabaseWrites;
 import ug.co.smsone.shared.tenancy.SplitTables;
 
 /**
@@ -43,6 +44,37 @@ import ug.co.smsone.shared.tenancy.SplitTables;
  * {@link SplitTables#homeOf} has to know where a tenant lives, and today it assumes the pool — see its
  * Phase 5 note.
  *
+ * <h2>ADR 0011: naming the schema stopped being enough, in BOTH directions</h2>
+ *
+ * <p>The paragraph above is still true and is now half an address. A schema name is interpolated into a
+ * statement on the caller's connection, which is right exactly while every schema is in one database.
+ * Since the router can put a tenant on another one, the same two facts that make this class name its
+ * schema — the caller writes inside its own transaction, and the caller is frequently NOT on the axis
+ * of the org it is recording against — turn into two hard failures:
+ *
+ * <ul>
+ *   <li>a PLATFORM-axis caller (an operator suspending an organization, {@code TrialExpiryJob} lapsing
+ *       a subscription, {@code SignupService} completing a signup) recording against a REMOTE org names
+ *       {@code t_<32hex>.audit_log} on a primary connection, where that schema does not exist;</li>
+ *   <li>a REMOTE tenant's own request recording a platform-level event ({@code org_id} null — an
+ *       impersonation hop, a platform key mint) names {@code platform.audit_log} on the remote, whose
+ *       {@code platform} schema deliberately holds only {@code event_publication} (ADR 0011 §5.1).</li>
+ * </ul>
+ *
+ * <p>{@link CrossDatabaseWrites#runInHomeOf} closes both: it makes the connection agree with the name.
+ * When the row's home and the caller's axis are in the same database — every call on every deployment
+ * with no remote datasource configured — it runs the insert on the caller's own connection, inside the
+ * caller's transaction, exactly as before, and the port's atomicity contract is untouched. Only when
+ * they are NOT does it suspend, borrow from the home's own pool, and write there.
+ *
+ * <p><strong>And that hop is where the atomicity contract in this class's first paragraph stops being
+ * true, which ADR 0011 §8 item 5 accepts in writing.</strong> A cross-database audit row is a separate
+ * transaction: it can survive the rollback of the action it describes, and its ordering against that
+ * tenant's own rows is no longer transactional. The trade is deliberate and it is the same one
+ * {@code MemberService.remove} already documents for Keycloak — an audit row that outlives its action
+ * is a reconcilable discrepancy, while an action with no audit row is a hole in the record. Losing the
+ * row is the worse failure, so the row is what survives.
+ *
  * <p><strong>Why JDBC and not the repository.</strong> A JPA entity carries exactly one table mapping,
  * so routing through {@link AuditEntryRepository} would need a second entity per home and would still
  * be unable to name a promoted tenant's schema. The insert joins the caller's transaction the same way
@@ -62,11 +94,14 @@ class AuditLogImpl implements AuditLog {
     private final JdbcTemplate jdbc;
     private final CurrentUserProvider currentUser;
     private final Clock clock;
+    private final CrossDatabaseWrites homes;
 
-    AuditLogImpl(JdbcTemplate jdbc, CurrentUserProvider currentUser, Clock clock) {
+    AuditLogImpl(JdbcTemplate jdbc, CurrentUserProvider currentUser, Clock clock,
+            CrossDatabaseWrites homes) {
         this.jdbc = jdbc;
         this.currentUser = currentUser;
         this.clock = clock;
+        this.homes = homes;
     }
 
     @Override
@@ -100,11 +135,16 @@ class AuditLogImpl implements AuditLog {
      * from a caller: {@link SplitTables#homeOf} answers with one of two compiled-in constants, and when
      * Phase 5 makes it answer with a silo name that name will have been through
      * {@code TenantSchemas.requireSiloSchema}. Everything else here is bound.
+     *
+     * <p>{@code runInHomeOf} wraps the statement rather than the whole method so the name and the
+     * connection are chosen by the same call: resolving the schema outside the wrapper and the pool
+     * inside it would be two reads of {@code tenant_placement} with a route TTL between them, which is
+     * the one window in which a cutover could hand back a fresh schema and a stale database.
      */
     private void insert(UUID orgId, String action, AuditEntry.Attribution attribution, String target,
             String fromState, String toState) {
         Timestamp now = Timestamp.from(clock.instant());
-        jdbc.update("insert into " + SplitTables.homeOf(orgId) + ".audit_log ("
+        homes.runInHomeOf(orgId, () -> jdbc.update("insert into " + SplitTables.homeOf(orgId) + ".audit_log ("
                         + "id, org_id, action, actor_person_id, on_behalf_of_person_id, impersonation_id, "
                         + "target, from_state, to_state, occurred_at, version, created_at, created_by) "
                         + "values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
@@ -118,7 +158,7 @@ class AuditLogImpl implements AuditLog {
                 // created_by keeps the meaning JpaAuditingConfig gave it and NOT the accountable actor:
                 // the EFFECTIVE person, so an impersonated write reads like the target's own everywhere
                 // except actor_person_id, which is the one column that exists to name the operator.
-                currentUser.currentPersonId().orElse(null));
+                currentUser.currentPersonId().orElse(null)));
     }
 
     private static String withEdgePrincipal(String edgePrincipal, String toState) {

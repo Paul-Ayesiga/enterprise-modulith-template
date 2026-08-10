@@ -106,13 +106,22 @@ public class TenantTierTables {
      * was before the last migration ran.
      */
     public Plan planFor(String schemaName) {
+        return planFor(jdbc, schemaName);
+    }
+
+    /**
+     * The same plan read through a caller-supplied {@code JdbcTemplate} — ADR 0011's cutover verifies
+     * a tenant across TWO databases, and the destination's catalogue is not behind this bean's pool.
+     * Same derivation, same refusals; only where the catalogue is read from moves.
+     */
+    public Plan planFor(JdbcTemplate side, String schemaName) {
         String schema = TenantSchemaNames.require(schemaName);
-        Map<String, List<String>> columns = columns(schema);
+        Map<String, List<String>> columns = columns(side, schema);
         if (columns.isEmpty()) {
             throw new IllegalStateException("schema '" + schema + "' holds no tables at all — nothing has"
                     + " migrated it, so there is no tenant here to copy (ADR 0010 §4.2)");
         }
-        List<ForeignKey> foreignKeys = foreignKeys(schema, columns.keySet());
+        List<ForeignKey> foreignKeys = foreignKeys(side, schema, columns.keySet());
         Map<String, String> parentOf = new LinkedHashMap<>();
         Map<String, ForeignKey> linkTo = new LinkedHashMap<>();
         for (ForeignKey key : foreignKeys) {
@@ -165,9 +174,9 @@ public class TenantTierTables {
     }
 
     /** Every base table in the schema with its columns, in the order the table declares them. */
-    private Map<String, List<String>> columns(String schema) {
+    private Map<String, List<String>> columns(JdbcTemplate side, String schema) {
         Map<String, List<String>> columns = new TreeMap<>();
-        for (Map<String, Object> row : jdbc.queryForList("""
+        for (Map<String, Object> row : side.queryForList("""
                 select c.table_name, c.column_name
                   from information_schema.columns c
                   join information_schema.tables t
@@ -188,8 +197,8 @@ public class TenantTierTables {
      * at: none exists in this schema, and a promoter that silently took the first column of a two-column
      * key would build a predicate that is quietly wrong for a subset of rows.
      */
-    private List<ForeignKey> foreignKeys(String schema, Set<String> tables) {
-        List<ForeignKey> keys = jdbc.query("""
+    private List<ForeignKey> foreignKeys(JdbcTemplate side, String schema, Set<String> tables) {
+        List<ForeignKey> keys = side.query("""
                 select con.conname                as constraint_name,
                        child.relname              as child_table,
                        childatt.attname           as child_column,

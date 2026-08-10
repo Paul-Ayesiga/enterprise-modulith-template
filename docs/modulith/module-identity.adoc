@@ -15,5 +15,7 @@ _Others_
 |* `u.c.s.s.audit.AuditLog` (in Shared Kernel)
 * `u.c.s.s.security.CurrentUserProvider` (in Shared Kernel)
 * `u.c.s.s.security.PlatformAdmins` (in Shared Kernel)
+* `u.c.s.s.tenancy.CrossDatabaseWrites` (in Shared Kernel)
+* `u.c.s.s.cache.StaleWhileUnreachable` (in Shared Kernel)
 * `u.c.s.s.web.EnvelopeErrorWriter` (in Shared Kernel)
 |===

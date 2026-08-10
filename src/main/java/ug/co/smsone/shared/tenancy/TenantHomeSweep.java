@@ -42,6 +42,24 @@ import org.slf4j.LoggerFactory;
  *       failed so a permanently broken silo cannot park the rotation on itself.</li>
  * </ol>
  *
+ * <h2>A remote home is two databases, and the choreography is fixed (ADR 0011 §5)</h2>
+ *
+ * <p>Since ADR 0011 a home can live on another database entirely; the pin in property 1 already
+ * handles it — {@code runAs(home.axis(), …)} makes every borrow inside the visit resolve to that
+ * database's pool, with no code here knowing or caring which. What the VISIT's own code must know is
+ * that the coordination state is not there: {@code platform.queue_signal},
+ * {@code platform.tenant_freeze} and {@code platform.shedlock} exist on primary and nowhere else, so a
+ * visit that consults them wraps that one read in {@code TenantContext.callAsPlatform} — its own
+ * borrow, on primary, on its own transaction. <strong>The trap: a {@code @Transactional} spanning the
+ * signal read and the row work is silently two transactions</strong> — two connections, two commits,
+ * no shared fate; a rollback on the remote leaves the primary write standing (proven against two real
+ * containers before this shipped). Design every remote-home visit so each side's write is individually
+ * safe to keep — the same discipline {@code MemberService.remove} documents for Keycloak — and let
+ * {@code TenantContext.set}'s throw-inside-a-transaction convert the accidental version into a loud
+ * failure. The remote's deliberately minimal {@code platform} schema (ADR 0011 §5.1) is the tripwire
+ * for the quieter mistake: a platform-qualified statement issued on the tenant's own axis dies with
+ * "relation does not exist" instead of landing in a copy nobody reads.
+ *
  * <h2>What it deliberately does not do</h2>
  *
  * <p>It does not cap the number of homes. Truncating the list would silently stop doing the last
@@ -146,8 +164,12 @@ public final class TenantHomeSweep {
                 Instant homeDeadline = budgetFor(home, order, index, clock, deadline);
                 TenantContext.runAs(home.axis(), () -> work.visit(home, homeDeadline));
             } catch (RuntimeException failure) {
-                log.error("{} failed on tenant home {} (continuing with the remaining homes)",
-                        job, home.schema(), failure);
+                // The datasource is in the line because the likeliest cluster of these since ADR 0011
+                // is one unreachable remote failing its whole contiguous group, and the grep that
+                // establishes that should not need a join against the registry.
+                log.error("{} failed on tenant home {} (datasource '{}'; continuing with the remaining"
+                                + " homes)",
+                        job, home.schema(), home.datasource(), failure);
                 if (firstFailure == null) {
                     firstFailure = failure;
                 }

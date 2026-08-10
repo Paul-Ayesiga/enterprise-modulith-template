@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.data.domain.Window;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import ug.co.smsone.shared.web.CursorPageRequest;
@@ -38,9 +40,11 @@ class MemberController {
     private static final String RESOURCE_TYPE = "member";
 
     private final MemberService members;
+    private final MemberSideload sideload;
 
-    MemberController(MemberService members) {
+    MemberController(MemberService members, MemberSideload sideload) {
         this.members = members;
+        this.sideload = sideload;
     }
 
     record MemberAttributes(UUID personId, String roleId, String roleCode, String status) {
@@ -53,13 +57,39 @@ class MemberController {
     record AssignRoleRequest(@NotBlank String roleCode) {
     }
 
+    /**
+     * <b>{@code ?include=person} answers the roster and the people in one call.</b> Without it the
+     * response is exactly what it always was — ids, roles, statuses — and a client that wants names
+     * had to fetch each person separately, which is an N+1 paid over the network by a browser. With
+     * it the envelope grows a top-level {@code included} array of {@code user} resources carrying
+     * {@code name} and {@code email}, resolved in one batch however long the page is
+     * ({@link MemberSideload}).
+     *
+     * <p>The people are resolved on THIS request's axis and that is correct rather than lucky:
+     * {@code person} and {@code person_contact} are declared {@code platform.}-qualified, so the read
+     * finds the platform's person graph from inside the tenant's own pin (ADR 0010 §2). It is also
+     * the exact join ADR 0011 turns into a remote call, which is why it goes through a {@code shared}
+     * port rather than a repository.
+     */
     @GetMapping
-    @Operation(summary = "List organization members")
+    @Operation(summary = "List organization members",
+            description = """
+                    Add `?include=person` to get the people in the same response: a top-level \
+                    `included` array of `user` resources (`name`, `email`) keyed by the same \
+                    `personId` each row carries, resolved in one batch whatever the page size. \
+                    Without the parameter the response is unchanged and `included` is absent.""")
     @PreAuthorize("hasPermission(#orgId, 'organization', 'member:read')")
-    WindowedResult<ResourceObject> list(@PathVariable UUID orgId, CursorPageRequest page) {
+    WindowedResult<ResourceObject> list(@PathVariable UUID orgId,
+            @RequestParam(name = "include", required = false) String include, CursorPageRequest page) {
+        // Parsed before the roster query: an unknown relationship is a client bug and must not cost
+        // the tenant a page it cannot use.
+        boolean withPeople = sideload.wantsPeople(include);
         Map<UUID, String> roleCodes = roleCodesFor(orgId);
         Window<Membership> window = members.list(orgId, page);
-        return WindowedResult.of(window, page, membership -> toResource(membership, roleCodes));
+        List<UUID> personIds = window.getContent().stream().map(Membership::getPersonId).toList();
+        WindowedResult<ResourceObject> result =
+                WindowedResult.of(window, page, membership -> toResource(membership, roleCodes));
+        return withPeople ? result.withIncluded(sideload.peopleFor(personIds)) : result;
     }
 
     @PostMapping

@@ -13,6 +13,25 @@ import java.util.UUID;
  * The claim carries an alias and a provider-minted id; {@code kc_org_id} used to BE the tenant key, and
  * V11 records where that ended — the identifier escaped into every module, the public API, Kill Bill and
  * the gateway. Resolving it here, once, is the fix.
+ *
+ * <h2>The staleness contract (ADR 0011 §2) — Phase 8's wire adapter implements it unchanged</h2>
+ *
+ * <p>Same contract as {@link PersonLookup}, whose javadoc carries it in full: stale-while-unreachable
+ * on connection-shaped failure only, hard {@code app.tenancy.identity-stale.ceiling} (PT15M) per entry
+ * measured from that entry's own last successful refresh, authoritative absence replacing the entry
+ * immediately, and a THROW (503 + Retry-After) at the ceiling — never an empty that would strip the
+ * caller's tenant and misreport a database outage as a 403 about their credentials.
+ *
+ * <p>One asymmetry of this port's own: only the <b>id</b> leg has a last-known answer. The alias leg
+ * is deliberately never held (an alias is mutable and reusable — a stale {@code alias → org} is the
+ * one shape that could hand a caller a tenant that no longer owns the name), so a claim that carries
+ * only an alias resolves during an outage to the 503, not to a guess. This is a fact about the
+ * CONTRACT, not the JPA implementation, and the wire adapter inherits it.
+ *
+ * <p>What a stale answer here can cost, bounded: this entry is the router's INPUT (a translation),
+ * never the route. {@code TenantRoutes} — which holds where the id's rows actually live — is never
+ * served stale in any phase (ADR 0011 §2.4): identity staleness degrades who we think you are,
+ * bounded and metered; placement staleness writes rows into the wrong schema.
  */
 public interface OrgLookup {
 

@@ -113,7 +113,7 @@ restart.
 
 | Setting | Default | Required | Why |
 |---|---|---|---|
-| `wal_level` | `replica` | **`logical`** | ADR 0010 §6 hop 1→2 moves a tenant to its own database by row-filtered logical replication. **Needs a restart** — set it at provisioning, not at cutover. |
+| `wal_level` | `replica` | **`logical`** | ADR 0010 §6 hop 1→2 moves a tenant to its own database by logical replication — a schema-level publication of its silo (ADR 0011 §7.1 measured why not row filters). Required on the **destination too**: the reverse stream that insures the move publishes from there. **Needs a restart** — set it at provisioning, not at cutover. |
 | `max_replication_slots` | 10 | 20 | One slot per tenant *in flight*, not per tenant, plus headroom for backup tooling. |
 | `max_wal_senders` | 10 | 20 | Pairs with the slots above. |
 | `max_slot_wal_keep_size` | unlimited | 4GB | **An abandoned slot retains WAL forever and fills the disk.** Bounded, the slot is invalidated instead — loud and recoverable rather than silent and terminal. |

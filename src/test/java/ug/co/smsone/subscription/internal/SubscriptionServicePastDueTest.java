@@ -27,16 +27,19 @@ class SubscriptionServicePastDueTest {
     void lapsedPastDuePausesAndPublishes() {
         OrgSubscriptionRepository repo = mock(OrgSubscriptionRepository.class);
         PlanRepository plans = mock(PlanRepository.class);
+        // The cross-tier plan read goes through the port now (ADR 0011 §6); an unknown plan id is an
+        // empty answer and the event carries a null code, exactly as the repository join answered.
+        ug.co.smsone.subscription.PlanCatalog catalog = mock(ug.co.smsone.subscription.PlanCatalog.class);
+        given(catalog.plan(any())).willReturn(Optional.empty());
         ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
         UUID orgId = UUID.randomUUID();
         OrgSubscription lapsed = OrgSubscription.of(orgId, UUID.randomUUID());
         lapsed.markStatus(OrgSubscription.Status.PAST_DUE);
         given(repo.findByStatusAndUpdatedAtBefore(any(), any())).willReturn(List.of(lapsed));
-        given(plans.findById(any())).willReturn(Optional.empty());
 
-        SubscriptionService service = new SubscriptionService(repo, plans,
-                mock(EntitlementResolver.class), events, mock(AuditLog.class),
-                new SimpleMeterRegistry(), Clock.systemUTC(),
+        SubscriptionService service = new SubscriptionService(repo, plans, catalog,
+                mock(PlanCatalogCache.class), mock(EntitlementResolver.class), events,
+                mock(AuditLog.class), new SimpleMeterRegistry(), Clock.systemUTC(),
                 mock(TwoLevelCacheManager.class), mock(TransactionTemplate.class));
 
         assertThat(service.pauseLapsedPastDue(Duration.ofDays(7))).isEqualTo(1);

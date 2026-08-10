@@ -7,11 +7,16 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static ug.co.smsone.shared.tenancy.TenantSchemaFloor.MIN_TENANT_SCHEMA_VERSION;
 
+import com.zaxxer.hikari.HikariDataSource;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
+import ug.co.smsone.shared.persistence.TenantDataSourceProperties;
+import ug.co.smsone.shared.persistence.TenantDataSources;
 import ug.co.smsone.shared.tenancy.placement.PlacementState;
 import ug.co.smsone.shared.tenancy.placement.TenantPlacement;
 import ug.co.smsone.shared.tenancy.placement.TenantPlacements;
@@ -29,7 +34,25 @@ import ug.co.smsone.shared.tenancy.placement.TenantPlacements;
 class TenantSchemaFloorTest {
 
     private final TenantPlacements placements = mock(TenantPlacements.class);
-    private final TenantSchemaFloor floor = new TenantSchemaFloor(placements);
+
+    /**
+     * A real registry over an empty {@code app.tenancy.datasources} map — the shipped shape, in which
+     * only {@code 'primary'} is configured. Real rather than mocked because an empty registry builds no
+     * pool and touches no database, and its {@code isConfigured} is the very logic under test in the
+     * datasource-refusal case below.
+     */
+    private final TenantDataSources dataSources =
+            new TenantDataSources(new HikariDataSource(), new TenantDataSourceProperties(Map.of()));
+
+    private final TenantSchemaFloor floor =
+            new TenantSchemaFloor(placements, dataSources, TenantSchemaFloor.RECHECK_AFTER);
+
+    /**
+     * The same floor with the shortest re-check the class will accept, for the two cases below that
+     * have to WATCH it change its mind. One second is the clamp, not a taste: see the constructor.
+     */
+    private final TenantSchemaFloor impatient =
+            new TenantSchemaFloor(placements, dataSources, Duration.ofSeconds(1));
 
     @Test
     void aTenantAtTheFloorIsServed() {
@@ -144,6 +167,116 @@ class TenantSchemaFloorTest {
     void theRetryAfterIsTheIntervalTheRefusalIsRememberedFor() {
         assertThat(floor.retryAfterSeconds()).isEqualTo(TenantSchemaFloor.RECHECK_AFTER.toSeconds());
         assertThat(floor.retryAfterSeconds()).isPositive();
+    }
+
+    /**
+     * <b>ADR 0011 §4.2: a placement naming a datasource this deployment has no pool for refuses THAT
+     * tenant — and unlike a missing version it is a refusal, not an unknown-so-serve.</b> The
+     * difference is what was read: the nulls above are facts the registry could not supply, where this
+     * row answered plainly with a name configuration cannot honour. Serving it would mean the borrow
+     * path guessing a pool, which is ADR 0010 §1's misroute; a bounded per-tenant 503 is the safe
+     * failure, and the fleet keeps serving — asserted here as the tenant beside it.
+     */
+    @Test
+    void aPlacementNamingAnUnconfiguredDatasourceIsRefusedWhileTheFleetServes() {
+        UUID marooned = UUID.randomUUID();
+        UUID healthy = UUID.randomUUID();
+        when(placements.find(marooned)).thenReturn(Optional.of(new TenantPlacement(
+                marooned, TenantSchemas.siloSchema(marooned), "nobody-configured-this",
+                PlacementState.ACTIVE, String.valueOf(MIN_TENANT_SCHEMA_VERSION), null, Instant.now())));
+        when(placements.find(healthy))
+                .thenReturn(placedAt(healthy, String.valueOf(MIN_TENANT_SCHEMA_VERSION)));
+
+        assertThat(floor.admits(marooned)).isFalse();
+        assertThat(floor.admits(healthy))
+                .describedAs("per tenant, never per pod — the whole point of refusing here")
+                .isTrue();
+    }
+
+    /**
+     * The refusal is remembered on the floor's own {@code RECHECK_AFTER} cadence, so a broken row is
+     * one registry read per interval and not one per request — the memoization ADR 0011 §4.2 asks for
+     * by name.
+     */
+    @Test
+    void theDatasourceRefusalIsRememberedLikeAnyOther() {
+        UUID marooned = UUID.randomUUID();
+        when(placements.find(marooned)).thenReturn(Optional.of(new TenantPlacement(
+                marooned, TenantSchemas.siloSchema(marooned), "nobody-configured-this",
+                PlacementState.ACTIVE, null, null, Instant.now())));
+
+        assertThat(floor.admits(marooned)).isFalse();
+        assertThat(floor.admits(marooned)).isFalse();
+
+        verify(placements, times(1)).find(marooned);
+    }
+
+    /**
+     * <b>ADR 0011 §4.2, the half that had been folded into a verdict that never expired.</b> An
+     * admission rests on two facts with different lifetimes: the tenant's {@code schema_version},
+     * which cannot go backwards, and the row's {@code datasource_name}, which any cutover may rewrite
+     * at any instant. Remembering the conjunction forever is remembering the wrong one — and the
+     * failure it produced was not a stale 200 but a worse thing: the edge kept ADMITTING a tenant this
+     * deployment could no longer route, so the refusal moved from a bounded 503 at the filter to an
+     * {@code UnknownTenantDataSourceException} at the connection borrow, which the wire renders as
+     * INTERNAL_ERROR with no {@code Retry-After}.
+     *
+     * <p>Asserted by moving the row underneath a tenant this process has already agreed to serve and
+     * watching the answer change on its own, which is the only way to observe an expiry that happened.
+     */
+    @Test
+    void anAdmissionIsReEarnedBecauseTheDatasourceHalfOfItCanChange() throws Exception {
+        UUID moved = UUID.randomUUID();
+        when(placements.find(moved))
+                .thenReturn(placedAt(moved, String.valueOf(MIN_TENANT_SCHEMA_VERSION)));
+
+        assertThat(impatient.admits(moved)).describedAs("served: pooled on primary, at the floor").isTrue();
+
+        // The cutover another pod just ran: same tenant, same version, a datasource THIS deployment
+        // has no pool for.
+        when(placements.find(moved)).thenReturn(Optional.of(new TenantPlacement(
+                moved, TenantSchemas.siloSchema(moved), "configured-on-other-pods-only",
+                PlacementState.ACTIVE, String.valueOf(MIN_TENANT_SCHEMA_VERSION), null, Instant.now())));
+
+        Thread.sleep(1_100);
+
+        assertThat(impatient.admits(moved))
+                .describedAs("the admission expired and the re-read found a pool this deployment does"
+                        + " not have — refused at the EDGE, where the refusal is a 503, instead of"
+                        + " being discovered at the borrow, where it is a 500")
+                .isFalse();
+    }
+
+    /**
+     * The other direction, and the one the operator lives through: a datasource refusal is not a
+     * sentence for the life of the pod. A typo'd {@code datasource_name} corrected in the registry, or
+     * a config rollback rolled forward, must serve the same tenant again <b>without a restart</b> —
+     * the interval this process advertises as {@code Retry-After} is exactly when it will look.
+     */
+    @Test
+    void aDatasourceRefusalLiftsItselfOnceTheRegistryAgrees() throws Exception {
+        UUID marooned = UUID.randomUUID();
+        when(placements.find(marooned)).thenReturn(Optional.of(new TenantPlacement(
+                marooned, TenantSchemas.siloSchema(marooned), "nobody-configured-this",
+                PlacementState.ACTIVE, String.valueOf(MIN_TENANT_SCHEMA_VERSION), null, Instant.now())));
+
+        assertThat(impatient.admits(marooned)).isFalse();
+
+        // The one-line repair, applied while the pod runs.
+        when(placements.find(marooned))
+                .thenReturn(placedAt(marooned, String.valueOf(MIN_TENANT_SCHEMA_VERSION)));
+
+        Thread.sleep(1_100);
+
+        assertThat(impatient.admits(marooned))
+                .describedAs("no restart: the refusal expires on the interval its own Retry-After named")
+                .isTrue();
+    }
+
+    /** A deployment that configured the interval gets that interval on the wire, not the default. */
+    @Test
+    void theAdvertisedRetryAfterFollowsTheConfiguredInterval() {
+        assertThat(impatient.retryAfterSeconds()).isEqualTo(1);
     }
 
     private boolean admits(String schemaVersion) {

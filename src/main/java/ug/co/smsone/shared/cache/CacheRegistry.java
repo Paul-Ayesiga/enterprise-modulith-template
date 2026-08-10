@@ -45,7 +45,7 @@ import java.util.TreeSet;
 public final class CacheRegistry {
 
     /**
-     * The seven caches, with the ADR §3.5 verdict for each.
+     * The eight caches, with the ADR §3.5 verdict for each.
      *
      * <p>The two {@code GLOBAL} resolution caches are the load-bearing ones: they are read at the edge
      * BEFORE any tenant is known — they are how the tenant becomes known — so a tenant prefix on them
@@ -75,6 +75,11 @@ public final class CacheRegistry {
         declared.put("org-permissions", CacheScope.TENANT);
         // subscription.internal.EntitlementResolver — org_subscription is tenant-tier.
         declared.put("org-entitlements", CacheScope.TENANT);
+        // subscription.internal.PlanCatalogCache — `plan` and `plan_entitlement` are platform-tier
+        // catalog with no org_id: one price list, one answer, installation-wide (ADR 0011 §6). The
+        // per-ORG question ("what does THIS org's plan allow") stays in org-entitlements above; this
+        // cache only ever translates a plan id or code into the catalog's snapshot of it.
+        declared.put("plan-catalog", CacheScope.GLOBAL);
         return Map.copyOf(declared);
     }
 

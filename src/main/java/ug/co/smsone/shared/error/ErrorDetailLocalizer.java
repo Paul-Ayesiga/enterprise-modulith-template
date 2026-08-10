@@ -27,7 +27,23 @@ public class ErrorDetailLocalizer {
             return fallbackDetail;
         }
         String key = "error." + errorCode.code().toLowerCase();
-        String resolved = resolver.resolve(key, LocaleContextHolder.getLocale());
-        return key.equals(resolved) ? fallbackDetail : resolved;
+        try {
+            String resolved = resolver.resolve(key, LocaleContextHolder.getLocale());
+            return key.equals(resolved) ? fallbackDetail : resolved;
+        } catch (RuntimeException lookupFailure) {
+            // The class promise, kept on the path that tests forgot: the bundle is a PLATFORM read
+            // (platform.translation, cached 60 s), and this method runs while rendering ERRORS —
+            // including the 503 that says the platform database is unreachable (ADR 0011 §2). A cold
+            // bundle during that outage made the renderer itself throw out of the FILTER, turning a
+            // curated 503 + Retry-After into an unenveloped 500 — measured in the Phase 7 gate. §2.1's
+            // row for translations is "last value or default"; the author's English detail IS the
+            // default, so it is served and the lookup failure is a log line, never a second error.
+            log.warn("error-detail localization for {} failed ({}); serving the author's default",
+                    key, lookupFailure.toString());
+            return fallbackDetail;
+        }
     }
+
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(ErrorDetailLocalizer.class);
 }

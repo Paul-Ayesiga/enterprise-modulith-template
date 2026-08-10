@@ -233,6 +233,33 @@ status).</p>
       detail localizes, else you get the English original.</li>
   <li>Stack traces never reach the wire — a 500's detail is generic; the trace lives in the server log under your request id.</li>
 </ul>
+<div class="card tip"><strong><code>included</code> — ask for related resources instead of fetching them one by one.</strong>
+A few collections accept <code>?include=&lt;relationship&gt;</code> and answer with a third top-level member,
+<code>included</code>: a flat array of <code>{id, type, attributes}</code> resources the rows in <code>data</code> refer to.
+Match them by <code>(type, id)</code> — the same pair the standalone endpoint for that resource uses, so a client can merge
+them into records it already holds. Today the only relationship is <code>person</code>, on the two member rosters
+(<a href="#members">D1</a> and <code>GET /api/v1/admin/orgs/{orgId}/members</code>).
+<pre><code>GET /api/v1/orgs/{orgId}/members?include=person&page[size]=2
+{ "data": [ { "id":"5862…", "type":"member",
+              "attributes": { "personId":"5862…", "roleCode":"MEMBER", "status":"ACTIVE" } }, … ],
+  "included": [ { "id":"5862…", "type":"user",
+                  "attributes": { "name": { "formattedName":"Ada Lovelace", "givenName":"Ada",
+                                            "familyName":"Lovelace" },
+                                  "email":"ada@acme.test" } }, … ],
+  "meta": { "requestId":"01J4X9…", "page": { … } } }</code></pre>
+<ul>
+  <li><strong>Opt-in, and silent without the parameter.</strong> Omit it and the key is <em>absent</em> — not an empty array —
+      so nothing about an existing response changes. Ask for it and get nothing resolvable and you get <code>[]</code>: the two
+      are different answers and both are meaningful.</li>
+  <li><strong>Exactly the page, deduplicated.</strong> <code>included</code> covers the rows in <code>data</code> and nothing
+      else, one entry per distinct resource. A row whose related resource no longer exists (an erased person) keeps its place in
+      <code>data</code> and simply has no entry — render the id.</li>
+  <li><strong>One batch, any page size.</strong> The server resolves the whole page in a fixed number of queries, which is the
+      point: this exists to remove the round trip per row, not to move it.</li>
+  <li><strong>An unknown relationship is a <code>422</code></strong> with <code>source.parameter: "include"</code>, never a
+      silently ignored parameter — so <code>?include=persons</code> tells you rather than looking like a broken feature.</li>
+  <li><code>links.next</code> carries the page cursor only; re-send <code>include</code> (and any other filter) on the next page.</li>
+</ul></div>
 
 <h2 id="paging">A3 · Cursor pagination</h2>
 <p>Collections page by <strong>keyset cursor</strong> — no page numbers, no totals (by design). Parameters are literally
@@ -575,7 +602,18 @@ POST /api/v1/signup/verify {"token":"…from the link…"}
 <div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/admin/orgs</span><span class="perm plat">platform-support</span></div>
   <div class="ep-body"><p>Observe the fleet. <code>?status=active</code> filters; <code>…/{orgId}</code> reads one; <code>…/{orgId}/members</code> is the
   read-only roster (<code>personId</code> + role codes). Managing members stays a tenant action, or an impersonation
-  session's.</p></div></div>
+  session's.</p>
+  <p><strong>Put names on that roster in one call: <code>…/{orgId}/members?include=person</code></strong> adds an
+  <a href="#envelope"><code>included</code></a> array of <code>user</code> resources carrying <code>name</code> and
+  <code>email</code>, keyed by the same <code>personId</code> each row already shows. It replaces one
+  <code>GET /api/v1/admin/users/{personId}</code> per row — twenty members used to be twenty-one requests — and costs a fixed
+  number of queries whatever the page size. Same <code>platform-support</code> floor: these are the people
+  <code>GET /api/v1/admin/users</code> already lists, fetched by the page instead of one at a time.</p>
+  <p class="mut">The sideloaded <code>name</code> is the <strong>three-component projection</strong> —
+  <code>formattedName</code>, <code>givenName</code>, <code>familyName</code> — not the full seven-component SCIM block, and
+  because null components are omitted you cannot tell "not in the projection" from "this person has none". Need the whole
+  block, the honorifics or <code>status</code>? That is <code>GET /api/v1/admin/users/{personId}</code>, for the one person you
+  are actually looking at. Omit the parameter and the response is byte-for-byte what it always was.</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/suspend</span> · <span class="path">/reactivate</span><span class="perm plat">platform-admin</span></div>
   <div class="ep-body"><p>Reversible. Suspending kills every member's access immediately (zero permissions resolve while suspended).</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method DELETE">DELETE</span><span class="path">/api/v1/admin/orgs/{orgId}</span><span class="perm plat">platform-admin</span></div>
@@ -786,7 +824,18 @@ usage (tracking-id-deduped) for usage-based plans.</div>
   <code>org.ticket.escalated</code>. Per-priority SLA overrides live at <code>…/admin/orgs/{orgId}/sla/{P1..P4}</code>.</p>
   <p class="mut"><code>GET …/{id}/messages</code> is a cursor-paged collection like every other one here — oldest first,
   <code>page[size]</code>/<code>page[after]</code>, <code>meta.page.nextCursor</code>. A long incident's conversation is
-  not a single response.</p></div></div>
+  not a single response.</p>
+  <p class="mut"><strong>The queue page is a projection now, and everything else on this route is not.</strong>
+  <code>GET /api/v1/admin/tickets</code> is answered from a platform-side index of every tenant's live tickets rather
+  than by querying each tenant in turn — one indexed page whatever the tenant count, where the previous
+  implementation cost roughly 1.3&nbsp;ms per tenant and grew with the customer base. <strong>The response shape,
+  the attributes, the <code>?status=</code> filter and the cursor are all unchanged</strong>, including cursors minted
+  before the change. What is new is that a row can be a moment behind the tenant's own record: a status that changed
+  a second ago may still read as the old one, and a ticket deleted inside a tenant can briefly still appear (opening
+  it returns <code>404</code>). Every OTHER route here — <code>GET …/{id}</code>, the messages, the assignment, the
+  status change — reads the tenant's own row and is never served from the index, so the queue is a place to find work,
+  not a place to read a ticket's state from. A tenant's own <code>GET /api/v1/orgs/{orgId}/tickets</code> is entirely
+  unaffected and always has been: it reads that organization's schema directly.</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/admin/compliance/legal-holds/subject</span><span class="perm plat">platform-admin</span></div>
   <div class="ep-body"><p>A legal hold BLOCKS the purge and any erasure of the held person/org until released
   (<code>DELETE …/legal-holds/{id}</code>). The body is <code>{"personId":"…","reason":"…"}</code> — a
@@ -869,6 +918,26 @@ GET /api/v1/feature-flags/beta.exports/orgs/{orgId}   # → {"type":"feature-fla
   across every identity provider they ever sign in with. It used to be their Keycloak subject, which is a value one
   provider minted and no second one could ever reproduce. That id is the member resource's id, and it is what the two
   paths below take.</p></div></div>
+<div class="ep"><div class="ep-head"><span class="method GET">GET</span><span class="path">/api/v1/orgs/{orgId}/members</span><span class="perm org">member:read</span></div>
+  <div class="ep-body"><p>The roster, cursor-paginated: <code>personId</code>, <code>roleId</code>, <code>roleCode</code>,
+  <code>status</code>. Ids only, deliberately — a membership is a fact about this organization, and who the human is belongs to
+  the platform's person record.</p>
+  <p><strong><code>?include=person</code> puts the humans in the same response.</strong> A top-level
+  <a href="#envelope"><code>included</code></a> array of <code>user</code> resources — <code>name</code>
+  (<code>formattedName</code> / <code>givenName</code> / <code>familyName</code>) and <code>email</code> — matched to the rows by
+  <code>personId</code>. Rendering twenty members with names was twenty extra requests; it is now zero, and the server resolves
+  the whole page in a fixed number of queries however long it is.</p>
+  <table class="params"><tr><th>Param</th><th>In</th><th>Req</th><th>Description</th></tr>
+    <tr><td>include</td><td>query</td><td>no</td><td><code>person</code> — the only relationship a member has. Anything else ⇒ <code>422</code> with <code>source.parameter: "include"</code>.</td></tr></table>
+  <pre><code>GET /api/v1/orgs/{orgId}/members?include=person&page[size]=20
+# → 200 { "data":[ {"id":"5862…","type":"member","attributes":{"personId":"5862…","roleCode":"MEMBER",…}}, … ],
+#         "included":[ {"id":"5862…","type":"user",
+#                       "attributes":{"name":{"formattedName":"Ada Lovelace","givenName":"Ada","familyName":"Lovelace"},
+#                                     "email":"ada@acme.test"}}, … ] }</code></pre>
+  <p class="mut">No new permission and no wider data: <code>member:read</code> is the same floor the roster
+  <a href="#exchange">export</a> uses, and that file has always carried member e-mail. Omit the parameter and the response is
+  unchanged — <code>included</code> is absent, not empty. A member whose person record was erased keeps their row in
+  <code>data</code> and has no <code>included</code> entry; render the id.</p></div></div>
 <div class="ep"><div class="ep-head"><span class="method POST">POST</span><span class="path">/api/v1/orgs/{orgId}/roles</span><span class="perm org">role:create</span></div>
   <div class="ep-body"><p>A custom role; <code>permissions</code> are exact names from <a href="#myfiles">the catalog</a>. Reassign a member with
   <code>PUT …/members/{personId}/role</code> <code>{"roleCode":"…"}</code>; remove with
@@ -1049,7 +1118,7 @@ POST …/security-policy/trusted-devices {"personId":"5862…","deviceId":"…",
 <tr><td>409</td><td><code>CONFLICT</code></td><td>Duplicate alias, last-owner, last-super-admin, self-suspension, an unproven address made primary or its last proven one removed, idempotency body mismatch, delete-before-suspend</td></tr>
 <tr><td>413 / 422</td><td><code>PAYLOAD_TOO_LARGE</code> / <code>VALIDATION_FAILED</code></td><td>Body cap / field problems with <code>source.pointer|parameter</code></td></tr>
 <tr><td>429</td><td><code>RATE_LIMITED</code></td><td>Bucket empty (or plan quota) — honor <code>Retry-After</code></td></tr>
-<tr><td>503</td><td><code>SERVICE_UNAVAILABLE</code></td><td>Maintenance window, or a dependency breaker open — retry later</td></tr>
+<tr><td>503</td><td><code>SERVICE_UNAVAILABLE</code></td><td>Maintenance window, a dependency breaker open, a tenant whose storage is mid-upgrade or placed on a database this deployment cannot currently route to (ADR 0011 — per-tenant, every other tenant is unaffected), or — during a platform-database outage — an identity whose last confirmed answer has aged past the 15-minute stale ceiling, or an organization whose standing (active vs suspended) cannot be confirmed for an authorization that is not already cached (ADR 0011: authorization is never served stale — it refuses instead): the platform serves cached identity for up to 15 minutes of outage, then answers 503 + <code>Retry-After</code> rather than a false 401/403. Retry after <code>Retry-After</code>; nothing is wrong with the credential</td></tr>
 </table>
 
 <h2 id="tips">E2 · Tester tips</h2>

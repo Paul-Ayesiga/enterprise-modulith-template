@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.shared.tenancy.CrossDatabaseWrites;
 
 /**
  * {@code platform.org_membership_index} — the routing answer to "which organizations does this person
@@ -81,18 +82,33 @@ class OrgMembershipIndex {
      * {@code SystemRoleCatalogReconciler}, where a platform-tier scan is INTERLEAVED with per-tenant
      * writes and no single axis can serve both.
      *
-     * <p>When Phase 7 puts the tiers in different databases the shared transaction goes and the pair
-     * becomes eventually consistent by construction. That is survivable only because of the invariant
-     * above — the index routes, the tenant schema authorizes — and because
-     * {@link OrgMembershipIndexReconciler} repairs both directions. It is not a reason to give the
-     * guarantee up early while it is still free.
+     * <p><strong>ADR 0011 is where "Phase 7" above stopped being future tense, and the sentence it
+     * invalidates is "a qualified name resolves from every axis".</strong> It resolves from every axis
+     * in one DATABASE. A tenant served from another one has no {@code platform} schema worth the name
+     * (ADR 0011 §5.1 keeps it to {@code event_publication} on purpose), so the invite path — pinned to
+     * that tenant, inside its transaction — issues this statement against a database that does not hold
+     * the table, and the invite fails outright. Every statement below therefore borrows on the platform
+     * axis through {@link CrossDatabaseWrites#runOnPlatform}, which is the same connection and the same
+     * transaction whenever the tenant is co-located with primary — i.e. every tenant on every deployment
+     * with no remote datasource configured, where the one-span guarantee above is untouched and stays
+     * exactly as argued.
+     *
+     * <p>For a REMOTE tenant the shared transaction is gone and the pair becomes eventually consistent,
+     * which the paragraph this replaces already predicted. It is survivable only because of the
+     * invariant above — the index routes, the tenant schema authorizes — and because
+     * {@link OrgMembershipIndexReconciler} repairs both directions. The direction it leaves open is the
+     * benign one by construction: {@link #record} commits on primary BEFORE the membership it mirrors,
+     * so a failed invite can leave an index row with no seat — a stale entry in a switcher that denies
+     * on arrival — and never a seat that its owner cannot see.
      */
     private static final String TABLE = "platform.org_membership_index";
 
     private final JdbcTemplate jdbc;
+    private final CrossDatabaseWrites platformTier;
 
-    OrgMembershipIndex(JdbcTemplate jdbc) {
+    OrgMembershipIndex(JdbcTemplate jdbc, CrossDatabaseWrites platformTier) {
         this.jdbc = jdbc;
+        this.platformTier = platformTier;
     }
 
     /** One organization a person belongs to, as the index knows it. Routing keys only — see the class note. */
@@ -114,11 +130,11 @@ class OrgMembershipIndex {
      * dead tuple; on a re-invite storm that is the difference between a no-op and a vacuum problem.
      */
     void record(UUID orgId, UUID personId, MembershipStatus status) {
-        jdbc.update("""
+        platformTier.runOnPlatform(() -> jdbc.update("""
                 insert into %s as i (person_id, org_id, status) values (?, ?, ?)
                 on conflict (person_id, org_id) do update set status = excluded.status
                  where i.status is distinct from excluded.status
-                """.formatted(TABLE), personId, orgId, status.name());
+                """.formatted(TABLE), personId, orgId, status.name()));
     }
 
     /**
@@ -129,9 +145,17 @@ class OrgMembershipIndex {
      * <p>A DELETE and not a status flag, because the row means exactly "this person has a live seat
      * here". {@code membership} is soft-deleted so the seat can be restored, and the restore path goes
      * through the reconciler rather than through a tombstone nobody would remember to clear.
+     *
+     * <p>The one direction this ordering gets wrong for a remote tenant is the one the class note calls
+     * benign: the delete commits on primary before the seat's own removal, so a removal that then fails
+     * leaves a live member the switcher no longer lists. That is the {@code membership}-with-no-index
+     * case, it is what {@link OrgMembershipIndexReconciler} exists to find, and it is strictly better
+     * than the alternative ordering, which would leave a REMOVED member holding a route into an
+     * organization until the same reconciler ran.
      */
     void forget(UUID orgId, UUID personId) {
-        jdbc.update("delete from " + TABLE + " where person_id = ? and org_id = ?", personId, orgId);
+        platformTier.runOnPlatform(() ->
+                jdbc.update("delete from " + TABLE + " where person_id = ? and org_id = ?", personId, orgId));
     }
 
     /**
@@ -139,12 +163,19 @@ class OrgMembershipIndex {
      * {@code (person_id, org_id)}, no tenant schema touched, no fan-out. The caller still has to visit
      * each org for anything the tenant owns — its role, for one — and that is the invariant working
      * as designed, not a shortcoming of this method.
+     *
+     * <p>Borrowed on the platform axis like the writes, and for a reason the endpoint's name hides:
+     * {@code GET /api/v1/me/organizations} is not a tenant-less route in practice, because
+     * {@code CurrentUserFilter} pins whatever organization the CALLER'S credential names on every route,
+     * not only on {@code /orgs/**}. A multi-org human signed into a remote tenant therefore asks "which
+     * organizations am I in" over that tenant's connection — and this is the one read whose whole
+     * purpose is to answer across tenants, so it can never be the answer of the one it is asked on.
      */
     List<Seat> seatsOf(UUID personId, MembershipStatus status) {
-        return jdbc.query("select org_id, status from " + TABLE
+        return platformTier.callOnPlatform(() -> jdbc.query("select org_id, status from " + TABLE
                         + " where person_id = ? and status = ?",
                 (resultSet, row) -> new Seat(resultSet.getObject("org_id", UUID.class),
                         resultSet.getString("status")),
-                personId, status.name());
+                personId, status.name()));
     }
 }

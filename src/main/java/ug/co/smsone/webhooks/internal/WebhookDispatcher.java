@@ -42,4 +42,20 @@ class WebhookDispatcher {
             queue.enqueue(deliveries, properties.maxAttempts());
         }
     }
+
+    /**
+     * Gives the dedup claim back when the fan-out it was taken for did not happen — the failure half of
+     * {@link #dispatch}'s first line, and one that only became necessary with ADR 0011.
+     *
+     * <p>While the inbox row and the deliveries commit together, a failed fan-out un-claims itself by
+     * rolling back and this is a no-op that matches zero rows. For a tenant on ANOTHER database they
+     * cannot commit together ({@code EventInbox}'s class note), so the claim survives a failed fan-out
+     * and would swallow the redelivery that is supposed to repair it — a webhook silently never sent,
+     * which is exactly the outcome {@code WebhookEventListener}'s transaction exists to prevent. Calling
+     * this unconditionally on failure is correct in both topologies, which is why the caller does not
+     * branch on which one it is in.
+     */
+    void unclaim(String messageId) {
+        inbox.forget(LISTENER_ID, messageId);
+    }
 }

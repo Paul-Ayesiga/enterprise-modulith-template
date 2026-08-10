@@ -78,11 +78,12 @@ class AdminTicketController {
     @PreAuthorize("hasRole('platform-support')")
     WindowedResult<ResourceObject> queue(@RequestParam(name = "status", required = false) String status,
             CursorPageRequest page) {
-        // The fan-out pins each home itself, so nothing is pinned here — and the mapping stays outside
-        // it deliberately: the merged window already holds rows read inside their own home's
-        // transaction, so mapping under some other home's axis would be an accident that happens to
-        // work only because TicketAttributes touches no association.
-        return WindowedResult.of(homes.queue(status, page), page, TicketResources::toResource);
+        // One keyset statement against platform.ticket_index since V61, not a merge over every home —
+        // and therefore nothing to pin here, because the projection is platform-tier and TicketIndex
+        // borrows the platform axis itself. The response shape is byte-identical to the merge's: the
+        // index carries exactly the attributes this resource renders, which is why that column set is
+        // what it is (see V61's header).
+        return homes.queue(status, page, TicketResources::toResource);
     }
 
     @GetMapping("/{id}")

@@ -4,7 +4,7 @@ Every table in the database, its columns and its relationships. Generated from
 `src/main/resources/db/migration`, which is the source of truth — and since ADR 0010 Phase 2 that is
 two sequences, `platform/` and `tenant/`. Which one created a table is the same statement as its tier.
 
-**60 tables**, grouped by owning module, alphabetical within each group. Seven of them were created in
+**62 tables**, grouped by owning module, alphabetical within each group. Seven of them were created in
 both schemas and are counted once, here and in every total below. (`flyway_schema_history` is created
 by Flyway itself, is not declared in any migration, and is not counted here.)
 
@@ -50,7 +50,7 @@ tier is now also the answer to *where is this table, and how is it addressed*.
 
 ## The schemas
 
-- `platform` — the 33 platform-tier tables, the platform copy of the seven split ones, and Flyway's own
+- `platform` — the 35 platform-tier tables, the platform copy of the seven split ones, and Flyway's own
   `flyway_schema_history`.
 - `tenant_pool` — the 20 tenant-tier tables and the tenant copy of the seven. Every tenant lives here
   until it is promoted, so inside this schema `org_id` is the only thing separating them: **every
@@ -1165,6 +1165,24 @@ Where each tenant's rows live, on which datasource, and whether that home is fit
 
 Relationships: `org_id` is a soft ref to `organization.id`, no FK (see the column). Primary key (`org_id`); indexed by (`schema_name`) for the fleet's by-schema statements, and by (`state`, `updated_at`) **partial on `state <> 'ACTIVE'`** for "which tenants are not fit to serve, oldest first" — the alert query, kept off the write path for the overwhelming ACTIVE majority. No `version`, `created_at` or `deleted_at`: every write is a single conditional statement whose row count is the answer, so there is nothing for optimistic locking to arbitrate, and a placement is never deleted while its schema holds bytes. ADR 0010 §4.2, V57; `shared.tenancy.placement.TenantPlacements` owns every statement against it.
 
+### tenant_cutover
+The tenants whose silo is moving to another **database** right now, and how far along each move is. One row per organization for the life of one cutover — from the first replicated byte to the day the stale source copy is dropped — and empty the rest of the time; a finished cutover's row is deleted, never marked done.
+
+**Tier:** platform — it is read as a REFUSAL by the migration runner (DDL under a live publication crash-loops the subscriber and then silently under-copies, ADR 0011 §7.3) and by the promoter (`TenantPlacements.beginRelocation` declines a tenant a cutover holds), both of which walk schemas before any tenant axis exists; and a record of a move between two databases cannot live in either of them.
+
+| Column | Type | Null | Description |
+|---|---|---|---|
+| org_id | uuid | no | `organization.id`, and the primary key — one live cutover per tenant, enforced structurally. Soft ref, no FK: V57's reasons, plus this row is the only record that replication objects exist on TWO databases and must be torn down — an orphaned slot pins WAL until a human drops it |
+| schema_name | text | no | The silo being moved. Derivable from `org_id`, recorded so the runner's refusal is one lookup by the name it walks schemas under |
+| source_datasource | text | no | Where the tenant is served from when the move begins, and where a rollback puts it back — recorded because the placement's `datasource_name` changes at the flip and the rollback needs the pre-flip answer afterwards |
+| target_datasource | text | no | What the flip writes into `tenant_placement.datasource_name` |
+| state | text | no | `SYNCING` (streams live, initial copy or catch-up; tenant fully served from the source), `CUT` (flip committed, reverse stream not yet confirmed — the one crash state needing operator judgement), `WATCHING` (reverse replication live; rollback is a brief freeze and one row). Constrained by `tenant_cutover_state_known` |
+| started_at | timestamptz | no | When the move was recorded |
+| cut_at | timestamptz | yes | When the flip committed; NULL while SYNCING. `cut_at + app.tenancy.cutover.watch-window` is what `decommission` refuses before |
+| updated_at | timestamptz | no | When the state last changed |
+
+Relationships: `org_id` is a soft ref to `organization.id`, no FK (see the column). Primary key (`org_id`); indexed by (`schema_name`) for the runner's refusal lookup. Constrained by `tenant_cutover_actually_moves` (`source_datasource <> target_datasource`). ADR 0011 §7.2, V60; `shared.tenancy.cutover.TenantCutovers` owns every statement against it, `shared.tenancy.cutover.TenantCutover` drives the sequence, and `docs/runbooks/tenant-cutover.md` is the operator's entry.
+
 ---
 
 # signup
@@ -1319,6 +1337,28 @@ One support request a tenant opened, and its progress against its SLA.
 | deleted_at | timestamptz | yes | Soft delete |
 
 Relationships: `org_id` → `organization.id`; `opener_person_id`, `assignee_person_id`, `created_by`, `updated_by` → `person.id` — all soft refs, no FK. Referenced by `ticket_message.ticket_id` (real FK, cascade).
+
+### ticket_index
+The cross-tenant OPERATOR queue, as one platform-side projection of every tenant's live tickets. It **renders; the tenant schema answers** — a tenant reading its own tickets never touches it, the operator's single-ticket routes read the tenant's own row, and no authorization decision may read it.
+
+**Tier:** platform — `ticket` is the tenant's, so `GET /api/v1/admin/tickets` would otherwise be one keyset query per tenant home merged in Java. ADR 0010 §8 Q1 measured that merge at 1.29–1.39 ms per home, flat, i.e. **279 ms per operator page at 200 homes and linear in the fleet**; since `silo-per-org` became the default placement the home count is the organization count, which is what fired §5.1's trigger for this table.
+
+| Column | Type | Null | Description |
+|---|---|---|---|
+| ticket_id | uuid | no | Primary key; `ticket.id`, unique fleet-wide because ticket ids are v4 UUIDs — which is what lets the operator's routes probe it with no org in the URL |
+| org_id | uuid | no | The organization whose home holds the ticket; the key back into the tenant's own schema for the detail read |
+| opener_person_id | uuid | no | The person who opened it |
+| subject | varchar(200) | no | The ticket's title |
+| category | varchar(40) | yes | What area the request is about |
+| priority | varchar(2) | no | P1..P4 |
+| status | varchar(25) | no | The queue's only filter (`?status=`) |
+| assignee_person_id | uuid | yes | The platform operator handling it |
+| escalated | boolean | no | Whether the breach job has escalated it |
+| first_response_at | timestamptz | yes | When the first response was sent |
+| resolution_due_at | timestamptz | no | When resolution is due |
+| created_at | timestamptz | no | `ticket.created_at`; half the queue's keyset |
+
+Relationships: `ticket_id` → `ticket.id`, `org_id` → `organization.id`, `opener_person_id` / `assignee_person_id` → `person.id` — all soft refs, and there is **no FK to `ticket` and cannot be**: the two are in different tiers, and since ADR 0011 not necessarily in the same database. Indexed by (`created_at desc`, `ticket_id desc`) for the unfiltered page, (`status`, `created_at desc`, `ticket_id desc`) for `?status=`, and (`org_id`, `ticket_id`) for the reconciler's per-organization arms. No `deleted_at`, `version` or `created_by`: the row's existence is the liveness statement and nothing here is an aggregate. Columns are exactly what the operator queue orders, filters and renders — anything else would be duplicated data with its own drift. `support.internal.TicketIndex` owns every statement against it; `support.internal.TicketIndexReconciler` replaces the missing constraint nightly, per ADR 0010 §8 Q2's rule that no projection ships without its reconciler, and here it is not a backstop for the delete path but *is* the delete path — nothing in the application soft-deletes a ticket, so every disappearance is raw SQL (`SoftDeletePurgeJob`, a dropped schema) that cannot know this table exists. ADR 0010 §5.1 / §8 Q2, V61.
 
 ### ticket_message
 One message on a ticket, from the tenant or from the platform.

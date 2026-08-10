@@ -121,8 +121,13 @@ public final class TenantSchemas {
      * A tenant home plus {@code ext}, which is the shape every tenant path has. The pooled constant is
      * kept as a literal rather than built here so that {@code TenantSchemasTest}'s assertion about the
      * exact string is still an assertion about a written-down name and not the method restated.
+     *
+     * <p>Public since ADR 0011 for exactly one caller: {@code TenantRoutingDataSource} resolves the
+     * whole route pair once per borrow ({@code TenantRoutes.routeOf}) and needs the path for the schema
+     * half without asking {@link #searchPathFor} to resolve the route a second time. Everything else
+     * keeps going through {@link #searchPathFor}, which is the method that knows about axes.
      */
-    private static String tenantSearchPath(String home) {
+    public static String tenantSearchPath(String home) {
         return TENANT_POOL.equals(home) ? POOLED_TENANT_SEARCH_PATH
                 : requireSiloSchema(home) + ", " + EXTENSIONS;
     }

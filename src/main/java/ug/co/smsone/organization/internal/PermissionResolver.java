@@ -4,7 +4,11 @@ import java.util.Set;
 import java.util.UUID;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import ug.co.smsone.organization.Permission;
+import ug.co.smsone.shared.cache.PlatformUnreachableException;
+import ug.co.smsone.shared.cache.StaleWhileUnreachable;
+import ug.co.smsone.shared.tenancy.TenantContext;
 
 /**
  * Resolves a person's effective permission codes in an org (org ACTIVE → membership → role →
@@ -19,8 +23,11 @@ import ug.co.smsone.organization.Permission;
  * {@code search_path} on the borrowed connection is the only thing that says which schema it means.
  * On a PLATFORM axis they are not merely the wrong tenant's rows, they are no rows at all:
  * {@code relation "org_role" does not exist}. The fourth, {@code platform.organization}, is reached by
- * name and so resolves from either axis — which is why one tenant span covers the whole method and the
- * org-status check can stay inside the cached value where a suspension's eviction reaches it.
+ * name — which resolved from either axis for as long as every axis landed in the SAME database. ADR
+ * 0011 ended that: a remote-served tenant's axis borrows from a database whose {@code platform} schema
+ * deliberately holds only the outbox (§5.1's tripwire), so the status read takes its own platform-axis
+ * span inside {@link #resolve} — a second, sequential borrow, still inside the cached value where a
+ * suspension's eviction reaches it.
  *
  * <p><b>The pin is not taken here, and that is not an omission.</b> This method is {@code @Cacheable}
  * and is called from two directions with different obligations:
@@ -107,9 +114,53 @@ class PermissionResolver {
         }
         // A suspended (or locally unknown) org grants nothing to anyone — org status is enforced
         // here, inside the cached value, so a suspension plus its cache eviction is immediate.
-        boolean orgActive = organizations.findById(organizationId)
-                .map(org -> org.getStatus() == OrganizationStatus.ACTIVE)
-                .orElse(false);
+        //
+        // The read runs on the PLATFORM axis as its own sequential borrow: `organization` lives only
+        // on the primary database, and since ADR 0011 the tenant axis this method is pinned to may be
+        // another database entirely, whose minimal platform schema would fail the qualified name
+        // (§5.1's tripwire — this was the first call site it caught). A caller that is already inside
+        // a transaction cannot change axis (the connection is bound), so it reads on its own
+        // connection — correct for every transactional caller today, all of whose axes are co-located
+        // with the platform database; a remote-home transactional caller would trip §5.1 loudly, and
+        // the fix belongs at that caller (its platform reads must be their own span, the
+        // TenantHomeSweep doctrine), never a wider search_path here.
+        boolean orgActive;
+        try {
+            // The BRANCH is about which connection may be used; the CATCH is about what an
+            // unreachable platform means, and it wraps both arms deliberately. A transactional
+            // caller cannot change axis (the connection is bound), so it reads on the one it has —
+            // but its borrow fails exactly the same way when the platform database is gone, and
+            // before this catch spanned it that failure escaped raw: the edge rendered an
+            // INTERNAL_ERROR 500 for a request whose true answer is "cannot currently answer", and
+            // a caller that swallows per-item failures (ExchangeScheduleFiringJob does, per
+            // schedule) could not tell a bug from an outage. Two arms, ONE refusal.
+            if (TransactionSynchronizationManager.isActualTransactionActive()) {
+                orgActive = organizationIsActive(organizationId);
+            } else {
+                orgActive = TenantContext.callAsPlatform(() -> organizationIsActive(organizationId));
+            }
+        } catch (RuntimeException failure) {
+            if (!StaleWhileUnreachable.connectionShaped(failure)) {
+                throw failure;
+            }
+            // The platform database is unreachable, so the org's standing cannot be KNOWN — and
+            // this is the one read with no ceiling and no grace (ADR 0011 §2.1): serving off a
+            // remembered ACTIVE would let a just-suspended org keep authorizing for the length of
+            // an outage, and returning empty would be CACHED as this member's permissions until
+            // an eviction nobody will send. So refuse, cache nothing (a throw is never cached),
+            // and let the edge render the 503 + Retry-After that says "cannot currently answer" —
+            // a member whose answer is already cached keeps serving, which is the availability
+            // the remote-database hop actually promises.
+            //
+            // The detail is load-bearing, not decoration: it is the ONLY thing on the wire that
+            // tells this refusal apart from the identity ceiling's 503, which is the same status,
+            // the same header and the same envelope. RemoteTenantPlatformOutageTest asserts it, so
+            // that a revoked member's mid-outage 503 is attributable to THIS read rather than to a
+            // holdover that happened to age out in the same second.
+            throw new PlatformUnreachableException("This organization's standing cannot be"
+                    + " confirmed right now. Nothing is wrong with your credentials — retry after"
+                    + " the interval in the Retry-After header.");
+        }
         if (!orgActive) {
             return Set.of();
         }
@@ -140,5 +191,11 @@ class PermissionResolver {
             role.getPermissions().stream().map(Permission::code).forEach(effective::add);
         }
         return Set.copyOf(effective);
+    }
+
+    private boolean organizationIsActive(UUID organizationId) {
+        return organizations.findById(organizationId)
+                .map(org -> org.getStatus() == OrganizationStatus.ACTIVE)
+                .orElse(false);
     }
 }

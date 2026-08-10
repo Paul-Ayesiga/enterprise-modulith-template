@@ -4,6 +4,7 @@ import java.util.UUID;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.shared.cache.StaleWhileUnreachable;
 
 /**
  * The cached half of {@link PersonResolver}: {@code (provider, issuer, subject) → person.id}, the one
@@ -50,13 +51,20 @@ class PersonResolutionCache {
      * key has to render as text, and '|' rather than ':' because an issuer is a URL full of colons.
      * Every component is non-null by the time {@link PersonResolver} calls: it derives the provider,
      * and rejects a null or blank subject, before it gets here.
+     *
+     * <p>{@link #key} is this expression as Java, and the two MUST stay in step: the holdover files its
+     * entries under the string {@code key} builds, so a drift between them would leave every refresh
+     * invisible to the outage path — the stale layer would deny at the ceiling for entries the cache was
+     * refreshing all along.
      */
     private static final String KEY = "#provider.name() + '|' + #issuer + '|' + #externalSubject";
 
     private final ExternalIdentityRepository identities;
+    private final StaleWhileUnreachable.Holdover<String> holdover;
 
-    PersonResolutionCache(ExternalIdentityRepository identities) {
+    PersonResolutionCache(ExternalIdentityRepository identities, StaleWhileUnreachable stale) {
         this.identities = identities;
+        this.holdover = stale.holdoverFor(CACHE);
     }
 
     /**
@@ -66,15 +74,41 @@ class PersonResolutionCache {
      * <p>No {@code @Transactional} here. The read is a single statement and the repository already runs
      * it read-only, so a cache HIT now costs the edge no connection checkout at all — which was half the
      * point of caching it.
+     *
+     * <p>The holdover refresh sits INSIDE the loader on purpose (ADR 0011 §2.3): this body runs only on
+     * a genuine authoritative read — never on a cache hit — so the recorded instant is exactly "when was
+     * this fact last known true". A null result is recorded too: authoritative ABSENT replaces whatever
+     * was held, which is what keeps the stale path from resurrecting an erased identity.
      */
     @Cacheable(cacheNames = CACHE, key = KEY, unless = "#result == null")
     public String personIdTextOf(IdentityProvider provider, String issuer, String externalSubject) {
-        return identities.personIdByLink(provider, issuer, externalSubject).map(UUID::toString).orElse(null);
+        return holdover.refresh(key(provider, issuer, externalSubject),
+                identities.personIdByLink(provider, issuer, externalSubject).map(UUID::toString).orElse(null));
     }
 
-    /** Drops one subject's entry. Called after a link commits — see the class javadoc. */
+    /**
+     * The outage path (ADR 0011 §2): called by {@link PersonResolver} when {@link #personIdTextOf}
+     * threw. Serves the last-known answer while it is younger than the ceiling, rethrows query-shaped
+     * failures, and raises the 503 otherwise. Never writes the cache — a stale answer must not restart
+     * a freshness TTL.
+     */
+    String lastKnownOr(IdentityProvider provider, String issuer, String externalSubject,
+            RuntimeException failure) {
+        return holdover.serveOr(key(provider, issuer, externalSubject), failure);
+    }
+
+    /**
+     * Drops one subject's entry — from the holdover too, in the same call: the eviction exists because
+     * the subject may now name a DIFFERENT person, and an outage right after a re-link must not serve
+     * the superseded one for up to the ceiling.
+     */
     @CacheEvict(cacheNames = CACHE, key = KEY)
     public void forget(IdentityProvider provider, String issuer, String externalSubject) {
-        // The eviction IS the behaviour; the annotation does the work.
+        holdover.forget(key(provider, issuer, externalSubject));
+    }
+
+    /** The SpEL {@link #KEY} as Java — see that constant on why the two must not drift. */
+    private static String key(IdentityProvider provider, String issuer, String externalSubject) {
+        return provider.name() + "|" + issuer + "|" + externalSubject;
     }
 }

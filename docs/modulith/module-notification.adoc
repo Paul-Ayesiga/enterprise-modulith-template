@@ -21,6 +21,7 @@ _Others_
 * `u.c.s.s.security.CurrentUserProvider` (in Shared Kernel)
 * `u.c.s.s.persistence.DbDialect` (in Shared Kernel)
 * `u.c.s.s.queue.QueueSignals` (in Shared Kernel)
+* `u.c.s.s.tenancy.CrossDatabaseWrites` (in Shared Kernel)
 * `u.c.s.i.PersonDirectory` (in Identity)
 |Events listened to
 |* `u.c.s.e.JobCompleted` (async) 

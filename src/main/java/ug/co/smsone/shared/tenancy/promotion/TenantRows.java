@@ -172,6 +172,18 @@ public class TenantRows {
      * schema it has always served from.
      */
     public Map<String, Fingerprint> fingerprint(Plan plan, UUID orgId) {
+        return fingerprint(jdbc, plan, orgId);
+    }
+
+    /**
+     * The same fingerprint through a caller-supplied {@code JdbcTemplate} — a cutover (ADR 0011 §7.2
+     * step 7) compares the two sides of a move that spans TWO DATABASES, so "one transaction" is not
+     * available and is replaced by two facts that hold exactly there: the freeze has stopped every
+     * writer on both sides, and both pools live in one JVM, so pgjdbc pins both sessions'
+     * {@code TimeZone} to the same JVM default and {@code t::text} renders identically. Neither fact
+     * holds for the same-database promotion, which keeps its one-transaction rule.
+     */
+    public Map<String, Fingerprint> fingerprint(JdbcTemplate side, Plan plan, UUID orgId) {
         Map<String, Fingerprint> fingerprints = new LinkedHashMap<>();
         for (TenantTable table : plan.tables()) {
             String sql = "select count(*) as rows,"
@@ -179,7 +191,7 @@ public class TenantRows {
                     + "::text), 1, 16))::bit(64)::bigint), 0) as checksum"
                     + " from " + qualified(plan.schema(), table.name())
                     + " where " + table.predicate();
-            Fingerprint fingerprint = jdbc.queryForObject(sql,
+            Fingerprint fingerprint = side.queryForObject(sql,
                     (rs, row) -> new Fingerprint(rs.getLong("rows"), rs.getBigDecimal("checksum")),
                     bindings(table, orgId));
             fingerprints.put(table.name(), fingerprint);
@@ -231,9 +243,14 @@ public class TenantRows {
      * evidence along with the row.
      */
     public Map<String, Long> countEverything(Plan plan) {
+        return countEverything(jdbc, plan);
+    }
+
+    /** The same emptiness check on another database — the cutover's destination (ADR 0011 §7.2 step 1). */
+    public Map<String, Long> countEverything(JdbcTemplate side, Plan plan) {
         Map<String, Long> counts = new LinkedHashMap<>();
         for (TenantTable table : plan.tables()) {
-            Long rows = jdbc.queryForObject("select count(*) from " + TenantTierTables.quote(plan.schema())
+            Long rows = side.queryForObject("select count(*) from " + TenantTierTables.quote(plan.schema())
                     + "." + TenantTierTables.quote(table.name()), Long.class);
             if (rows != null && rows > 0) {
                 counts.put(table.name(), rows);
@@ -276,7 +293,8 @@ public class TenantRows {
      */
     public record Fingerprint(long rows, BigDecimal checksum) {
 
-        boolean matches(Fingerprint other) {
+        /** Public since ADR 0011: the cutover's cross-database verifier compares from another package. */
+        public boolean matches(Fingerprint other) {
             return other != null && rows == other.rows && checksum.compareTo(other.checksum) == 0;
         }
 

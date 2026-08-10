@@ -87,8 +87,17 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     public ResponseEntity<Object> handleApiException(ApiException ex) {
         ApiMeta meta = metaFactory.create();
         ErrorCode errorCode = ex.errorCode();
-        return render(errorCode, List.of(error(meta, new AtomicInteger(1), errorCode,
-                errorCode.code(), localizer.localize(errorCode, ex.detail()), ex.source())), meta);
+        // The staleness-ceiling 503 carries a Retry-After as part of its contract (ADR 0011 §2.3) —
+        // the same claim TenantSchemaFloor's refusal makes, rendered the same way whichever path
+        // (filter or dispatcher) the exception surfaced on.
+        HttpHeaders headers = null;
+        if (ex instanceof ug.co.smsone.shared.cache.PlatformUnreachableException unreachable) {
+            headers = new HttpHeaders();
+            headers.set(HttpHeaders.RETRY_AFTER, String.valueOf(unreachable.retryAfterSeconds()));
+        }
+        return render(errorCode.httpStatus(), errorCode, List.of(error(meta, new AtomicInteger(1),
+                errorCode, errorCode.code(), localizer.localize(errorCode, ex.detail()), ex.source())),
+                meta, headers);
     }
 
     // --- Method-security denials: must not fall into the 500 catch-all ---

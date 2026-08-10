@@ -102,6 +102,14 @@ public final class TenantSilos implements BeforeEachCallback, AfterEachCallback 
             "delete from platform.tenant_placement where schema_name ~ '" + SILO_SCHEMA_PATTERN + "'";
 
     /**
+     * A cutover row that outlives its test is a refusal, not a leak of bytes: while one exists,
+     * {@code TenantPlacements.beginRelocation} declines that tenant's promotions and the migration
+     * runner declines its schema (ADR 0011 §7.3) — in whichever unrelated class runs next.
+     */
+    private static final String FORGET_SILO_CUTOVERS =
+            "delete from platform.tenant_cutover where schema_name ~ '" + SILO_SCHEMA_PATTERN + "'";
+
+    /**
      * Captured in {@link #beforeEach} rather than injected, because a field initialised where this
      * extension is declared runs before Spring has injected anything into the test instance. The Spring
      * context is already built by then — {@code SpringExtension} is registered on the class and its
@@ -303,6 +311,7 @@ public final class TenantSilos implements BeforeEachCallback, AfterEachCallback 
                 // and a test may legitimately have written one (V57's header gives the reasons), and the
                 // fleet runner reports every such row as a broken tenant on its next pass.
                 try (Statement statement = connection.createStatement()) {
+                    statement.executeUpdate(FORGET_SILO_CUTOVERS);
                     statement.executeUpdate(FORGET_SILO_PLACEMENTS);
                 }
             }

@@ -6,6 +6,7 @@ import org.springframework.cache.annotation.Cacheable;
 import org.springframework.modulith.events.ApplicationModuleListener;
 import org.springframework.stereotype.Component;
 import ug.co.smsone.organization.OrganizationDeleted;
+import ug.co.smsone.shared.cache.StaleWhileUnreachable;
 
 /**
  * The cached half of {@link OrgResolver}: {@code (provider, issuer, external_org_id) → organization.id},
@@ -68,13 +69,19 @@ class OrgResolutionCache {
      * Strings only, because the L2 key has to render as text; '|' rather than ':' because an issuer is a
      * URL full of colons. Both components are non-null by the time {@link OrgResolver} calls — it derives
      * the provider and rejects a blank id first.
+     *
+     * <p>{@link #key} is this expression as Java, and the two MUST stay in step: the holdover files its
+     * entries under the string {@code key} builds, so a drift would make every refresh invisible to the
+     * outage path.
      */
     private static final String KEY = "#provider.name() + '|' + #issuer + '|' + #externalOrgId";
 
     private final ExternalOrganizationRepository links;
+    private final StaleWhileUnreachable.Holdover<String> holdover;
 
-    OrgResolutionCache(ExternalOrganizationRepository links) {
+    OrgResolutionCache(ExternalOrganizationRepository links, StaleWhileUnreachable stale) {
         this.links = links;
+        this.holdover = stale.holdoverFor(CACHE);
     }
 
     /**
@@ -83,11 +90,45 @@ class OrgResolutionCache {
      *
      * <p>No {@code @Transactional}: the read is a single statement the repository already runs read-only,
      * so a cache HIT costs the edge no connection checkout at all.
+     *
+     * <p>The holdover refresh sits INSIDE the loader (ADR 0011 §2.3): this body runs only on a genuine
+     * authoritative read, so the recorded instant is exactly "when was this link last known true" — a
+     * cache hit does not advance it. Null is recorded too: authoritative ABSENT replaces what was held.
      */
     @Cacheable(cacheNames = CACHE, key = KEY, unless = "#result == null")
     public String organizationIdTextOf(OrgProvider provider, String issuer, String externalOrgId) {
-        return links.organizationIdByExternalOrgId(provider, issuer, externalOrgId)
-                .map(UUID::toString).orElse(null);
+        return holdover.refresh(key(provider, issuer, externalOrgId),
+                links.organizationIdByExternalOrgId(provider, issuer, externalOrgId)
+                        .map(UUID::toString).orElse(null));
+    }
+
+    /**
+     * The outage path (ADR 0011 §2): serves the last-known translation while it is younger than the
+     * ceiling, rethrows query-shaped failures, raises 503 + Retry-After otherwise. Safe to serve stale
+     * for the reason the class note gives for caching at all — this is a translation, never a decision,
+     * and a stale entry can only name a tenant whose grants then resolve to nothing.
+     */
+    String lastKnownOr(OrgProvider provider, String issuer, String externalOrgId,
+            RuntimeException failure) {
+        return holdover.serveOr(key(provider, issuer, externalOrgId), failure);
+    }
+
+    /**
+     * The ALIAS leg's outage answer, and it is deliberately not a lookup: aliases are mutable and
+     * reusable, so nothing about them is ever held (see the class note — a stale {@code alias → org}
+     * entry is the one shape of this cache that could hand a caller a tenant that no longer owns the
+     * name). All this does is convert a connection-shaped failure into the contract's 503 — "we could
+     * not ask" — instead of letting a raw exception surface as a 500; a query-shaped failure rethrows.
+     * The key can never have been refreshed, so {@code serveOr} always denies.
+     */
+    String noAliasAnswerFor(OrgProvider provider, String issuer, String externalAlias,
+            RuntimeException failure) {
+        return holdover.serveOr("alias|" + provider.name() + "|" + issuer + "|" + externalAlias, failure);
+    }
+
+    /** The SpEL {@link #KEY} as Java — see that constant on why the two must not drift. */
+    private static String key(OrgProvider provider, String issuer, String externalOrgId) {
+        return provider.name() + "|" + issuer + "|" + externalOrgId;
     }
 
     /**
@@ -98,7 +139,9 @@ class OrgResolutionCache {
      */
     @CacheEvict(cacheNames = CACHE, allEntries = true)
     public void forgetAll() {
-        // The eviction IS the behaviour; the annotation does the work.
+        // The holdover goes with the cache: the eviction exists because answers may now be DIFFERENT,
+        // and an outage right after would otherwise serve the superseded ones for up to the ceiling.
+        holdover.clear();
     }
 
     /**
@@ -108,6 +151,8 @@ class OrgResolutionCache {
     @ApplicationModuleListener
     @CacheEvict(cacheNames = CACHE, allEntries = true)
     void onOrganizationDeleted(OrganizationDeleted event) {
-        // Cached translations must not outlive the tenant.
+        // Cached translations must not outlive the tenant — the last-known holdover included, so a
+        // provider id re-linked to a new organization cannot resolve to the erased one mid-outage.
+        holdover.clear();
     }
 }

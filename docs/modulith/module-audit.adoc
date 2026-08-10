@@ -4,6 +4,7 @@
 |`ug.co.smsone.audit`
 |Bean references
 |* `u.c.s.s.security.CurrentUserProvider` (in Shared Kernel)
+* `u.c.s.s.tenancy.CrossDatabaseWrites` (in Shared Kernel)
 * `u.c.s.s.audit.AuditLog` (in Shared Kernel)
 * `u.c.s.s.security.GatewaySecretVerifier` (in Shared Kernel)
 |===

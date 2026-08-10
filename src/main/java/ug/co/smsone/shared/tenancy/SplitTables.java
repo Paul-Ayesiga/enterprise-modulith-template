@@ -92,6 +92,26 @@ public final class SplitTables {
      *
      * <p>The name it returns is safe to interpolate: it is one of two compiled-in constants or a silo
      * name {@code TenantSchemas.requireSiloSchema} has validated.
+     *
+     * <p><strong>SINCE ADR 0011 A SCHEMA NAME IS HALF AN ADDRESS, AND THIS RETURNS THE OTHER HALF OF
+     * NOTHING.</strong> Every caller interpolates the answer into a statement issued on the connection
+     * it is already holding, which is correct exactly while every schema is in one database. It no
+     * longer is. Both directions now fail, and neither one is quiet in a useful way:
+     *
+     * <ul>
+     *   <li>a platform-axis caller — an operator suspending an organization, a nightly job lapsing a
+     *       trial — writing a row for a REMOTE org names {@code t_<hex>} on a primary connection, where
+     *       that schema does not exist;</li>
+     *   <li>a remote tenant's own request recording a platform-level event names
+     *       {@code platform.audit_log} on the remote, whose {@code platform} schema deliberately holds
+     *       only {@code event_publication} (ADR 0011 §5.1).</li>
+     * </ul>
+     *
+     * <p>So this method still answers WHICH SCHEMA and has stopped being sufficient on its own. Wrap the
+     * statement in {@link CrossDatabaseWrites#runInHomeOf}, which makes the connection and the name
+     * agree by construction — it is a no-op (same connection, same transaction) whenever the row's home
+     * and the caller's axis are in the same database, which is every call on every deployment with no
+     * remote datasource configured.
      */
     public static String homeOf(UUID orgId) {
         return orgId == null ? PLATFORM : TenantRoutes.homeOf(orgId);

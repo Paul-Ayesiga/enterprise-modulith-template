@@ -1,5 +1,6 @@
 package ug.co.smsone.shared.persistence;
 
+import com.zaxxer.hikari.HikariDataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -7,9 +8,11 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -28,6 +31,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.datasource.DelegatingDataSource;
 import ug.co.smsone.shared.tenancy.TenantSchemas;
+import ug.co.smsone.shared.tenancy.placement.TenantPlacement;
 
 /**
  * Applies the tenant migration sequence to every tenant schema — {@code tenant_pool} and every silo —
@@ -55,8 +59,17 @@ import ug.co.smsone.shared.tenancy.TenantSchemas;
  *       the first app pod has ever started. Running it here also puts the schema ahead of the binary on
  *       an upgrade, which is the direction §4.4 requires and AGENTS §4.6 already guarantees is safe.</li>
  *   <li>{@link #discoverFleet()} — {@code tenant_pool}, plus every {@code t_<32 hex>} schema in the
- *       catalogue, plus every schema {@code platform.tenant_placement} names.</li>
+ *       catalogue, plus every schema {@code platform.tenant_placement} names on the primary.</li>
  *   <li>{@link #fanOut(Mode, List)} — 8–16 workers, one Flyway per schema.</li>
+ *   <li>Since ADR 0011, one further pass per named remote datasource, grouped: each remote's silos are
+ *       discovered from ITS catalogue unioned with the primary registry's rows naming it, migrated over
+ *       its own pool, and recorded — like everything else — in the primary registry, because
+ *       {@code platform.tenant_placement} exists nowhere else. Never-abort spans the group boundary: an
+ *       unreachable datasource fails its own tenants in the manifest and the run continues, and it does
+ *       NOT touch the registry (see {@code remotePass}). What this runner still does not do on a remote
+ *       is CREATE anything — destination-building for a cutover is the cutover machinery's
+ *       (ADR 0011 §7.2 step 1), and a runner that created schemas would turn a typo'd placement row
+ *       into a new, empty, unserved tenant.</li>
  * </ol>
  *
  * <h2>Parallel is safe, and that is a fact about Flyway rather than a hope</h2>
@@ -184,7 +197,12 @@ public final class TenantMigrationRunner {
                     + "     last_error = null,"
                     + "     state = case when state = 'FAILED' then 'ACTIVE' else state end,"
                     + "     updated_at = now()"
-                    + " where schema_name = ?"
+                    // The datasource arm exists for one window (ADR 0011 §7.2 step 10): during a
+                    // cutover's watch the SOURCE schema still exists on primary while the row already
+                    // names the destination, and a primary pass over the leftover must not stamp the
+                    // serving row with the abandoned copy's version. Keyed on both, the write lands
+                    // only on the copy this pass actually migrated.
+                    + " where schema_name = ? and datasource_name = ?"
                     + NOT_A_PROVISIONING_FAILURE;
 
     /**
@@ -206,7 +224,11 @@ public final class TenantMigrationRunner {
                     + "     last_error = ?,"
                     + "     state = 'FAILED',"
                     + "     updated_at = now()"
-                    + " where schema_name = ?"
+                    // Same both-keys rule as CLEAR_PLACEMENT, and here it is the sharper half: a
+                    // failure on a leftover source schema marking the row that serves from the
+                    // DESTINATION as FAILED would stand a healthy tenant's fan-outs down over a copy
+                    // nobody serves from.
+                    + " where schema_name = ? and datasource_name = ?"
                     + NOT_A_PROVISIONING_FAILURE;
 
     /** Silos are named from {@code organization.id}, so the catalogue can be filtered without the registry. */
@@ -216,9 +238,25 @@ public final class TenantMigrationRunner {
 
     private static final String SCHEMAS_IN_CATALOGUE = "select schema_name from information_schema.schemata";
 
-    private static final String SCHEMAS_IN_REGISTRY = "select distinct schema_name from platform.tenant_placement";
+    /**
+     * Filtered by datasource since ADR 0011: the registry names every database's schemas, and handing a
+     * remote-placed silo to the PRIMARY fan-out would report it "schema does not exist" and mark a
+     * healthy remote tenant FAILED — the availability coupling §4.2 exists to prevent, produced by the
+     * migration job itself.
+     */
+    private static final String SCHEMAS_IN_REGISTRY =
+            "select distinct schema_name from platform.tenant_placement where datasource_name = ?";
+
+    /**
+     * Only silo-shaped names on a remote, deliberately no {@code tenant_pool} arm: a remote database
+     * holds silos and the minimal platform schema (ADR 0011 §5.1), and a stray {@code tenant_pool}
+     * there is somebody's mistake — migrating it would give the mistake a version and a future.
+     */
+    private static final String SILOS_IN_CATALOGUE =
+            "select schema_name from information_schema.schemata where schema_name ~ '^t_[0-9a-f]{32}$'";
 
     private final DataSource dataSource;
+    private final Map<String, DataSource> remotes;
     private final MigrationScripts platformScripts;
     private final MigrationScripts tenantScripts;
     private final int workers;
@@ -229,11 +267,29 @@ public final class TenantMigrationRunner {
      */
     public TenantMigrationRunner(
             DataSource dataSource, MigrationScripts platformScripts, MigrationScripts tenantScripts, int workers) {
+        this(dataSource, Map.of(), platformScripts, tenantScripts, workers);
+    }
+
+    /**
+     * The ADR 0011 shape: the primary plus every named remote datasource ({@code app.tenancy
+     * .datasources.*} — the same names {@code tenant_placement.datasource_name} selects). Each remote
+     * gets the same baseline-{@code search_path} wrapper as the primary and its own per-datasource pass
+     * in {@link #run}; the registry is written on PRIMARY regardless, because
+     * {@code platform.tenant_placement} exists nowhere else.
+     */
+    public TenantMigrationRunner(DataSource dataSource, Map<String, DataSource> remoteDataSources,
+            MigrationScripts platformScripts, MigrationScripts tenantScripts, int workers) {
         if (workers < 1 || workers > MAX_WORKERS) {
             throw new IllegalArgumentException(
                     "workers must be between 1 and " + MAX_WORKERS + " (ADR 0010 §4.2 measured 8–16), was " + workers);
         }
         this.dataSource = new FixedSearchPathDataSource(dataSource, BASELINE_SEARCH_PATH);
+        Map<String, DataSource> wrapped = new LinkedHashMap<>();
+        remoteDataSources.forEach((name, remote) ->
+                wrapped.put(name, new FixedSearchPathDataSource(remote, BASELINE_SEARCH_PATH)));
+        // Not Map.copyOf, which forgets insertion order: the per-datasource passes run in the order
+        // the caller declared, so two runs of the same fleet produce a diffable manifest.
+        this.remotes = java.util.Collections.unmodifiableMap(wrapped);
         this.platformScripts = platformScripts;
         this.tenantScripts = tenantScripts;
         this.workers = workers;
@@ -241,8 +297,15 @@ public final class TenantMigrationRunner {
 
     /** The production wiring: both sequences off the classpath, the tenant one refusing script config. */
     public static TenantMigrationRunner fromClasspath(DataSource dataSource, int workers) {
+        return fromClasspath(dataSource, Map.of(), workers);
+    }
+
+    /** {@link #fromClasspath(DataSource, int)} plus the named remote datasources (ADR 0011 §4.3). */
+    public static TenantMigrationRunner fromClasspath(
+            DataSource dataSource, Map<String, DataSource> remoteDataSources, int workers) {
         return new TenantMigrationRunner(
                 dataSource,
+                remoteDataSources,
                 MigrationScripts.fromClasspath(PLATFORM_LOCATION),
                 MigrationScripts.fromClasspath(TENANT_LOCATION, true),
                 workers);
@@ -278,9 +341,21 @@ public final class TenantMigrationRunner {
         INFO
     }
 
-    /** One schema's outcome. {@code from}/{@code to} are Flyway version strings, null for a virgin schema. */
-    public record SchemaResult(
-            String schema, String from, String to, int applied, int pending, long millis, String error) {
+    /**
+     * One schema's outcome, on one datasource. {@code from}/{@code to} are Flyway version strings, null
+     * for a virgin schema. {@code datasource} was added by ADR 0011 as the LEADING component so the
+     * pre-existing seven-argument construction order kept compiling unchanged through the secondary
+     * constructor below — a positional caller silently binding {@code schema} to {@code datasource}
+     * is the record-evolution bug that ordering rules out.
+     */
+    public record SchemaResult(String datasource, String schema, String from, String to, int applied,
+            int pending, long millis, String error) {
+
+        /** The pre-ADR-0011 shape: an outcome on the platform database. */
+        public SchemaResult(
+                String schema, String from, String to, int applied, int pending, long millis, String error) {
+            this(TenantPlacement.PRIMARY_DATASOURCE, schema, from, to, applied, pending, millis, error);
+        }
 
         public boolean failed() {
             return error != null;
@@ -336,8 +411,9 @@ public final class TenantMigrationRunner {
         }
 
         private static String line(SchemaResult result) {
-            return "schema=%s from=%s to=%s applied=%d pending=%d ms=%d status=%s%s".formatted(
+            return "schema=%s datasource=%s from=%s to=%s applied=%d pending=%d ms=%d status=%s%s".formatted(
                     result.schema(),
+                    result.datasource(),
                     result.from() == null ? "-" : result.from(),
                     result.to() == null ? "-" : result.to(),
                     result.applied(),
@@ -364,8 +440,14 @@ public final class TenantMigrationRunner {
             log.error("platform sequence failed — the tenant fan-out was not attempted: {}", platform.error());
             return new Manifest(mode, platform, List.of(), millisSince(started));
         }
-        Manifest tenants = fanOut(mode, discoverFleet());
-        return new Manifest(mode, platform, tenants.tenants(), millisSince(started));
+        var results = new ArrayList<>(fanOut(mode, discoverFleet()).tenants());
+        // One pass per named datasource, after primary's — grouped, exactly the way TenantFanOut
+        // orders a sweep, and for the same reason: a remote's failures cluster into one contiguous
+        // stretch of the manifest, and its connection load is its own. Never-abort holds across the
+        // group boundary too: an unreachable datasource fails ITS tenants in the manifest and the run
+        // continues to the next one.
+        remotes.forEach((name, pool) -> results.addAll(remotePass(mode, name, pool)));
+        return new Manifest(mode, platform, results, millisSince(started));
     }
 
     /**
@@ -403,13 +485,17 @@ public final class TenantMigrationRunner {
         found.add(TenantSchemas.TENANT_POOL);
         try (Connection connection = dataSource.getConnection()) {
             found.addAll(query(connection, TENANT_SCHEMAS_IN_CATALOGUE));
-            found.addAll(query(connection, SCHEMAS_IN_REGISTRY));
+            found.addAll(registrySchemas(connection, TenantPlacement.PRIMARY_DATASOURCE));
         } catch (SQLException failure) {
             throw new IllegalStateException(
                     "Cannot enumerate the tenant fleet. platform.tenant_placement is created by the platform"
                             + " sequence, so this failing after a successful platform pass means the database"
                             + " moved underneath the run.", failure);
         }
+        return orderedFleet(found);
+    }
+
+    private static List<String> orderedFleet(LinkedHashSet<String> found) {
         var ordered = new ArrayList<>(found);
         ordered.removeIf(schema -> schema == null || schema.isBlank());
         ordered.forEach(TenantMigrationRunner::requireTenantSchema);
@@ -421,6 +507,59 @@ public final class TenantMigrationRunner {
     }
 
     /**
+     * One remote datasource, start to finish, never aborting the run (the class's own doctrine, one
+     * level up). The one failure with no per-schema shape — the datasource itself unreachable — fails
+     * every registry-known schema in the MANIFEST and touches the registry not at all: the state of
+     * those schemas is UNKNOWN, not proven unfit, and a FAILED row would stand a serving tenant's
+     * fan-outs down (ADR 0010 §8 Q7 says serve and page) over what may be the migration job's own
+     * network path. The next reachable pass writes the truth either way.
+     */
+    private List<SchemaResult> remotePass(Mode mode, String datasourceName, DataSource pool) {
+        long started = System.nanoTime();
+        // The registry half first, on PRIMARY, unguarded: primary just served the platform pass, so
+        // losing it mid-run is the database moving underneath us — discoverFleet's own abort case, not
+        // a remote's failure to survive.
+        List<String> fromRegistry;
+        try (Connection connection = dataSource.getConnection()) {
+            fromRegistry = registrySchemas(connection, datasourceName);
+        } catch (SQLException failure) {
+            throw new IllegalStateException(
+                    "Cannot enumerate datasource '" + datasourceName + "' from platform.tenant_placement"
+                            + " after a successful platform pass — the primary database moved underneath"
+                            + " the run.", failure);
+        }
+        List<String> discovered;
+        try {
+            var found = new LinkedHashSet<>(fromRegistry);
+            try (Connection connection = pool.getConnection()) {
+                found.addAll(query(connection, SILOS_IN_CATALOGUE));
+            }
+            discovered = orderedFleet(found);
+        } catch (SQLException | RuntimeException unreachable) {
+            long millis = millisSince(started);
+            if (fromRegistry.isEmpty()) {
+                // Config leading placement by a release is legitimate (ADR 0011 §4.2); an unreachable
+                // datasource nobody is placed on holds no tenant behind, so it must not fail the run.
+                log.warn("datasource '{}' is unreachable and no placement row names it — nothing to"
+                        + " migrate there, continuing: {}", datasourceName, describe(unreachable));
+                return List.of();
+            }
+            // Manifest failures, registry untouched: those schemas' state is UNKNOWN, not proven
+            // unfit, and a FAILED row would stand a serving tenant's fan-outs down (ADR 0010 §8 Q7
+            // says serve and page) over what may be the migration job's own network path.
+            log.error("datasource '{}' is unreachable — its {} tenant schema(s) were not attempted and"
+                    + " the registry was left alone: {}",
+                    datasourceName, fromRegistry.size(), describe(unreachable));
+            return fromRegistry.stream()
+                    .map(TenantMigrationRunner::requireTenantSchema)
+                    .map(schema -> new SchemaResult(datasourceName, schema, null, null, 0, 0, millis,
+                            "datasource '" + datasourceName + "' unreachable: " + describe(unreachable)))
+                    .toList();
+        }
+        return fanOutOn(mode, datasourceName, pool, discovered).tenants();
+    }
+
+    /**
      * The fan-out. One Flyway per schema across {@code workers} threads, every outcome recorded, the
      * registry updated per schema, and no failure allowed to stop another schema from being visited.
      *
@@ -429,17 +568,29 @@ public final class TenantMigrationRunner {
      * schemas of its own.
      */
     public Manifest fanOut(Mode mode, List<String> schemas) {
+        return fanOutOn(mode, TenantPlacement.PRIMARY_DATASOURCE, dataSource, schemas);
+    }
+
+    /**
+     * The fan-out proper, on one datasource. The worker count is additionally capped by what the pool
+     * can actually lend — Flyway holds two connections per instance, so a remote pool of Hikari's
+     * default shape would deadlock under the primary's worker count, every worker holding one
+     * connection and waiting for a second only another waiting worker can free.
+     */
+    private Manifest fanOutOn(Mode mode, String datasourceName, DataSource pool, List<String> schemas) {
         schemas.forEach(TenantMigrationRunner::requireTenantSchema);
         long started = System.nanoTime();
         if (schemas.isEmpty()) {
             return new Manifest(mode, null, List.of(), millisSince(started));
         }
 
-        Set<String> present = existingSchemas();
-        ExecutorService pool = Executors.newFixedThreadPool(Math.min(workers, schemas.size()), namedThreads());
+        Set<String> present = existingSchemas(pool);
+        int concurrency = Math.min(Math.min(workers, schemas.size()), workersAffordedBy(pool));
+        ExecutorService executor = Executors.newFixedThreadPool(concurrency, namedThreads());
         try {
             List<Future<SchemaResult>> submitted = schemas.stream()
-                    .map(schema -> pool.submit(() -> visit(schema, mode, present.contains(schema))))
+                    .map(schema -> executor.submit(
+                            () -> visit(datasourceName, pool, schema, mode, present.contains(schema))))
                     .toList();
             var results = new ArrayList<SchemaResult>(submitted.size());
             for (Future<SchemaResult> future : submitted) {
@@ -447,8 +598,26 @@ public final class TenantMigrationRunner {
             }
             return new Manifest(mode, null, results, millisSince(started));
         } finally {
-            pool.shutdown();
+            executor.shutdown();
         }
+    }
+
+    /**
+     * How many Flyway workers a pool can serve without deadlocking on itself — the
+     * {@link #connectionsRequired(int)} arithmetic inverted, for the pools this runner did NOT size.
+     * The primary was sized by its caller to fit {@code workers}; a remote pool arrives with whatever
+     * {@code app.tenancy.datasources.<name>.pool.maximum-pool-size} says (default 8), and unwrapping to
+     * Hikari is the only way to ask it.
+     */
+    private int workersAffordedBy(DataSource pool) {
+        DataSource unwrapped = pool;
+        while (unwrapped instanceof DelegatingDataSource delegating) {
+            unwrapped = delegating.getTargetDataSource();
+        }
+        if (unwrapped instanceof HikariDataSource hikari) {
+            return Math.max(1, (hikari.getMaximumPoolSize() - 2) / 2);
+        }
+        return workers;
     }
 
     /**
@@ -456,37 +625,69 @@ public final class TenantMigrationRunner {
      * because the alternative is a fleet-wide abort over one tenant — see the class note on
      * {@code SoftDeletePurgeJob}.
      */
-    private SchemaResult visit(String schema, Mode mode, boolean exists) {
+    private SchemaResult visit(String datasourceName, DataSource pool, String schema, Mode mode, boolean exists) {
         long started = System.nanoTime();
+        if (mode != Mode.INFO && cutoverInFlight(schema)) {
+            // ADR 0011 §7.3, measured: DDL in a schema under a live publication crash-loops the
+            // subscriber's apply worker every ~5 s, freezes confirmed_flush_lsn and grows WAL on the
+            // publisher — and the obvious "heal" (create the table on the destination by hand) then
+            // SILENTLY SKIPS that table's rows until ALTER SUBSCRIPTION … REFRESH PUBLICATION
+            // tablesyncs it. Reported as a failure (non-zero exit, so a release cannot roll past a
+            // tenant it did not migrate) but DELIBERATELY not written to the registry: the tenant is
+            // serving and healthy, and a FAILED placement would stand its background work down over a
+            // refusal that is this runner's, not the schema's.
+            String stayedAt = historyHead(pool, schema);
+            log.error("tenant migration REFUSED for {} on {}: a cutover is in flight for this schema"
+                    + " (platform.tenant_cutover). Finish, roll back or abort the cutover first; if a"
+                    + " migration already reached a published schema, repair per"
+                    + " docs/runbooks/tenant-cutover.md (migrate the destination, then REFRESH"
+                    + " PUBLICATION).", schema, datasourceName);
+            return new SchemaResult(datasourceName, schema, stayedAt, stayedAt, 0, 0,
+                    millisSince(started),
+                    "refused: a cutover is in flight for this schema (platform.tenant_cutover;"
+                            + " ADR 0011 §7.3 — DDL under a live publication breaks the stream, and the"
+                            + " hand-heal then under-copies silently)");
+        }
         if (!exists) {
             // Reported rather than skipped: this is a placement row pointing at nothing, which means a
-            // promotion died mid-flight or a schema was dropped without flipping its row. Either way that
-            // tenant cannot be served and the manifest has to say so.
-            return recordOutcome(new SchemaResult(schema, null, null, 0, 0, millisSince(started),
+            // promotion died mid-flight, a schema was dropped without flipping its row, or — since ADR
+            // 0011 — a cutover's destination was never built on the datasource its row already names.
+            // Either way that tenant cannot be served and the manifest has to say so.
+            return recordOutcome(new SchemaResult(datasourceName, schema, null, null, 0, 0, millisSince(started),
                     "schema does not exist — platform.tenant_placement names it but the catalogue does not"
                             + " hold it (a promotion that stopped before its schema was created, or a drop"
                             + " without a placement flip)"), mode);
         }
         try {
-            Flyway flyway = configure(tenantScripts, schema)
+            Flyway flyway = configure(tenantScripts, schema, pool)
                     .schemas(schema)
                     // Never true for a tenant: schema creation is the promoter's, under a freeze window and
                     // a runbook (ADR 0010 §4.3, §7 Phase 5). A migration runner that created schemas would
                     // turn a typo in a placement row into a new, empty, unserved tenant.
                     .createSchemas(false)
                     .load();
-            return recordOutcome(apply(schema, flyway, mode), mode);
+            return recordOutcome(withDatasource(datasourceName, apply(schema, flyway, mode, pool)), mode);
         } catch (RuntimeException failure) {
             // Thrown by load() rather than by migrate() — a schema that vanished between the catalogue
             // read and this borrow, a name Flyway refuses. Same reporting shape as apply()'s own catch.
-            String stayedAt = historyHead(schema);
-            return recordOutcome(
-                    new SchemaResult(schema, stayedAt, stayedAt, 0, 0, millisSince(started), describe(failure)), mode);
+            String stayedAt = historyHead(pool, schema);
+            return recordOutcome(new SchemaResult(datasourceName, schema, stayedAt, stayedAt, 0, 0,
+                    millisSince(started), describe(failure)), mode);
         }
+    }
+
+    /** Re-labels an outcome with the datasource its Flyway actually ran against. */
+    private static SchemaResult withDatasource(String datasourceName, SchemaResult result) {
+        return new SchemaResult(datasourceName, result.schema(), result.from(), result.to(),
+                result.applied(), result.pending(), result.millis(), result.error());
     }
 
     /** {@link Mode} applied to one already-configured Flyway. Shared by the platform pass and the fan-out. */
     private SchemaResult apply(String schema, Flyway flyway, Mode mode) {
+        return apply(schema, flyway, mode, dataSource);
+    }
+
+    private SchemaResult apply(String schema, Flyway flyway, Mode mode, DataSource pool) {
         long started = System.nanoTime();
         if (mode == Mode.INFO) {
             MigrationInfoService info = flyway.info();
@@ -514,16 +715,17 @@ public final class TenantMigrationRunner {
             // it off. With the transactional default this reads V(n−1) — the failed migration wrote no
             // history row at all — which is exactly the fact the version floor needs. `from` and `to` are
             // the same value and that is the report: a rolled-back migration moved the schema nowhere.
-            String stayedAt = historyHead(schema);
+            String stayedAt = historyHead(pool, schema);
             return new SchemaResult(schema, stayedAt, stayedAt, 0, 0, millisSince(started), describe(failure));
         }
     }
 
     /**
-     * Writes the outcome into {@code platform.tenant_placement}. Never throws: a registry write that
-     * failed must not turn a successful migration into a reported failure, nor stop the next schema. It
-     * is logged at ERROR, which is the honest signal — the schema moved and the registry does not know —
-     * and the head-parity test is what catches the drift.
+     * Writes the outcome into {@code platform.tenant_placement} — always on PRIMARY, whichever
+     * datasource the Flyway ran against, because the registry exists nowhere else (ADR 0011 §5). Never
+     * throws: a registry write that failed must not turn a successful migration into a reported
+     * failure, nor stop the next schema. It is logged at ERROR, which is the honest signal — the schema
+     * moved and the registry does not know — and the head-parity test is what catches the drift.
      */
     private SchemaResult recordOutcome(SchemaResult result, Mode mode) {
         if (mode == Mode.INFO) {
@@ -536,8 +738,10 @@ public final class TenantMigrationRunner {
             if (result.failed()) {
                 statement.setString(2, result.error());
                 statement.setString(3, result.schema());
+                statement.setString(4, result.datasource());
             } else {
                 statement.setString(2, result.schema());
+                statement.setString(3, result.datasource());
             }
             statement.executeUpdate();
         } catch (SQLException failure) {
@@ -545,11 +749,13 @@ public final class TenantMigrationRunner {
                     result.schema(), failure.getMessage());
         }
         if (result.failed()) {
-            log.error("tenant migration FAILED for {} (schema stays at {}): {}",
-                    result.schema(), result.to() == null ? "an unread version" : result.to(), result.error());
+            log.error("tenant migration FAILED for {} on '{}' (schema stays at {}): {}",
+                    result.schema(), result.datasource(),
+                    result.to() == null ? "an unread version" : result.to(), result.error());
         } else {
-            log.info("tenant migration {} {} -> {} ({} applied, {} ms)",
-                    result.schema(), result.from(), result.to(), result.applied(), result.millis());
+            log.info("tenant migration {} on '{}' {} -> {} ({} applied, {} ms)",
+                    result.schema(), result.datasource(), result.from(), result.to(),
+                    result.applied(), result.millis());
         }
         return result;
     }
@@ -562,8 +768,12 @@ public final class TenantMigrationRunner {
      * future reader who drops a provider get an empty migration set rather than a slow one.
      */
     private FluentConfiguration configure(MigrationScripts scripts, String schema) {
+        return configure(scripts, schema, dataSource);
+    }
+
+    private FluentConfiguration configure(MigrationScripts scripts, String schema, DataSource pool) {
         return Flyway.configure(MigrationScripts.class.getClassLoader())
-                .dataSource(dataSource)
+                .dataSource(pool)
                 .locations("classpath:" + scripts.location())
                 // Both, always. Supplying one and not the other makes Flyway build the Scanner anyway to
                 // fill the gap, and the Scanner is the 50–150 ms this runner exists to stop paying per
@@ -586,8 +796,43 @@ public final class TenantMigrationRunner {
                 .cleanDisabled(true);
     }
 
-    private String historyHead(String schema) {
+    /**
+     * Whether {@code platform.tenant_cutover} (V60) holds a live row for this schema — asked of
+     * PRIMARY always, because the cutover registry lives nowhere else. {@code to_regclass}-guarded:
+     * this runner also runs against scratch databases mid-build, where the platform sequence may not
+     * have reached V60 yet, and "the table is not there" honestly means "no cutover can be in flight".
+     */
+    private boolean cutoverInFlight(String schema) {
         try (Connection connection = dataSource.getConnection()) {
+            // Two statements, not one: a single query naming the table would fail to PARSE on a
+            // pre-V60 database — the planner resolves every relation before any boolean shortcuts —
+            // and the catch below would then refuse every schema on a database that has no cutovers.
+            try (PreparedStatement present = connection.prepareStatement(
+                    "select to_regclass('platform.tenant_cutover') is not null")) {
+                try (ResultSet found = present.executeQuery()) {
+                    if (!found.next() || !found.getBoolean(1)) {
+                        return false;
+                    }
+                }
+            }
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "select exists (select 1 from platform.tenant_cutover where schema_name = ?)")) {
+                statement.setString(1, schema);
+                try (ResultSet found = statement.executeQuery()) {
+                    return found.next() && found.getBoolean(1);
+                }
+            }
+        } catch (SQLException failure) {
+            // Fail toward refusing the migration, not toward running it: the cost of a wrong refusal
+            // is a re-run, the cost of a wrong pass is the measured §7.3 breakage.
+            log.warn("could not read platform.tenant_cutover for {} — refusing this schema's pass"
+                    + " rather than risking DDL under a live publication: {}", schema, failure.getMessage());
+            return true;
+        }
+    }
+
+    private String historyHead(DataSource pool, String schema) {
+        try (Connection connection = pool.getConnection()) {
             return historyHead(connection, schema);
         } catch (SQLException failure) {
             log.warn("could not read the history head of {}: {}", schema, failure.getMessage());
@@ -617,12 +862,26 @@ public final class TenantMigrationRunner {
         }
     }
 
-    private Set<String> existingSchemas() {
-        try (Connection connection = dataSource.getConnection()) {
+    private static Set<String> existingSchemas(DataSource pool) {
+        try (Connection connection = pool.getConnection()) {
             return Set.copyOf(query(connection, SCHEMAS_IN_CATALOGUE));
         } catch (SQLException failure) {
             throw new IllegalStateException("Cannot read the schema catalogue", failure);
         }
+    }
+
+    private static List<String> registrySchemas(Connection connection, String datasourceName)
+            throws SQLException {
+        var values = new ArrayList<String>();
+        try (PreparedStatement statement = connection.prepareStatement(SCHEMAS_IN_REGISTRY)) {
+            statement.setString(1, datasourceName);
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    values.add(rows.getString(1));
+                }
+            }
+        }
+        return values;
     }
 
     private static List<String> query(Connection connection, String sql) throws SQLException {

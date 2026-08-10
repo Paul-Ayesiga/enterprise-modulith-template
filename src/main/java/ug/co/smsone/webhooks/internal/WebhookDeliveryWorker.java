@@ -18,6 +18,8 @@ import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 import ug.co.smsone.shared.queue.QueueSignals;
 import ug.co.smsone.shared.tenancy.TenantContext;
+import ug.co.smsone.shared.tenancy.TenantFanOut;
+import ug.co.smsone.shared.tenancy.TenantHome;
 
 /**
  * Drains the webhook queue: claims a tenant, claims a batch of that tenant's deliveries, sends each on
@@ -54,20 +56,37 @@ class WebhookDeliveryWorker implements SmartLifecycle {
     private final WebhookProperties config;
     private final Clock clock;
     private final MeterRegistry meters;
+    private final TenantFanOut fanOut;
 
     private volatile ExecutorService sendExecutor = Executors.newVirtualThreadPerTaskExecutor();
     private volatile boolean running;
     private volatile Thread poller;
 
     WebhookDeliveryWorker(WebhookDeliveryQueue queue, QueueSignals signals, WebhookSender sender,
-            WebhookProperties config, Clock clock, MeterRegistry meters) {
+            WebhookProperties config, Clock clock, MeterRegistry meters, TenantFanOut fanOut) {
         this.queue = queue;
         this.signals = signals;
         this.sender = sender;
         this.config = config;
         this.clock = clock;
         this.meters = meters;
+        this.fanOut = fanOut;
     }
+
+    /**
+     * How often an idle poll goes looking for work that no signal announces (ADR 0011 §5). Long,
+     * because the residue it repairs needs a process to die inside a sub-millisecond window, and cheap
+     * enough that being wrong about the interval costs one indexed query per remote home.
+     */
+    static final Duration RECONCILE_EVERY = Duration.ofMinutes(5);
+
+    /**
+     * When the next reconciliation may run. Instance state, not cluster state, on purpose: every
+     * instance repairing the same residue is idempotent ({@code announceIfUnsignalled} creates only what
+     * is missing) and a ShedLock around it would make the repair depend on the scheduler being healthy,
+     * which is the thing least likely to be true in the incident that produced the residue.
+     */
+    private volatile java.time.Instant reconcileAfter = java.time.Instant.MIN;
 
     @Override
     public void start() {
@@ -159,6 +178,9 @@ class WebhookDeliveryWorker implements SmartLifecycle {
             Optional<QueueSignals.Leased> due = TenantContext.callAsPlatform(
                     () -> signals.claim(WebhookDeliveryQueue.QUEUE, config.staleLock()));
             if (due.isEmpty()) {
+                // Nothing is due anywhere, which is the only moment this fleet has spare capacity and
+                // therefore the right moment to ask whether "nothing due" is actually true.
+                reconcileRemoteHomes();
                 return 0;
             }
             QueueSignals.Leased tenant = due.get();
@@ -181,6 +203,46 @@ class WebhookDeliveryWorker implements SmartLifecycle {
             return batch.size();
         }
         return 0;
+    }
+
+    /**
+     * <strong>Finds deliveries that exist and are announced by nothing</strong> — the residue half of
+     * ADR 0011 §5's trade, modelled on {@code SoftDeletePurgeJob.sweepSearchResidue}.
+     *
+     * <p>Only a tenant on ANOTHER database can have this residue: for everyone else the signal still
+     * commits inside the transaction that writes the rows, so "rows with no signal" is a state the
+     * database cannot be in. So the pass visits remote homes only, which on every deployment with no
+     * remote datasource configured is an empty list and a rate-limited no-op — the whole method costs
+     * one {@code Instant} comparison there.
+     *
+     * <p>Homes come from {@link TenantFanOut}, never from the raw registry: it already subtracts the
+     * frozen and the half-built ones, and announcing work in a schema a cutover is copying is the
+     * failure the freeze exists to prevent. A home that fails is logged and the pass continues — this is
+     * a repair, and a repair that can fail the poll loop it rides on is worse than the residue.
+     */
+    private void reconcileRemoteHomes() {
+        java.time.Instant now = clock.instant();
+        if (now.isBefore(reconcileAfter)) {
+            return;
+        }
+        reconcileAfter = now.plus(RECONCILE_EVERY);
+        for (TenantHome home : TenantContext.callAsPlatform(() -> fanOut.fleet().homes())) {
+            if (home.onPrimary()) {
+                continue;
+            }
+            try {
+                boolean orphaned = TenantContext.callAs(home.axis(),
+                        () -> queue.reconcileSignal(home.axis(), config.staleLock()));
+                if (orphaned) {
+                    log.warn("Webhook deliveries for organization {} were queued with no signal to"
+                            + " announce them and would never have been polled; a signal has been"
+                            + " raised (ADR 0011 §5 — the cross-database enqueue window)", home.axis());
+                }
+            } catch (RuntimeException failure) {
+                log.error("Webhook signal reconciliation failed for home {} (continuing; the next pass"
+                        + " retries)", home.schema(), failure);
+            }
+        }
     }
 
     private void release(QueueSignals.Leased tenant) {

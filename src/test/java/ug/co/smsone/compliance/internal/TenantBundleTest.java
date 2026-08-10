@@ -139,9 +139,9 @@ class TenantBundleTest extends AbstractIntegrationTest {
      * platform already made. So this asserts something stronger than "the bundle did not carry them":
      * there is no SQL in the package that could ask for them, and the attempt throws.
      *
-     * <p>The catalogue holds SIX, not the document's four, and that gap is the argument for deriving the
-     * list rather than reciting it: {@code queue_signal} (V56) and {@code tenant_freeze} (V58) both
-     * arrived after §6 was written and both carry exactly its hazard.
+     * <p>The catalogue holds SEVEN, not the document's four, and that gap is the argument for deriving
+     * the list rather than reciting it: {@code queue_signal} (V56), {@code tenant_freeze} (V58) and
+     * {@code tenant_cutover} (V60) all arrived after §6 was written and all carry exactly its hazard.
      */
     @Test
     void theTablesThatMustArriveFreshAreOnesThisBundlerCannotEvenAskFor() {
@@ -156,7 +156,7 @@ class TenantBundleTest extends AbstractIntegrationTest {
         assertThat(plan.freshAndEmpty())
                 .describedAs("derived from the catalogue, which is how the two tables §6 predates got in")
                 .contains("event_publication", "event_inbox", "idempotency_key", "shedlock",
-                        "queue_signal", "tenant_freeze");
+                        "queue_signal", "tenant_freeze", "tenant_cutover");
         assertThat(collected.tables())
                 .describedAs("not one row of any of them reached the sink")
                 .doesNotContainAnyElementsOf(plan.freshAndEmpty());

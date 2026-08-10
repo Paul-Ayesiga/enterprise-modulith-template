@@ -46,7 +46,7 @@ import ug.co.smsone.shared.tenancy.TenantSchemaFloor;
  * is the condition that matters; {@code SubscriptionCacheEvictor} is the same shape. The condition is
  * about the flip's commit, not about the evictor's, and no check here can tell them apart.
  *
- * <h2>The verdict for every declared cache, and why the GLOBAL five are not evicted</h2>
+ * <h2>The verdict for every declared cache, and why the GLOBAL six are not evicted</h2>
  *
  * <p>{@link #AT_THE_FLIP} classifies every name in {@link CacheRegistry} and
  * {@code TenantPromotionEvictionTest} fails the build when the two sets disagree — the same shape, and
@@ -54,7 +54,7 @@ import ug.co.smsone.shared.tenancy.TenantSchemaFloor;
  * two decisions, not one: which tenancy axis its entries belong to, and whether a tenant changing
  * schema changes its value.
  *
- * <p>The five {@link Verdict#PROMOTION_INVARIANT} lines are not an optimization and they are not
+ * <p>The six {@link Verdict#PROMOTION_INVARIANT} lines are not an optimization and they are not
  * laziness. Every one of them reads <em>platform-tier</em> tables (ADR 0010 §2), and promotion moves no
  * platform-tier row and changes no {@code organization.id} — the silo is NAMED after that id. Evicting
  * them anyway would cost the whole installation its edge translation caches on every promotion, and
@@ -117,7 +117,7 @@ public final class TenantPromotionCaches {
     }
 
     /**
-     * The seven caches and what the flip does to each. Literals rather than the constants that declare
+     * The eight caches and what the flip does to each. Literals rather than the constants that declare
      * them, for the reason {@link CacheRegistry} gives at length: every cache name lives on a
      * package-private field inside its own module, which {@code shared} cannot see and must not be
      * given a reason to. The enumeration test closes the gap from the other side.
@@ -150,6 +150,11 @@ public final class TenantPromotionCaches {
         flip.put("feature-flags", Verdict.PROMOTION_INVARIANT);
         // localization.internal.TranslationBundles — keyed by locale; `translation` is platform-tier.
         flip.put("translation-bundles", Verdict.PROMOTION_INVARIANT);
+        // subscription.internal.PlanCatalogCache — `plan` and `plan_entitlement` are platform-tier
+        // catalog keyed by plan id/code; no entry names a tenant, a schema or a datasource, so a tenant
+        // changing schema cannot change what any entry holds. The per-org answer derived FROM it
+        // (org-entitlements) is the one the flip touches, above.
+        flip.put("plan-catalog", Verdict.PROMOTION_INVARIANT);
         return Map.copyOf(flip);
     }
 

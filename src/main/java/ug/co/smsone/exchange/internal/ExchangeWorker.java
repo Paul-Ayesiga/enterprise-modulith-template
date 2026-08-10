@@ -9,6 +9,8 @@ import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 import ug.co.smsone.shared.queue.QueueSignals;
 import ug.co.smsone.shared.tenancy.TenantContext;
+import ug.co.smsone.shared.tenancy.TenantFanOut;
+import ug.co.smsone.shared.tenancy.TenantHome;
 
 /**
  * Polls the job queue and runs claimed jobs — ONE at a time per instance, deliberately: a job is
@@ -43,6 +45,7 @@ class ExchangeWorker implements SmartLifecycle {
     private final org.springframework.context.ApplicationEventPublisher events;
     private final org.springframework.transaction.support.TransactionTemplate transactions;
     private final java.time.Clock clock;
+    private final TenantFanOut fanOut;
 
     private volatile boolean running;
     private volatile Thread poller;
@@ -51,7 +54,7 @@ class ExchangeWorker implements SmartLifecycle {
             ExportRunner exports, ExchangeProperties config, ExchangeMetrics metrics,
             org.springframework.context.ApplicationEventPublisher events,
             org.springframework.transaction.support.TransactionTemplate transactions,
-            java.time.Clock clock) {
+            java.time.Clock clock, TenantFanOut fanOut) {
         this.store = store;
         this.signals = signals;
         this.imports = imports;
@@ -61,7 +64,14 @@ class ExchangeWorker implements SmartLifecycle {
         this.events = events;
         this.transactions = transactions;
         this.clock = clock;
+        this.fanOut = fanOut;
     }
+
+    /** ADR 0011 §5's residue sweep interval — {@code WebhookDeliveryWorker.RECONCILE_EVERY}'s reasoning. */
+    private static final java.time.Duration RECONCILE_EVERY = java.time.Duration.ofMinutes(5);
+
+    /** When the next residue pass may run. Per instance and idempotent; see the webhook worker's note. */
+    private volatile java.time.Instant reconcileAfter = java.time.Instant.MIN;
 
     @Override
     public void start() {
@@ -158,6 +168,9 @@ class ExchangeWorker implements SmartLifecycle {
             QueueSignals.Leased leased = signals.claim(ExchangeJobStore.QUEUE, config.staleLock())
                     .orElse(null);
             if (leased == null) {
+                // The idle moment: the only one with capacity, and the only one where asking "is
+                // 'nothing due' actually true?" costs nobody anything. See reconcileRemoteHomes.
+                reconcileRemoteHomes();
                 return 0;
             }
             Optional<ExchangeJob> claimed = store.claimOne(config.staleLock(), leased.scope());
@@ -180,6 +193,42 @@ class ExchangeWorker implements SmartLifecycle {
             }
         }
         return 0;
+    }
+
+    /**
+     * <strong>Finds jobs that exist and are announced by nothing</strong> — ADR 0011 §5's residue sweep,
+     * the {@code sweepSearchResidue} shape. Remote homes only, because a co-located tenant's signal
+     * still commits with its rows and so cannot be missing; on every deployment with no remote
+     * datasource this is an empty loop behind a rate limit.
+     *
+     * <p>Runs under the platform axis this method already holds ({@code drainOnce} wraps it), pinning
+     * each home's own axis only for the query that reads that home's jobs — the two-connection
+     * choreography {@code TenantHomeSweep} documents. Homes come from {@link TenantFanOut} so a tenant
+     * mid-cutover is not announced into a schema that is being copied.
+     */
+    private void reconcileRemoteHomes() {
+        java.time.Instant now = clock.instant();
+        if (now.isBefore(reconcileAfter)) {
+            return;
+        }
+        reconcileAfter = now.plus(RECONCILE_EVERY);
+        for (TenantHome home : fanOut.fleet().homes()) {
+            if (home.onPrimary()) {
+                continue;
+            }
+            try {
+                boolean orphaned = TenantContext.callAs(home.axis(),
+                        () -> store.reconcileSignal(home.axis(), config.staleLock()));
+                if (orphaned) {
+                    log.warn("Exchange jobs for organization {} were queued with no signal to announce"
+                            + " them and would never have been claimed; a signal has been raised"
+                            + " (ADR 0011 §5 — the cross-database enqueue window)", home.axis());
+                }
+            } catch (RuntimeException failure) {
+                log.error("Exchange signal reconciliation failed for home {} (continuing; the next pass"
+                        + " retries)", home.schema(), failure);
+            }
+        }
     }
 
     private int runClaimed(ExchangeJob job) {

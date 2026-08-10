@@ -1,11 +1,14 @@
 package ug.co.smsone.shared.tenancy;
 
 import java.time.Duration;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import ug.co.smsone.shared.persistence.TenantDataSources;
 import ug.co.smsone.shared.tenancy.placement.TenantPlacement;
 import ug.co.smsone.shared.tenancy.placement.TenantPlacements;
 
@@ -53,20 +56,35 @@ import ug.co.smsone.shared.tenancy.placement.TenantPlacements;
  * organization, in this process, with two lifetimes and a different argument for each:
  *
  * <ul>
- *   <li><b>"At or above the floor" is remembered permanently, and needs no invalidation</b> — the
- *       transition it records is one-way. {@code schema_version} only ever increases (Flyway does not go
- *       backwards without a hand-run {@code repair}) and {@link #MIN_TENANT_SCHEMA_VERSION} is compiled
- *       in, so a tenant that has met THIS process's floor cannot stop meeting it while THIS process
- *       lives. There is no event to subscribe to because there is no transition to miss.</li>
- *   <li><b>"Below the floor" is remembered for {@link #RECHECK_AFTER} only, and that expiry IS the
- *       invalidation.</b> The migration runner is a Kubernetes Job in a different process — it cannot
- *       push anything into a running pod, and a Valkey pub/sub channel for a fact that settles once per
- *       deploy would be machinery in place of a timer. So the refusal simply expires and the next
- *       request re-reads. {@link #retryAfterSeconds()} advertises that same interval, which is the point:
- *       {@code Retry-After} is not a guess but the instant this process is next willing to change its
- *       mind, so a client that obeys the header arrives to a fresh read rather than to the same cached
- *       503.</li>
+ *   <li><b>Every verdict this class has READ expires on {@link #RECHECK_AFTER}</b> — the admissions
+ *       exactly as much as the refusals — because since ADR 0011 an admission rests on <em>two</em>
+ *       facts with different lifetimes, and a memo lives as long as the shortest fact under it.
+ *       {@code schema_version} genuinely cannot go backwards (Flyway does not, absent a hand-run
+ *       {@code repair}) and {@link #MIN_TENANT_SCHEMA_VERSION} is compiled in, so that half of an
+ *       admission would be safe to remember for the life of the process. The other half is not:
+ *       whether this deployment has a pool for the row's {@code datasource_name} is a statement about
+ *       a column a cutover rewrites and a configuration a rollout changes. <b>The two must not share
+ *       an entry shape</b>, and the shape they shared was the one that never expires — which is how a
+ *       tenant re-pointed at a datasource this pod has no pool for went on being admitted here, and
+ *       then failed at the BORROW instead: {@code UnknownTenantDataSourceException}, an
+ *       INTERNAL_ERROR with no {@code Retry-After}, where §4.2 decided a bounded per-tenant 503.</li>
+ *   <li><b>The expiry IS the invalidation, in both directions.</b> The migration runner is a Kubernetes
+ *       Job in a different process and a cutover is another pod entirely — neither can push anything
+ *       into a running pod, and a Valkey pub/sub channel for a fact that changes once in a tenant's
+ *       lifetime would be machinery in place of a timer. So a verdict simply expires and the next
+ *       request re-reads: a refused tenant recovers without a restart the moment the row or the
+ *       configuration it named is fixed, and an admitted one stops being admitted the moment it is
+ *       moved somewhere this deployment cannot follow. {@link #retryAfterSeconds()} advertises that
+ *       same interval, which is the point: {@code Retry-After} is not a guess but the instant this
+ *       process is next willing to change its mind, so a client that obeys the header arrives to a
+ *       fresh read rather than to the same cached 503.</li>
  * </ul>
+ *
+ * <p>The hot path is still one map lookup; what the re-check costs is <em>one indexed read per tenant
+ * per {@link #RECHECK_AFTER}</em> — the same cadence, against the same row, that {@link TenantRoutes}
+ * already pays for the routing half of the same registry. The floor keeps its own read rather than
+ * borrowing the router's memo because the two answer opposite failure policies (below), and a shared
+ * read would have to pick one.
  *
  * <p><b>"Could not say" gets a third, slower lifetime</b> ({@code UNRESOLVED_RECHECK_AFTER}), because it
  * is not a refusal and V57's backfill makes it the state of the entire fleet for one deploy window. See
@@ -85,6 +103,29 @@ import ug.co.smsone.shared.tenancy.placement.TenantPlacements;
  * loudly and locally — whereas a blanket 503 for every tenant is neither loud nor local. This mirrors
  * {@code CurrentUserFilter}'s own reasoning about a resolution that throws: "we could not ask" is not
  * "you may not".
+ *
+ * <h2>The second refusal: a datasource nobody configured (ADR 0011 §4.2)</h2>
+ *
+ * <p>Since ADR 0011 the placement row carries a second fact this binary must be able to honour:
+ * {@code datasource_name}. A row naming a pool this deployment does not have — a typo'd name, a config
+ * rollback racing a cutover — is refused with the same 503 + {@code Retry-After}, remembered for the
+ * same {@link #RECHECK_AFTER}, and for the same reason the version refusal exists: the failure must be
+ * THAT tenant's and bounded, not the pod's. It is a REFUSAL and not an unknown-so-serve, because unlike
+ * a missing version this is a fact we READ — the registry answered, and the answer is one this
+ * deployment cannot route. Serving would mean borrowing from a guessed pool, which is ADR 0010 §1's
+ * misroute; the borrow path backs this up by throwing {@code UnknownTenantDataSourceException} for
+ * whatever slips past the edge. Logged at ERROR once per transition into refusal (then re-checked
+ * silently every {@link #RECHECK_AFTER}), naming the organization, the row's name and the config key
+ * that would fix it.
+ *
+ * <p><b>This refusal is the one that had to become re-checkable, in both directions.</b> A missing
+ * datasource is not a fact about the tenant, it is a fact about this deployment's configuration and
+ * this instant's placement row — a name typo'd into the registry is corrected in a minute, a config
+ * rollback is rolled forward, a cutover re-points a row that was fine when this process last looked.
+ * So neither answer may be permanent: the refusal lifts on its own the moment the row or the config
+ * agrees again, and the admission is re-earned on the same cadence rather than assumed for the life of
+ * the pod. That is the whole difference between a bounded 503 the client is told to retry and a pod
+ * that has to be restarted to serve a tenant it is perfectly able to serve.
  *
  * <h2>What it does not cover</h2>
  *
@@ -118,9 +159,16 @@ public class TenantSchemaFloor {
     public static final int MIN_TENANT_SCHEMA_VERSION = 53;
 
     /**
-     * How long a refusal is remembered, and — the same number, on purpose — the {@code Retry-After} a
-     * refused tenant is given. See the class note: making these one value is what stops a client from
-     * being told to come back sooner than this process is willing to look again.
+     * How long any verdict this class has read is believed — refusal and admission alike — and, the
+     * same number on purpose, the {@code Retry-After} a refused tenant is given. See the class note:
+     * making these one value is what stops a client from being told to come back sooner than this
+     * process is willing to look again.
+     *
+     * <p>The default, and the number every deployment should keep. It is overridable
+     * ({@code app.tenancy.schema-floor-recheck}) for the reason {@code app.tenancy.route-ttl} is:
+     * a test that has to WATCH this process change its mind — refuse a tenant on an unconfigured
+     * datasource, then serve it once the registry is fixed, without a restart — would otherwise have
+     * to sleep half a minute to observe the one behaviour that matters.
      */
     public static final Duration RECHECK_AFTER = Duration.ofSeconds(30);
 
@@ -157,15 +205,30 @@ public class TenantSchemaFloor {
      */
     private final TenantPlacements placements;
 
+    /** Who can answer "does a pool of this name exist here" — the ADR 0011 §4.2 half of the check. */
+    private final TenantDataSources dataSources;
+
+    /** {@link #RECHECK_AFTER}, or whatever the deployment set. Never zero: see the constructor. */
+    private final Duration recheckAfter;
+
     private final ConcurrentHashMap<UUID, Entry> decisions = new ConcurrentHashMap<>();
 
-    public TenantSchemaFloor(TenantPlacements placements) {
+    public TenantSchemaFloor(TenantPlacements placements, TenantDataSources dataSources,
+            @Value("${app.tenancy.schema-floor-recheck:30s}") Duration recheckAfter) {
         this.placements = placements;
+        this.dataSources = dataSources;
+        // A zero or negative interval would make every verdict expire before it was stored — one
+        // registry read per request forever — and a sub-second one would advertise Retry-After: 0,
+        // which asks a client to come back instantly and is not a thing this process can honour.
+        this.recheckAfter = recheckAfter == null || recheckAfter.compareTo(Duration.ofSeconds(1)) < 0
+                ? RECHECK_AFTER : recheckAfter;
     }
 
     /**
      * May this process serve requests for {@code orgId}? {@code false} only when the registry says, in
-     * so many words, that the tenant's schema is BELOW {@link #MIN_TENANT_SCHEMA_VERSION}.
+     * so many words, one of the two things this binary cannot honour: the tenant's schema is BELOW
+     * {@link #MIN_TENANT_SCHEMA_VERSION}, or its placement names a datasource this deployment has no
+     * pool for (ADR 0011 §4.2).
      *
      * <p>Answered from memory on all but the first call per tenant (and per {@link #RECHECK_AFTER} while
      * a tenant is refused), so the hot path costs one map lookup. Must be called with no transaction
@@ -187,7 +250,7 @@ public class TenantSchemaFloor {
 
     /** The {@code Retry-After} to give a refused tenant: the interval after which this will look again. */
     public long retryAfterSeconds() {
-        return RECHECK_AFTER.toSeconds();
+        return recheckAfter.toSeconds();
     }
 
     /**
@@ -196,13 +259,12 @@ public class TenantSchemaFloor {
      * therefore the one caller: <b>promotion</b> ({@code TenantPromotionCaches.evictAfterPlacementFlip},
      * ADR 0010 §6 hop 0→1) rewrites the placement row this class read its answer out of.
      *
-     * <p>It exists for the SETTLED entry specifically. A refusal expires on {@link #RECHECK_AFTER} and
-     * an unresolved read on the slower interval, so both would heal on their own; "at or above the
-     * floor" never expires, because the class note's argument for that — {@code schema_version} only
-     * increases and the floor is compiled in — holds for a tenant that stays in one schema and is
-     * exactly what a promotion suspends. The sanctioned sequence migrates the new home to head before
-     * flipping, so in practice the memo stays true; this is what makes that a property of the data
-     * rather than an assumption the memo bakes in.
+     * <p>Every entry expires on its own now (see {@link Entry}), so this shortens a bounded wait
+     * rather than being the only cure — and the flip is exactly the moment where that distinction is
+     * worth a call. A promotion rewrites both halves of the row this class read its answer out of, and
+     * the flipping process must not spend the next {@link #RECHECK_AFTER} answering out of what the
+     * row said before it moved: its own freeze arithmetic is sized on every OTHER process healing
+     * within one route TTL, and it would be odd for the one process that knows to be the last to.
      *
      * <p>Silently tolerates a tenant this process never decided about, and a null. Both mean "there is
      * nothing remembered here", which is the state the caller wanted.
@@ -214,11 +276,11 @@ public class TenantSchemaFloor {
     }
 
     private Entry read(UUID orgId, Entry previous) {
-        String recorded;
+        Optional<TenantPlacement> placement;
         try {
             // An empty Optional is an ordinary state, not an error: §4.3 keeps provisioning free of DDL,
             // so a tenant can be perfectly serviceable while the registry has never named it.
-            recorded = placements.find(orgId).map(TenantPlacement::schemaVersion).orElse(null);
+            placement = placements.find(orgId);
         } catch (RuntimeException ex) {
             // RuntimeException and not just DataAccessException, and the extra breadth is load-bearing:
             // PlacementState.of THROWS on a state its enum does not name, which is precisely the
@@ -230,6 +292,22 @@ public class TenantSchemaFloor {
                     orgId, ex.toString(), ex);
             return Entry.unresolved();
         }
+        String namedDatasource = placement.map(TenantPlacement::dataSourceName).orElse(null);
+        if (!dataSources.isConfigured(namedDatasource)) {
+            // A fact we READ, not one we failed to establish — so it refuses where the nulls above
+            // serve. Once per transition into refusal: the entry expires on RECHECK_AFTER and this
+            // method re-runs, and a line per 30 s per broken tenant would bury the one that matters.
+            if (previous == null || previous.serve()) {
+                log.error("Tenant {} is placed on datasource '{}' and this deployment has no such pool —"
+                        + " app.tenancy.datasources.{}.url is the config key that would create it"
+                        + " (ADR 0011 §4.2). Its requests answer 503 with Retry-After {}s; every other"
+                        + " tenant is unaffected, which is the whole point of refusing here rather than"
+                        + " at boot.",
+                        orgId, namedDatasource, namedDatasource, retryAfterSeconds());
+            }
+            return Entry.refused(recheckAfter);
+        }
+        String recorded = placement.map(TenantPlacement::schemaVersion).orElse(null);
         int version = majorVersion(recorded);
         if (version < 0) {
             // DEBUG, not WARN, and the level is a decision. Right after V57 this is the state of every
@@ -243,16 +321,18 @@ public class TenantSchemaFloor {
         }
         if (version >= MIN_TENANT_SCHEMA_VERSION) {
             if (previous != null && !previous.serve()) {
-                log.info("Tenant {} reached schema version {} (floor {}) and is being served again.",
-                        orgId, recorded, MIN_TENANT_SCHEMA_VERSION);
+                // Covers both refusals coming back: a migration that reached the tenant, and a
+                // datasource this deployment can now route to. The row says which.
+                log.info("Tenant {} is being served again: schema version {} (floor {}) on datasource"
+                        + " '{}'.", orgId, recorded, MIN_TENANT_SCHEMA_VERSION, namedDatasource);
             }
-            return Entry.SETTLED;
+            return Entry.served(recheckAfter);
         }
         log.warn("Tenant {} is at schema version {} and this binary requires {} (ADR 0010 §4.4). Its"
                 + " requests answer 503 with Retry-After {}s until the tenant migration reaches it; every"
                 + " other tenant is unaffected.",
                 orgId, recorded, MIN_TENANT_SCHEMA_VERSION, retryAfterSeconds());
-        return Entry.refused();
+        return Entry.refused(recheckAfter);
     }
 
     /**
@@ -280,34 +360,44 @@ public class TenantSchemaFloor {
     }
 
     /**
-     * One remembered decision, in the three lifetimes the class note argues for: {@code settled} never
-     * expires (the transition it records is one-way), a refusal expires on {@link #RECHECK_AFTER}, and an
-     * unresolved read on the slower {@code UNRESOLVED_RECHECK_AFTER}.
+     * One remembered decision and when this process stops believing it. Two lifetimes, and the class
+     * note argues both: a verdict READ from the registry — served or refused — lasts
+     * {@link #RECHECK_AFTER}, and a read that could not say lasts the slower
+     * {@code UNRESOLVED_RECHECK_AFTER}.
+     *
+     * <p><b>Nothing here is permanent, and that is the ADR 0011 repair.</b> There used to be a third
+     * shape, {@code SETTLED}, that never expired: correct for the only fact the class had in Phase 6
+     * ({@code schema_version} cannot go backwards), and wrong the moment an admission also began to
+     * rest on {@code datasource_name}, which any cutover may rewrite and any rollout may reconfigure.
+     * A memo may not outlive the shortest-lived fact under it, so the surviving shapes both expire —
+     * and the version half loses nothing by being re-read, because re-reading it can only confirm it.
      *
      * <p>{@code nanoTime} rather than the injected {@code Clock}: this is an interval, not an instant a
      * human will ever read or a row will ever hold, and a wall clock that steps backwards during an NTP
      * correction would extend a refusal indefinitely. The {@code now - expiresAt < 0} comparison is the
      * overflow-safe form the {@code nanoTime} javadoc prescribes — the same idiom, for the same reason,
-     * as {@code DistributedRateLimiter}'s {@code retryNotBefore} — and it is why the settled case is a
-     * flag rather than an expiry of {@code Long.MAX_VALUE}, which that subtraction would overflow.
+     * as {@code DistributedRateLimiter}'s {@code retryNotBefore}.
      */
-    private record Entry(boolean serve, boolean settled, long expiresAtNanos) {
+    private record Entry(boolean serve, long expiresAtNanos) {
 
-        /** At or above the floor: one-way, so there is nothing to invalidate and no expiry to set. */
-        private static final Entry SETTLED = new Entry(true, true, 0L);
+        /** At or above the floor, on a pool this deployment has. Re-earned every {@code recheckAfter}. */
+        static Entry served(Duration recheckAfter) {
+            return new Entry(true, System.nanoTime() + recheckAfter.toNanos());
+        }
 
-        /** Below the floor. Expires on the interval this tenant's {@code Retry-After} promised. */
-        static Entry refused() {
-            return new Entry(false, false, System.nanoTime() + RECHECK_AFTER.toNanos());
+        /** Below the floor, or placed nowhere this deployment can reach. Expires on the same interval,
+         * which is the one this tenant's {@code Retry-After} promised. */
+        static Entry refused(Duration recheckAfter) {
+            return new Entry(false, System.nanoTime() + recheckAfter.toNanos());
         }
 
         /** The registry could not say. Served, and re-asked on the slow interval — nobody is waiting. */
         static Entry unresolved() {
-            return new Entry(true, false, System.nanoTime() + UNRESOLVED_RECHECK_AFTER.toNanos());
+            return new Entry(true, System.nanoTime() + UNRESOLVED_RECHECK_AFTER.toNanos());
         }
 
         boolean validAt(long now) {
-            return settled || now - expiresAtNanos < 0;
+            return now - expiresAtNanos < 0;
         }
     }
 }

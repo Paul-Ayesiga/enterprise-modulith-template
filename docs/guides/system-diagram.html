@@ -401,8 +401,8 @@ flowchart TB
       inaccessible across modules (ArchUnit + ModularityTests fail the build), cross-module calls go through
       shared-kernel <b>ports</b> (<code>Entitlements</code>, <code>OrgAuthorization</code>, <code>LegalHolds</code>,
       <code>PlatformAdmins</code>, <code>Subscriptions</code>, <code>AuditLog</code>, <code>GeoStamps</code>,
-      <code>PersonLookup</code>, <code>OrgLookup</code>, <code>PersonProvisioning</code>, <code>PersonDirectory</code>,
-      <code>ProviderOrgMembership</code>…) or <b>events</b>. The two <b>link tables</b> are drawn on the modules that own
+      <code>PersonLookup</code>, <code>OrgLookup</code>, <code>PersonProjections</code>, <code>PersonProvisioning</code>,
+      <code>PersonDirectory</code>, <code>ProviderOrgMembership</code>…) or <b>events</b>. The two <b>link tables</b> are drawn on the modules that own
       them: they are the only tables in the schema allowed to hold an identifier minted somewhere else, which is what
       confines a provider swap to two modules.</p>
     <div class="diagram">
@@ -839,7 +839,7 @@ flowchart TB
         <span class="what"><b>Platform first, serially.</b> The Job applies <code>db/migration/platform</code> before anything else. On a live database that is an idempotent no-op; on a fresh one it is what creates <code>platform</code>, <code>tenant_pool</code>, <code>ext</code>, <code>no_tenant</code> and the placement registry — none of which exist before the first pod has ever started.</span>
         <span class="fail"><span class="pill store">~1 s</span></span></div>
       <div class="stagebox"><span class="ord">2</span>
-        <span class="what"><b>Discover the fleet</b> — <code>tenant_pool</code>, plus every <code>t_&lt;32hex&gt;</code> schema in the catalogue, plus every schema <code>platform.tenant_placement</code> names. The <em>union</em>: a silo whose promotion died before flipping its placement row is still migrated, and a placement row naming a schema that is not there is <em>reported</em> rather than skipped.</span>
+        <span class="what"><b>Discover the fleet</b> — <code>tenant_pool</code>, plus every <code>t_&lt;32hex&gt;</code> schema in the catalogue, plus every schema <code>platform.tenant_placement</code> names on the primary. The <em>union</em>: a silo whose promotion died before flipping its placement row is still migrated, and a placement row naming a schema that is not there is <em>reported</em> rather than skipped. Since ADR 0011 the run then repeats per named remote datasource, grouped — each remote's silos discovered from <em>its</em> catalogue unioned with the registry rows naming it, migrated over its own pool, recorded in the one registry on primary. An unreachable datasource fails its own tenants in the manifest, leaves the registry saying what was last known true, and never stops the run.</span>
         <span class="fail"><span class="pill store">catalogue ∪ registry</span></span></div>
       <div class="stagebox"><span class="ord">3</span>
         <span class="what"><b>Fan out, 8–16 workers.</b> Safe because Flyway derives its advisory-lock discriminator from the <em>qualified</em> <code>"&lt;schema&gt;"."flyway_schema_history"</code> — the lock is per schema, so parallel tenants never serialise. One Flyway per schema, with the scripts read off the classpath <b>once</b> and handed to every migrate as a shared resource provider: supply that and the Java-migration class provider together and Flyway skips building its Scanner entirely, which is the 50–150&nbsp;ms per schema it otherwise pays with nothing pending.</span>
@@ -850,10 +850,10 @@ flowchart TB
     </div>
     <div class="chain">
       <div class="stagebox"><span class="ord">org</span>
-        <span class="what"><code>search_path = tenant_pool, ext</code> for a pooled tenant, <code>t_&lt;32hex&gt;, ext</code> for one with a schema of its own — and <b>the placement registry is what chooses</b>. <code>TenantRoutes</code> reads <code>platform.tenant_placement</code> and memoizes the answer per organization, so the borrow path costs a map lookup rather than a round trip; the schema NAME is still derived from <code>organization.id</code> with zero reads, so nothing in the binary ever holds a silo name. That is why promotion is a placement flip and not a deployment. Tenant tables are named <b>unqualified</b> so the path can decide.</span>
+        <span class="what"><code>search_path = tenant_pool, ext</code> for a pooled tenant, <code>t_&lt;32hex&gt;, ext</code> for one with a schema of its own — and <b>the placement registry is what chooses</b>, since ADR 0011 as a <em>pair</em>: the row's <code>datasource_name</code> picks WHICH DATABASE'S pool the connection is borrowed from (named Hikari pools built from <code>app.tenancy.datasources.*</code>; <code>primary</code> = the platform database), then the schema half sets the path on it. <code>TenantRoutes</code> reads <code>platform.tenant_placement</code> — always over the primary pool, where the registry lives — and memoizes the pair per organization, so the borrow path costs a map lookup rather than a round trip; the schema NAME is still derived from <code>organization.id</code> with zero reads, so nothing in the binary ever holds a silo name. That is why promotion is a placement flip, a cutover is a datasource flip, and neither is a deployment. Tenant tables are named <b>unqualified</b> so the path can decide. A row naming a datasource this deployment has no pool for fails <em>that tenant</em> — 503 + <code>Retry-After</code> at the edge, its home withheld from every sweep — never the pod, and never a guessed pool. The platform axis and the poison <code>no_tenant</code> state always borrow from primary, which is what keeps the coordination tables (<code>queue_signal</code>, <code>tenant_freeze</code>, <code>shedlock</code>) one truth however many databases serve tenants.</span>
         <span class="fail"><span class="pill store">tenant tables, bare</span></span></div>
       <div class="stagebox"><span class="ord">platform</span>
-        <span class="what"><code>search_path = platform, ext</code> — operators, catalogues, the person graph, the framework tables. <code>platform</code> is on <em>no</em> tenant's path, so a platform table is only ever reached by being NAMED (<code>platform.person</code>) — which is exactly what lets a tenant-pinned request read one without leaving its own axis. A build gate fails the compile when a mapping or a SQL literal gets that backwards in either direction.</span>
+        <span class="what"><code>search_path = platform, ext</code> — operators, catalogues, the person graph, the framework tables. <code>platform</code> is on <em>no</em> tenant's path, so a platform table is only ever reached by being NAMED (<code>platform.person</code>) — which is what let a tenant-pinned request read one without leaving its own axis. <b>Since ADR 0011 a schema name is half an address.</b> Naming <code>platform.x</code> reaches it only if the connection in hand is pointed at the database that holds it, and a remote tenant's is not: its <code>platform</code> schema deliberately holds <em>only</em> <code>event_publication</code>, so the statement dies with <code>relation "platform.x" does not exist</code> rather than landing in an empty copy nobody reads. <code>CrossDatabaseWrites</code> is the other half — it compares the caller's DATABASE with the target's (never their axes: a pooled tenant's axis is not the platform axis, but its rows and the platform's share one database), and hops only when they differ, suspending the caller's transaction first because <code>TenantContext</code> refuses a pin inside one. Every coordination write a request can reach goes through it — the idempotency claim, the queue signal, the inbox claim, the delivery row, the search projection, the membership index, both halves of the audit row. On a deployment with no remote datasource the hop is never taken and nothing changes. A build gate fails the compile when a mapping or a SQL literal gets the qualification backwards in either direction.</span>
         <span class="fail"><span class="pill store">platform.&lt;table&gt;</span></span></div>
       <div class="stagebox"><span class="ord">absent</span>
         <span class="what"><b>The poison state</b> — <code>search_path = no_tenant</code>, a real schema that is permanently empty and deliberately has no <code>ext</code> on it either. An unqualified tenant read there dies with <code>relation "ticket" does not exist</code> instead of answering out of whatever the previous borrower left behind. Ugly on purpose, and unreachable in practice because the refusal at −1 gets there first.</span>
@@ -906,6 +906,63 @@ flowchart TB
       ~130 ms of planning and ~403 locks per fan-out transaction. The fan-out deliberately does <em>not</em> enforce it;
       truncating a sweep's home list would silently stop doing the 201st tenant's work.</p>
 
+    <p class="sec-sub" style="margin-top:18px"><b>Cutover — moving a silo to another <em>database</em>, with a freeze
+      measured in seconds whatever the tenant weighs</b> (ADR 0011 §7, <code>shared.tenancy.cutover.TenantCutover</code>,
+      driven from <code>docs/runbooks/tenant-cutover.md</code>). Where promotion copies rows itself and freezes for the
+      copy, a cutover lets logical replication copy ONLINE and freezes only for the tail. Only a silo cuts over — a
+      row-filtered publication under PK replica identity breaks every pooled tenant's UPDATE/DELETE fleet-wide
+      (measured) — so the hop discipline is pool → silo → database.</p>
+    <div class="chain">
+      <div class="stagebox"><span class="ord">1</span>
+        <span class="what"><b>Record, build, sync — online.</b> A row in <code>platform.tenant_cutover</code> (V60):
+          while it lives, the migration runner refuses this schema (DDL under a live publication crash-loops the
+          subscriber, then a hand-heal silently under-copies until <code>REFRESH PUBLICATION</code> — both measured) and
+          the promoter refuses the tenant. The destination is built by the real <code>TenantSchemaMigrator</code> plus a
+          <b>minimal</b> <code>platform</code> schema holding exactly <code>event_publication</code>, so a stray
+          platform-qualified statement on the remote fails loudly instead of landing where nobody reads. Then
+          <code>CREATE PUBLICATION … FOR TABLES IN SCHEMA</code> on the source and a <code>copy_data=true</code>
+          subscription on the destination; the tenant serves from the source throughout.</span>
+        <span class="fail"><span class="pill store">nothing frozen yet</span></span></div>
+      <div class="stagebox"><span class="ord">2</span>
+        <span class="what"><b>Freeze, drain, verify.</b> The promotion's three locks verbatim, then:
+          capture <code>pg_current_wal_lsn()</code> <em>once</em> and wait for the slot's
+          <code>confirmed_flush_lsn</code> to cross it — never a chase of the live head, which every other tenant's
+          writes keep moving. Then counts AND checksums across the two databases. A mismatch aborts with nothing
+          flipped and the stream still running: a retry costs a new freeze, not a new sync.</span>
+        <span class="fail"><span class="pill bad">abort before the flip</span></span></div>
+      <div class="stagebox"><span class="ord">3</span>
+        <span class="what"><b>Flip, then reverse-replicate BEFORE unfreezing.</b> One compare-and-swap moves
+          <code>tenant_placement.datasource_name</code> (schema name unchanged); the freeze holds one
+          <code>route-ttl</code> so every pod re-reads. Then, still frozen: forward subscription dropped (loop
+          prevention), destination publishes, source subscribes <code>copy_data=false</code>. <b>That ordering is the
+          rollback guarantee</b> — no destination write exists before the reverse stream does, so flipping back never
+          loses a committed write.</span>
+        <span class="fail"><span class="pill ok">reversible</span></span></div>
+      <div class="stagebox"><span class="ord">4</span>
+        <span class="what"><b>Watch, then decommission — or roll back.</b> The reverse stream insures the move for
+          <code>app.tenancy.cutover.watch-window</code> (P7D): rollback in that window is a brief freeze and one row.
+          Decommission drops the streams and the stale source schema. The trap: <code>DROP SUBSCRIPTION</code> with an
+          unreachable publisher takes the <code>DISABLE → slot_name=NONE → DROP</code> escape, and the orphaned far-side
+          slot <b>pins WAL until a human drops it</b> — reported at ERROR, bounded by
+          <code>max_slot_wal_keep_size</code>, and a mandatory runbook step.</span>
+        <span class="fail"><span class="pill store">P7D insurance</span></span></div>
+    </div>
+
+    <p class="sec-sub" style="margin-top:18px"><b>When the primary is unreachable — the degradation ladder a
+      remote-served tenant rides</b> (ADR 0011 §2, proven against a severed database in the Phase 7 gate). The
+      tenant's rows are on a database that never went down, so whole requests keep serving: identity
+      (<code>person-by-subject</code>, <code>org-by-external-id</code>) serves each entry's <em>last-known</em> answer
+      up to <code>app.tenancy.identity-stale.ceiling</code> (PT15M), aged from that entry's own last refresh — then
+      denies with 503 + <code>Retry-After</code> in the envelope, never a false 401/403. Authorization never rides that
+      ladder: the membership walk resolves fresh from the tenant's own database, and the org-standing half — a
+      platform fact — <b>refuses</b> when it cannot be confirmed (503, nothing cached), so a revocation or suspension
+      can never be outlived by a holdover. Routes are the rung below both: never served past their TTL, a forgotten
+      route is a loud per-tenant refusal rather than a guessed pool. "Unreachable" is classified once
+      (<code>StaleWhileUnreachable.connectionShaped</code> — connect/socket failures, SQLState class 08, and the
+      57P01/P02/P03 a failover actually delivers; never a query-shaped error, never a statement-timeout cancel), and
+      the error renderer itself stays platform-independent — a translation bundle that cannot be read falls back to
+      the author's default detail instead of turning the 503 into an unenveloped 500.</p>
+
     <p class="sec-sub" style="margin-top:18px"><b>Bounded fan-out — what every background sweep does once a second
       schema exists.</b> Nine surfaces used to be one statement against <code>tenant_pool</code>, because one schema
       held every tenant: the soft-delete purge, SLA escalation, the webhook and exchange retention purges, exchange
@@ -943,12 +1000,26 @@ flowchart TB
           against a thirty-day window for the purges.</span>
         <span class="fail"><span class="pill bad">no write mid-copy</span></span></div>
     </div>
-    <p class="sec-sub">The platform ticket queue is the one surface that is a <em>read</em> rather than a sweep: each
-      home is scrolled from the SAME keyset cursor and the pages are merged in order, with the next cursor taken from
-      the winning branch's own window. The tie-break compares uuids UNSIGNED, the way Postgres does and the way
-      <code>UUID.compareTo</code> does not — get that wrong and pages skip or repeat a row, but only when two
-      timestamps collide. §5.1's trigger for replacing the whole shape with <code>platform.ticket_index</code> is 50
-      silos, which is where the fan-out starts warning.</p>
+    <p class="sec-sub">The platform ticket queue is the one surface that was a <em>read</em> rather than a sweep, and it
+      is the one that has now left the fan-out entirely. It used to scroll every home from the same keyset cursor and
+      merge the pages in order — correct, and measured at 1.3&nbsp;ms per home, flat, so 279&nbsp;ms per operator page
+      at 200 homes and linear in the customer base once <code>silo-per-org</code> made every organization its own
+      schema. <b>V61's <code>platform.ticket_index</code> is that page as one platform-side projection:</b> one indexed
+      keyset statement whose cost is a function of the page, not the fleet. The merge's most dangerous line went with
+      it — the hand-written UNSIGNED uuid tie-break that Postgres agrees with and <code>UUID.compareTo</code> does not,
+      whose failure skipped or repeated a row only when two timestamps collided.</p>
+    <p class="sec-sub">The projection is maintained from the tenant-tier writes (<code>SupportService</code> is the one
+      funnel both protocol surfaces pass through) inside the ticket's own transaction — and, for a tenant on another
+      database, in a separate transaction on primary, where the pair is eventually consistent and the ordering leaves
+      only the benign direction open: a queue row may outlive its ticket, never the reverse.
+      <b>Its reconciler is not optional and is not a backstop</b> — nothing in the application soft-deletes a ticket, so
+      every disappearance is raw SQL that cannot know the projection exists, which makes the nightly
+      <code>TicketIndexReconciler</code> the delete path itself. It fans out over homes with the same
+      <code>TenantHomeSweep</code> the sweeps use, in two independently resumable arms, and it never reasons from
+      absence: each page of index rows is checked against the tenant that owns it rather than against a set some
+      earlier page collected. The single-ticket routes and the SLA breach sweep deliberately did NOT move — a listing
+      can be served from a projection, but a breach sweep needs the tenant's own row lock, and a projection cannot lock
+      a row in another database.</p>
 
     <p class="sec-sub"><b>Why, in one line:</b> once a tenant has been promoted into its own schema,
       <code>pg_dump -n t_&lt;hex&gt;</code> is a complete, restorable tenant — no <code>WHERE org_id = ?</code> to get wrong and

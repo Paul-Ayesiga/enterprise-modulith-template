@@ -2652,6 +2652,11 @@ paths:
       tags:
       - Organization · Members
       summary: List organization members
+      description: "Add `?include=person` to get the people in the same response:\
+        \ a top-level `included` array of `user` resources (`name`, `email`) keyed\
+        \ by the same `personId` each row carries, resolved in one batch whatever\
+        \ the page size. Without the parameter the response is unchanged and `included`\
+        \ is absent."
       operationId: list_5
       parameters:
       - name: orgId
@@ -2660,6 +2665,11 @@ paths:
         schema:
           type: string
           format: uuid
+      - name: include
+        in: query
+        required: false
+        schema:
+          type: string
       - name: "page[size]"
         in: query
         description: "Items per page, 1–100. Defaults to 20."
@@ -7156,7 +7166,12 @@ paths:
       - Platform · Organizations
       summary: List an organization's members as the platform
       description: "The support view of a tenant's roster — person ids and role codes,\
-        \ read-only. Managing members stays a tenant action (or an impersonation session's)."
+        \ read-only. Managing members stays a tenant action (or an impersonation session's).\
+        \ Add `?include=person` to get the people in the same response: a top-level\
+        \ `included` array of `user` resources (`name`, `email`), resolved in one\
+        \ batch whatever the page size, instead of one `GET /api/v1/admin/users/{personId}`\
+        \ per row. Without the parameter the response is unchanged and `included`\
+        \ is absent."
       operationId: listMembers
       parameters:
       - name: orgId
@@ -7165,6 +7180,11 @@ paths:
         schema:
           type: string
           format: uuid
+      - name: include
+        in: query
+        required: false
+        schema:
+          type: string
       - name: "page[size]"
         in: query
         description: "Items per page, 1–100. Defaults to 20."
@@ -8388,6 +8408,10 @@ components:
             $ref: "#/components/schemas/ResourceObject"
         page:
           $ref: "#/components/schemas/PageMeta"
+        included:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResourceObject"
   securitySchemes:
     bearerAuth:
       type: http

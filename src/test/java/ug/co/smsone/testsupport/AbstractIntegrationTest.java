@@ -68,8 +68,9 @@ public abstract class AbstractIntegrationTest {
                     .withCommand("postgres", "-c", "max_connections=400",
                             // Matches docker/docker-compose.yml and deploy/k3s-local/infra/state.yaml,
                             // which carry the reasoning. Here it buys one specific thing: ADR 0010 §6
-                            // hop 1->2's row-filtered logical replication CANNOT BE TESTED AT ALL
-                            // against wal_level=replica — CREATE PUBLICATION succeeds and the
+                            // hop 1->2's logical-replication cutover (schema-level publication of a
+                            // silo — ADR 0011 §7.1 measured why not row filters) CANNOT BE TESTED AT
+                            // ALL against wal_level=replica — CREATE PUBLICATION succeeds and the
                             // subscription then fails at connect time, so the gap would surface as a
                             // broken cutover rather than a red test. A container that cannot run the
                             // mechanism cannot prove the mechanism.

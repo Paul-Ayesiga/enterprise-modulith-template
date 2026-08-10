@@ -21,7 +21,7 @@ import tools.jackson.databind.jsontype.PolymorphicTypeValidator;
 
 @Configuration(proxyBeanMethods = false)
 @EnableCaching
-@EnableConfigurationProperties(CacheProperties.class)
+@EnableConfigurationProperties({CacheProperties.class, IdentityStaleProperties.class})
 public class CacheConfig {
 
     private static final String CACHE_PREFIX = "smsone:cache:";
